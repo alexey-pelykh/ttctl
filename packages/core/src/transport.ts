@@ -1,22 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import { fetch as wreqFetch } from "node-wreq";
+import type { BrowserProfile } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
 import { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 import type { GraphQLRequest, ToptalSurface } from "./types.js";
 
 /**
- * TLS-impersonation profile. Pinned to `chrome_146` to match the
- * `User-Agent: Chrome/146` we send. See the `tls-fingerprinting` skill —
- * identity-catalog freshness requires the impersonate profile and User-Agent
- * to track current Chrome stable as a coupled pair.
+ * TLS-impersonation profile. Pinned as a coupled pair with `USER_AGENT` —
+ * see the `tls-fingerprinting` skill on identity-catalog freshness: WAFs
+ * cross-validate the User-Agent string against the JA4 hash, so the profile
+ * and UA must both name the same Chrome version. Bump them together when
+ * `node-wreq` publishes a newer profile.
+ *
+ * Currently `chrome_145` because that is the freshest profile published in
+ * `node-wreq@2.2.1`. The Rust upstream `wreq` crate has `chrome_146` in
+ * its release-candidate stream but the Node bindings have not yet shipped a
+ * matching release. Track upstream and bump.
  */
-export const IMPERSONATE_PROFILE = "chrome_146";
+export const IMPERSONATE_PROFILE: BrowserProfile = "chrome_145";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+  "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 
 const COMMON_HEADERS: Record<string, string> = {
   accept: "*/*",
@@ -88,12 +96,36 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
  * Impersonated HTTP via `node-wreq` (Rust + BoringSSL). Used for the
  * Cloudflare-protected `talent-profile` and `scheduler` surfaces.
  *
- * Implementation deferred to milestone 1 — see issue tracker. This stub keeps
- * the type surface in place so dependent code compiles.
+ * The `browser` option drives node-wreq's TLS ClientHello and HTTP/2
+ * SETTINGS frame to match the bundled Chrome profile (see `IMPERSONATE_PROFILE`).
+ * Header-tuple ordering is left as a future tightening — currently we pass
+ * a plain `Record<string, string>` matching `stockTransport`'s shape so the
+ * two transports stay symmetric. JA4H header-name ordering is a secondary
+ * detection vector relative to JA4 / Akamai HTTP/2; revisit if empirical
+ * blocks indicate it matters.
  */
-export function impersonatedTransport(req: TransportRequest): Promise<TransportResponse> {
-  // TODO(milestone-1): wire node-wreq with `browser: 'chrome_146'`,
-  // header-tuple ordering, and per-surface cookie jar.
-  void req;
-  return Promise.reject(new Error("impersonatedTransport not yet implemented; see TODO"));
+export async function impersonatedTransport(req: TransportRequest): Promise<TransportResponse> {
+  const url = SURFACE_ENDPOINTS[req.surface];
+  const headers: Record<string, string> = { ...COMMON_HEADERS };
+  if (req.cookieHeader) headers["cookie"] = req.cookieHeader;
+
+  const res = await wreqFetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(req.body),
+    browser: IMPERSONATE_PROFILE,
+  });
+
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = text;
+  }
+  return {
+    status: res.status,
+    headers: res.headers.toObject(),
+    body: parsed,
+  };
 }
