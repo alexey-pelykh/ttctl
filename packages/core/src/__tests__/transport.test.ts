@@ -7,9 +7,14 @@ vi.mock("node-wreq", () => ({
   fetch: vi.fn(),
 }));
 
-import { fetch as wreqFetch } from "node-wreq";
+vi.mock("undici", () => ({
+  request: vi.fn(),
+}));
 
-import { IMPERSONATE_PROFILE, impersonatedTransport } from "../transport.js";
+import { fetch as wreqFetch } from "node-wreq";
+import { request as undiciRequest } from "undici";
+
+import { IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../transport.js";
 
 interface FakeResponse {
   status: number;
@@ -160,5 +165,85 @@ describe("impersonatedTransport", () => {
     expect(init.headers["content-type"]).toBe("application/json");
     expect(init.headers["origin"]).toBe("https://talent.toptal.com");
     expect(init.headers["referer"]).toBe("https://talent.toptal.com/");
+  });
+});
+
+interface FakeUndiciResponse {
+  statusCode: number;
+  headers: Record<string, string | string[]>;
+  body: { text(): Promise<string> };
+}
+
+function fakeUndici(opts: { status: number; headers?: Record<string, string | string[]>; body: string }): FakeUndiciResponse {
+  return {
+    statusCode: opts.status,
+    headers: opts.headers ?? {},
+    body: { text: () => Promise.resolve(opts.body) },
+  };
+}
+
+const mockedUndici = vi.mocked(undiciRequest);
+
+describe("stockTransport", () => {
+  beforeEach(() => {
+    mockedUndici.mockReset();
+  });
+
+  it("preserves multi-valued Set-Cookie headers as an array (not joined on comma)", async () => {
+    mockedUndici.mockResolvedValueOnce(
+      fakeUndici({
+        status: 200,
+        headers: {
+          "set-cookie": [
+            "_toptal_session_id=abc; Expires=Sun, 06 Nov 2099 08:49:37 GMT; Path=/",
+            "csrf=xyz; Path=/",
+          ],
+          "content-type": "application/json",
+        },
+        body: '{"data":null}',
+      }) as never,
+    );
+
+    const result = await stockTransport({
+      surface: "mobile-gateway",
+      body: { operationName: "X" },
+    });
+
+    expect(result.setCookies).toEqual([
+      "_toptal_session_id=abc; Expires=Sun, 06 Nov 2099 08:49:37 GMT; Path=/",
+      "csrf=xyz; Path=/",
+    ]);
+    expect(result.headers["set-cookie"]).toBeUndefined();
+    expect(result.headers["content-type"]).toBe("application/json");
+  });
+
+  it("normalizes a single-string Set-Cookie header into a one-element array", async () => {
+    mockedUndici.mockResolvedValueOnce(
+      fakeUndici({
+        status: 200,
+        headers: { "set-cookie": "_toptal_session_id=abc; Path=/" },
+        body: "{}",
+      }) as never,
+    );
+
+    const result = await stockTransport({
+      surface: "mobile-gateway",
+      body: { operationName: "X" },
+    });
+
+    expect(result.setCookies).toEqual(["_toptal_session_id=abc; Path=/"]);
+  });
+
+  it("omits setCookies when no Set-Cookie header is present (exactOptionalPropertyTypes)", async () => {
+    mockedUndici.mockResolvedValueOnce(
+      fakeUndici({ status: 200, headers: { "content-type": "application/json" }, body: "{}" }) as never,
+    );
+
+    const result = await stockTransport({
+      surface: "mobile-gateway",
+      body: { operationName: "X" },
+    });
+
+    expect("setCookies" in result).toBe(false);
   });
 });
