@@ -192,9 +192,6 @@ async function verifyViewer(credentials: Credentials, jar: CookieJar): Promise<v
     throw new SignInError("UNKNOWN", "Viewer verification returned no email — session may be invalid");
   }
   if (email.toLowerCase() !== credentials.email.toLowerCase()) {
-    throw new SignInError(
-      "UNKNOWN",
-      `Viewer email '${email}' does not match credentials email '${credentials.email}'`,
-    );
+    throw new SignInError("UNKNOWN", `Viewer email '${email}' does not match credentials email '${credentials.email}'`);
   }
 }

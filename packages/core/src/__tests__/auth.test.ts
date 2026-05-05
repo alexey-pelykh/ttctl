@@ -217,10 +217,7 @@ describe("signIn", () => {
     reply(
       {
         body: SUCCESS_BODY,
-        setCookies: [
-          "this is not a valid cookie",
-          "_toptal_session_id=ok; Path=/; Domain=.toptal.com",
-        ],
+        setCookies: ["this is not a valid cookie", "_toptal_session_id=ok; Path=/; Domain=.toptal.com"],
       },
       { body: VIEWER_OK("user@example.com") },
     );

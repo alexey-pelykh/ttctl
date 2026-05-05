@@ -174,7 +174,11 @@ interface FakeUndiciResponse {
   body: { text(): Promise<string> };
 }
 
-function fakeUndici(opts: { status: number; headers?: Record<string, string | string[]>; body: string }): FakeUndiciResponse {
+function fakeUndici(opts: {
+  status: number;
+  headers?: Record<string, string | string[]>;
+  body: string;
+}): FakeUndiciResponse {
   return {
     statusCode: opts.status,
     headers: opts.headers ?? {},
@@ -194,10 +198,7 @@ describe("stockTransport", () => {
       fakeUndici({
         status: 200,
         headers: {
-          "set-cookie": [
-            "_toptal_session_id=abc; Expires=Sun, 06 Nov 2099 08:49:37 GMT; Path=/",
-            "csrf=xyz; Path=/",
-          ],
+          "set-cookie": ["_toptal_session_id=abc; Expires=Sun, 06 Nov 2099 08:49:37 GMT; Path=/", "csrf=xyz; Path=/"],
           "content-type": "application/json",
         },
         body: '{"data":null}',
