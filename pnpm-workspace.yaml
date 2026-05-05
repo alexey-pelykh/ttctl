@@ -23,5 +23,5 @@ catalog:
   yaml: "^2.8.4"
   undici: "^7.10.0"
   "node-wreq": "^2.2.1"
-  "tough-cookie": "^5.1.2"
+  "tough-cookie": "^6.0.1"
   msw: "^2.10.5"
