@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.alexey-pelykh/ttctl",
+  "description": "Unofficial CLI and MCP server for the Toptal Talent platform — personal-productivity tool",
+  "repository": {
+    "url": "https://github.com/alexey-pelykh/ttctl",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "ttctl",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": []
+    }
+  ]
+}

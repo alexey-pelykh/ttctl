@@ -1,0 +1,56 @@
+{
+  "name": "ttctl",
+  "version": "0.0.0",
+  "description": "Unofficial CLI and MCP server for the Toptal Talent platform",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "AGPL-3.0-only",
+  "author": "Alexey Pelykh (https://github.com/alexey-pelykh)",
+  "homepage": "https://github.com/alexey-pelykh/ttctl",
+  "bugs": "https://github.com/alexey-pelykh/ttctl/issues",
+  "funding": "https://github.com/sponsors/alexey-pelykh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexey-pelykh/ttctl.git",
+    "directory": "packages/ttctl"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "bin": {
+    "ttctl": "./dist/cli.js"
+  },
+  "mcpName": "io.github.alexey-pelykh/ttctl",
+  "keywords": [
+    "toptal-talent",
+    "mcp",
+    "cli"
+  ],
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "cp ../../README.md ../../LICENSE .",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src/",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@ttctl/cli": "workspace:^",
+    "@ttctl/mcp": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

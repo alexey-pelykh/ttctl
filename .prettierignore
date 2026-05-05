@@ -1,0 +1,6 @@
+dist/
+coverage/
+.turbo/
+.tmp/
+pnpm-lock.yaml
+**/__generated__/

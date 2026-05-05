@@ -1,0 +1,60 @@
+{
+  "name": "@ttctl/core",
+  "version": "0.0.0",
+  "description": "Core library for Toptal Talent platform integration: API client, auth, services",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "AGPL-3.0-only",
+  "author": "Alexey Pelykh (https://github.com/alexey-pelykh)",
+  "homepage": "https://github.com/alexey-pelykh/ttctl/tree/main/packages/core",
+  "bugs": "https://github.com/alexey-pelykh/ttctl/issues",
+  "funding": "https://github.com/sponsors/alexey-pelykh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexey-pelykh/ttctl.git",
+    "directory": "packages/core"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "toptal-talent",
+    "graphql",
+    "api-client",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "cp ../../LICENSE .",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src/",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "dependencies": {
+    "graphql": "catalog:",
+    "node-wreq": "catalog:",
+    "tough-cookie": "catalog:",
+    "undici": "catalog:",
+    "yaml": "catalog:",
+    "zod": "catalog:"
+  }
+}

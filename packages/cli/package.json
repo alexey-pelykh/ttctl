@@ -1,0 +1,51 @@
+{
+  "name": "@ttctl/cli",
+  "version": "0.0.0",
+  "description": "TTCtl CLI commands and program definition",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "AGPL-3.0-only",
+  "author": "Alexey Pelykh (https://github.com/alexey-pelykh)",
+  "homepage": "https://github.com/alexey-pelykh/ttctl/tree/main/packages/cli",
+  "bugs": "https://github.com/alexey-pelykh/ttctl/issues",
+  "funding": "https://github.com/sponsors/alexey-pelykh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexey-pelykh/ttctl.git",
+    "directory": "packages/cli"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "cp ../../LICENSE .",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src/",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "dependencies": {
+    "@clack/prompts": "catalog:",
+    "@ttctl/core": "workspace:^",
+    "commander": "catalog:"
+  }
+}
