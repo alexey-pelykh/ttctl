@@ -13,7 +13,7 @@ catalog:
   eslint-config-prettier: "^10.1.8"
   "@tony.ganchev/eslint-plugin-header": "^3.3.3"
   "@modelcontextprotocol/sdk": "^1.28.0"
-  "@graphql-codegen/cli": "^5.0.5"
+  "@graphql-codegen/cli": "^7.0.0"
   graphql: "^16.10.0"
   zod: "^4.4.3"
   commander: "^14.0.3"
