@@ -14,7 +14,7 @@ vi.mock("undici", () => ({
 import { fetch as wreqFetch } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
-import { IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../transport.js";
+import { Cf403Error, IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../transport.js";
 
 interface FakeResponse {
   status: number;
@@ -108,7 +108,7 @@ describe("impersonatedTransport", () => {
   it("propagates the response status and parses a JSON body", async () => {
     mockedFetch.mockResolvedValueOnce(
       fakeResponse({
-        status: 403,
+        status: 401,
         headers: { "content-type": "application/json" },
         body: '{"errors":[{"message":"unauthorized"}]}',
       }) as never,
@@ -119,7 +119,7 @@ describe("impersonatedTransport", () => {
       body: { operationName: "X" },
     });
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(401);
     expect(result.headers).toEqual({ "content-type": "application/json" });
     expect(result.body).toEqual({ errors: [{ message: "unauthorized" }] });
   });
@@ -165,6 +165,112 @@ describe("impersonatedTransport", () => {
     expect(init.headers["content-type"]).toBe("application/json");
     expect(init.headers["origin"]).toBe("https://talent.toptal.com");
     expect(init.headers["referer"]).toBe("https://talent.toptal.com/");
+  });
+
+  it("throws Cf403Error when talent-profile returns 403", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      fakeResponse({
+        status: 403,
+        headers: { "content-type": "text/html" },
+        body: "<html>Cloudflare</html>",
+      }) as never,
+    );
+
+    await expect(
+      impersonatedTransport({
+        surface: "talent-profile",
+        body: { operationName: "X" },
+      }),
+    ).rejects.toBeInstanceOf(Cf403Error);
+  });
+
+  it("throws Cf403Error when scheduler returns 403", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      fakeResponse({
+        status: 403,
+        body: "<html>Cloudflare</html>",
+      }) as never,
+    );
+
+    await expect(
+      impersonatedTransport({
+        surface: "scheduler",
+        body: { operationName: "X" },
+      }),
+    ).rejects.toBeInstanceOf(Cf403Error);
+  });
+
+  it("Cf403Error carries the surface and endpoint that failed", async () => {
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
+
+    let captured: Cf403Error | undefined;
+    try {
+      await impersonatedTransport({ surface: "scheduler", body: { operationName: "X" } });
+    } catch (err) {
+      captured = err as Cf403Error;
+    }
+
+    expect(captured).toBeInstanceOf(Cf403Error);
+    expect(captured?.surface).toBe("scheduler");
+    expect(captured?.endpoint).toBe("https://scheduler.toptal.com/api/graphql");
+  });
+
+  it("Cf403Error message includes the verbatim cf_clearance refresh instructions", async () => {
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
+
+    let captured: Cf403Error | undefined;
+    try {
+      await impersonatedTransport({ surface: "talent-profile", body: { operationName: "X" } });
+    } catch (err) {
+      captured = err as Cf403Error;
+    }
+
+    expect(captured?.message).toContain("`cf_clearance` cookie may have expired (Cloudflare 403). To refresh:");
+    expect(captured?.message).toContain("1. Open https://talent.toptal.com/ in Chrome.");
+    expect(captured?.message).toContain("2. Pass any bot-check (CAPTCHA / Turnstile) if shown.");
+    expect(captured?.message).toContain("3. From DevTools → Application → Cookies, copy the `cf_clearance` value.");
+    expect(captured?.message).toContain(
+      "4. Update your cookie jar with the new value (manually edit\n     ~/.ttctl/session.cookies, OR rerun `ttctl auth signin`).",
+    );
+  });
+
+  it("Cf403Error message swaps the refresh URL to scheduler.toptal.com for the scheduler surface", async () => {
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
+
+    let captured: Cf403Error | undefined;
+    try {
+      await impersonatedTransport({ surface: "scheduler", body: { operationName: "X" } });
+    } catch (err) {
+      captured = err as Cf403Error;
+    }
+
+    expect(captured?.message).toContain("1. Open https://scheduler.toptal.com/ in Chrome.");
+    expect(captured?.message).not.toContain("Open https://talent.toptal.com/ in Chrome.");
+  });
+
+  it("Cf403Error names the offending surface and endpoint in the message", async () => {
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
+
+    let captured: Cf403Error | undefined;
+    try {
+      await impersonatedTransport({ surface: "talent-profile", body: { operationName: "X" } });
+    } catch (err) {
+      captured = err as Cf403Error;
+    }
+
+    expect(captured?.message).toContain('Cloudflare returned 403 for surface "talent-profile"');
+    expect(captured?.message).toContain("https://www.toptal.com/api/talent_profile/graphql");
+  });
+
+  it("does not throw Cf403Error for non-403 status codes from impersonated surfaces", async () => {
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 502, body: "<html>bad gateway</html>" }) as never);
+
+    const result = await impersonatedTransport({
+      surface: "talent-profile",
+      body: { operationName: "X" },
+    });
+
+    expect(result.status).toBe(502);
   });
 });
 

@@ -9,7 +9,7 @@ export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js"
 export { resolveCredentials, signIn, SignInError } from "./auth.js";
 export type { SignInErrorCode } from "./auth.js";
 
-export { IMPERSONATE_PROFILE, callSurface, impersonatedTransport, stockTransport } from "./transport.js";
+export { Cf403Error, IMPERSONATE_PROFILE, callSurface, impersonatedTransport, stockTransport } from "./transport.js";
 export type { TransportRequest, TransportResponse } from "./transport.js";
 
 export { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";

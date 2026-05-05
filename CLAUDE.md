@@ -143,6 +143,23 @@ TTCtl uses two transports in `packages/core/src/transport.ts`:
 Pin both `User-Agent: Chrome/146` and `node-wreq` profile `chrome_146` together;
 identity-catalog freshness is critical (see `tls-fingerprinting` skill).
 
+### Troubleshooting: `cf_clearance` 403
+
+When an impersonated surface (`talent-profile` or `scheduler`) returns HTTP
+403, `impersonatedTransport` throws `Cf403Error` (exported from
+`@ttctl/core`) instead of returning a `TransportResponse`. The error message
+walks the user through manual cookie refresh — `cf_clearance` is JA3 + IP
+bound and cannot be regenerated programmatically because Cloudflare's
+bot-management challenge requires a real browser session.
+
+CLI commands that call into the impersonated transport must catch
+`Cf403Error` (or let it propagate) so the message reaches the user verbatim
+rather than being collapsed into a generic "request failed" string.
+`talent-profile` and `scheduler` live in distinct Cloudflare zones, so the
+refresh entry-point differs per surface (`https://talent.toptal.com/` vs
+`https://scheduler.toptal.com/`); `Cf403Error.formatMessage` already swaps
+the URL based on `surface`. See [issue #4](https://github.com/alexey-pelykh/ttctl/issues/4).
+
 ## Reverse-Engineering Artifacts
 
 The Toptal Talent platform has no public API. TTCtl is built from artifacts in
