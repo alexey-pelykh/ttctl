@@ -45,6 +45,12 @@ export interface TransportRequest {
 export interface TransportResponse {
   status: number;
   headers: Record<string, string>;
+  /**
+   * Raw `Set-Cookie` header values, preserved as an array. Joining cookies on
+   * `,` is destructive — `Expires=Sun, 06 Nov 1994 08:49:37 GMT` contains a
+   * comma — so the array form is what consumers (cookie jars) need.
+   */
+  setCookies?: string[];
   body: unknown;
 }
 
@@ -82,14 +88,19 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
     parsed = text;
   }
   const responseHeaders: Record<string, string> = {};
+  let setCookies: string[] | undefined;
   for (const [k, v] of Object.entries(res.headers)) {
+    if (k.toLowerCase() === "set-cookie") {
+      setCookies = Array.isArray(v) ? [...v] : typeof v === "string" ? [v] : undefined;
+      continue;
+    }
     if (Array.isArray(v)) {
       responseHeaders[k] = v.join(", ");
     } else if (typeof v === "string") {
       responseHeaders[k] = v;
     }
   }
-  return { status: res.statusCode, headers: responseHeaders, body: parsed };
+  return { status: res.statusCode, headers: responseHeaders, body: parsed, ...(setCookies ? { setCookies } : {}) };
 }
 
 /**
