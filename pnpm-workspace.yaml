@@ -17,7 +17,7 @@ catalog:
   graphql: "^16.10.0"
   zod: "^4.4.3"
   commander: "^14.0.3"
-  turbo: "^2.8.20"
+  turbo: "^2.9.9"
   typedoc: "^0.28.18"
   "@clack/prompts": "^1.1.0"
   yaml: "^2.8.3"
