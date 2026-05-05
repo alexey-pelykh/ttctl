@@ -21,7 +21,7 @@ catalog:
   typedoc: "^0.28.18"
   "@clack/prompts": "^1.1.0"
   yaml: "^2.8.4"
-  undici: "^7.10.0"
+  undici: "^8.2.0"
   "node-wreq": "^2.2.1"
   "tough-cookie": "^6.0.1"
   msw: "^2.10.5"
