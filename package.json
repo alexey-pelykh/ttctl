@@ -1,0 +1,38 @@
+{
+  "name": "ttctl-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "clean": "turbo run clean",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e --concurrency=1",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "license-check": "node scripts/check-licenses.js",
+    "codegen": "graphql-codegen --config codegen.config.ts",
+    "dev": "turbo run dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@graphql-codegen/cli": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "@tony.ganchev/eslint-plugin-header": "catalog:",
+    "graphql": "catalog:",
+    "prettier": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
+  }
+}
