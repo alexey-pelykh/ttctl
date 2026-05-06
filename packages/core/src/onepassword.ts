@@ -25,15 +25,51 @@ export class OnePasswordError extends Error {
   override readonly name = "OnePasswordError";
 }
 
+interface ParsedReference {
+  account?: string;
+  vault: string;
+  item: string;
+}
+
 /**
- * Resolve credentials from a 1Password item reference of the form
- * `op://VAULT/ITEM`.
+ * Parse `op://[ACCOUNT/]VAULT/ITEM` into its components. Returns `null` for any
+ * shape outside the 2- or 3-segment grammar (matches `OnePasswordItemRefSchema`
+ * in `config.ts`).
  *
- * Mechanism: shells out to `op item get ITEM --vault VAULT --format json`,
- * then matches credential fields by `purpose` (`USERNAME` / `PASSWORD`) — the
- * canonical semantic identifier 1Password sets automatically for LOGIN-category
- * items. The 1Password Desktop app brokers authentication (typically via
- * biometric prompt) — no service-account token is required.
+ * Splitting on `/` after stripping the `op://` prefix avoids regex capture-group
+ * contortions and produces clear branching on segment count.
+ */
+function parseReference(ref: string): ParsedReference | null {
+  if (!ref.startsWith("op://")) return null;
+  const segments = ref.slice("op://".length).split("/");
+  if (segments.some((s) => s.length === 0)) return null;
+  if (segments.length === 2) {
+    const [vault, item] = segments as [string, string];
+    return { vault, item };
+  }
+  if (segments.length === 3) {
+    const [account, vault, item] = segments as [string, string, string];
+    return { account, vault, item };
+  }
+  return null;
+}
+
+/**
+ * Resolve credentials from a 1Password item reference.
+ *
+ * Accepted forms:
+ *   - `op://VAULT/ITEM` (2-segment) — `op` CLI uses its default account or
+ *     `OP_ACCOUNT` env.
+ *   - `op://ACCOUNT/VAULT/ITEM` (3-segment) — `--account ACCOUNT` is forwarded
+ *     to `op item get` so users with multiple configured accounts can select
+ *     one explicitly. ACCOUNT may be a UUID, shorthand, or sign-in email; `op`
+ *     itself validates the value.
+ *
+ * Mechanism: shells out to `op item get ITEM --vault VAULT [--account ACCOUNT]
+ * --format json`, then matches credential fields by `purpose` (`USERNAME` /
+ * `PASSWORD`) — the canonical semantic identifier 1Password sets automatically
+ * for LOGIN-category items. The 1Password Desktop app brokers authentication
+ * (typically via biometric prompt) — no service-account token is required.
  *
  * Field-matching by `purpose` rather than `label` is necessary because
  * browser-autosaved items inherit their `label` from the HTML form input name
@@ -42,16 +78,19 @@ export class OnePasswordError extends Error {
  * purposes set).
  */
 export function resolveOnePasswordReference(ref: string): Credentials {
-  const match = /^op:\/\/([^/]+)\/([^/]+)$/.exec(ref);
-  const vault = match?.[1];
-  const item = match?.[2];
-  if (!vault || !item) {
-    throw new OnePasswordError(`Invalid reference: ${ref}. Expected op://VAULT/ITEM.`);
+  const parsed = parseReference(ref);
+  if (!parsed) {
+    throw new OnePasswordError(`Invalid reference: ${ref}. Expected op://[account/]vault/item.`);
   }
+  const { account, vault, item } = parsed;
+
+  const args = ["item", "get", item, "--vault", vault];
+  if (account !== undefined) args.push("--account", account);
+  args.push("--format", "json");
 
   let raw: string;
   try {
-    raw = execFileSync("op", ["item", "get", item, "--vault", vault, "--format", "json"], {
+    raw = execFileSync("op", args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -65,9 +104,9 @@ export function resolveOnePasswordReference(ref: string): Credentials {
     throw new OnePasswordError(`op item get failed: ${e.message}`);
   }
 
-  let parsed: unknown;
+  let parsedJson: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsedJson = JSON.parse(raw);
   } catch (err) {
     throw new OnePasswordError(`op returned non-JSON output: ${(err as Error).message}`);
   }
@@ -75,7 +114,7 @@ export function resolveOnePasswordReference(ref: string): Credentials {
   // `op item get --format json` returns the full item object with a `fields`
   // array. Older `op` CLI versions returned a bare fields array instead;
   // normalize both shapes into the wrapped form before schema validation.
-  const normalized = Array.isArray(parsed) ? { fields: parsed } : parsed;
+  const normalized = Array.isArray(parsedJson) ? { fields: parsedJson } : parsedJson;
   const result = OpItemSchema.safeParse(normalized);
   if (!result.success) {
     throw new OnePasswordError(`Unexpected op output shape: ${result.error.message}`);

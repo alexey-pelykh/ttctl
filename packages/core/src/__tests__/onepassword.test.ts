@@ -40,10 +40,11 @@ describe("resolveOnePasswordReference", () => {
   });
 
   describe("reference parsing", () => {
-    it("rejects references that do not match op://VAULT/ITEM", () => {
+    it("rejects references that do not match op://[account/]VAULT/ITEM", () => {
       expect(() => resolveOnePasswordReference("not-a-ref")).toThrow(OnePasswordError);
       expect(() => resolveOnePasswordReference("op://only-vault")).toThrow(OnePasswordError);
-      expect(() => resolveOnePasswordReference("op://vault/item/extra")).toThrow(OnePasswordError);
+      expect(() => resolveOnePasswordReference("op://account/vault/item/extra")).toThrow(OnePasswordError);
+      expect(() => resolveOnePasswordReference("op://account//item")).toThrow(OnePasswordError);
       expect(mockedExec).not.toHaveBeenCalled();
     });
   });
@@ -126,6 +127,62 @@ describe("resolveOnePasswordReference", () => {
       expect(args).toContain("MyVault");
       expect(args).toContain("--format");
       expect(args).toContain("json");
+    });
+
+    it("does NOT pass --account when the reference has only 2 segments", () => {
+      reply([
+        { id: "username", purpose: "USERNAME", value: "u" },
+        { id: "password", purpose: "PASSWORD", value: "p" },
+      ]);
+
+      resolveOnePasswordReference("op://MyVault/MyItem");
+
+      const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+      expect(args).not.toContain("--account");
+    });
+
+    it("passes --account when the reference includes an account segment", () => {
+      reply([
+        { id: "username", purpose: "USERNAME", value: "u" },
+        { id: "password", purpose: "PASSWORD", value: "p" },
+      ]);
+
+      resolveOnePasswordReference("op://my-account/MyVault/MyItem");
+
+      expect(mockedExec).toHaveBeenCalledTimes(1);
+      const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+      expect(args).toContain("--account");
+      expect(args).toContain("my-account");
+      // --account must precede its value
+      expect(args.indexOf("my-account")).toBe(args.indexOf("--account") + 1);
+      expect(args).toContain("MyVault");
+      expect(args).toContain("MyItem");
+    });
+
+    it("forwards a UUID account verbatim", () => {
+      reply([
+        { id: "username", purpose: "USERNAME", value: "u" },
+        { id: "password", purpose: "PASSWORD", value: "p" },
+      ]);
+
+      resolveOnePasswordReference("op://FB4OMM7TV5GW7HGY2A2NCC7PP4/Private/Toptal");
+
+      const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+      expect(args).toContain("--account");
+      expect(args).toContain("FB4OMM7TV5GW7HGY2A2NCC7PP4");
+    });
+
+    it("forwards an email account verbatim", () => {
+      reply([
+        { id: "username", purpose: "USERNAME", value: "u" },
+        { id: "password", purpose: "PASSWORD", value: "p" },
+      ]);
+
+      resolveOnePasswordReference("op://oleksii@example.com/Private/Toptal");
+
+      const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+      expect(args).toContain("--account");
+      expect(args).toContain("oleksii@example.com");
     });
 
     it("translates ENOENT (op CLI not installed) into a friendly OnePasswordError", () => {

@@ -19,10 +19,11 @@ TTCtl authenticates against the Toptal Talent platform using session cookies
 obtained via `EmailPasswordSignIn`. The user provides credentials in `.ttctl.yaml`
 via one of two forms:
 
-| Form                | Example                                   | Recommended           |
-| ------------------- | ----------------------------------------- | --------------------- |
-| 1Password reference | `auth: "op://Personal/ttctl"`             | yes                   |
-| Literal             | `auth: { email: "...", password: "..." }` | no — dev/testing only |
+| Form                | Example                                                   | Recommended           |
+| ------------------- | --------------------------------------------------------- | --------------------- |
+| 1Password reference | `auth: "op://Personal/ttctl"`                             | yes                   |
+| 1Password reference | `auth: "op://my-account/Personal/ttctl"` (3-segment form) | yes                   |
+| Literal             | `auth: { email: "...", password: "..." }`                 | no — dev/testing only |
 
 When the 1Password form is used, TTCtl shells out to `op item get` at runtime to
 resolve `username` and `password`. Credentials are not persisted by TTCtl.

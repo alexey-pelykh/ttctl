@@ -92,10 +92,16 @@ The `auth` key is **polymorphic** on type:
 #### Form A — string (1Password reference, RECOMMENDED)
 
 ```yaml
+# Single 1Password account (or relying on `OP_ACCOUNT` env / op default)
 auth: "op://Personal/ttctl"
+
+# Multiple 1Password accounts — pin one explicitly
+auth: "op://my-account/Personal/ttctl"
 ```
 
-TTCtl parses `op://VAULT/ITEM` and runs `op item get ITEM --vault VAULT --format json`, then resolves credentials by matching fields with `purpose: USERNAME` and `purpose: PASSWORD` — the canonical semantic identifiers 1Password sets automatically for **LOGIN-category** items (including browser-autosaved logins where the field labels are the HTML form input names like `user[email]`).
+TTCtl parses `op://[ACCOUNT/]VAULT/ITEM` and runs `op item get ITEM --vault VAULT [--account ACCOUNT] --format json`, then resolves credentials by matching fields with `purpose: USERNAME` and `purpose: PASSWORD` — the canonical semantic identifiers 1Password sets automatically for **LOGIN-category** items (including browser-autosaved logins where the field labels are the HTML form input names like `user[email]`).
+
+The optional `ACCOUNT` segment is required only when you have multiple `op` accounts configured (`op account list`); single-account setups can omit it. ACCOUNT may be the account UUID, the shorthand set via `op account add`, or the sign-in email — TTCtl forwards the value verbatim to `op` for validation.
 
 #### Form B — object (literal, dev/testing only)
 
@@ -107,7 +113,7 @@ auth:
 
 > Discouraged for daily use. Plaintext credentials in config files leak through backups, sync clients, and accidental commits. Form A is what you want.
 
-> **Per-field references like `auth: "op://Personal/ttctl/username"` are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
+> **Per-field references (4+ segments, e.g. `auth: "op://Personal/ttctl/Section/username"`) are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
 
 ## MCP Integration
 
