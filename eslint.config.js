@@ -29,6 +29,21 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
+    // Loose root tooling files: outside any tsconfig project. Skip type-aware
+    // lint (these files are imported by tooling, not part of compiled output).
+    // The header rule below still applies.
+    files: ["eslint.config.js", "*.config.ts", "scripts/**/*.{js,mjs,cjs}"],
+    ...tseslint.configs.disableTypeChecked,
+  },
+  {
+    // Plain JS root files lack @types/node — disable `no-undef` so Node
+    // globals (console, process, …) don't trip the recommended ruleset.
+    files: ["eslint.config.js", "scripts/**/*.{js,mjs,cjs}"],
+    rules: {
+      "no-undef": "off",
+    },
+  },
+  {
     plugins: {
       header: headerPlugin,
     },

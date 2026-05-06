@@ -48,7 +48,7 @@ pnpm build
 pnpm build            # Build all packages (via Turbo)
 pnpm test             # Run unit tests
 pnpm test:e2e         # Run E2E tests (sequential, requires API credentials)
-pnpm lint             # Lint all packages
+pnpm lint             # Lint all packages and root config files
 pnpm license-check    # Verify dependency licenses
 pnpm dev              # Watch mode
 ```
