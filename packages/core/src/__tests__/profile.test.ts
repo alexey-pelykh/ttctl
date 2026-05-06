@@ -147,7 +147,9 @@ const PROFILE_OK = {
           phoneNumber: "+1 555 0001",
           skype: null as string | null,
         },
-        talentVerticals: [{ __typename: "TalentVertical", isApiAllowed: true, name: "Engineering", roleId: 1, slug: "eng" }],
+        talentVerticals: [
+          { __typename: "TalentVertical", isApiAllowed: true, name: "Engineering", roleId: 1, slug: "eng" },
+        ],
         vertical: {
           __typename: "TalentVertical",
           name: "Engineering",
