@@ -2793,6 +2793,11 @@ export type ViewerRoleUpdatePayload = MutationResult & {
   success: Scalars['Boolean']['output'];
 };
 
+export type ProfileShowQueryVariables = Exact<{ [key: string]: never; }>;
+
+
+export type ProfileShowQuery = { viewer: { __typename: 'Viewer', id: string, viewerRole: { __typename: 'ViewerRole', email: string, firstName: string, fullName: string, phoneNumber: string, allocatedHours: number, hiredHours: number, photo: { __typename: 'Photo', large: string, small: string }, profile: { __typename: 'Profile', id: string, fullName: string, city: string, photo: { __typename: 'ProfilePhotoType', large: string }, skillSets: { __typename: 'ProfileSkillSetConnection', nodes: Array<{ __typename: 'ProfileSkillSet', id: string, experience: number | null, rating: string, public: boolean, skill: { __typename: 'Skill', id: string, name: string } } | null> } } } } | null };
+
 export type ViewerQueryVariables = Exact<{ [key: string]: never; }>;
 
 

@@ -4,6 +4,7 @@
 import { Command } from "commander";
 
 import { registerAuthCommand } from "./commands/auth/index.js";
+import { buildProfileCommand } from "./commands/profile.js";
 
 /**
  * Build the root TTCtl Commander program. Sub-commands are registered as they
@@ -19,13 +20,7 @@ export function buildProgram(): Command {
 
   registerAuthCommand(program);
 
-  program
-    .command("profile")
-    .description("View and update your Toptal Talent profile")
-    .action(() => {
-      // TODO(milestone-1): profile show / update
-      console.log("profile: not yet implemented");
-    });
+  program.addCommand(buildProfileCommand());
 
   return program;
 }

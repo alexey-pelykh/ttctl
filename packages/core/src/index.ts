@@ -17,3 +17,8 @@ export type { TransportRequest, TransportResponse } from "./transport.js";
 
 export { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 export type { Credentials, GraphQLRequest, ToptalSurface } from "./types.js";
+
+export { getProfile, ProfileError } from "./profile.js";
+export type { ProfileErrorCode } from "./profile.js";
+
+export type { ProfileShowQuery, ProfileShowQueryVariables } from "./__generated__/graphql.js";
