@@ -9,7 +9,7 @@ export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js"
 export { getAuthStatus, resolveCredentials, signIn, SignInError } from "./auth.js";
 export type { AuthInvalidReason, AuthStatusResult, SignInErrorCode } from "./auth.js";
 
-export { discoverCookieJarPath, loadCookieJar, saveCookieJar } from "./cookieJar.js";
+export { createCookieJar, discoverCookieJarPath, loadCookieJar, saveCookieJar } from "./cookieJar.js";
 export type { DiscoverCookieJarPathOptions } from "./cookieJar.js";
 
 export { Cf403Error, IMPERSONATE_PROFILE, callSurface, impersonatedTransport, stockTransport } from "./transport.js";
