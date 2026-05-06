@@ -49,7 +49,7 @@ export interface FreshSessionContext {
   sandboxConfigPath: string;
   /**
    * Absolute path to the repo root, resolved at suite startup. Useful for
-   * locating sibling fixtures (`.tmp/e2e-restore/`, etc.).
+   * locating sibling fixtures under `<repo-root>/.tmp/`.
    */
   repoRoot: string;
 }

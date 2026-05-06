@@ -2,33 +2,194 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import type { ProfileShowQuery } from "./__generated__/graphql.js";
-import { impersonatedTransport } from "./transport.js";
+import { impersonatedTransport, stockTransport } from "./transport.js";
 import type { TransportResponse } from "./transport.js";
 
 /**
  * Full-document `ProfileShow` query string.
  *
- * Mirrors `research/graphql/operations/ProfileShow.graphql`. Sent as a
- * full-document GraphQL query (not a persisted query) because the
- * `talent_profile/graphql` surface has no published persisted-query catalog
- * we can pin a sha256 hash against. Keep this in sync with the .graphql file
- * if either is edited; the codegen smoke test in `__tests__/codegen.test.ts`
- * catches structural drift between the operation document and the generated
- * `ProfileShowQuery` type.
+ * Mirrors `research/graphql/gateway/operations/mobile/ProfileShow.graphql`. Sent as a
+ * full-document GraphQL query (not a persisted query) because pinning a
+ * sha256 hash against an unstable persisted-query catalog (it changes on
+ * every portal client release) costs more in churn than it saves in
+ * bandwidth. Keep this in sync with the .graphql file if either is edited;
+ * the codegen smoke test in `__tests__/codegen.test.ts` catches structural
+ * drift between operation documents and the generated TypeScript types.
+ *
+ * The selection set is a rich, profile-comprehensive shape adapted from the
+ * portal `GetViewer` operation (see `research/graphql/gateway/operations/
+ * portal/GetViewer.graphql` and `research/notes/13-getviewer-empirical-shape.md`)
+ * trimmed to fields ttctl actually surfaces. Deliberately excluded:
+ * `codeOfConduct.body` and `termsOfService.body` (~25 KB combined per the
+ * empirical capture in note 13 — CLI does not render legal text); the
+ * full `pendingSurveys`/`pendingQuizzes`/`jobActivityList`/operational-state
+ * scopes (out of profile-show scope); and fields the SDL types as `Unknown`
+ * (no actionable typing — codegen produces `unknown`).
  */
 const PROFILE_SHOW_QUERY = `query ProfileShow {
   viewer {
     __typename
     id
+    appliedAt
+    hasSearchSubscription
+    availabilityRequestTalentCardEnabled
+    coachingEligibility
+    referralUrl {
+      __typename
+      legacySlug
+      pathSuffix
+      shortenedUrl
+      url
+    }
+    hireMeBanner {
+      __typename
+      enabled
+      submitted
+      experimentVariant
+      referralUrl
+      personalWebsiteUrl
+      verificationStatus
+      verifiedCount
+    }
+    codeOfConduct {
+      __typename
+      id
+      acceptedAt
+      title
+      revisedOn
+    }
+    termsOfService {
+      __typename
+      id
+      title
+      revisedOn
+      requiredAction
+    }
+    preliminarySearchSetting {
+      __typename
+      enabled
+    }
     viewerRole {
       __typename
-      email
-      firstName
-      fullName
-      phoneNumber
+      activatedAt
+      askExpertMenuVisible
+      blockedStatus { __typename isBlocked }
+      roleId
+      profileId
+      availability
       allocatedHours
       hiredHours
+      fullName
+      firstName
+      phoneNumber
+      email
+      toptalEmail
+      toptalEmailSuspended
+      sendNotificationsToPrivateEmail
+      specializationType
+      specializations {
+        __typename
+        id
+        slug
+        title
+        deliveryModel { __typename id identifier }
+      }
       photo { __typename large small }
+      postActivationStepsStatus
+      publicResumeUrl
+      timeZone {
+        __typename
+        name
+        value
+        location
+        utcOffset
+        stdOffset
+      }
+      hourlyRate { __typename verbose decimal }
+      isPassThroughTalent
+      isFakeSession
+      availableShiftRangeFrom
+      availableShiftRangeTo
+      workingTimeFrom
+      workingTimeTo
+      contactFields {
+        __typename
+        communitySlackId
+        email
+        phoneNumber
+        skype
+      }
+      talentVerticals {
+        __typename
+        isApiAllowed
+        name
+        roleId
+        slug
+      }
+      vertical {
+        __typename
+        name
+        slug
+        hasSingleSpecialization
+        isMarketplaceAccessEnabled
+        profileHandbookUrl
+        minPortfolioItems
+        marketCondition { __typename condition }
+        globalMarketCondition {
+          __typename
+          condition
+          conditionVerbose
+          conditionColor
+          reportUrl
+        }
+        talentJobApplicationConfig {
+          __typename
+          portfolioRequired
+          careerHighlightRequired
+          highlightFields
+        }
+      }
+      lastAllocatedHoursChangeRequest {
+        __typename
+        id
+        allocatedHours
+        comment
+        reviewedManually
+        statusV2 { __typename value verbose }
+      }
+      lastMobileAccess { __typename deviceType startedAt }
+      rateInsight {
+        __typename
+        hourly {
+          __typename
+          currentRateCompetitive
+          recentApplicationRate
+          recommendedRate
+        }
+      }
+      operations {
+        __typename
+        createRateChangeRequest { __typename callable }
+        startSearchSubscription { __typename callable }
+        promoteGigs { __typename callable }
+      }
+      permissions {
+        __typename
+        canApplyToJobs
+        canFillInAdvancedProfile
+        canHaveReferrals
+        canViewAskAnExpert
+        canViewCoachingRequests
+        canViewCommunity
+        canViewConsultations
+        canViewEligibleJobs
+        canViewPayments
+        canViewRateInsights
+        canViewRecognitionBadges
+        canViewRecommendedJobs
+        canViewSlackCommunity
+        canViewSpecializations
+      }
       profile {
         __typename
         id
@@ -82,18 +243,29 @@ interface ProfileShowResponse {
 }
 
 /**
- * Fetch the signed-in user's profile from the Cloudflare-protected
- * `talent_profile/graphql` surface.
+ * Fetch the signed-in user's profile from the mobile-gateway GraphQL
+ * surface (`https://www.toptal.com/gateway/graphql/talent/graphql`).
  *
  * Authenticates via `Authorization: Token token=<token>` (the canonical
  * Toptal auth mechanism — see `research/docs/decisions/ADR-005-token-auth.md`).
- * Cookies are NOT load-bearing on this surface; Chrome TLS impersonation
- * alone clears Cloudflare in the happy path.
+ * The mobile-gateway is plain HTTPS — no Cloudflare, no TLS impersonation
+ * required (empirically validated in `research/notes/13-getviewer-empirical-shape.md`).
+ *
+ * The returned shape is profile-comprehensive: identity (email, fullName,
+ * phoneNumber, photo), role (allocatedHours, hiredHours, availability,
+ * specializations, vertical, hourlyRate, timeZone, permissions, contact
+ * fields), profile sub-object (id, fullName, city, photo, skillSets), and
+ * operational metadata (codeOfConduct/termsOfService acceptance state,
+ * hireMeBanner, lastAllocatedHoursChangeRequest, rateInsight). Caller may
+ * project as needed for display.
+ *
+ * Note: `Profile.about` (bio) and `Profile.quote` (headline) are NOT on
+ * mobile-gateway's `Profile` type. They are write-side fields surfaced by
+ * `updateProfile()`'s response payload via the talent-profile surface. If a
+ * read-side bio/headline display becomes needed, that requires a follow-up
+ * issue to add a second talent-profile call.
  *
  * Errors:
- * - `Cf403Error` propagates from the transport when Cloudflare returns 403.
- *   This is no longer expected in normal operation; if it surfaces, file an
- *   issue (the error message provides the link).
  * - `ProfileError` with code `UNAUTHENTICATED` when the surface returns 401
  *   (token expired or invalid). Caller should suggest `ttctl auth signin`
  *   to recover.
@@ -108,8 +280,8 @@ interface ProfileShowResponse {
 export async function getProfile(token: string): Promise<ProfileShowQuery> {
   let res: TransportResponse;
   try {
-    res = await impersonatedTransport({
-      surface: "talent-profile",
+    res = await stockTransport({
+      surface: "mobile-gateway",
       authToken: token,
       body: {
         operationName: "ProfileShow",
@@ -117,11 +289,6 @@ export async function getProfile(token: string): Promise<ProfileShowQuery> {
       },
     });
   } catch (err) {
-    // Cf403Error is raised by impersonatedTransport on 403 — re-throw it as-is
-    // so the CLI layer can surface its actionable message. Any other thrown
-    // error is a network-level failure (DNS, ECONNRESET, TLS handshake, etc.)
-    // and gets wrapped in ProfileError.
-    if (err instanceof Error && err.name === "Cf403Error") throw err;
     throw new ProfileError("NETWORK_ERROR", `Profile request failed: ${(err as Error).message}`, { cause: err });
   }
 
@@ -166,7 +333,7 @@ export async function getProfile(token: string): Promise<ProfileShowQuery> {
  * The Toptal `talent_profile/graphql` surface does not publish a persisted-query
  * catalog — every operation is sent as a full document. This is a SIMPLIFIED
  * version of the bundle-extracted `UPDATE_BASIC_INFO` mutation
- * (`research/graphql/web/operations/UPDATE_BASIC_INFO.graphql`): we ask only
+ * (`research/graphql/talent_profile/operations/UPDATE_BASIC_INFO.graphql`): we ask only
  * for the response fields we actually use (id, about, quote, success, notice,
  * errors), avoiding the bundle version's dependency on five fragments
  * (`RealTimeFields`, `ProfileCompletion`, `SkillsReadiness`,
@@ -200,7 +367,7 @@ const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBas
  * `headline` are the user-facing flag names exposed by the CLI; they map to
  * the GraphQL fields `about` and `quote` respectively (the field names used
  * by the talent_profile surface — see the response selection in
- * `research/graphql/web/operations/UPDATE_BASIC_INFO.graphql`).
+ * `research/graphql/talent_profile/operations/UPDATE_BASIC_INFO.graphql`).
  *
  * Both fields are optional. The caller is responsible for ensuring at least
  * one is supplied — `updateProfile` rejects an empty object with a
@@ -281,15 +448,17 @@ export interface UpdateProfileResult {
  *
  * Authenticates via `Authorization: Token token=<token>` (the canonical
  * Toptal auth mechanism). Cookies are NOT load-bearing — Chrome TLS
- * impersonation alone passes Cloudflare. Internally calls `getProfile` first
- * to obtain the `profileId` required by the mutation input, then issues the
- * typed `UpdateBasicInfo` mutation via `impersonatedTransport`. Returns the
- * server-confirmed updated values.
+ * impersonation alone passes Cloudflare. Internally calls `getProfile`
+ * (against mobile-gateway) first to obtain the `profileId` required by the
+ * mutation input, then issues the typed `UpdateBasicInfo` mutation against
+ * talent-profile via `impersonatedTransport`. Returns the server-confirmed
+ * updated values.
  *
  * Errors:
  * - `ProfileError` with code `VALIDATION_ERROR` when neither `bio` nor
  *   `headline` is supplied — the contract requires at least one.
- * - `Cf403Error` propagates from the transport when Cloudflare returns 403.
+ * - `Cf403Error` propagates from the talent-profile transport when
+ *   Cloudflare returns 403.
  * - `ProfileError` with code `UNAUTHENTICATED` on token expiry.
  * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
  * - `ProfileError` with code `USER_ERROR` when the mutation returns a
@@ -305,12 +474,12 @@ export async function updateProfile(token: string, changes: ProfileUpdate): Prom
   }
 
   // Need profileId for the mutation input — fetch the current profile first.
-  // Errors from getProfile (Cf403Error, ProfileError) propagate verbatim:
-  // a write attempt that can't read its own profile is unrecoverable, and
-  // surfacing the read-side error gives the user the same actionable message
-  // they'd get from `ttctl profile show`.
+  // Errors from getProfile (ProfileError) propagate verbatim: a write attempt
+  // that can't read its own profile is unrecoverable, and surfacing the
+  // read-side error gives the user the same actionable message they'd get
+  // from `ttctl profile show`.
   const profile = await getProfile(token);
-  const profileId = profile.viewer?.viewerRole.profile.id;
+  const profileId = profile.viewer?.viewerRole.profileId;
   if (profileId === undefined) {
     throw new ProfileError(
       "NO_VIEWER",

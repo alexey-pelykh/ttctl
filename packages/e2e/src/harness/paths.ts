@@ -92,15 +92,6 @@ export function resolveLockfilePath(repoRoot: string): string {
 }
 
 /**
- * Path to the directory holding bio-restoration breadcrumbs (used by the
- * profile-update round-trip test in #21). Created lazily by test cases
- * that need it; the harness does not own its lifecycle.
- */
-export function resolveRestoreDir(repoRoot: string): string {
-  return join(repoRoot, ".tmp", "e2e-restore");
-}
-
-/**
  * Write the fixture `.ttctl.yaml` that isolates the harness from the user's
  * working session.
  *
