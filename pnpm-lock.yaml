@@ -12,6 +12,9 @@ catalogs:
     '@eslint/js':
       specifier: ^9.39.2
       version: 9.39.4
+    '@graphql-codegen/add':
+      specifier: ^7.0.0
+      version: 7.0.0
     '@graphql-codegen/cli':
       specifier: ^7.0.0
       version: 7.0.0
@@ -77,6 +80,9 @@ importers:
       '@eslint/js':
         specifier: 'catalog:'
         version: 9.39.4
+      '@graphql-codegen/add':
+        specifier: 'catalog:'
+        version: 7.0.0(graphql@16.13.2)
       '@graphql-codegen/cli':
         specifier: 'catalog:'
         version: 7.0.0(@types/node@25.6.0)(graphql@16.13.2)(typescript@5.9.3)
@@ -2044,7 +2050,6 @@ packages:
   node-wreq@2.2.1:
     resolution: {integrity: sha512-wVbAfkMWPhfP0bVp0TJWaiSqf0Fh6sdG+KTd8LhrhRMrSoDnvTR2tOjWg45EM0ViOMfjgWsnj9TasUmx5BUAiw==}
     engines: {node: '>=20.0.0'}
-    cpu: [x64, arm64]
     os: [darwin, linux, win32]
 
   normalize-path@2.1.1:
