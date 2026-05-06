@@ -135,7 +135,7 @@ describe("captureBioToDisk", () => {
   });
 
   it("preserves bio prose verbatim (no normalization, no encoding shifts)", async () => {
-    const tricky = "line1\nline2\t\"quoted\"\\backslash — em-dash 日本語";
+    const tricky = 'line1\nline2\t"quoted"\\backslash — em-dash 日本語';
     const file = await captureBioToDisk(workDir, "verbatim", tricky);
     const onDisk = JSON.parse(await readFile(file, "utf8")) as { bio: string };
     expect(onDisk.bio).toBe(tricky);
@@ -187,11 +187,9 @@ describe("readBreadcrumb", () => {
 
   it("throws when 'bio' is the wrong type (defensive against a hand-edited file)", async () => {
     const file = join(workDir, "bio-wrong-type.json");
-    await writeFile(
-      file,
-      JSON.stringify({ runId: "x", capturedAt: "2026-01-01T00:00:00.000Z", bio: 123 }),
-      { mode: 0o600 },
-    );
+    await writeFile(file, JSON.stringify({ runId: "x", capturedAt: "2026-01-01T00:00:00.000Z", bio: 123 }), {
+      mode: 0o600,
+    });
     await expect(readBreadcrumb(file)).rejects.toThrow(/bio/);
   });
 
