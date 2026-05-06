@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { Cf403Error, ProfileError, discoverCookieJarPath, getProfile, loadCookieJar } from "@ttctl/core";
-import type { ProfileShowQuery } from "@ttctl/core";
+import {
+  Cf403Error,
+  ProfileError,
+  discoverCookieJarPath,
+  getProfile,
+  loadCookieJar,
+  updateProfile,
+} from "@ttctl/core";
+import type { ProfileShowQuery, ProfileUpdate, UpdateProfileResult } from "@ttctl/core";
 import { Command, Option } from "commander";
 
 /**
@@ -16,8 +23,9 @@ export type ProfileOutputFormat = "text" | "json" | "table";
 const OUTPUT_FORMATS: ProfileOutputFormat[] = ["text", "json", "table"];
 
 /**
- * Build the `ttctl profile` command tree. Currently exposes one subcommand:
- * `show`. Future subcommands (`update`, `skills add`, etc.) attach here.
+ * Build the `ttctl profile` command tree. Currently exposes two subcommands:
+ * `show` (read-side) and `update` (write-side). Future subcommands
+ * (`skills add`, etc.) attach here.
  */
 export function buildProfileCommand(): Command {
   const profile = new Command("profile").description("View and update your Toptal Talent profile");
@@ -32,6 +40,20 @@ export function buildProfileCommand(): Command {
     )
     .action(async (options: { output: ProfileOutputFormat }) => {
       await runProfileShow(options.output);
+    });
+
+  profile
+    .command("update")
+    .description("Update editable fields on the signed-in user's profile (currently bio + headline)")
+    .option("--bio <text>", "long-form bio / about-me text")
+    .option("--headline <text>", "short tagline / quote shown above your profile")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("text" satisfies ProfileOutputFormat),
+    )
+    .action(async (options: { bio?: string; headline?: string; output: ProfileOutputFormat }) => {
+      await runProfileUpdate(options);
     });
 
   return profile;
@@ -136,4 +158,85 @@ export function formatProfile(payload: ProfileShowQuery, format: ProfileOutputFo
 function truncate(s: string, width: number): string {
   if (s.length <= width) return s;
   return `${s.slice(0, width - 1)}…`;
+}
+
+/**
+ * Action handler for `ttctl profile update`. Validates that at least one of
+ * `--bio` / `--headline` was supplied (per the issue's AC), loads the
+ * persisted cookie jar, dispatches the mutation via `updateProfile`, then
+ * prints either a human-readable confirmation or the raw payload depending
+ * on the `--output` format.
+ *
+ * Domain errors are routed through `handleProfileError`, which already knows
+ * how to surface `Cf403Error` walkthroughs and `ProfileError` codes — adding
+ * `USER_ERROR` and `VALIDATION_ERROR` to its repertoire required no changes
+ * since it falls through to a generic `${err.code}: ${err.message}` line.
+ */
+export async function runProfileUpdate(options: {
+  bio?: string;
+  headline?: string;
+  output: ProfileOutputFormat;
+}): Promise<void> {
+  if (options.bio === undefined && options.headline === undefined) {
+    process.stderr.write(
+      "profile update requires at least one of --bio or --headline.\nExample: ttctl profile update --headline \"Senior backend engineer\"\n",
+    );
+    process.exit(1);
+  }
+
+  const changes: ProfileUpdate = {};
+  if (options.bio !== undefined) changes.bio = options.bio;
+  if (options.headline !== undefined) changes.headline = options.headline;
+
+  const jarPath = discoverCookieJarPath();
+  const jar = await loadCookieJar(jarPath);
+
+  let result: UpdateProfileResult;
+  try {
+    result = await updateProfile(jar, changes);
+  } catch (err) {
+    handleProfileError(err);
+    return;
+  }
+
+  const output = formatUpdateResult(result, options.output);
+  process.stdout.write(`${output}\n`);
+}
+
+/**
+ * Format the typed update result for the chosen output mode. Pure function —
+ * no I/O — so directly unit-testable. The text branch reads as a
+ * confirmation: "Profile updated" + the newly-stored values for any field
+ * the server returned. JSON returns the raw structured payload; table
+ * emits one `key\tvalue` row per returned field for shell-pipe consumption.
+ */
+export function formatUpdateResult(result: UpdateProfileResult, format: ProfileOutputFormat): string {
+  if (format === "json") {
+    return JSON.stringify(result, null, 2);
+  }
+
+  const { profile, notice } = result;
+
+  if (format === "table") {
+    const rows: [string, string][] = [
+      ["status", "updated"],
+      ["bio", profile.about ?? ""],
+      ["headline", profile.quote ?? ""],
+    ];
+    if (notice !== null) rows.push(["notice", notice]);
+    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+  }
+
+  // text — confirmation + echoed values
+  const lines: string[] = ["Profile updated."];
+  if (profile.about !== null) {
+    lines.push(truncate(`  bio: ${profile.about}`, 80));
+  }
+  if (profile.quote !== null) {
+    lines.push(truncate(`  headline: ${profile.quote}`, 80));
+  }
+  if (notice !== null) {
+    lines.push(truncate(`  ${notice}`, 80));
+  }
+  return lines.join("\n");
 }

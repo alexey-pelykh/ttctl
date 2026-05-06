@@ -54,7 +54,14 @@ const PROFILE_SHOW_QUERY = `query ProfileShow {
   }
 }`;
 
-export type ProfileErrorCode = "UNAUTHENTICATED" | "NO_VIEWER" | "GRAPHQL_ERROR" | "NETWORK_ERROR" | "UNKNOWN";
+export type ProfileErrorCode =
+  | "UNAUTHENTICATED"
+  | "NO_VIEWER"
+  | "GRAPHQL_ERROR"
+  | "NETWORK_ERROR"
+  | "USER_ERROR"
+  | "VALIDATION_ERROR"
+  | "UNKNOWN";
 
 export class ProfileError extends Error {
   override readonly name = "ProfileError";
@@ -157,4 +164,234 @@ export async function getProfile(jar: CookieJar): Promise<ProfileShowQuery> {
   }
 
   return body.data;
+}
+
+/**
+ * Full-document `UPDATE_BASIC_INFO` mutation string.
+ *
+ * The Toptal `talent_profile/graphql` surface does not publish a persisted-query
+ * catalog — every operation is sent as a full document. This is a SIMPLIFIED
+ * version of the bundle-extracted `UPDATE_BASIC_INFO` mutation
+ * (`research/graphql/web/operations/UPDATE_BASIC_INFO.graphql`): we ask only
+ * for the response fields we actually use (id, about, quote, success, notice,
+ * errors), avoiding the bundle version's dependency on five fragments
+ * (`RealTimeFields`, `ProfileCompletion`, `SkillsReadiness`,
+ * `ProfileRecommendations`, `UserErrorFragment`) that haven't been wired into
+ * codegen.
+ *
+ * Operation name is `UPDATE_BASIC_INFO` (SCREAMING_CASE), matching the
+ * bundle-extracted document. Per `research/notes/05-talent-profile-api.md`,
+ * the server matches `operationName` against the request body literally and
+ * the React app sends the SCREAMING_CASE form — keeping the same shape avoids
+ * any chance of server-side allowlist drift.
+ */
+const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBasicInfoInput!) {
+  updateBasicInfo(input: $input) {
+    success
+    notice
+    errors {
+      message
+      field
+    }
+    profile {
+      id
+      about
+      quote
+    }
+  }
+}`;
+
+/**
+ * Subset of profile fields editable via the wave-0 MVP write-path. `bio` and
+ * `headline` are the user-facing flag names exposed by the CLI; they map to
+ * the GraphQL fields `about` and `quote` respectively (the field names used
+ * by the talent_profile surface — see the response selection in
+ * `research/graphql/web/operations/UPDATE_BASIC_INFO.graphql`).
+ *
+ * Both fields are optional. The caller is responsible for ensuring at least
+ * one is supplied — `updateProfile` rejects an empty object with a
+ * `VALIDATION_ERROR`.
+ */
+export interface ProfileUpdate {
+  bio?: string;
+  headline?: string;
+}
+
+/**
+ * `UpdateBasicInfoInput` is undocumented in the published web schema (the
+ * unified SDL ships only a `_placeholder: String` stub) and was NOT captured
+ * via the safe-mode interceptor (see
+ * `research/notes/06-safe-mutation-capture.md`). The shape here is INFERRED
+ * from the patterns in `research/notes/10-mutation-input-patterns.md` (Pattern
+ * 1) which match nine sibling mutations:
+ *
+ *   { profileId: ID!, basicInfo: BasicInfoInput! }
+ *
+ * `BasicInfoInput` mirrors writable fields of the `Profile` type as observed
+ * in the response selection set of `UPDATE_BASIC_INFO.graphql`. Only the two
+ * MVP-relevant fields (`about`, `quote`) are typed here. Field names assumed
+ * to be optional `String` — sibling captures don't flag any nullability
+ * surprises.
+ *
+ * If a future capture reveals a different shape, this is the only place to
+ * update.
+ */
+interface UpdateBasicInfoInput {
+  profileId: string;
+  basicInfo: {
+    about?: string;
+    quote?: string;
+  };
+}
+
+interface UpdateBasicInfoUserError {
+  message?: string | null;
+  field?: string | null;
+}
+
+interface UpdateBasicInfoPayload {
+  success?: boolean | null;
+  notice?: string | null;
+  errors?: UpdateBasicInfoUserError[] | null;
+  profile?: {
+    id: string;
+    about?: string | null;
+    quote?: string | null;
+  } | null;
+}
+
+interface UpdateBasicInfoResponse {
+  data?: { updateBasicInfo?: UpdateBasicInfoPayload | null } | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Result of a successful `updateProfile` call. Mirrors the GraphQL field
+ * names so callers see `about`/`quote` rather than the CLI flag names — the
+ * mapping back to user-facing `bio`/`headline` is a presentation concern
+ * handled at the CLI layer.
+ */
+export interface UpdateProfileResult {
+  profile: {
+    id: string;
+    about: string | null;
+    quote: string | null;
+  };
+  notice: string | null;
+}
+
+/**
+ * Update a subset of the signed-in user's basic-info fields (currently
+ * `bio` → `about` and `headline` → `quote`) via the Cloudflare-protected
+ * `talent_profile/graphql` surface.
+ *
+ * Loads the session cookies from the supplied jar (which must include
+ * `_csrf_token` for write requests to be authorized — populated by
+ * `signIn`). Internally calls `getProfile` first to obtain the
+ * `profileId` required by the mutation input, then issues the typed
+ * `UpdateBasicInfo` mutation via `impersonatedTransport`. Returns the
+ * server-confirmed updated values.
+ *
+ * Errors:
+ * - `ProfileError` with code `VALIDATION_ERROR` when neither `bio` nor
+ *   `headline` is supplied — the contract requires at least one.
+ * - `Cf403Error` propagates from the transport when Cloudflare returns 403.
+ * - `ProfileError` with code `UNAUTHENTICATED` on session expiry.
+ * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
+ * - `ProfileError` with code `USER_ERROR` when the mutation returns a
+ *   non-empty `errors` array (validation failures from the server, e.g., a
+ *   bio that exceeds the platform's length limit). The message includes the
+ *   first reported error.
+ * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors.
+ * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
+ */
+export async function updateProfile(jar: CookieJar, changes: ProfileUpdate): Promise<UpdateProfileResult> {
+  if (changes.bio === undefined && changes.headline === undefined) {
+    throw new ProfileError("VALIDATION_ERROR", "updateProfile requires at least one of `bio` or `headline`.");
+  }
+
+  // Need profileId for the mutation input — fetch the current profile first.
+  // Errors from getProfile (Cf403Error, ProfileError) propagate verbatim:
+  // a write attempt that can't read its own profile is unrecoverable, and
+  // surfacing the read-side error gives the user the same actionable message
+  // they'd get from `ttctl profile show`.
+  const profile = await getProfile(jar);
+  const profileId = profile.viewer?.viewerRole.profile.id;
+  if (profileId === undefined) {
+    throw new ProfileError(
+      "NO_VIEWER",
+      "Cannot update profile: viewer or profile id missing from the session response.",
+    );
+  }
+
+  const basicInfo: UpdateBasicInfoInput["basicInfo"] = {};
+  if (changes.bio !== undefined) basicInfo.about = changes.bio;
+  if (changes.headline !== undefined) basicInfo.quote = changes.headline;
+
+  const cookieHeader = await jar.getCookieString(SURFACE_ENDPOINTS["talent-profile"]);
+
+  let res: TransportResponse;
+  try {
+    res = await impersonatedTransport({
+      surface: "talent-profile",
+      ...(cookieHeader ? { cookieHeader } : {}),
+      body: {
+        operationName: "UPDATE_BASIC_INFO",
+        query: UPDATE_BASIC_INFO_MUTATION,
+        variables: { input: { profileId, basicInfo } satisfies UpdateBasicInfoInput },
+      },
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "Cf403Error") throw err;
+    throw new ProfileError("NETWORK_ERROR", `Profile update request failed: ${(err as Error).message}`, { cause: err });
+  }
+
+  if (res.status === 401) {
+    throw new ProfileError("UNAUTHENTICATED", "Session is invalid or expired. Run `ttctl auth signin` to refresh it.");
+  }
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new ProfileError("UNKNOWN", `Profile update returned HTTP ${res.status.toString()}`);
+  }
+
+  const body = res.body as UpdateBasicInfoResponse | null;
+  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
+    const first = body.errors[0];
+    const message = first?.message ?? "GraphQL error";
+    if (first?.extensions?.code === "UNAUTHENTICATED") {
+      throw new ProfileError(
+        "UNAUTHENTICATED",
+        "Session is invalid or expired. Run `ttctl auth signin` to refresh it.",
+      );
+    }
+    throw new ProfileError("GRAPHQL_ERROR", `Profile update failed: ${message}`);
+  }
+
+  const payload = body?.data?.updateBasicInfo;
+  if (!payload) {
+    throw new ProfileError("UNKNOWN", "Profile update response had no `data.updateBasicInfo` field");
+  }
+
+  if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+    const first = payload.errors[0];
+    const fieldHint = first?.field ? ` (${first.field})` : "";
+    throw new ProfileError("USER_ERROR", `Profile update rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
+  }
+
+  if (payload.success === false) {
+    throw new ProfileError("USER_ERROR", `Profile update reported success=false${payload.notice ? `: ${payload.notice}` : ""}`);
+  }
+
+  if (!payload.profile) {
+    throw new ProfileError("UNKNOWN", "Profile update succeeded but response had no profile payload");
+  }
+
+  return {
+    profile: {
+      id: payload.profile.id,
+      about: payload.profile.about ?? null,
+      quote: payload.profile.quote ?? null,
+    },
+    notice: payload.notice ?? null,
+  };
 }
