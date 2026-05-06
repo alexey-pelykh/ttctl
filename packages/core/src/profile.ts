@@ -379,7 +379,10 @@ export async function updateProfile(jar: CookieJar, changes: ProfileUpdate): Pro
   }
 
   if (payload.success === false) {
-    throw new ProfileError("USER_ERROR", `Profile update reported success=false${payload.notice ? `: ${payload.notice}` : ""}`);
+    throw new ProfileError(
+      "USER_ERROR",
+      `Profile update reported success=false${payload.notice ? `: ${payload.notice}` : ""}`,
+    );
   }
 
   if (!payload.profile) {

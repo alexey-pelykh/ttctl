@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import {
-  Cf403Error,
-  ProfileError,
-  discoverCookieJarPath,
-  getProfile,
-  loadCookieJar,
-  updateProfile,
-} from "@ttctl/core";
+import { Cf403Error, ProfileError, discoverCookieJarPath, getProfile, loadCookieJar, updateProfile } from "@ttctl/core";
 import type { ProfileShowQuery, ProfileUpdate, UpdateProfileResult } from "@ttctl/core";
 import { Command, Option } from "commander";
 
@@ -179,7 +172,7 @@ export async function runProfileUpdate(options: {
 }): Promise<void> {
   if (options.bio === undefined && options.headline === undefined) {
     process.stderr.write(
-      "profile update requires at least one of --bio or --headline.\nExample: ttctl profile update --headline \"Senior backend engineer\"\n",
+      'profile update requires at least one of --bio or --headline.\nExample: ttctl profile update --headline "Senior backend engineer"\n',
     );
     process.exit(1);
   }
