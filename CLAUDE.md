@@ -99,6 +99,7 @@ ESLint enforces this via `@tony.ganchev/eslint-plugin-header`.
 - Use `verbatimModuleSyntax` (explicit `type` imports)
 - All packages use `composite: true` with project references
 - ESLint uses `tseslint.configs.strictTypeChecked` (strict type-aware rules)
+- Explicit `types: ["node"]` at base — TS 6 narrowed default ambient resolution; opt-in required for Node globals
 
 ## Auth Model
 
