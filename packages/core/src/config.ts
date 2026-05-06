@@ -11,13 +11,21 @@ import { z } from "zod";
 /**
  * 1Password item reference for credential resolution.
  *
- * Form: `op://VAULT/ITEM`. Per-field references (`op://VAULT/ITEM/FIELD`) are
+ * Forms:
+ *   - `op://VAULT/ITEM` (2-segment) — relies on `op` CLI default-account or
+ *     `OP_ACCOUNT` env. Works for single-account setups.
+ *   - `op://ACCOUNT/VAULT/ITEM` (3-segment) — selects a specific account when
+ *     the user has multiple `op` accounts configured. ACCOUNT is forwarded
+ *     verbatim to `op item get --account` (accepts UUID, shorthand, or sign-in
+ *     email — `op` CLI validates).
+ *
+ * Per-field references (`op://VAULT/ITEM/FIELD` or 4+ segments) are
  * deliberately NOT supported — TTCtl always reads `username` and `password`
  * from a single item. Schema rejects per-field URIs with a clear error.
  */
 const OnePasswordItemRefSchema = z
   .string()
-  .regex(/^op:\/\/[^/]+\/[^/]+$/, "auth string must be op://vault/item (no /field suffix)");
+  .regex(/^op:\/\/(?:[^/]+\/)?[^/]+\/[^/]+$/, "auth string must be op://[account/]vault/item (no /field suffix)");
 
 /**
  * Literal credentials in YAML — discouraged for daily use; the 1Password form

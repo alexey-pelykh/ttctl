@@ -110,6 +110,9 @@ credentials in `.ttctl.yaml` via two valid forms:
 # Form A — 1Password reference (recommended)
 auth: "op://Personal/ttctl"
 
+# Form A (with explicit account, for users with multiple `op` accounts)
+auth: "op://my-account/Personal/ttctl"
+
 # Form B — literal (dev/testing only, discouraged)
 auth:
   email: "you@example.com"
@@ -117,8 +120,11 @@ auth:
 ```
 
 The Zod schema in `packages/core/src/config.ts` is polymorphic on `auth`'s type
-(string vs object). It rejects per-field op:// references
-(`auth: "op://Personal/ttctl/username"` is NOT supported).
+(string vs object). The 1Password reference accepts both `op://VAULT/ITEM` and
+`op://ACCOUNT/VAULT/ITEM` (3-segment); the latter forwards `--account ACCOUNT`
+to `op item get`. Per-field references (`op://Personal/ttctl/Section/username`,
+4+ segments) are NOT supported — TTCtl always reads `username` and `password`
+from a single LOGIN-category item.
 
 After sign-in via `EmailPasswordSignIn` (persisted-query mode), session cookies
 are stored at `~/.ttctl/session.cookies` (or `$XDG_DATA_HOME/ttctl/session.cookies`)
