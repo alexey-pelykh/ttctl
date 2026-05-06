@@ -39,6 +39,11 @@ export interface DiscoverCookieJarPathOptions {
  * Resolve the on-disk path for the persisted session cookie jar.
  *
  * Priority:
+ *   - `$TTCTL_COOKIE_JAR_PATH` if set and non-empty — explicit override; used
+ *     by the E2E harness to redirect to an isolated jar (`.tmp/e2e/session.cookies`)
+ *     so signin during E2E doesn't clobber the user's working session, and as
+ *     a general operator escape hatch (e.g., running multiple sessions
+ *     side-by-side, debugging a specific jar).
  *   - Windows: `%APPDATA%/ttctl/session.cookies`
  *     (fallback `%USERPROFILE%/AppData/Roaming/ttctl/session.cookies`).
  *   - Linux/macOS: `$XDG_DATA_HOME/ttctl/session.cookies` if `XDG_DATA_HOME`
@@ -49,6 +54,11 @@ export function discoverCookieJarPath(opts: DiscoverCookieJarPathOptions = {}): 
   const env = opts.env ?? process.env;
   const platform = opts.platform ?? process.platform;
   const home = opts.homeDir ?? homedir();
+
+  const explicit = env["TTCTL_COOKIE_JAR_PATH"];
+  if (explicit !== undefined && explicit !== "") {
+    return explicit;
+  }
 
   if (platform === "win32") {
     const appData = env["APPDATA"];
