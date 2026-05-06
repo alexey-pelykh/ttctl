@@ -17,8 +17,8 @@ session.cookies
 # MCP configuration with credentials
 .mcp.json.local
 
-# GraphQL codegen output
-**/__generated__/
+# GraphQL codegen output (committed so CI builds without research-repo access)
+# Re-running `pnpm codegen` requires the sibling `../research/` working copy.
 
 ## Origin: https://github.com/github/gitignore/blob/main/Node.gitignore
 # Logs

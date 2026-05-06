@@ -170,7 +170,12 @@ operation extraction strategy (ADR-004).
 
 The `research/` repo's artifacts are the source for `pnpm codegen` —
 `graphql-codegen` reads `research/graphql/schema.graphql` (synthesized SDL) and
-operation documents to generate typed clients.
+operation documents to generate typed clients. The codegen config
+(`codegen.config.ts`) assumes `research/` is a sibling directory at
+`../research/` relative to the ttctl repo root. The generated TypeScript at
+`packages/core/src/__generated__/graphql.ts` is committed so contributors
+without research-repo access can build and consume the types; re-running
+`pnpm codegen` requires the sibling working copy and overwrites the file.
 
 ## CI/CD
 

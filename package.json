@@ -23,11 +23,12 @@
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
+    "@graphql-codegen/add": "catalog:",
     "@graphql-codegen/cli": "catalog:",
+    "@tony.ganchev/eslint-plugin-header": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
     "eslint-config-prettier": "catalog:",
-    "@tony.ganchev/eslint-plugin-header": "catalog:",
     "graphql": "catalog:",
     "prettier": "catalog:",
     "turbo": "catalog:",
