@@ -29,10 +29,12 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    // Loose root tooling files: outside any tsconfig project. Skip type-aware
-    // lint (these files are imported by tooling, not part of compiled output).
-    // The header rule below still applies.
-    files: ["eslint.config.js", "*.config.ts", "scripts/**/*.{js,mjs,cjs}"],
+    // Loose tooling config files: outside any tsconfig project. Skip
+    // type-aware lint (these files are imported by tooling, not part of
+    // compiled output). The header rule below still applies. Pattern
+    // covers root config files (vitest.config.ts, codegen.config.ts) AND
+    // package-local config files (packages/e2e/vitest.config.ts).
+    files: ["eslint.config.js", "**/*.config.ts", "scripts/**/*.{js,mjs,cjs}"],
     ...tseslint.configs.disableTypeChecked,
   },
   {
