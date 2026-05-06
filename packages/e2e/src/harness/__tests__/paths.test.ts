@@ -12,7 +12,6 @@ import {
   findRepoRoot,
   resolveIsolatedAuthTokenPath,
   resolveLockfilePath,
-  resolveRestoreDir,
   resolveSandboxConfigPath,
   resolveSandboxDir,
   writeSandboxConfig,
@@ -84,19 +83,12 @@ describe("path helpers", () => {
     expect(resolveLockfilePath("/repo")).toBe(join("/repo", ".tmp", "e2e", ".lock"));
   });
 
-  it("resolveRestoreDir joins .tmp/e2e-restore under the given root", () => {
-    expect(resolveRestoreDir("/repo")).toBe(join("/repo", ".tmp", "e2e-restore"));
-  });
-
   it("sandbox children all live under resolveSandboxDir", () => {
     const root = "/r";
     const sandbox = resolveSandboxDir(root);
     expect(resolveSandboxConfigPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveIsolatedAuthTokenPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveLockfilePath(root).startsWith(sandbox)).toBe(true);
-    // restore-dir is intentionally a sibling of the sandbox, not a child —
-    // breadcrumbs survive `rm -rf .tmp/e2e/` cleanups.
-    expect(resolveRestoreDir(root)).toBe(join(root, ".tmp", "e2e-restore"));
   });
 });
 

@@ -50,7 +50,7 @@ pnpm test             # Run unit tests
 pnpm test:e2e         # Run E2E tests (sequential, requires real session)
 pnpm lint             # Lint all packages and root config files
 pnpm license-check    # Verify dependency licenses
-pnpm codegen          # Run graphql-codegen against research/graphql/schema.graphql
+pnpm codegen          # Run graphql-codegen against research/graphql/gateway/schema.graphql
 pnpm dev              # Watch mode
 ```
 
@@ -203,7 +203,7 @@ operation extraction, schema synthesis, ADRs covering TLS impersonation
 operation extraction strategy (ADR-004).
 
 The `research/` repo's artifacts are the source for `pnpm codegen` —
-`graphql-codegen` reads `research/graphql/schema.graphql` (synthesized SDL) and
+`graphql-codegen` reads `research/graphql/gateway/schema.graphql` (synthesized SDL) and
 operation documents to generate typed clients. The codegen config
 (`codegen.config.ts`) assumes `research/` is a sibling directory at
 `../research/` relative to the ttctl repo root. The generated TypeScript at

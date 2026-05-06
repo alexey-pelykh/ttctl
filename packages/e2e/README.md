@@ -24,7 +24,6 @@ The Toptal mobile gateway has no terminal `SignOut` GraphQL mutation. The sessio
 ### What's NOT protected
 
 - **Cross-machine concurrency** — the lockfile is local-only. Two developers running E2E against the same Toptal account simultaneously WILL clobber each other's session token. This project assumes single-developer use.
-- **The maintainer's public profile data** — the `profile update` round-trip in #21 deliberately mutates the live bio with a minimal whitespace edit. The mutation is restored in `afterAll`, but a process crash mid-test can leave the bio in the mutated state. See #21 for the recovery procedure (`.tmp/e2e-restore/<run-id>.json` breadcrumbs).
 
 ## Running the harness
 
@@ -73,18 +72,6 @@ describe("my E2E case", () => {
 ```
 
 The harness session also exposes `tokenPath` (`<repo-root>/.tmp/e2e/auth.token`) for existence assertions, `sandboxConfigPath` (`<repo-root>/.tmp/e2e/.ttctl.yaml`) for fixture inspection, and `repoRoot` for sibling-fixture lookups.
-
-## Recovery from a crashed run
-
-If a run crashes mid-`profile update` (#21's destructive case), the original bio is captured at `<repo-root>/.tmp/e2e-restore/<run-id>.json` BEFORE mutation. Recover with:
-
-```sh
-RESTORE_FILE=.tmp/e2e-restore/<run-id>.json
-node packages/ttctl/dist/cli.js profile update --bio "$(jq -r .bio "$RESTORE_FILE")"
-rm "$RESTORE_FILE"
-```
-
-(See #21 for the full restore protocol — the harness only owns the breadcrumb directory location.)
 
 ## CI behavior
 

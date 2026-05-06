@@ -141,7 +141,10 @@ function handleProfileError(err: unknown): never {
  *
  * Pure function — no I/O — so it's directly unit-testable. The text branch
  * trims to 80 columns at most so the default terminal width is honored;
- * truncated strings end with `…`.
+ * truncated strings end with `…`. The text/table branches surface a curated
+ * subset of the rich `ProfileShowQuery` payload (identity + role + selected
+ * derived fields); `json` returns the entire typed payload verbatim so power
+ * users can pipe it through `jq` / `yq` for fields the curated views omit.
  */
 export function formatProfile(payload: ProfileShowQuery, format: ProfileOutputFormat): string {
   if (format === "json") {
@@ -160,18 +163,33 @@ export function formatProfile(payload: ProfileShowQuery, format: ProfileOutputFo
     .filter((n) => n.public)
     .slice(0, 5)
     .map((n) => n.skill.name);
+  const specializations = role.specializations
+    .filter((s): s is NonNullable<typeof s> => s !== null)
+    .slice(0, 3)
+    .map((s) => s.title);
   const allocatedHours = role.allocatedHours.toString();
   const hiredHours = role.hiredHours.toString();
-  const availability = `${hiredHours}/${allocatedHours}h`;
+  const hoursRatio = `${hiredHours}/${allocatedHours}h`;
+  const availability = role.availability;
+  const verticalName = role.vertical.name;
+  const hourlyRate = role.hourlyRate.verbose;
+  const timeZoneId = role.timeZone.value;
 
   if (format === "table") {
     const rows: [string, string][] = [
       ["name", role.fullName],
       ["email", role.email],
+      ["phone", role.phoneNumber],
       ["city", profile.city || "(unset)"],
+      ["vertical", verticalName],
+      ["specializations", specializations.join(",")],
+      ["availability", availability],
       ["allocated_hours", allocatedHours],
       ["hired_hours", hiredHours],
-      ["availability", availability],
+      ["hours", hoursRatio],
+      ["hourly_rate", hourlyRate],
+      ["time_zone", timeZoneId],
+      ["public_resume_url", role.publicResumeUrl],
       ["skills", skills.join(",")],
     ];
     return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
@@ -179,10 +197,19 @@ export function formatProfile(payload: ProfileShowQuery, format: ProfileOutputFo
 
   // text — 80-column friendly
   const lines: string[] = [truncate(role.fullName, 80), truncate(`  ${role.email}`, 80)];
+  if (role.phoneNumber !== "") {
+    lines.push(truncate(`  ${role.phoneNumber}`, 80));
+  }
   if (profile.city !== "") {
     lines.push(truncate(`  ${profile.city}`, 80));
   }
-  lines.push(truncate(`  Availability: ${availability} (hired/allocated)`, 80));
+  lines.push(truncate(`  Vertical: ${verticalName}`, 80));
+  if (specializations.length > 0) {
+    lines.push(truncate(`  Specializations: ${specializations.join(", ")}`, 80));
+  }
+  lines.push(truncate(`  Availability: ${availability} (${hoursRatio})`, 80));
+  lines.push(truncate(`  Rate: ${hourlyRate}/hr`, 80));
+  lines.push(truncate(`  TimeZone: ${timeZoneId}`, 80));
   if (skills.length > 0) {
     lines.push(truncate(`  Skills: ${skills.join(", ")}`, 80));
   }

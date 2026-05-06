@@ -29,7 +29,6 @@ export {
   findRepoRoot,
   resolveIsolatedAuthTokenPath,
   resolveLockfilePath,
-  resolveRestoreDir,
   resolveSandboxConfigPath,
   resolveSandboxDir,
   writeSandboxConfig,

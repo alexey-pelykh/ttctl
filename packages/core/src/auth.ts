@@ -9,7 +9,7 @@ import type { Credentials } from "./types.js";
 
 /**
  * Persisted-query SHA-256 hash for the `EmailPasswordSignIn` mutation. Sourced
- * from `research/graphql/operations.json` (operation extracted from the mobile
+ * from `research/graphql/derived/operations/gateway-mobile.json` (operation extracted from the mobile
  * APK at `jadx/sources/fn/t3.java`). Hardcoded because the synthesized SDL has
  * no client-side queries to feed Apollo APQ codegen — operations live in the
  * research workspace, not in this repo. Re-extract and bump if the gateway
@@ -190,7 +190,7 @@ export type AuthInvalidReason =
  *
  * Issues a minimal full-doc `Viewer` query against the mobile gateway,
  * authenticated with `Authorization: Token token=<X>`. The cataloged
- * persisted `Viewer` query in `research/graphql/operations/Viewer.graphql`
+ * persisted `Viewer` query in `research/graphql/gateway/operations/mobile/Viewer.graphql`
  * does not return `viewerRole.email`, so we can't use APQ here — see
  * `VIEWER_VERIFY_QUERY` doc.
  *
