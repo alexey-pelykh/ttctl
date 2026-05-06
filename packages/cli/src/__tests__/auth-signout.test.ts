@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -189,14 +189,12 @@ describe("runAuthSignOut", () => {
   });
 
   it("non-ENOENT errors propagate as error result with exit 1", async () => {
-    // Point at a path that cannot exist as a regular file because its parent
-    // is a regular file (not a directory). unlink will fail with ENOTDIR on
-    // POSIX, EISDIR on certain configurations — either way, NOT ENOENT, so
-    // the result classifies as `error`.
-    const fileAsParent = join(tempDir, "blocker");
-    writeFileSync(fileAsParent, "x");
-    const unreachable = join(fileAsParent, "session.cookies");
-    mockedDiscoverPath.mockReturnValue(unreachable);
+    // Place a DIRECTORY at the jar path. `unlink` on a directory yields
+    // EISDIR (Linux), EPERM (macOS, Windows) — neither is ENOENT, so the
+    // result must classify as `error`. The earlier "parent-is-file" trick
+    // produced ENOTDIR on POSIX but ENOENT on Windows (path-resolution
+    // semantics differ), so it's not portable.
+    mkdirSync(jarPath);
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
