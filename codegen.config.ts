@@ -27,7 +27,7 @@ const config: CodegenConfig = {
   // Wave-0 MVP wires up only the operations actually invoked from
   // `@ttctl/core` source. Expand this glob as additional operations come into
   // scope and the schema gaps they depend on are filled.
-  documents: ["../research/graphql/operations/Viewer.graphql"],
+  documents: ["../research/graphql/operations/Viewer.graphql", "../research/graphql/operations/ProfileShow.graphql"],
   generates: {
     "packages/core/src/__generated__/graphql.ts": {
       plugins: [
