@@ -124,6 +124,45 @@ describe("discoverCookieJarPath", () => {
     expect(path).toContain("Roaming");
     expect(path).toContain("ttctl");
   });
+
+  it("honors TTCTL_COOKIE_JAR_PATH override on Linux (E2E harness escape hatch)", () => {
+    const path = discoverCookieJarPath({
+      env: { TTCTL_COOKIE_JAR_PATH: "/repo/.tmp/e2e/session.cookies", XDG_DATA_HOME: "/var/data/me" },
+      platform: "linux",
+      homeDir: "/home/u",
+    });
+    expect(path).toBe("/repo/.tmp/e2e/session.cookies");
+  });
+
+  it("honors TTCTL_COOKIE_JAR_PATH override on macOS", () => {
+    const path = discoverCookieJarPath({
+      env: { TTCTL_COOKIE_JAR_PATH: "/Users/me/dev/proj/.tmp/e2e/session.cookies" },
+      platform: "darwin",
+      homeDir: "/Users/me",
+    });
+    expect(path).toBe("/Users/me/dev/proj/.tmp/e2e/session.cookies");
+  });
+
+  it("honors TTCTL_COOKIE_JAR_PATH override on Windows (overrides APPDATA)", () => {
+    const path = discoverCookieJarPath({
+      env: {
+        TTCTL_COOKIE_JAR_PATH: "C:\\repo\\.tmp\\e2e\\session.cookies",
+        APPDATA: "C:\\Users\\u\\AppData\\Roaming",
+      },
+      platform: "win32",
+      homeDir: "C:\\Users\\u",
+    });
+    expect(path).toBe("C:\\repo\\.tmp\\e2e\\session.cookies");
+  });
+
+  it("treats empty TTCTL_COOKIE_JAR_PATH as unset (falls through to XDG/home)", () => {
+    const path = discoverCookieJarPath({
+      env: { TTCTL_COOKIE_JAR_PATH: "" },
+      platform: "linux",
+      homeDir: "/home/u",
+    });
+    expect(path).toBe(join("/home/u", ".ttctl", "session.cookies"));
+  });
 });
 
 describe("createCookieJar", () => {
