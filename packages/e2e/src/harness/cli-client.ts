@@ -20,17 +20,15 @@ export interface CliInvocationResult {
 
 export interface CliClientOptions {
   /**
-   * Absolute path to the isolated cookie jar. Forwarded to the spawned CLI
-   * process via `TTCTL_COOKIE_JAR_PATH` env var, which `discoverCookieJarPath`
-   * in `@ttctl/core` honors as an explicit override (added for the E2E
-   * harness). The CLI reads/writes this file instead of `~/.ttctl/session.cookies`.
-   */
-  jarPath: string;
-  /**
-   * Working directory for the spawned CLI. Defaults to the repo root —
-   * this mirrors how a developer invokes `ttctl` from the project tree
-   * during local testing. Override only when a test deliberately exercises
-   * CWD-dependent behavior (e.g. `.ttctl.yaml` discovery).
+   * Working directory for the spawned CLI. The harness's session setup
+   * passes `<repo-root>/.tmp/e2e/` here so CLI config discovery (which
+   * checks `./.ttctl.yaml` first) picks up the sandbox fixture. The
+   * fixture's `auth-token-path: ./auth.token` then resolves to
+   * `<repo-root>/.tmp/e2e/auth.token`, isolating the run from the user's
+   * everyday session at `~/.ttctl/auth.token`.
+   *
+   * Defaults to the repo root for harness-internal unit tests that exercise
+   * the spawn mechanics without needing config discovery.
    */
   cwd?: string;
   /**
@@ -53,10 +51,10 @@ export interface CliInvocationOptions {
    */
   input?: string;
   /**
-   * Per-invocation env overlay. Merged onto the harness's defaults
-   * (TTCTL_COOKIE_JAR_PATH always wins so callers can't accidentally
-   * unisolate the session — passing TTCTL_COOKIE_JAR_PATH here is rejected
-   * to make the contract explicit).
+   * Per-invocation env overlay. Merged onto `process.env`. The harness
+   * does NOT inject any auth-related env vars — the spawned CLI discovers
+   * its config (and therefore its token path) via the sandbox `cwd` set
+   * at client-construction time, not via env.
    */
   env?: Record<string, string | undefined>;
   /**
@@ -78,10 +76,16 @@ export interface CliClient {
    * Resolved path to the CLI entry point — exposed for diagnostics.
    */
   readonly cliEntryPoint: string;
+  /**
+   * Working directory the spawned CLI inherits — exposed for diagnostics
+   * and so test authors can sanity-check isolation without re-deriving the
+   * sandbox path.
+   */
+  readonly cwd: string;
 }
 
 /**
- * Build a programmatic CLI invoker bound to an isolated cookie jar.
+ * Build a programmatic CLI invoker bound to a sandbox working directory.
  *
  * The CLI is invoked as `node <repo-root>/packages/ttctl/dist/cli.js`. We
  * deliberately avoid the `pnpm exec ttctl` path (slower, depends on the
@@ -92,6 +96,12 @@ export interface CliClient {
  * The harness throws at construction time if the CLI build artifact is
  * missing — running E2E against an unbuilt workspace would surface as
  * cryptic "Cannot find module" errors deep inside the spawn output.
+ *
+ * Isolation strategy: the spawned CLI inherits the configured `cwd` and
+ * uses normal `.ttctl.yaml` config discovery. The harness writes a
+ * fixture `.ttctl.yaml` to the sandbox before any subprocess spawn (see
+ * `writeSandboxConfig` in `paths.ts`); that fixture's `auth-token-path:
+ * ./auth.token` redirects token persistence to the sandbox.
  */
 export function getCliClient(options: CliClientOptions): CliClient {
   const repoRoot = options.repoRoot ?? findRepoRoot();
@@ -105,25 +115,14 @@ export function getCliClient(options: CliClientOptions): CliClient {
 
   return {
     cliEntryPoint,
+    cwd,
     run: async (args, runOptions = {}) => {
-      const baseEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        TTCTL_COOKIE_JAR_PATH: options.jarPath,
-      };
-      // Merge user overlay; reject attempts to override the jar (the whole
-      // point of the harness is isolation — silently dropping it would
-      // produce confusing "session not found" errors). `Reflect.deleteProperty`
-      // (vs `delete env[k]`) sidesteps eslint's `no-dynamic-delete`; both
-      // erase the key but the static-analyzer-friendly form is preferred
-      // throughout this repo.
+      const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+      // Merge user overlay. `Reflect.deleteProperty` (vs `delete env[k]`)
+      // sidesteps eslint's `no-dynamic-delete`; both erase the key but the
+      // static-analyzer-friendly form is preferred throughout this repo.
       if (runOptions.env) {
         for (const [k, v] of Object.entries(runOptions.env)) {
-          if (k === "TTCTL_COOKIE_JAR_PATH") {
-            throw new Error(
-              `getCliClient: refusing to override TTCTL_COOKIE_JAR_PATH via run() env. ` +
-                `Construct a separate client with the desired jar path instead.`,
-            );
-          }
           if (v === undefined) {
             Reflect.deleteProperty(baseEnv, k);
           } else {

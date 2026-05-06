@@ -49,9 +49,28 @@ export type AuthValue = z.infer<typeof AuthSchema>;
 
 /**
  * Top-level `.ttctl.yaml` schema. Single-config; no profiles.
+ *
+ * Optional `auth-token-path` overrides the on-disk path of the persisted
+ * session token (the value captured from `SignInPayload.token` and replayed
+ * as `Authorization: Token token=<X>` on every GraphQL request). Resolution
+ * (handled by `resolveAuthTokenPath` in `authToken.ts`):
+ *
+ *   - Absolute path → used verbatim
+ *   - Relative path → resolved relative to `dirname(configPath)` (the
+ *     directory containing this `.ttctl.yaml` file)
+ *   - Absent → platform default (`$XDG_DATA_HOME/ttctl/auth.token` if set,
+ *     else `~/.ttctl/auth.token` on POSIX; `%APPDATA%/ttctl/auth.token` on
+ *     Windows)
+ *
+ * The kebab-case key matches YAML conventions in this file. The E2E harness
+ * relies on the relative-path branch to redirect the token into a sandbox
+ * directory (`<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path:
+ * ./auth.token`) so test runs never touch the user's working session at
+ * `~/.ttctl/auth.token`.
  */
 export const ConfigSchema = z.object({
   auth: AuthSchema,
+  "auth-token-path": z.string().min(1).optional(),
 });
 
 export type TtctlConfig = z.infer<typeof ConfigSchema>;

@@ -82,4 +82,44 @@ describe("ConfigSchema", () => {
     const result = ConfigSchema.safeParse({});
     expect(result.success).toBe(false);
   });
+
+  it("auth-token-path is optional — config without it is valid (default platform path applies)", () => {
+    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data["auth-token-path"]).toBeUndefined();
+    }
+  });
+
+  it("accepts an absolute auth-token-path string", () => {
+    const result = ConfigSchema.safeParse({
+      auth: "op://Personal/ttctl",
+      "auth-token-path": "/var/run/ttctl/auth.token",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data["auth-token-path"]).toBe("/var/run/ttctl/auth.token");
+    }
+  });
+
+  it("accepts a relative auth-token-path string (resolved at runtime against the config-file dir)", () => {
+    const result = ConfigSchema.safeParse({
+      auth: "op://Personal/ttctl",
+      "auth-token-path": "./auth.token",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data["auth-token-path"]).toBe("./auth.token");
+    }
+  });
+
+  it("REJECTS empty-string auth-token-path (zod min(1))", () => {
+    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl", "auth-token-path": "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("REJECTS non-string auth-token-path", () => {
+    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl", "auth-token-path": 42 });
+    expect(result.success).toBe(false);
+  });
 });

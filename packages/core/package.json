@@ -52,7 +52,6 @@
   "dependencies": {
     "graphql": "catalog:",
     "node-wreq": "catalog:",
-    "tough-cookie": "catalog:",
     "undici": "catalog:",
     "yaml": "catalog:",
     "zod": "catalog:"

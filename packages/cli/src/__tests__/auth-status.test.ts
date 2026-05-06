@@ -3,13 +3,29 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@ttctl/core", () => ({
-  discoverCookieJarPath: vi.fn(() => "/tmp/test-jar"),
-  loadCookieJar: vi.fn(),
-  getAuthStatus: vi.fn(),
-}));
+vi.mock("@ttctl/core", () => {
+  // Local ConfigError so the `instanceof` check in status.ts resolves
+  // against THIS constructor (vi.mock replaces the imports). Tracks the real
+  // class shape from `packages/core/src/config.ts`.
+  class ConfigError extends Error {
+    override readonly name = "ConfigError";
+    constructor(
+      message: string,
+      public readonly path?: string,
+    ) {
+      super(message);
+    }
+  }
+  return {
+    ConfigError,
+    resolveAuthTokenPath: vi.fn(() => "/tmp/test-auth.token"),
+    resolveConfig: vi.fn(),
+    loadAuthToken: vi.fn(),
+    getAuthStatus: vi.fn(),
+  };
+});
 
-import { discoverCookieJarPath, getAuthStatus, loadCookieJar } from "@ttctl/core";
+import { ConfigError, getAuthStatus, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
 import type { AuthStatusResult } from "@ttctl/core";
 
 import {
@@ -19,9 +35,10 @@ import {
   runAuthStatus,
 } from "../commands/auth/status.js";
 
-const mockedLoadJar = vi.mocked(loadCookieJar);
+const mockedLoadToken = vi.mocked(loadAuthToken);
 const mockedFetchStatus = vi.mocked(getAuthStatus);
-const mockedDiscoverPath = vi.mocked(discoverCookieJarPath);
+const mockedResolveTokenPath = vi.mocked(resolveAuthTokenPath);
+const mockedResolveConfig = vi.mocked(resolveConfig);
 
 interface ExitCalled {
   code: number;
@@ -117,14 +134,16 @@ describe("formatAuthStatusOutput", () => {
 
 describe("runAuthStatus", () => {
   beforeEach(() => {
-    mockedLoadJar.mockReset();
+    mockedLoadToken.mockReset();
     mockedFetchStatus.mockReset();
-    mockedDiscoverPath.mockReset();
-    mockedDiscoverPath.mockReturnValue("/tmp/test-jar");
-    // The jar is opaque to runAuthStatus once getAuthStatus is mocked — pass
-    // a sentinel rather than pulling tough-cookie into the cli devDeps just
-    // for a value that is never inspected.
-    mockedLoadJar.mockResolvedValue({} as never);
+    mockedResolveTokenPath.mockReset();
+    mockedResolveTokenPath.mockReturnValue("/tmp/test-auth.token");
+    mockedResolveConfig.mockReset();
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: "op://Personal/ttctl" },
+      path: "/cwd/.ttctl.yaml",
+    });
+    mockedLoadToken.mockResolvedValue("tok-abc-123");
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -191,10 +210,13 @@ describe("runAuthStatus", () => {
     });
   });
 
-  it("calls discoverCookieJarPath then loadCookieJar with that path then getAuthStatus with the jar", async () => {
-    const jar = { __sentinelJar: true } as never;
-    mockedDiscoverPath.mockReturnValue("/some/path/session.cookies");
-    mockedLoadJar.mockResolvedValue(jar);
+  it("calls resolveConfig then resolveAuthTokenPath with that config, then loadAuthToken with the resolved path then getAuthStatus with the token", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: "op://Personal/ttctl", "auth-token-path": "./custom.token" },
+      path: "/cwd/.ttctl.yaml",
+    });
+    mockedResolveTokenPath.mockReturnValue("/some/path/auth.token");
+    mockedLoadToken.mockResolvedValue("tok-abc-123");
     mockedFetchStatus.mockResolvedValue({ status: "valid", email: "x@y.z" });
     captureStdout();
     captureExit();
@@ -203,8 +225,40 @@ describe("runAuthStatus", () => {
     } catch (err) {
       if (!(err instanceof ExitInvoked)) throw err;
     }
-    expect(mockedDiscoverPath).toHaveBeenCalledTimes(1);
-    expect(mockedLoadJar).toHaveBeenCalledWith("/some/path/session.cookies");
-    expect(mockedFetchStatus).toHaveBeenCalledWith(jar);
+    expect(mockedResolveConfig).toHaveBeenCalledTimes(1);
+    expect(mockedResolveTokenPath).toHaveBeenCalledTimes(1);
+    expect(mockedResolveTokenPath.mock.calls[0]?.[0]).toEqual({
+      config: { auth: "op://Personal/ttctl", "auth-token-path": "./custom.token" },
+      configPath: "/cwd/.ttctl.yaml",
+    });
+    expect(mockedLoadToken).toHaveBeenCalledWith("/some/path/auth.token");
+    expect(mockedFetchStatus).toHaveBeenCalledWith("tok-abc-123");
+  });
+
+  it("forwards a missing-token (null) state to getAuthStatus, which short-circuits to no-session", async () => {
+    mockedLoadToken.mockResolvedValue(null);
+    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "no-session" }, "table");
+    expect(exitCode).toBe(1);
+    expect(stdout.join("")).toContain("No session found");
+    expect(mockedFetchStatus).toHaveBeenCalledWith(null);
+  });
+
+  it("ConfigError → collapses to invalid/no-session (exit 1, sign-in hint, no token / network calls)", async () => {
+    mockedResolveConfig.mockImplementation(() => {
+      throw new ConfigError("No .ttctl.yaml found in CWD or $XDG_CONFIG_HOME/ttctl/config.yaml. See README for setup.");
+    });
+    const stdout = captureStdout();
+    const exit = captureExit();
+    try {
+      await runAuthStatus({ output: "table" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    if (exit.exit === null) throw new Error("process.exit was not called");
+    expect(exit.exit.code).toBe(1);
+    expect(stdout.lines.join("")).toContain("No session found");
+    expect(mockedResolveTokenPath).not.toHaveBeenCalled();
+    expect(mockedLoadToken).not.toHaveBeenCalled();
+    expect(mockedFetchStatus).not.toHaveBeenCalled();
   });
 });

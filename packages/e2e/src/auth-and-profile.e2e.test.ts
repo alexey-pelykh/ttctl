@@ -77,21 +77,21 @@ describe("auth + profile E2E (live Toptal)", () => {
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { jarPath } = session.getContext();
-    cli = getCliClient({ jarPath });
+    const { sandboxDir } = session.getContext();
+    cli = getCliClient({ cwd: sandboxDir });
   });
 
   it.skipIf(!e2eEnabled)(
-    "signin: beforeAll established a session (auth status reports the email; isolated jar non-empty)",
+    "signin: beforeAll established a session (auth status reports the email; isolated token non-empty)",
     async () => {
-      const { jarPath, email } = session.getContext();
+      const { tokenPath, email } = session.getContext();
 
-      // Isolated jar exists and is non-empty (#21 spec: "isolated jar
-      // contains expected session cookies"). The jar format is Mozilla
-      // tab-separated; we don't parse it here — non-zero size is the
-      // observable proxy that tough-cookie wrote something.
-      expect(existsSync(jarPath)).toBe(true);
-      expect(statSync(jarPath).size).toBeGreaterThan(0);
+      // Isolated auth token exists and is non-empty (#21 spec: "isolated
+      // session-of-record present after signin"). The token is plain
+      // text + trailing newline; non-zero size is the observable proxy
+      // that core.signIn captured + saveAuthToken persisted something.
+      expect(existsSync(tokenPath)).toBe(true);
+      expect(statSync(tokenPath).size).toBeGreaterThan(0);
 
       // Session round-trips through the CLI: auth status exits 0 and the
       // table row mentions the email we signed in with.
@@ -274,19 +274,19 @@ describe("auth + profile E2E (live Toptal)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "signout: ttctl auth signout exits 0; subsequent auth status reports no session; jar deleted",
+    "signout: ttctl auth signout exits 0; subsequent auth status reports no session; token deleted",
     async () => {
-      const { jarPath } = session.getContext();
+      const { tokenPath } = session.getContext();
 
       // #21 spec: this is the suite's only `auth signout` invocation. The
-      // harness's afterAll also unlinks the jar, but ENOENT is silently
+      // harness's afterAll also unlinks the token, but ENOENT is silently
       // swallowed there — the count of *logical* signouts remains exactly
       // one (this CLI call) per AC E2.
       const signoutResult = await cli.run(["auth", "signout"]);
       expect(signoutResult.exitCode).toBe(0);
 
-      // Jar gone (signout's contract: idempotent unlink).
-      expect(existsSync(jarPath)).toBe(false);
+      // Token gone (signout's contract: idempotent unlink).
+      expect(existsSync(tokenPath)).toBe(false);
 
       // Status now reports invalid (exit 1 — no-session branch).
       const statusAfter = await cli.run(["auth", "status"]);

@@ -33,11 +33,10 @@ vi.mock("@ttctl/core", async () => {
     ConfigError,
     OnePasswordError,
     SignInError,
-    createCookieJar: vi.fn(() => ({})),
-    discoverCookieJarPath: vi.fn(() => "/tmp/test-jar"),
+    resolveAuthTokenPath: vi.fn(() => "/tmp/test-auth.token"),
     resolveConfig: vi.fn(),
     resolveCredentials: vi.fn(),
-    saveCookieJar: vi.fn(),
+    saveAuthToken: vi.fn(),
     signIn: vi.fn(),
   };
 });
@@ -46,11 +45,10 @@ import {
   ConfigError,
   OnePasswordError,
   SignInError,
-  createCookieJar,
-  discoverCookieJarPath,
+  resolveAuthTokenPath,
   resolveConfig,
   resolveCredentials,
-  saveCookieJar,
+  saveAuthToken,
   signIn,
 } from "@ttctl/core";
 
@@ -65,9 +63,8 @@ import type { SignInResult } from "../commands/auth/signin.js";
 const mockedResolveConfig = vi.mocked(resolveConfig);
 const mockedResolveCredentials = vi.mocked(resolveCredentials);
 const mockedSignIn = vi.mocked(signIn);
-const mockedSaveCookieJar = vi.mocked(saveCookieJar);
-const mockedDiscoverPath = vi.mocked(discoverCookieJarPath);
-const mockedCreateJar = vi.mocked(createCookieJar);
+const mockedSaveAuthToken = vi.mocked(saveAuthToken);
+const mockedResolveTokenPath = vi.mocked(resolveAuthTokenPath);
 
 class ExitInvoked extends Error {
   constructor(public readonly code: number) {
@@ -168,11 +165,9 @@ describe("runAuthSignIn", () => {
     mockedResolveConfig.mockReset();
     mockedResolveCredentials.mockReset();
     mockedSignIn.mockReset();
-    mockedSaveCookieJar.mockReset();
-    mockedDiscoverPath.mockReset();
-    mockedCreateJar.mockReset();
-    mockedDiscoverPath.mockReturnValue("/tmp/test-jar");
-    mockedCreateJar.mockReturnValue({} as never);
+    mockedSaveAuthToken.mockReset();
+    mockedResolveTokenPath.mockReset();
+    mockedResolveTokenPath.mockReturnValue("/tmp/test-auth.token");
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -190,29 +185,37 @@ describe("runAuthSignIn", () => {
     return { stdout: streams.stdout, stderr: streams.stderr, exitCode: exit.exit.code };
   }
 
-  it("happy path: config → resolve → signIn → saveCookieJar → exit 0 + confirmation on stdout", async () => {
+  it("happy path: config → resolve → signIn → saveAuthToken → exit 0 + confirmation on stdout", async () => {
     mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
-    mockedSignIn.mockResolvedValue(undefined);
-    mockedSaveCookieJar.mockResolvedValue(undefined);
+    mockedSignIn.mockResolvedValue({ token: "tok-abc-123" });
+    mockedSaveAuthToken.mockResolvedValue(undefined);
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toBe("Signed in as ada@example.com\n");
     expect(stderr.join("")).toBe("");
-    // Sequencing: createJar → signIn called with creds + jar → save with discovered path + same jar
-    expect(mockedCreateJar).toHaveBeenCalledTimes(1);
+    // signIn called with creds (no jar argument); saveAuthToken called with the resolved path + the captured token
     expect(mockedSignIn).toHaveBeenCalledTimes(1);
-    expect(mockedSaveCookieJar).toHaveBeenCalledTimes(1);
-    expect(mockedSaveCookieJar.mock.calls[0]?.[0]).toBe("/tmp/test-jar");
+    expect(mockedSignIn.mock.calls[0]?.[0]).toEqual({ email: "ada@example.com", password: "hunter2" });
+    expect(mockedSignIn.mock.calls[0]).toHaveLength(1);
+    expect(mockedSaveAuthToken).toHaveBeenCalledTimes(1);
+    expect(mockedSaveAuthToken.mock.calls[0]?.[0]).toBe("/tmp/test-auth.token");
+    expect(mockedSaveAuthToken.mock.calls[0]?.[1]).toBe("tok-abc-123");
+    // resolveAuthTokenPath called with the loaded config + its path
+    expect(mockedResolveTokenPath).toHaveBeenCalledTimes(1);
+    expect(mockedResolveTokenPath.mock.calls[0]?.[0]).toEqual({
+      config: { auth: "op://Personal/ttctl" },
+      configPath: "/cwd/.ttctl.yaml",
+    });
   });
 
   it("happy path JSON: emits {status:signed-in, email} on stdout", async () => {
     mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
-    mockedSignIn.mockResolvedValue(undefined);
-    mockedSaveCookieJar.mockResolvedValue(undefined);
+    mockedSignIn.mockResolvedValue({ token: "tok" });
+    mockedSaveAuthToken.mockResolvedValue(undefined);
 
     const { stdout, exitCode } = await invoke("json");
 
@@ -235,7 +238,7 @@ describe("runAuthSignIn", () => {
     // Should NOT proceed past config resolution
     expect(mockedResolveCredentials).not.toHaveBeenCalled();
     expect(mockedSignIn).not.toHaveBeenCalled();
-    expect(mockedSaveCookieJar).not.toHaveBeenCalled();
+    expect(mockedSaveAuthToken).not.toHaveBeenCalled();
   });
 
   it("OnePasswordError → exit 1, message preserves install hint verbatim", async () => {
@@ -283,7 +286,7 @@ describe("runAuthSignIn", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toBe("Sign-in failed (INVALID_CREDENTIALS): Invalid email or password\n");
-    expect(mockedSaveCookieJar).not.toHaveBeenCalled();
+    expect(mockedSaveAuthToken).not.toHaveBeenCalled();
   });
 
   it("SignInError(MFA_REQUIRED) → exit 1 with surfaced MFA code", async () => {
@@ -313,18 +316,18 @@ describe("runAuthSignIn", () => {
     expect(stderr.join("")).toContain("NETWORK_ERROR");
   });
 
-  it("saveCookieJar failure → exit 1 with SAVE_FAILED code and path mentioned", async () => {
+  it("saveAuthToken failure → exit 1 with SAVE_FAILED code and path mentioned", async () => {
     mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
-    mockedSignIn.mockResolvedValue(undefined);
-    mockedDiscoverPath.mockReturnValue("/home/u/.ttctl/session.cookies");
-    mockedSaveCookieJar.mockRejectedValue(new Error("EACCES: permission denied"));
+    mockedSignIn.mockResolvedValue({ token: "tok" });
+    mockedResolveTokenPath.mockReturnValue("/home/u/.ttctl/auth.token");
+    mockedSaveAuthToken.mockRejectedValue(new Error("EACCES: permission denied"));
 
     const { stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toContain("SAVE_FAILED");
-    expect(stderr.join("")).toContain("/home/u/.ttctl/session.cookies");
+    expect(stderr.join("")).toContain("/home/u/.ttctl/auth.token");
     expect(stderr.join("")).toContain("EACCES");
   });
 
@@ -342,24 +345,6 @@ describe("runAuthSignIn", () => {
     expect(stderr.join("")).toContain("weird non-error");
   });
 
-  it("uses createCookieJar (not loadCookieJar) → fresh empty jar so stale cookies cannot shadow new session", async () => {
-    mockedResolveConfig.mockReturnValue({
-      config: { auth: { email: "a@b.c", password: "p" } },
-      path: "/cwd/.ttctl.yaml",
-    });
-    mockedResolveCredentials.mockReturnValue({ email: "a@b.c", password: "p" });
-    mockedSignIn.mockResolvedValue(undefined);
-    mockedSaveCookieJar.mockResolvedValue(undefined);
-
-    await invoke("table");
-
-    expect(mockedCreateJar).toHaveBeenCalledTimes(1);
-    // The jar created is the same one passed to signIn and saveCookieJar
-    const jar = mockedCreateJar.mock.results[0]?.value as unknown;
-    expect(mockedSignIn.mock.calls[0]?.[1]).toBe(jar);
-    expect(mockedSaveCookieJar.mock.calls[0]?.[1]).toBe(jar);
-  });
-
   function isResult(o: unknown): o is SignInResult {
     return typeof o === "object" && o !== null && "status" in o;
   }
@@ -367,8 +352,8 @@ describe("runAuthSignIn", () => {
   it("preserves the success email exactly (no normalization, no email from elsewhere)", async () => {
     mockedResolveConfig.mockReturnValue({ config: { auth: { email: "Ada@EXAMPLE.com", password: "p" } }, path: "/x" });
     mockedResolveCredentials.mockReturnValue({ email: "Ada@EXAMPLE.com", password: "p" });
-    mockedSignIn.mockResolvedValue(undefined);
-    mockedSaveCookieJar.mockResolvedValue(undefined);
+    mockedSignIn.mockResolvedValue({ token: "tok" });
+    mockedSaveAuthToken.mockResolvedValue(undefined);
 
     const { stdout } = await invoke("json");
     const parsed: unknown = JSON.parse(stdout.join("").trim());

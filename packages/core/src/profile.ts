@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import type { CookieJar } from "tough-cookie";
-
 import type { ProfileShowQuery } from "./__generated__/graphql.js";
 import { impersonatedTransport } from "./transport.js";
 import type { TransportResponse } from "./transport.js";
-import { SURFACE_ENDPOINTS } from "./types.js";
 
 /**
  * Full-document `ProfileShow` query string.
@@ -88,35 +85,32 @@ interface ProfileShowResponse {
  * Fetch the signed-in user's profile from the Cloudflare-protected
  * `talent_profile/graphql` surface.
  *
- * Loads the session cookies from the supplied jar, issues the typed
- * `ProfileShow` GraphQL query via `impersonatedTransport`, and returns the
- * typed payload. Cookie persistence (file load/save) is the caller's
- * responsibility — pass an already-loaded `CookieJar`.
+ * Authenticates via `Authorization: Token token=<token>` (the canonical
+ * Toptal auth mechanism — see `research/docs/decisions/ADR-005-token-auth.md`).
+ * Cookies are NOT load-bearing on this surface; Chrome TLS impersonation
+ * alone clears Cloudflare in the happy path.
  *
  * Errors:
- * - `Cf403Error` propagates from the transport when Cloudflare returns 403
- *   (the `cf_clearance` cookie has expired or the JA3/IP binding drifted).
- *   Caller should surface its message verbatim — it walks the user through
- *   the manual refresh procedure.
+ * - `Cf403Error` propagates from the transport when Cloudflare returns 403.
+ *   This is no longer expected in normal operation; if it surfaces, file an
+ *   issue (the error message provides the link).
  * - `ProfileError` with code `UNAUTHENTICATED` when the surface returns 401
- *   (session expired or no session cookie was supplied). Caller should
- *   suggest `ttctl auth signin` to recover.
+ *   (token expired or invalid). Caller should suggest `ttctl auth signin`
+ *   to recover.
  * - `ProfileError` with code `NO_VIEWER` when the response is 200 but
- *   `data.viewer` is `null` (the API contract says this means the session
+ *   `data.viewer` is `null` (the API contract says this means the token
  *   does not bind to a viewer).
  * - `ProfileError` with code `GRAPHQL_ERROR` when the response carries a
  *   non-empty `errors` array.
  * - `ProfileError` with code `NETWORK_ERROR` when the transport itself
  *   throws (DNS, connection reset, etc).
  */
-export async function getProfile(jar: CookieJar): Promise<ProfileShowQuery> {
-  const cookieHeader = await jar.getCookieString(SURFACE_ENDPOINTS["talent-profile"]);
-
+export async function getProfile(token: string): Promise<ProfileShowQuery> {
   let res: TransportResponse;
   try {
     res = await impersonatedTransport({
       surface: "talent-profile",
-      ...(cookieHeader ? { cookieHeader } : {}),
+      authToken: token,
       body: {
         operationName: "ProfileShow",
         query: PROFILE_SHOW_QUERY,
@@ -124,9 +118,9 @@ export async function getProfile(jar: CookieJar): Promise<ProfileShowQuery> {
     });
   } catch (err) {
     // Cf403Error is raised by impersonatedTransport on 403 — re-throw it as-is
-    // so the CLI layer can surface its actionable refresh instructions to the
-    // user. Any other thrown error is a network-level failure (DNS, ECONNRESET,
-    // TLS handshake, etc.) and gets wrapped in ProfileError.
+    // so the CLI layer can surface its actionable message. Any other thrown
+    // error is a network-level failure (DNS, ECONNRESET, TLS handshake, etc.)
+    // and gets wrapped in ProfileError.
     if (err instanceof Error && err.name === "Cf403Error") throw err;
     throw new ProfileError("NETWORK_ERROR", `Profile request failed: ${(err as Error).message}`, { cause: err });
   }
@@ -285,18 +279,18 @@ export interface UpdateProfileResult {
  * `bio` → `about` and `headline` → `quote`) via the Cloudflare-protected
  * `talent_profile/graphql` surface.
  *
- * Loads the session cookies from the supplied jar (which must include
- * `_csrf_token` for write requests to be authorized — populated by
- * `signIn`). Internally calls `getProfile` first to obtain the
- * `profileId` required by the mutation input, then issues the typed
- * `UpdateBasicInfo` mutation via `impersonatedTransport`. Returns the
+ * Authenticates via `Authorization: Token token=<token>` (the canonical
+ * Toptal auth mechanism). Cookies are NOT load-bearing — Chrome TLS
+ * impersonation alone passes Cloudflare. Internally calls `getProfile` first
+ * to obtain the `profileId` required by the mutation input, then issues the
+ * typed `UpdateBasicInfo` mutation via `impersonatedTransport`. Returns the
  * server-confirmed updated values.
  *
  * Errors:
  * - `ProfileError` with code `VALIDATION_ERROR` when neither `bio` nor
  *   `headline` is supplied — the contract requires at least one.
  * - `Cf403Error` propagates from the transport when Cloudflare returns 403.
- * - `ProfileError` with code `UNAUTHENTICATED` on session expiry.
+ * - `ProfileError` with code `UNAUTHENTICATED` on token expiry.
  * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
  * - `ProfileError` with code `USER_ERROR` when the mutation returns a
  *   non-empty `errors` array (validation failures from the server, e.g., a
@@ -305,7 +299,7 @@ export interface UpdateProfileResult {
  * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors.
  * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
  */
-export async function updateProfile(jar: CookieJar, changes: ProfileUpdate): Promise<UpdateProfileResult> {
+export async function updateProfile(token: string, changes: ProfileUpdate): Promise<UpdateProfileResult> {
   if (changes.bio === undefined && changes.headline === undefined) {
     throw new ProfileError("VALIDATION_ERROR", "updateProfile requires at least one of `bio` or `headline`.");
   }
@@ -315,7 +309,7 @@ export async function updateProfile(jar: CookieJar, changes: ProfileUpdate): Pro
   // a write attempt that can't read its own profile is unrecoverable, and
   // surfacing the read-side error gives the user the same actionable message
   // they'd get from `ttctl profile show`.
-  const profile = await getProfile(jar);
+  const profile = await getProfile(token);
   const profileId = profile.viewer?.viewerRole.profile.id;
   if (profileId === undefined) {
     throw new ProfileError(
@@ -328,13 +322,11 @@ export async function updateProfile(jar: CookieJar, changes: ProfileUpdate): Pro
   if (changes.bio !== undefined) basicInfo.about = changes.bio;
   if (changes.headline !== undefined) basicInfo.quote = changes.headline;
 
-  const cookieHeader = await jar.getCookieString(SURFACE_ENDPOINTS["talent-profile"]);
-
   let res: TransportResponse;
   try {
     res = await impersonatedTransport({
       surface: "talent-profile",
-      ...(cookieHeader ? { cookieHeader } : {}),
+      authToken: token,
       body: {
         operationName: "UPDATE_BASIC_INFO",
         query: UPDATE_BASIC_INFO_MUTATION,

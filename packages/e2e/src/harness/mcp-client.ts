@@ -37,15 +37,18 @@ import { findRepoRoot } from "./paths.js";
  * client. Test authors call `getMcpClient(...)` in `beforeAll` and
  * `await client.close()` in `afterAll` themselves — the client is opt-in
  * per test (most cases don't need MCP).
+ *
+ * Isolation strategy is identical to `getCliClient`: the spawned MCP
+ * server inherits the configured `cwd` (the harness's sandbox) and
+ * discovers its `.ttctl.yaml` (with the redirected `auth-token-path`)
+ * via normal config discovery. No environment variable is involved.
  */
 export interface McpClientOptions {
   /**
-   * Absolute path to the isolated cookie jar. Same semantics as
-   * `getCliClient` — forwarded as `TTCTL_COOKIE_JAR_PATH`.
-   */
-  jarPath: string;
-  /**
-   * Working directory for the spawned MCP server. Defaults to repo root.
+   * Working directory for the spawned MCP server. The harness's session
+   * setup passes the sandbox dir here so config discovery picks up the
+   * fixture `.ttctl.yaml`. Defaults to the repo root for harness-internal
+   * unit tests.
    */
   cwd?: string;
   /**
@@ -58,9 +61,9 @@ export interface McpClientOptions {
    */
   repoRoot?: string;
   /**
-   * Per-invocation env overlay. `TTCTL_COOKIE_JAR_PATH` is rejected here
-   * for the same reason as in `getCliClient` — the whole point is
-   * isolation.
+   * Per-invocation env overlay. Merged onto `process.env`. The harness
+   * does NOT inject any auth-related env vars — isolation flows through
+   * `cwd`.
    */
   env?: Record<string, string | undefined>;
 }
@@ -76,6 +79,11 @@ export interface McpClient {
    */
   readonly cliEntryPoint: string;
   /**
+   * Working directory the spawned MCP server inherits — exposed for
+   * diagnostics.
+   */
+  readonly cwd: string;
+  /**
    * Snapshot of stderr accumulated since spawn. Useful for diagnosing
    * server-side errors during local debugging. Spawn-time errors (e.g.
    * EACCES on the entry point) are also captured here, prefixed with
@@ -90,8 +98,8 @@ export interface McpClient {
 }
 
 /**
- * Spawn the MCP server bound to an isolated cookie jar. The process runs
- * until `close()` is called.
+ * Spawn the MCP server bound to a sandbox working directory. The process
+ * runs until `close()` is called.
  */
 export function getMcpClient(options: McpClientOptions): McpClient {
   const repoRoot = options.repoRoot ?? findRepoRoot();
@@ -103,18 +111,9 @@ export function getMcpClient(options: McpClientOptions): McpClient {
   }
   const cwd = options.cwd ?? repoRoot;
 
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    TTCTL_COOKIE_JAR_PATH: options.jarPath,
-  };
+  const env: NodeJS.ProcessEnv = { ...process.env };
   if (options.env) {
     for (const [k, v] of Object.entries(options.env)) {
-      if (k === "TTCTL_COOKIE_JAR_PATH") {
-        throw new Error(
-          `getMcpClient: refusing to override TTCTL_COOKIE_JAR_PATH via env. ` +
-            `Construct a separate client with the desired jar path instead.`,
-        );
-      }
       if (v === undefined) {
         Reflect.deleteProperty(env, k);
       } else {
@@ -145,6 +144,7 @@ export function getMcpClient(options: McpClientOptions): McpClient {
   return {
     process: child,
     cliEntryPoint,
+    cwd,
     getStderr: () => stderrBuffer,
     close: async (closeTimeoutMs = 5_000) => {
       // Process is already dead — either via natural exit (exitCode set)

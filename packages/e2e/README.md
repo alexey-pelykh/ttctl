@@ -10,7 +10,7 @@ Because E2E runs against a real Toptal Talent profile, the harness is engineered
 
 ### Isolation guarantees
 
-- **Isolated cookie jar** — the harness reads/writes `<repo-root>/.tmp/e2e/session.cookies`, NEVER `~/.ttctl/session.cookies`. The CLI subprocesses spawned by the harness inherit `TTCTL_COOKIE_JAR_PATH=<repo-root>/.tmp/e2e/session.cookies` and look at the same file. Your everyday session at `~/.ttctl/session.cookies` is untouched before, during, and after the run.
+- **Isolated auth token** — the harness writes a fixture `.ttctl.yaml` at `<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token` and spawns CLI / MCP subprocesses with `cwd=<repo-root>/.tmp/e2e/`. CLI config discovery (which checks `./.ttctl.yaml` in CWD first) picks up the fixture; the relative `auth-token-path` resolves to `<repo-root>/.tmp/e2e/auth.token`. Your everyday session at `~/.ttctl/auth.token` is untouched before, during, and after the run. No environment variable is involved.
 - **Run-level lockfile** — `<repo-root>/.tmp/e2e/.lock` records the PID of the active harness invocation. Concurrent invocations on the same machine are refused with a clear error message naming the holding PID. Stale lockfiles (PID no longer alive) are auto-cleared with a warning.
 - **One signin per suite** — the harness exposes `withFreshSession()` which signs in once in `beforeAll` and signs out once in `afterAll`. Tests inherit the established session — no per-test login. Bounds account churn to **one** `EmailPasswordSignIn` event per `pnpm test:e2e` run.
 - **Cool-off after signout** — the harness waits ≥5s after signout before exit, spacing successive runs to avoid Toptal's rate-limit / abuse heuristics.
@@ -19,11 +19,11 @@ Because E2E runs against a real Toptal Talent profile, the harness is engineered
 
 ### What "SignOut" means here
 
-The Toptal mobile gateway has no terminal `SignOut` GraphQL mutation. The session is "ended" by destroying the local cookie jar — which is exactly what `ttctl auth signout` does. The harness's `afterAll` deletes `<repo-root>/.tmp/e2e/session.cookies`; that's the harness's "SignOut".
+The Toptal mobile gateway has no terminal `SignOut` GraphQL mutation. The session is "ended" by destroying the local auth token — which is exactly what `ttctl auth signout` does. The harness's `afterAll` deletes `<repo-root>/.tmp/e2e/auth.token`; that's the harness's "SignOut".
 
 ### What's NOT protected
 
-- **Cross-machine concurrency** — the lockfile is local-only. Two developers running E2E against the same Toptal account simultaneously WILL clobber each other's `_toptal_session_id`. This project assumes single-developer use.
+- **Cross-machine concurrency** — the lockfile is local-only. Two developers running E2E against the same Toptal account simultaneously WILL clobber each other's session token. This project assumes single-developer use.
 - **The maintainer's public profile data** — the `profile update` round-trip in #21 deliberately mutates the live bio with a minimal whitespace edit. The mutation is restored in `afterAll`, but a process crash mid-test can leave the bio in the mutated state. See #21 for the recovery procedure (`.tmp/e2e-restore/<run-id>.json` breadcrumbs).
 
 ## Running the harness
@@ -63,14 +63,16 @@ const session = withFreshSession();
 
 describe("my E2E case", () => {
   it.skipIf(process.env.TTCTL_E2E !== "1")("does the thing", async () => {
-    const { jarPath } = session.getContext();
-    const cli = getCliClient({ jarPath });
+    const { sandboxDir } = session.getContext();
+    const cli = getCliClient({ cwd: sandboxDir });
     const result = await cli.run(["auth", "status"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("@");
   });
 });
 ```
+
+The harness session also exposes `tokenPath` (`<repo-root>/.tmp/e2e/auth.token`) for existence assertions, `sandboxConfigPath` (`<repo-root>/.tmp/e2e/.ttctl.yaml`) for fixture inspection, and `repoRoot` for sibling-fixture lookups.
 
 ## Recovery from a crashed run
 
@@ -86,4 +88,4 @@ rm "$RESTORE_FILE"
 
 ## CI behavior
 
-CI does NOT have real Toptal session cookies and MUST NOT attempt live signin. The CI workflow runs `pnpm test` (unit tests, including harness module tests). It does not run `pnpm test:e2e`. The env-gate (`TTCTL_E2E=1`) is the second layer of defense — even if a future CI workflow accidentally invoked `pnpm test:e2e`, it would skip silently.
+CI does NOT have real Toptal session credentials and MUST NOT attempt live signin. The CI workflow runs `pnpm test` (unit tests, including harness module tests). It does not run `pnpm test:e2e`. The env-gate (`TTCTL_E2E=1`) is the second layer of defense — even if a future CI workflow accidentally invoked `pnpm test:e2e`, it would skip silently.

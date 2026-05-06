@@ -103,8 +103,8 @@ ESLint enforces this via `@tony.ganchev/eslint-plugin-header`.
 
 ## Auth Model
 
-TTCtl uses session cookies (no Bearer tokens, no API keys). The user provides
-credentials in `.ttctl.yaml` via two valid forms:
+TTCtl uses a session bearer **token** (no cookies, no API keys). The user
+provides credentials in `.ttctl.yaml` via two valid forms:
 
 ```yaml
 # Form A — 1Password reference (recommended)
@@ -126,9 +126,35 @@ to `op item get`. Per-field references (`op://Personal/ttctl/Section/username`,
 4+ segments) are NOT supported — TTCtl always reads `username` and `password`
 from a single LOGIN-category item.
 
-After sign-in via `EmailPasswordSignIn` (persisted-query mode), session cookies
-are stored at `~/.ttctl/session.cookies` (or `$XDG_DATA_HOME/ttctl/session.cookies`)
-in Mozilla format with `0600` permissions.
+After sign-in via `EmailPasswordSignIn` (persisted-query mode), the captured
+session token is stored at `~/.ttctl/auth.token` (or
+`$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on
+Windows) at mode `0600`. Every subsequent GraphQL request authenticates by
+replaying it as `Authorization: Token token=<X>` — see
+`research/docs/decisions/ADR-005-token-auth.md` for the canonical
+cross-surface auth-model decision and `research/notes/02-auth-and-clients.md`
+for the empirical evidence.
+
+Cookies are NOT load-bearing on any surface TTCtl currently uses
+(`mobile-gateway`, `talent-profile`). Chrome TLS impersonation alone passes
+Cloudflare in the happy path on `talent-profile`; no `cf_clearance` cookie is
+required. (Scheduler has its own bearer chain — out of scope here, see
+`research/notes/12-scheduler-auth-chain.md`.)
+
+The on-disk path is configurable via the optional `auth-token-path` field in
+`.ttctl.yaml`. Absolute paths are used verbatim; relative paths are resolved
+against `dirname(.ttctl.yaml)`. When the field is absent, the platform
+default applies (`$XDG_DATA_HOME/ttctl/auth.token` if set on POSIX, else
+`~/.ttctl/auth.token`; `%APPDATA%/ttctl/auth.token` on Windows). The E2E
+harness uses the relative-path branch to redirect tokens into a sandbox
+(`<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token`)
+without touching the user's working session. There is no env-var override.
+
+```yaml
+# Complete example — auth + custom token path
+auth: "op://Personal/ttctl"
+auth-token-path: "./auth.token" # → <dir-of-.ttctl.yaml>/auth.token
+```
 
 There are NO profiles. TTCtl operates against the user's own Toptal Talent
 profile, period.
@@ -150,22 +176,23 @@ TTCtl uses two transports in `packages/core/src/transport.ts`:
 Pin both `User-Agent: Chrome/146` and `node-wreq` profile `chrome_146` together;
 identity-catalog freshness is critical (see `tls-fingerprinting` skill).
 
-### Troubleshooting: `cf_clearance` 403
+### Troubleshooting: Cloudflare 403
 
-When an impersonated surface (`talent-profile` or `scheduler`) returns HTTP
-403, `impersonatedTransport` throws `Cf403Error` (exported from
-`@ttctl/core`) instead of returning a `TransportResponse`. The error message
-walks the user through manual cookie refresh — `cf_clearance` is JA3 + IP
-bound and cannot be regenerated programmatically because Cloudflare's
-bot-management challenge requires a real browser session.
+Empirically, Chrome TLS impersonation alone passes Cloudflare on the surfaces
+TTCtl currently uses (`talent-profile`, `scheduler`). A 403 from these
+surfaces therefore means Cloudflare has flipped a feature flag (e.g., a new
+Turnstile challenge or bot-management heuristic) that we don't currently
+handle.
+
+When this happens, `impersonatedTransport` throws `Cf403Error` (exported from
+`@ttctl/core`) instead of returning a `TransportResponse`. There is no
+documented manual workaround — the error message asks the user to file an
+issue at https://github.com/alexey-pelykh/ttctl/issues with the surface
+name and a timestamp so we can investigate and re-engineer the response.
 
 CLI commands that call into the impersonated transport must catch
 `Cf403Error` (or let it propagate) so the message reaches the user verbatim
 rather than being collapsed into a generic "request failed" string.
-`talent-profile` and `scheduler` live in distinct Cloudflare zones, so the
-refresh entry-point differs per surface (`https://talent.toptal.com/` vs
-`https://scheduler.toptal.com/`); `Cf403Error.formatMessage` already swaps
-the URL based on `surface`. See [issue #4](https://github.com/alexey-pelykh/ttctl/issues/4).
 
 ## Reverse-Engineering Artifacts
 

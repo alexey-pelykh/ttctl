@@ -22,7 +22,7 @@
     "@ttctl/cli": "workspace:^",
     "@ttctl/core": "workspace:^",
     "@ttctl/mcp": "workspace:^",
-    "tough-cookie": "catalog:"
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

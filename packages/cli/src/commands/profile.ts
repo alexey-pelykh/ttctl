@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { Cf403Error, ProfileError, discoverCookieJarPath, getProfile, loadCookieJar, updateProfile } from "@ttctl/core";
+import {
+  Cf403Error,
+  ConfigError,
+  ProfileError,
+  getProfile,
+  loadAuthToken,
+  resolveAuthTokenPath,
+  resolveConfig,
+  updateProfile,
+} from "@ttctl/core";
 import type { ProfileShowQuery, ProfileUpdate, UpdateProfileResult } from "@ttctl/core";
 import { Command, Option } from "commander";
 
@@ -53,18 +62,50 @@ export function buildProfileCommand(): Command {
 }
 
 /**
- * Action handler for `ttctl profile show`. Loads the persisted cookie jar
- * from its discovered location, fetches the profile via `getProfile`, and
- * prints the chosen format to stdout. Maps domain errors to actionable
- * stderr messages and a non-zero exit code.
+ * Resolve the auth-token path from the user's `.ttctl.yaml` (honors the
+ * optional `auth-token-path` field; falls back to platform defaults). A
+ * `ConfigError` is surfaced verbatim and routed to stderr — the underlying
+ * message already contains the actionable hint ("See README for setup").
+ *
+ * Used by both `profile show` and `profile update` to keep the
+ * config-loading boilerplate in one place.
+ */
+function resolveAuthTokenPathOrExit(commandLabel: "profile show" | "profile update"): string {
+  try {
+    const { config, path: configPath } = resolveConfig();
+    return resolveAuthTokenPath({ config, configPath });
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      process.stderr.write(`${commandLabel} failed (CONFIG_ERROR): ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Action handler for `ttctl profile show`. Loads the persisted auth token,
+ * fetches the profile via `getProfile`, and prints the chosen format to
+ * stdout. Maps domain errors to actionable stderr messages and a non-zero
+ * exit code.
+ *
+ * No-token case: surface as `UNAUTHENTICATED` with the same hint as a
+ * gateway 401, so the user-visible message ("run `ttctl auth signin`") is
+ * uniform across "never signed in" and "signed in but expired".
  */
 export async function runProfileShow(format: ProfileOutputFormat): Promise<void> {
-  const jarPath = discoverCookieJarPath();
-  const jar = await loadCookieJar(jarPath);
+  const tokenPath = resolveAuthTokenPathOrExit("profile show");
+  const token = await loadAuthToken(tokenPath);
+  if (token === null) {
+    process.stderr.write(
+      "profile show failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
+    );
+    process.exit(1);
+  }
 
   let payload: ProfileShowQuery;
   try {
-    payload = await getProfile(jar);
+    payload = await getProfile(token);
   } catch (err) {
     handleProfileError(err);
     return;
@@ -156,7 +197,7 @@ function truncate(s: string, width: number): string {
 /**
  * Action handler for `ttctl profile update`. Validates that at least one of
  * `--bio` / `--headline` was supplied (per the issue's AC), loads the
- * persisted cookie jar, dispatches the mutation via `updateProfile`, then
+ * persisted auth token, dispatches the mutation via `updateProfile`, then
  * prints either a human-readable confirmation or the raw payload depending
  * on the `--output` format.
  *
@@ -181,12 +222,18 @@ export async function runProfileUpdate(options: {
   if (options.bio !== undefined) changes.bio = options.bio;
   if (options.headline !== undefined) changes.headline = options.headline;
 
-  const jarPath = discoverCookieJarPath();
-  const jar = await loadCookieJar(jarPath);
+  const tokenPath = resolveAuthTokenPathOrExit("profile update");
+  const token = await loadAuthToken(tokenPath);
+  if (token === null) {
+    process.stderr.write(
+      "profile update failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
+    );
+    process.exit(1);
+  }
 
   let result: UpdateProfileResult;
   try {
-    result = await updateProfile(jar, changes);
+    result = await updateProfile(token, changes);
   } catch (err) {
     handleProfileError(err);
     return;

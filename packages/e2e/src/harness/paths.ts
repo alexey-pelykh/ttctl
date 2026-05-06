@@ -2,7 +2,11 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+
+import { loadConfigFile } from "@ttctl/core";
+import { stringify as stringifyYaml } from "yaml";
 
 /**
  * Walk upward from `start` until a directory containing one of the
@@ -41,27 +45,50 @@ export function findRepoRoot(start: string = process.cwd()): string {
 }
 
 /**
- * Path to the isolated cookie jar used by the E2E harness.
+ * Sandbox directory for an E2E run — `<repo-root>/.tmp/e2e/`.
  *
- * Always under `<repo-root>/.tmp/e2e/session.cookies`. NEVER touches the
- * user's working session at `~/.ttctl/session.cookies` — see
- * `packages/e2e/README.md` for the live-account-safety rationale.
- *
- * The CLI subprocess reads this same path via the `TTCTL_COOKIE_JAR_PATH`
- * env var that the harness exports (handled by `discoverCookieJarPath` in
- * `@ttctl/core`).
+ * The harness writes a fixture `.ttctl.yaml` here and spawns CLI / MCP
+ * subprocesses with `cwd` set to this directory. CLI config discovery
+ * (which checks `./.ttctl.yaml` first) picks up the fixture; the
+ * fixture's relative `auth-token-path: ./auth.token` resolves to
+ * `<sandbox>/auth.token`. The user's everyday session at
+ * `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token`) is never
+ * touched.
  */
-export function resolveIsolatedJarPath(repoRoot: string): string {
-  return join(repoRoot, ".tmp", "e2e", "session.cookies");
+export function resolveSandboxDir(repoRoot: string): string {
+  return join(repoRoot, ".tmp", "e2e");
+}
+
+/**
+ * Path to the fixture `.ttctl.yaml` that lives inside the sandbox.
+ * Created by `writeSandboxConfig`.
+ */
+export function resolveSandboxConfigPath(repoRoot: string): string {
+  return join(resolveSandboxDir(repoRoot), ".ttctl.yaml");
+}
+
+/**
+ * Path to the isolated auth token used by the E2E harness.
+ *
+ * Always under `<repo-root>/.tmp/e2e/auth.token`. NEVER touches the user's
+ * working session at `~/.ttctl/auth.token` — see `packages/e2e/README.md`
+ * for the live-account-safety rationale.
+ *
+ * The CLI subprocess discovers this same path by reading the sandbox
+ * fixture `.ttctl.yaml` (whose `auth-token-path: ./auth.token` resolves
+ * relative to the sandbox dir). No environment variable is involved.
+ */
+export function resolveIsolatedAuthTokenPath(repoRoot: string): string {
+  return join(resolveSandboxDir(repoRoot), "auth.token");
 }
 
 /**
  * Path to the run-level lockfile that prevents concurrent E2E invocations
- * on the same machine. Lives next to the isolated jar so a single
+ * on the same machine. Lives next to the isolated token so a single
  * `rm -rf .tmp/e2e/` cleanly removes both.
  */
 export function resolveLockfilePath(repoRoot: string): string {
-  return join(repoRoot, ".tmp", "e2e", ".lock");
+  return join(resolveSandboxDir(repoRoot), ".lock");
 }
 
 /**
@@ -71,4 +98,41 @@ export function resolveLockfilePath(repoRoot: string): string {
  */
 export function resolveRestoreDir(repoRoot: string): string {
   return join(repoRoot, ".tmp", "e2e-restore");
+}
+
+/**
+ * Write the fixture `.ttctl.yaml` that isolates the harness from the user's
+ * working session.
+ *
+ *   - Reads + validates the user's source config at `sourceConfigPath`
+ *     (extracts the `auth` field verbatim — keeps secret-resolution behavior
+ *     identical to a non-E2E run).
+ *   - Composes a fixture object: `{ auth: <copied>, "auth-token-path":
+ *     "./auth.token" }`. The relative path resolves at CLI startup time
+ *     against `dirname(<sandbox>/.ttctl.yaml)` → `<sandbox>/auth.token`.
+ *   - Writes the YAML file to `<sandbox>/.ttctl.yaml`, creating the sandbox
+ *     directory if needed.
+ *
+ * Any field other than `auth` in the source config is intentionally NOT
+ * mirrored — the harness must own `auth-token-path` exactly, and importing
+ * unknown future fields would risk silent isolation breakage.
+ *
+ * Returns the absolute path to the written fixture.
+ */
+export async function writeSandboxConfig(repoRoot: string, sourceConfigPath: string): Promise<string> {
+  // Parse + validate via the canonical loader so a malformed source surfaces
+  // here (during setUp) rather than as an opaque CLI failure later.
+  const sourceConfig = loadConfigFile(sourceConfigPath);
+
+  const fixture: Record<string, unknown> = {
+    auth: sourceConfig.auth,
+    "auth-token-path": "./auth.token",
+  };
+
+  const sandbox = resolveSandboxDir(repoRoot);
+  await mkdir(sandbox, { recursive: true });
+
+  const fixturePath = resolveSandboxConfigPath(repoRoot);
+  await writeFile(fixturePath, stringifyYaml(fixture), "utf8");
+  return fixturePath;
 }

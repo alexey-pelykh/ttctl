@@ -3,7 +3,7 @@
 
 import { unlink } from "node:fs/promises";
 
-import { discoverCookieJarPath } from "@ttctl/core";
+import { ConfigError, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
 
 /**
  * Output format for `ttctl auth signout`. Mirrors the rest of the auth
@@ -18,9 +18,9 @@ export interface AuthSignOutOptions {
 
 /**
  * Terminal outcome of `ttctl auth signout`. The `removed` flag distinguishes
- * the case where a cookie jar existed and was deleted from the idempotent
- * no-op (no jar present). Both are success cases — the AC says signout MUST
- * be idempotent — but scripts may want to differentiate (e.g. to count active
+ * the case where an auth token existed and was deleted from the idempotent
+ * no-op (no token present). Both are success cases — signout MUST be
+ * idempotent — but scripts may want to differentiate (e.g. to count active
  * sessions across machines).
  *
  * `error` carries a generic message; the only realistic non-ENOENT failure is
@@ -33,7 +33,7 @@ export type SignOutResult =
 
 /**
  * Render a `SignOutResult` for the table format. The success line is "Signed
- * out." regardless of whether a jar was removed — the user-facing semantics
+ * out." regardless of whether a token was removed — the user-facing semantics
  * ("you are no longer signed in") are identical, and the AC explicitly calls
  * out idempotency. Errors surface verbatim.
  */
@@ -67,15 +67,19 @@ export function exitCodeForSignOutResult(result: SignOutResult): number {
 
 /**
  * Run the `auth signout` command end-to-end:
- *   1. Resolve the cookie jar path (same discovery as `auth status` /
- *      `auth signin` — XDG/AppData-aware).
- *   2. Delete the file. ENOENT is treated as a no-op success (idempotent —
- *      `signout` after `signout` must not be a hard error).
- *   3. Emit the result and exit. Always 0 in the success path.
+ *   1. Load `.ttctl.yaml` and resolve the auth-token path (honors the
+ *      optional `auth-token-path` field; falls back to platform defaults).
+ *   2. Delete the auth token via `unlink` (idempotent — ENOENT is silent).
+ *   3. Report `removed: true` when the file was deleted, `false` when it
+ *      was already absent.
+ *   4. Emit the result and exit. Always 0 in the success path.
  *
- * Other unlink errors (EACCES, EBUSY, etc.) propagate as `error` results
- * with exit code 1 — the user must resolve the filesystem condition out of
- * band before trying again.
+ * Loading config is required because the token path can be customized via
+ * `auth-token-path` in `.ttctl.yaml`. A `ConfigError` (no config found, or
+ * malformed) surfaces as an `error` result so the user-facing message is
+ * actionable. Other unlink errors (EACCES, EBUSY, etc.) propagate as
+ * `error` results with exit code 1 — the user must resolve the filesystem
+ * condition out of band before trying again.
  */
 export async function runAuthSignOut(options: AuthSignOutOptions): Promise<void> {
   const result = await performSignOut();
@@ -86,13 +90,45 @@ export async function runAuthSignOut(options: AuthSignOutOptions): Promise<void>
 }
 
 async function performSignOut(): Promise<SignOutResult> {
-  const jarPath = discoverCookieJarPath();
+  let tokenPath: string;
   try {
-    await unlink(jarPath);
-    return { status: "signed-out", removed: true, path: jarPath };
+    const { config, path: configPath } = resolveConfig();
+    tokenPath = resolveAuthTokenPath({ config, configPath });
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      return { status: "error", message: err.message };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return { status: "error", message };
+  }
+
+  // Token deletion revokes the identity-bearing credential. ENOENT is treated
+  // as a no-op (already-gone is the same as "deleted" from the user's
+  // perspective); other errors abort with `error`.
+  const outcome = await tryUnlink(tokenPath);
+  if (outcome.status === "error") return outcome;
+
+  return {
+    status: "signed-out",
+    removed: outcome.removed,
+    path: tokenPath,
+  };
+}
+
+type UnlinkOutcome = { status: "ok"; removed: boolean } | { status: "error"; message: string };
+
+/**
+ * Unlink `path`. Returns `removed: true` if the file existed and was
+ * deleted, `removed: false` if it was already absent (ENOENT), or an
+ * error outcome for any other failure.
+ */
+async function tryUnlink(path: string): Promise<UnlinkOutcome> {
+  try {
+    await unlink(path);
+    return { status: "ok", removed: true };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { status: "signed-out", removed: false, path: jarPath };
+      return { status: "ok", removed: false };
     }
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", message };
