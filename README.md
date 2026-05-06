@@ -95,7 +95,7 @@ The `auth` key is **polymorphic** on type:
 auth: "op://Personal/ttctl"
 ```
 
-TTCtl parses `op://VAULT/ITEM` and runs `op item get ITEM --vault VAULT --fields username,password --format json`. The 1Password item must have both `username` and `password` fields populated.
+TTCtl parses `op://VAULT/ITEM` and runs `op item get ITEM --vault VAULT --format json`, then resolves credentials by matching fields with `purpose: USERNAME` and `purpose: PASSWORD` — the canonical semantic identifiers 1Password sets automatically for **LOGIN-category** items (including browser-autosaved logins where the field labels are the HTML form input names like `user[email]`).
 
 #### Form B — object (literal, dev/testing only)
 
@@ -107,7 +107,7 @@ auth:
 
 > Discouraged for daily use. Plaintext credentials in config files leak through backups, sync clients, and accidental commits. Form A is what you want.
 
-> **Per-field references like `auth: "op://Personal/ttctl/username"` are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both `username` and `password` fields from a single item.
+> **Per-field references like `auth: "op://Personal/ttctl/username"` are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
 
 ## MCP Integration
 

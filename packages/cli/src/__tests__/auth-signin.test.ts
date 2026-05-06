@@ -257,8 +257,10 @@ describe("runAuthSignIn", () => {
 
   it("OnePasswordError JSON → emits {status:error, code:ONEPASSWORD_ERROR, message}", async () => {
     mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+    const opErrorMessage =
+      "Item Personal/ttctl must have fields with USERNAME and PASSWORD purposes (LOGIN-category items have these by default).";
     mockedResolveCredentials.mockImplementation(() => {
-      throw new OnePasswordError("Item Personal/ttctl must have both 'username' and 'password' fields populated.");
+      throw new OnePasswordError(opErrorMessage);
     });
 
     const { stderr, exitCode } = await invoke("json");
@@ -268,7 +270,7 @@ describe("runAuthSignIn", () => {
     expect(parsed).toEqual({
       status: "error",
       code: "ONEPASSWORD_ERROR",
-      message: "Item Personal/ttctl must have both 'username' and 'password' fields populated.",
+      message: opErrorMessage,
     });
   });
 

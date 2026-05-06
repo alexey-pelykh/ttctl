@@ -29,12 +29,17 @@ export class OnePasswordError extends Error {
  * Resolve credentials from a 1Password item reference of the form
  * `op://VAULT/ITEM`.
  *
- * Mechanism: shells out to `op item get ITEM --vault VAULT --fields
- * username,password --format json`. The 1Password Desktop app brokers
- * authentication (typically via biometric prompt) — no service-account token
- * is required.
+ * Mechanism: shells out to `op item get ITEM --vault VAULT --format json`,
+ * then matches credential fields by `purpose` (`USERNAME` / `PASSWORD`) — the
+ * canonical semantic identifier 1Password sets automatically for LOGIN-category
+ * items. The 1Password Desktop app brokers authentication (typically via
+ * biometric prompt) — no service-account token is required.
  *
- * The item must have both `username` and `password` fields populated.
+ * Field-matching by `purpose` rather than `label` is necessary because
+ * browser-autosaved items inherit their `label` from the HTML form input name
+ * (e.g. `user[email]`, `user[password]`) — only `purpose` is canonical. The
+ * item must be a LOGIN-category item (any item with both USERNAME and PASSWORD
+ * purposes set).
  */
 export function resolveOnePasswordReference(ref: string): Credentials {
   const match = /^op:\/\/([^/]+)\/([^/]+)$/.exec(ref);
@@ -46,11 +51,10 @@ export function resolveOnePasswordReference(ref: string): Credentials {
 
   let raw: string;
   try {
-    raw = execFileSync(
-      "op",
-      ["item", "get", item, "--vault", vault, "--fields", "label=username,label=password", "--format", "json"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
+    raw = execFileSync("op", ["item", "get", item, "--vault", vault, "--format", "json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "ENOENT") {
@@ -68,19 +72,22 @@ export function resolveOnePasswordReference(ref: string): Credentials {
     throw new OnePasswordError(`op returned non-JSON output: ${(err as Error).message}`);
   }
 
-  // op may return either a single field array (when `--fields` selects fields)
-  // or a wrapped object — normalize.
-  const fieldsArray = Array.isArray(parsed) ? { fields: parsed } : parsed;
-  const result = OpItemSchema.safeParse(fieldsArray);
+  // `op item get --format json` returns the full item object with a `fields`
+  // array. Older `op` CLI versions returned a bare fields array instead;
+  // normalize both shapes into the wrapped form before schema validation.
+  const normalized = Array.isArray(parsed) ? { fields: parsed } : parsed;
+  const result = OpItemSchema.safeParse(normalized);
   if (!result.success) {
     throw new OnePasswordError(`Unexpected op output shape: ${result.error.message}`);
   }
 
-  const username = result.data.fields.find((f) => f.label === "username")?.value;
-  const password = result.data.fields.find((f) => f.label === "password")?.value;
+  const username = result.data.fields.find((f) => f.purpose === "USERNAME")?.value;
+  const password = result.data.fields.find((f) => f.purpose === "PASSWORD")?.value;
 
   if (!username || !password) {
-    throw new OnePasswordError(`Item ${vault}/${item} must have both 'username' and 'password' fields populated.`);
+    throw new OnePasswordError(
+      `Item ${vault}/${item} must have fields with USERNAME and PASSWORD purposes (LOGIN-category items have these by default).`,
+    );
   }
 
   return { email: username, password };
