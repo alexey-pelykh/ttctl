@@ -6,8 +6,8 @@ export type { AuthValue, TtctlConfig } from "./config.js";
 
 export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js";
 
-export { resolveCredentials, signIn, SignInError } from "./auth.js";
-export type { SignInErrorCode } from "./auth.js";
+export { getAuthStatus, resolveCredentials, signIn, SignInError } from "./auth.js";
+export type { AuthInvalidReason, AuthStatusResult, SignInErrorCode } from "./auth.js";
 
 export { discoverCookieJarPath, loadCookieJar, saveCookieJar } from "./cookieJar.js";
 export type { DiscoverCookieJarPathOptions } from "./cookieJar.js";

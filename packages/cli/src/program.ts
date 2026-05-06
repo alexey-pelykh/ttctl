@@ -3,6 +3,8 @@
 
 import { Command } from "commander";
 
+import { registerAuthCommand } from "./commands/auth/index.js";
+
 /**
  * Build the root TTCtl Commander program. Sub-commands are registered as they
  * land in milestones; the program is shaped as a noun-verb tree (e.g.,
@@ -15,13 +17,7 @@ export function buildProgram(): Command {
     .description("Unofficial CLI for the Toptal Talent platform — personal-productivity tool")
     .version("0.0.0");
 
-  program
-    .command("auth")
-    .description("Manage authentication and session state")
-    .action(() => {
-      // TODO(milestone-1): auth status / sign-in / sign-out
-      console.log("auth: not yet implemented");
-    });
+  registerAuthCommand(program);
 
   program
     .command("profile")

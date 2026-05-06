@@ -8,7 +8,7 @@ vi.mock("../transport.js", () => ({
   stockTransport: vi.fn(),
 }));
 
-import { signIn, SignInError } from "../auth.js";
+import { getAuthStatus, signIn, SignInError } from "../auth.js";
 import { stockTransport } from "../transport.js";
 import type { TransportRequest, TransportResponse } from "../transport.js";
 
@@ -225,5 +225,105 @@ describe("signIn", () => {
     await expect(signIn({ email: "user@example.com", password: "x" }, jar)).resolves.toBeUndefined();
     const cookies = await jar.getCookies("https://www.toptal.com/");
     expect(cookies.some((c) => c.key === "_toptal_session_id")).toBe(true);
+  });
+});
+
+async function jarWithSession(): Promise<CookieJar> {
+  const jar = new CookieJar();
+  await jar.setCookie("_toptal_session_id=session-xyz; Path=/; Domain=.toptal.com", "https://www.toptal.com/");
+  return jar;
+}
+
+describe("getAuthStatus", () => {
+  beforeEach(() => {
+    mockedTransport.mockReset();
+  });
+
+  it("returns invalid/no-session when the cookie jar is empty", async () => {
+    const jar = new CookieJar();
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "invalid", reason: "no-session" });
+    expect(mockedTransport).not.toHaveBeenCalled();
+  });
+
+  it("returns valid + email on a 200 Viewer response", async () => {
+    const jar = await jarWithSession();
+    reply({ body: VIEWER_OK("user@example.com") });
+
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "valid", email: "user@example.com" });
+  });
+
+  it("issues a ViewerVerify call against the mobile gateway with the captured cookie", async () => {
+    const jar = await jarWithSession();
+    reply({ body: VIEWER_OK("user@example.com") });
+
+    await getAuthStatus(jar);
+
+    expect(mockedTransport).toHaveBeenCalledTimes(1);
+    const call = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.surface).toBe("mobile-gateway");
+    expect(call.body.operationName).toBe("ViewerVerify");
+    expect(call.body.query).toContain("viewer");
+    expect(call.body.query).toContain("email");
+    expect(call.cookieHeader).toContain("_toptal_session_id=session-xyz");
+  });
+
+  it("returns invalid/session-expired on a 401", async () => {
+    const jar = await jarWithSession();
+    reply({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
+
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "invalid", reason: "session-expired" });
+  });
+
+  it("returns invalid/session-expired on a 403", async () => {
+    const jar = await jarWithSession();
+    reply({ status: 403, body: { errors: [{ message: "forbidden" }] } });
+
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "invalid", reason: "session-expired" });
+  });
+
+  it("returns invalid/unexpected-status on other non-2xx codes (e.g. 500)", async () => {
+    const jar = await jarWithSession();
+    reply({ status: 500, body: { errors: [{ message: "internal error" }] } });
+
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "invalid", reason: "unexpected-status" });
+  });
+
+  it("returns invalid/no-email-in-response when 200 lacks viewer.viewerRole.email", async () => {
+    const jar = await jarWithSession();
+    reply({ body: { data: { viewer: { id: "v1", viewerRole: null } } } });
+
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "invalid", reason: "no-email-in-response" });
+  });
+
+  it("returns invalid/no-email-in-response when viewer is null", async () => {
+    const jar = await jarWithSession();
+    reply({ body: { data: { viewer: null } } });
+
+    const result = await getAuthStatus(jar);
+    expect(result).toEqual({ status: "invalid", reason: "no-email-in-response" });
+  });
+
+  it("returns unreachable when the transport itself rejects", async () => {
+    const jar = await jarWithSession();
+    mockedTransport.mockRejectedValueOnce(new Error("connect ECONNREFUSED 1.2.3.4:443"));
+
+    const result = await getAuthStatus(jar);
+    expect(result.status).toBe("unreachable");
+    if (result.status === "unreachable") {
+      expect(result.reason).toContain("ECONNREFUSED");
+    }
+  });
+
+  it("does not throw — every classified failure is returned, not raised", async () => {
+    const jar = await jarWithSession();
+    mockedTransport.mockRejectedValueOnce(new Error("DNS lookup failed"));
+
+    await expect(getAuthStatus(jar)).resolves.not.toThrow();
   });
 });

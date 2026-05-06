@@ -195,3 +195,75 @@ async function verifyViewer(credentials: Credentials, jar: CookieJar): Promise<v
     throw new SignInError("UNKNOWN", `Viewer email '${email}' does not match credentials email '${credentials.email}'`);
   }
 }
+
+/**
+ * Result of a session-validity probe. Three terminal shapes:
+ *
+ *   - `valid` — `Viewer` query returned 2xx with an email; the session is
+ *     active and bound to that account.
+ *   - `invalid` — the cookie jar is missing/empty, OR the gateway responded
+ *     with a non-2xx status, OR the response payload lacks `viewer.viewerRole.email`.
+ *     `reason` carries a stable machine-readable code so the CLI can pick the
+ *     right user-facing message without re-classifying the failure.
+ *   - `unreachable` — the transport itself rejected (DNS failure, connect
+ *     refused, TLS handshake timeout, etc.); the gateway was never reached.
+ *     This is distinguished from `invalid` so the CLI can exit 2 (transient,
+ *     retryable) rather than 1 (auth problem, action required).
+ */
+export type AuthStatusResult =
+  | { status: "valid"; email: string }
+  | { status: "invalid"; reason: AuthInvalidReason }
+  | { status: "unreachable"; reason: string };
+
+export type AuthInvalidReason =
+  | "no-session" // jar empty / no cookies for the gateway domain
+  | "session-expired" // gateway returned 401/403
+  | "no-email-in-response" // gateway returned 2xx but viewer.viewerRole.email was absent/null
+  | "unexpected-status"; // gateway returned some other non-2xx code (e.g. 5xx)
+
+/**
+ * Probe whether the persisted session in `jar` is currently valid.
+ *
+ * Issues a minimal full-doc `Viewer` query against the mobile gateway (the
+ * cataloged persisted `Viewer` query in `research/graphql/operations/Viewer.graphql`
+ * does not return `viewerRole.email`, so we can't use APQ here — see
+ * `VIEWER_VERIFY_QUERY` doc).
+ *
+ * Never throws on auth or network failure; classifies into the three
+ * `AuthStatusResult` shapes so CLI consumers can map cleanly to exit codes
+ * and output messages without re-parsing exceptions.
+ */
+export async function getAuthStatus(jar: CookieJar): Promise<AuthStatusResult> {
+  const cookieHeader = await jar.getCookieString(SURFACE_ENDPOINTS["mobile-gateway"]);
+  if (!cookieHeader) {
+    return { status: "invalid", reason: "no-session" };
+  }
+
+  let res: TransportResponse;
+  try {
+    res = await stockTransport({
+      surface: "mobile-gateway",
+      cookieHeader,
+      body: {
+        operationName: "ViewerVerify",
+        query: VIEWER_VERIFY_QUERY,
+      },
+    });
+  } catch (err) {
+    return { status: "unreachable", reason: (err as Error).message };
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    return { status: "invalid", reason: "session-expired" };
+  }
+  if (res.status < 200 || res.status >= 300) {
+    return { status: "invalid", reason: "unexpected-status" };
+  }
+
+  const body = res.body as ViewerResponse | null;
+  const email = body?.data?.viewer?.viewerRole?.email;
+  if (!email) {
+    return { status: "invalid", reason: "no-email-in-response" };
+  }
+  return { status: "valid", email };
+}
