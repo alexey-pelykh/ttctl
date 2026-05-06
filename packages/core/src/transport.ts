@@ -9,27 +9,15 @@ import { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js"
 import type { GraphQLRequest, ToptalSurface } from "./types.js";
 
 /**
- * Per-surface refresh entry-points the user must visit in a real browser to
- * regenerate `cf_clearance`. Only impersonated surfaces are listed: the
- * mobile gateway is not Cloudflare-protected and never throws `Cf403Error`.
+ * Thrown when an impersonated surface returns HTTP 403.
  *
- * `talent-profile` and `scheduler` live in distinct Cloudflare zones, so a
- * cookie minted at `talent.toptal.com` does not clear `scheduler.toptal.com`
- * and vice-versa.
- */
-const CF_REFRESH_URLS: Record<ToptalSurface, string> = {
-  "mobile-gateway": "https://talent.toptal.com/",
-  "talent-profile": "https://talent.toptal.com/",
-  scheduler: "https://scheduler.toptal.com/",
-};
-
-/**
- * Thrown when an impersonated surface returns HTTP 403, which on Cloudflare-
- * protected endpoints almost always means `cf_clearance` is invalid (expired,
- * IP-rebound, or JA3-drifted). The cookie cannot be refreshed programmatically
- * — it is gated by a bot-management challenge that requires a real browser
- * with a real user. The error message walks the user through the manual
- * refresh procedure for the offending surface.
+ * Empirically, Chrome TLS impersonation alone passes Cloudflare on the
+ * surfaces TTCtl currently uses (`talent-profile`, `scheduler`) — see
+ * `research/docs/decisions/ADR-005-token-auth.md`. A 403 here therefore
+ * means Cloudflare has flipped a feature flag (e.g. activated a Turnstile
+ * challenge or a new bot-management heuristic) that we don't currently
+ * handle. There is no documented manual workaround; the user is asked to
+ * file an issue so we can investigate.
  */
 export class Cf403Error extends Error {
   override readonly name = "Cf403Error";
@@ -41,21 +29,15 @@ export class Cf403Error extends Error {
     super(Cf403Error.formatMessage(surface, endpoint));
   }
 
-  /**
-   * Build the user-facing message. The message text is intentionally verbose
-   * and step-numbered so an unhandled throw at the CLI surfaces actionable
-   * recovery instructions, not a generic stack trace.
-   */
   static formatMessage(surface: ToptalSurface, endpoint: string): string {
-    const refreshUrl = CF_REFRESH_URLS[surface];
     return [
-      `Cloudflare returned 403 for surface "${surface}" (${endpoint}).`,
-      "`cf_clearance` cookie may have expired (Cloudflare 403). To refresh:",
-      `  1. Open ${refreshUrl} in Chrome.`,
-      "  2. Pass any bot-check (CAPTCHA / Turnstile) if shown.",
-      "  3. From DevTools → Application → Cookies, copy the `cf_clearance` value.",
-      "  4. Update your cookie jar with the new value (manually edit",
-      "     ~/.ttctl/session.cookies, OR rerun `ttctl auth signin`).",
+      `Cloudflare returned HTTP 403 from surface "${surface}" (${endpoint}).`,
+      "",
+      "Empirically, Chrome TLS impersonation alone passes Cloudflare in the happy path on this surface. " +
+        "A 403 here means Cloudflare's bot-management has flipped a feature flag we don't currently handle.",
+      "",
+      `Please file an issue at https://github.com/alexey-pelykh/ttctl/issues with the surface name ("${surface}") ` +
+        "and a timestamp so we can investigate.",
     ].join("\n");
   }
 }
@@ -86,23 +68,33 @@ const COMMON_HEADERS: Record<string, string> = {
   referer: "https://talent.toptal.com/",
   "sec-fetch-site": "same-site",
   "user-agent": USER_AGENT,
+  // Mobile-app fingerprint alignment: the official Toptal mobile client sets
+  // this on every gateway call. Not load-bearing for auth (empirically the
+  // Token header alone is sufficient — see issue #59), but copying it into
+  // outgoing requests reduces fingerprint divergence over time and limits the
+  // surface area for header-shape heuristics to flag this client.
+  "x-toptal-analytics-origin": "mobile",
 };
 
 export interface TransportRequest {
   surface: ToptalSurface;
   body: GraphQLRequest;
-  cookieHeader?: string;
+  /**
+   * Bearer-style session token captured from `EmailPasswordSignIn`'s
+   * `SignInPayload.token`. When present, sent as
+   * `Authorization: Token token=<X>` — the canonical Rails
+   * `ActionController::HttpAuthentication::Token` format that Toptal's
+   * GraphQL services use to authenticate. Empirically validated as the
+   * sole auth mechanism on both the mobile gateway and the
+   * Cloudflare-protected `talent-profile` surface (see issue #59 and
+   * `research/docs/decisions/ADR-005-token-auth.md`).
+   */
+  authToken?: string;
 }
 
 export interface TransportResponse {
   status: number;
   headers: Record<string, string>;
-  /**
-   * Raw `Set-Cookie` header values, preserved as an array. Joining cookies on
-   * `,` is destructive — `Expires=Sun, 06 Nov 1994 08:49:37 GMT` contains a
-   * comma — so the array form is what consumers (cookie jars) need.
-   */
-  setCookies?: string[];
   body: unknown;
 }
 
@@ -125,7 +117,7 @@ export async function callSurface(req: TransportRequest): Promise<TransportRespo
 export async function stockTransport(req: TransportRequest): Promise<TransportResponse> {
   const url = SURFACE_ENDPOINTS[req.surface];
   const headers: Record<string, string> = { ...COMMON_HEADERS };
-  if (req.cookieHeader) headers["cookie"] = req.cookieHeader;
+  if (req.authToken) headers["authorization"] = `Token token=${req.authToken}`;
 
   const res = await undiciRequest(url, {
     method: "POST",
@@ -140,19 +132,14 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
     parsed = text;
   }
   const responseHeaders: Record<string, string> = {};
-  let setCookies: string[] | undefined;
   for (const [k, v] of Object.entries(res.headers)) {
-    if (k.toLowerCase() === "set-cookie") {
-      setCookies = Array.isArray(v) ? [...v] : typeof v === "string" ? [v] : undefined;
-      continue;
-    }
     if (Array.isArray(v)) {
       responseHeaders[k] = v.join(", ");
     } else if (typeof v === "string") {
       responseHeaders[k] = v;
     }
   }
-  return { status: res.statusCode, headers: responseHeaders, body: parsed, ...(setCookies ? { setCookies } : {}) };
+  return { status: res.statusCode, headers: responseHeaders, body: parsed };
 }
 
 /**
@@ -161,6 +148,9 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
  *
  * The `browser` option drives node-wreq's TLS ClientHello and HTTP/2
  * SETTINGS frame to match the bundled Chrome profile (see `IMPERSONATE_PROFILE`).
+ * Empirically this fingerprint alone clears Cloudflare on the surfaces TTCtl
+ * uses; no `cf_clearance` cookie is required in the happy path.
+ *
  * Header-tuple ordering is left as a future tightening — currently we pass
  * a plain `Record<string, string>` matching `stockTransport`'s shape so the
  * two transports stay symmetric. JA4H header-name ordering is a secondary
@@ -170,7 +160,7 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
 export async function impersonatedTransport(req: TransportRequest): Promise<TransportResponse> {
   const url = SURFACE_ENDPOINTS[req.surface];
   const headers: Record<string, string> = { ...COMMON_HEADERS };
-  if (req.cookieHeader) headers["cookie"] = req.cookieHeader;
+  if (req.authToken) headers["authorization"] = `Token token=${req.authToken}`;
 
   const res = await wreqFetch(url, {
     method: "POST",

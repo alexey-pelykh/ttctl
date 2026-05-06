@@ -5,11 +5,10 @@ import {
   ConfigError,
   OnePasswordError,
   SignInError,
-  createCookieJar,
-  discoverCookieJarPath,
+  resolveAuthTokenPath,
   resolveConfig,
   resolveCredentials,
-  saveCookieJar,
+  saveAuthToken,
   signIn,
 } from "@ttctl/core";
 import type { SignInErrorCode } from "@ttctl/core";
@@ -29,7 +28,7 @@ export interface AuthSignInOptions {
 /**
  * CLI-level error code surfaced in JSON output. Extends `SignInErrorCode`
  * (from core) with codes specific to the orchestration this command performs
- * around the core `signIn` call (config loading, 1Password resolution, jar
+ * around the core `signIn` call (config loading, 1Password resolution, token
  * persistence). Stable strings — script consumers can branch on them without
  * pattern-matching prose messages.
  */
@@ -37,10 +36,9 @@ export type SignInResultErrorCode = SignInErrorCode | "CONFIG_ERROR" | "ONEPASSW
 
 /**
  * Terminal outcome of `ttctl auth signin`. `signed-in` carries the verified
- * `email` (the same string passed to `EmailPasswordSignIn` and confirmed via
- * the post-signin Viewer query in `core.signIn`). `error` carries a stable
- * `code` for scripting plus a human-readable `message` already containing any
- * actionable hint.
+ * `email` (the same string passed to `EmailPasswordSignIn`). `error` carries
+ * a stable `code` for scripting plus a human-readable `message` already
+ * containing any actionable hint.
  */
 export type SignInResult =
   | { status: "signed-in"; email: string }
@@ -112,11 +110,8 @@ function classifyError(err: unknown): SignInResult {
  *   1. Discover and load `.ttctl.yaml` (`ConfigError` on missing/invalid).
  *   2. Resolve credentials — Form A reaches `op` CLI, Form B is literal
  *      (`OnePasswordError` on Form A failures).
- *   3. Sign in via `core.signIn` against a FRESH cookie jar (the core call
- *      captures cookies and verifies the resulting session via Viewer query;
- *      we deliberately do not load any pre-existing jar — a stale cookie
- *      could shadow the new session).
- *   4. Persist the populated jar to disk (`saveCookieJar` → `0600` perms).
+ *   3. Sign in via `core.signIn`, capturing the bearer token.
+ *   4. Persist the token to disk at `0600`.
  *   5. Emit the result and exit with the corresponding code.
  *
  * Errors are routed to stderr; success goes to stdout. `process.exit` is the
@@ -147,22 +142,25 @@ async function performSignIn(): Promise<SignInResult> {
     return classifyError(err);
   }
 
-  const jar = createCookieJar();
+  let token: string;
   try {
-    await signIn(credentials, jar);
+    ({ token } = await signIn(credentials));
   } catch (err) {
     return classifyError(err);
   }
 
-  const jarPath = discoverCookieJarPath();
+  const tokenPath = resolveAuthTokenPath({
+    config: configResult.config,
+    configPath: configResult.path,
+  });
   try {
-    await saveCookieJar(jarPath, jar);
+    await saveAuthToken(tokenPath, token);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
       status: "error",
       code: "SAVE_FAILED",
-      message: `Failed to persist session cookies to ${jarPath}: ${message}`,
+      message: `Failed to persist auth token to ${tokenPath}: ${message}`,
     };
   }
 

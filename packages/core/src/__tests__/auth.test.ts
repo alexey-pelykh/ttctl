@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { CookieJar } from "tough-cookie";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../transport.js", () => ({
@@ -17,7 +16,6 @@ const mockedTransport = vi.mocked(stockTransport);
 interface MockResponse {
   status?: number;
   body: unknown;
-  setCookies?: string[];
 }
 
 function reply(...responses: MockResponse[]): void {
@@ -26,12 +24,11 @@ function reply(...responses: MockResponse[]): void {
       status: r.status ?? 200,
       headers: {},
       body: r.body,
-      ...(r.setCookies ? { setCookies: r.setCookies } : {}),
     } satisfies TransportResponse);
   }
 }
 
-const SUCCESS_BODY = { data: { auth: { signIn: { success: true, token: "tok", errors: [] } } } };
+const SUCCESS_BODY = { data: { auth: { signIn: { success: true, token: "tok-abc-123", errors: [] } } } };
 const VIEWER_OK = (email: string): unknown => ({ data: { viewer: { id: "v1", viewerRole: { email } } } });
 
 describe("signIn", () => {
@@ -40,14 +37,11 @@ describe("signIn", () => {
   });
 
   it("POSTs EmailPasswordSignIn as a persisted query with the cataloged sha256 hash", async () => {
-    const jar = new CookieJar();
-    reply(
-      { body: SUCCESS_BODY, setCookies: ["_toptal_session_id=abc; Path=/; Domain=.toptal.com"] },
-      { body: VIEWER_OK("user@example.com") },
-    );
+    reply({ body: SUCCESS_BODY });
 
-    await signIn({ email: "user@example.com", password: "hunter2" }, jar);
+    await signIn({ email: "user@example.com", password: "hunter2" });
 
+    expect(mockedTransport).toHaveBeenCalledTimes(1);
     const firstCall = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
     expect(firstCall.surface).toBe("mobile-gateway");
     expect(firstCall.body.operationName).toBe("EmailPasswordSignIn");
@@ -59,59 +53,23 @@ describe("signIn", () => {
     expect(firstCall.body.query).toBeUndefined();
   });
 
-  it("captures Set-Cookie values into the jar (including _toptal_session_id)", async () => {
-    const jar = new CookieJar();
-    reply(
-      {
-        body: SUCCESS_BODY,
-        setCookies: [
-          "_toptal_session_id=session-xyz; Path=/; Domain=.toptal.com; HttpOnly",
-          "csrf=token-abc; Path=/; Domain=.toptal.com",
-        ],
-      },
-      { body: VIEWER_OK("user@example.com") },
-    );
+  it("returns the captured token", async () => {
+    reply({ body: SUCCESS_BODY });
 
-    await signIn({ email: "user@example.com", password: "hunter2" }, jar);
+    const result = await signIn({ email: "user@example.com", password: "hunter2" });
 
-    const cookies = await jar.getCookies("https://www.toptal.com/");
-    const names = cookies.map((c) => c.key);
-    expect(names).toContain("_toptal_session_id");
-    expect(names).toContain("csrf");
-    const session = cookies.find((c) => c.key === "_toptal_session_id");
-    expect(session?.value).toBe("session-xyz");
+    expect(result).toEqual({ token: "tok-abc-123" });
   });
 
-  it("issues a Viewer verification call with the captured cookies after sign-in succeeds", async () => {
-    const jar = new CookieJar();
-    reply(
-      { body: SUCCESS_BODY, setCookies: ["_toptal_session_id=session-xyz; Path=/; Domain=.toptal.com"] },
-      { body: VIEWER_OK("user@example.com") },
-    );
+  it("does not issue a redundant Viewer verification call (one transport call total)", async () => {
+    reply({ body: SUCCESS_BODY });
 
-    await signIn({ email: "user@example.com", password: "hunter2" }, jar);
+    await signIn({ email: "user@example.com", password: "hunter2" });
 
-    expect(mockedTransport).toHaveBeenCalledTimes(2);
-    const verifyCall = mockedTransport.mock.calls[1]?.[0] as TransportRequest;
-    expect(verifyCall.surface).toBe("mobile-gateway");
-    expect(verifyCall.body.operationName).toBe("ViewerVerify");
-    expect(verifyCall.body.query).toContain("viewer");
-    expect(verifyCall.body.query).toContain("email");
-    expect(verifyCall.cookieHeader).toContain("_toptal_session_id=session-xyz");
-  });
-
-  it("compares emails case-insensitively", async () => {
-    const jar = new CookieJar();
-    reply(
-      { body: SUCCESS_BODY, setCookies: ["_toptal_session_id=s; Path=/; Domain=.toptal.com"] },
-      { body: VIEWER_OK("USER@example.com") },
-    );
-
-    await expect(signIn({ email: "user@EXAMPLE.com", password: "x" }, jar)).resolves.toBeUndefined();
+    expect(mockedTransport).toHaveBeenCalledTimes(1);
   });
 
   it("throws INVALID_CREDENTIALS when the gateway returns that error code", async () => {
-    const jar = new CookieJar();
     reply({
       body: {
         data: {
@@ -126,14 +84,13 @@ describe("signIn", () => {
       },
     });
 
-    await expect(signIn({ email: "user@example.com", password: "wrong" }, jar)).rejects.toMatchObject({
+    await expect(signIn({ email: "user@example.com", password: "wrong" })).rejects.toMatchObject({
       name: "SignInError",
       code: "INVALID_CREDENTIALS",
     });
   });
 
   it("throws MFA_REQUIRED when the gateway returns an MFA-style code", async () => {
-    const jar = new CookieJar();
     reply({
       body: {
         data: {
@@ -144,121 +101,74 @@ describe("signIn", () => {
       },
     });
 
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).rejects.toMatchObject({
+    await expect(signIn({ email: "user@example.com", password: "x" })).rejects.toMatchObject({
       code: "MFA_REQUIRED",
     });
   });
 
   it("throws NETWORK_ERROR when the transport itself rejects", async () => {
-    const jar = new CookieJar();
     mockedTransport.mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
 
-    const promise = signIn({ email: "user@example.com", password: "x" }, jar);
+    const promise = signIn({ email: "user@example.com", password: "x" });
     await expect(promise).rejects.toBeInstanceOf(SignInError);
     await expect(promise).rejects.toMatchObject({ code: "NETWORK_ERROR" });
   });
 
   it("throws UNKNOWN when no signIn payload is present", async () => {
-    const jar = new CookieJar();
-    reply({ body: { data: null }, setCookies: ["_toptal_session_id=s; Path=/; Domain=.toptal.com"] });
+    reply({ body: { data: null } });
 
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).rejects.toMatchObject({
+    await expect(signIn({ email: "user@example.com", password: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
     });
   });
 
-  it("throws UNKNOWN when sign-in succeeds but the gateway sets no cookies", async () => {
-    const jar = new CookieJar();
-    reply({ body: SUCCESS_BODY });
+  it("throws UNKNOWN when sign-in succeeds but the gateway returns no token", async () => {
+    reply({ body: { data: { auth: { signIn: { success: true, token: null, errors: [] } } } } });
 
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).rejects.toMatchObject({
+    await expect(signIn({ email: "user@example.com", password: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
-      message: expect.stringContaining("no session cookies"),
+      message: expect.stringContaining("no token was returned"),
     });
   });
 
-  it("throws UNKNOWN when Viewer verification returns a different email", async () => {
-    const jar = new CookieJar();
-    reply(
-      { body: SUCCESS_BODY, setCookies: ["_toptal_session_id=s; Path=/; Domain=.toptal.com"] },
-      { body: VIEWER_OK("someone-else@example.com") },
-    );
+  it("throws UNKNOWN when sign-in succeeds but the gateway returns an empty token", async () => {
+    reply({ body: { data: { auth: { signIn: { success: true, token: "", errors: [] } } } } });
 
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).rejects.toMatchObject({
+    await expect(signIn({ email: "user@example.com", password: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
-      message: expect.stringContaining("does not match"),
+      message: expect.stringContaining("no token was returned"),
     });
-  });
-
-  it("throws UNKNOWN when Viewer verification returns no email field", async () => {
-    const jar = new CookieJar();
-    reply(
-      { body: SUCCESS_BODY, setCookies: ["_toptal_session_id=s; Path=/; Domain=.toptal.com"] },
-      { body: { data: { viewer: { id: "v1", viewerRole: null } } } },
-    );
-
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).rejects.toMatchObject({
-      code: "UNKNOWN",
-    });
-  });
-
-  it("wraps Viewer-verification network failures as NETWORK_ERROR", async () => {
-    const jar = new CookieJar();
-    reply({ body: SUCCESS_BODY, setCookies: ["_toptal_session_id=s; Path=/; Domain=.toptal.com"] });
-    mockedTransport.mockRejectedValueOnce(new Error("socket hang up"));
-
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).rejects.toMatchObject({
-      code: "NETWORK_ERROR",
-    });
-  });
-
-  it("does not throw on malformed Set-Cookie values (skips them silently)", async () => {
-    const jar = new CookieJar();
-    reply(
-      {
-        body: SUCCESS_BODY,
-        setCookies: ["this is not a valid cookie", "_toptal_session_id=ok; Path=/; Domain=.toptal.com"],
-      },
-      { body: VIEWER_OK("user@example.com") },
-    );
-
-    await expect(signIn({ email: "user@example.com", password: "x" }, jar)).resolves.toBeUndefined();
-    const cookies = await jar.getCookies("https://www.toptal.com/");
-    expect(cookies.some((c) => c.key === "_toptal_session_id")).toBe(true);
   });
 });
-
-async function jarWithSession(): Promise<CookieJar> {
-  const jar = new CookieJar();
-  await jar.setCookie("_toptal_session_id=session-xyz; Path=/; Domain=.toptal.com", "https://www.toptal.com/");
-  return jar;
-}
 
 describe("getAuthStatus", () => {
   beforeEach(() => {
     mockedTransport.mockReset();
   });
 
-  it("returns invalid/no-session when the cookie jar is empty", async () => {
-    const jar = new CookieJar();
-    const result = await getAuthStatus(jar);
+  it("returns invalid/no-session when no token is supplied (null)", async () => {
+    const result = await getAuthStatus(null);
+    expect(result).toEqual({ status: "invalid", reason: "no-session" });
+    expect(mockedTransport).not.toHaveBeenCalled();
+  });
+
+  it("returns invalid/no-session when an empty-string token is supplied", async () => {
+    const result = await getAuthStatus("");
     expect(result).toEqual({ status: "invalid", reason: "no-session" });
     expect(mockedTransport).not.toHaveBeenCalled();
   });
 
   it("returns valid + email on a 200 Viewer response", async () => {
-    const jar = await jarWithSession();
     reply({ body: VIEWER_OK("user@example.com") });
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result).toEqual({ status: "valid", email: "user@example.com" });
   });
 
-  it("issues a ViewerVerify call against the mobile gateway with the captured cookie", async () => {
-    const jar = await jarWithSession();
+  it("issues a ViewerVerify call against the mobile gateway with Authorization: Token token=...", async () => {
     reply({ body: VIEWER_OK("user@example.com") });
 
-    await getAuthStatus(jar);
+    await getAuthStatus("tok-abc-123");
 
     expect(mockedTransport).toHaveBeenCalledTimes(1);
     const call = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
@@ -266,54 +176,48 @@ describe("getAuthStatus", () => {
     expect(call.body.operationName).toBe("ViewerVerify");
     expect(call.body.query).toContain("viewer");
     expect(call.body.query).toContain("email");
-    expect(call.cookieHeader).toContain("_toptal_session_id=session-xyz");
+    expect(call.authToken).toBe("tok-abc-123");
   });
 
   it("returns invalid/session-expired on a 401", async () => {
-    const jar = await jarWithSession();
     reply({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result).toEqual({ status: "invalid", reason: "session-expired" });
   });
 
   it("returns invalid/session-expired on a 403", async () => {
-    const jar = await jarWithSession();
     reply({ status: 403, body: { errors: [{ message: "forbidden" }] } });
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result).toEqual({ status: "invalid", reason: "session-expired" });
   });
 
   it("returns invalid/unexpected-status on other non-2xx codes (e.g. 500)", async () => {
-    const jar = await jarWithSession();
     reply({ status: 500, body: { errors: [{ message: "internal error" }] } });
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result).toEqual({ status: "invalid", reason: "unexpected-status" });
   });
 
   it("returns invalid/no-email-in-response when 200 lacks viewer.viewerRole.email", async () => {
-    const jar = await jarWithSession();
     reply({ body: { data: { viewer: { id: "v1", viewerRole: null } } } });
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result).toEqual({ status: "invalid", reason: "no-email-in-response" });
   });
 
   it("returns invalid/no-email-in-response when viewer is null", async () => {
-    const jar = await jarWithSession();
     reply({ body: { data: { viewer: null } } });
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result).toEqual({ status: "invalid", reason: "no-email-in-response" });
   });
 
   it("returns unreachable when the transport itself rejects", async () => {
-    const jar = await jarWithSession();
     mockedTransport.mockRejectedValueOnce(new Error("connect ECONNREFUSED 1.2.3.4:443"));
 
-    const result = await getAuthStatus(jar);
+    const result = await getAuthStatus("tok-abc-123");
     expect(result.status).toBe("unreachable");
     if (result.status === "unreachable") {
       expect(result.reason).toContain("ECONNREFUSED");
@@ -321,9 +225,8 @@ describe("getAuthStatus", () => {
   });
 
   it("does not throw — every classified failure is returned, not raised", async () => {
-    const jar = await jarWithSession();
     mockedTransport.mockRejectedValueOnce(new Error("DNS lookup failed"));
 
-    await expect(getAuthStatus(jar)).resolves.not.toThrow();
+    await expect(getAuthStatus("tok-abc-123")).resolves.not.toThrow();
   });
 });

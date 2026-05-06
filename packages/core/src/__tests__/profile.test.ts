@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { CookieJar } from "tough-cookie";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../transport.js", async () => {
@@ -17,6 +16,7 @@ import { Cf403Error, impersonatedTransport } from "../transport.js";
 import type { TransportRequest, TransportResponse } from "../transport.js";
 
 const mockedTransport = vi.mocked(impersonatedTransport);
+const TOKEN = "tok-abc-123";
 
 interface MockResponse {
   status?: number;
@@ -78,10 +78,9 @@ describe("getProfile", () => {
   });
 
   it("targets the talent-profile surface with the ProfileShow operation", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK });
 
-    await getProfile(jar);
+    await getProfile(TOKEN);
 
     expect(mockedTransport).toHaveBeenCalledTimes(1);
     const call = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
@@ -92,40 +91,19 @@ describe("getProfile", () => {
     expect(call.body.query).toContain("profile");
   });
 
-  it("forwards the captured cookie header to the impersonated transport", async () => {
-    const jar = new CookieJar();
-    await jar.setCookie(
-      "_toptal_session_id=session-xyz; Path=/; Domain=.toptal.com",
-      "https://www.toptal.com/api/talent_profile/graphql",
-    );
-    await jar.setCookie(
-      "cf_clearance=clr-abc; Path=/; Domain=.toptal.com",
-      "https://www.toptal.com/api/talent_profile/graphql",
-    );
+  it("forwards the auth token via Authorization: Token token=... (authToken field)", async () => {
     reply({ body: PROFILE_OK });
 
-    await getProfile(jar);
+    await getProfile(TOKEN);
 
     const call = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.cookieHeader).toContain("_toptal_session_id=session-xyz");
-    expect(call.cookieHeader).toContain("cf_clearance=clr-abc");
-  });
-
-  it("omits the cookie header when the jar has no cookies for the talent-profile origin", async () => {
-    const jar = new CookieJar();
-    reply({ body: PROFILE_OK });
-
-    await getProfile(jar);
-
-    const call = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.cookieHeader).toBeUndefined();
+    expect(call.authToken).toBe(TOKEN);
   });
 
   it("returns the typed `data` payload on a 200 response with viewer present", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK });
 
-    const result = await getProfile(jar);
+    const result = await getProfile(TOKEN);
 
     expect(result.viewer?.id).toBe("v1");
     expect(result.viewer?.viewerRole.email).toBe("user@example.com");
@@ -137,10 +115,9 @@ describe("getProfile", () => {
   });
 
   it("throws ProfileError UNAUTHENTICATED on HTTP 401", async () => {
-    const jar = new CookieJar();
     reply({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    await expect(getProfile(jar)).rejects.toMatchObject({
+    await expect(getProfile(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNAUTHENTICATED",
       message: expect.stringContaining("ttctl auth signin"),
@@ -148,32 +125,29 @@ describe("getProfile", () => {
   });
 
   it("propagates Cf403Error verbatim (does NOT wrap it in ProfileError)", async () => {
-    const jar = new CookieJar();
     mockedTransport.mockRejectedValueOnce(
       new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
     );
 
-    await expect(getProfile(jar)).rejects.toBeInstanceOf(Cf403Error);
+    await expect(getProfile(TOKEN)).rejects.toBeInstanceOf(Cf403Error);
   });
 
   it("wraps generic transport throws as ProfileError NETWORK_ERROR", async () => {
-    const jar = new CookieJar();
     mockedTransport.mockRejectedValueOnce(new Error("ECONNRESET"));
 
-    const promise = getProfile(jar);
+    const promise = getProfile(TOKEN);
     await expect(promise).rejects.toBeInstanceOf(ProfileError);
     await expect(promise).rejects.toMatchObject({ code: "NETWORK_ERROR" });
   });
 
   it("throws ProfileError GRAPHQL_ERROR when the response body has a non-empty `errors` array", async () => {
-    const jar = new CookieJar();
     reply({
       body: {
         errors: [{ message: "Schema field not found", extensions: { code: "VALIDATION" } }],
       },
     });
 
-    await expect(getProfile(jar)).rejects.toMatchObject({
+    await expect(getProfile(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "GRAPHQL_ERROR",
       message: expect.stringContaining("Schema field not found"),
@@ -181,7 +155,6 @@ describe("getProfile", () => {
   });
 
   it("routes errors[0].extensions.code='UNAUTHENTICATED' to ProfileError UNAUTHENTICATED (Toptal returns HTTP 200 + this code, not 401)", async () => {
-    const jar = new CookieJar();
     reply({
       status: 200,
       body: {
@@ -194,7 +167,7 @@ describe("getProfile", () => {
       },
     });
 
-    await expect(getProfile(jar)).rejects.toMatchObject({
+    await expect(getProfile(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNAUTHENTICATED",
       message: expect.stringContaining("ttctl auth signin"),
@@ -202,30 +175,27 @@ describe("getProfile", () => {
   });
 
   it("throws ProfileError NO_VIEWER when data.viewer is null on a 200 response", async () => {
-    const jar = new CookieJar();
     reply({ body: { data: { viewer: null } } });
 
-    await expect(getProfile(jar)).rejects.toMatchObject({
+    await expect(getProfile(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "NO_VIEWER",
     });
   });
 
   it("throws ProfileError UNKNOWN when the response has no data field", async () => {
-    const jar = new CookieJar();
     reply({ body: { data: null } });
 
-    await expect(getProfile(jar)).rejects.toMatchObject({
+    await expect(getProfile(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNKNOWN",
     });
   });
 
   it("throws ProfileError UNKNOWN on unexpected non-2xx status codes (e.g., 500)", async () => {
-    const jar = new CookieJar();
     reply({ status: 500, body: "<html>internal server error</html>" });
 
-    await expect(getProfile(jar)).rejects.toMatchObject({
+    await expect(getProfile(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNKNOWN",
       message: expect.stringContaining("500"),
@@ -254,9 +224,7 @@ describe("updateProfile", () => {
   });
 
   it("rejects calls with neither bio nor headline (CLI/contract guard)", async () => {
-    const jar = new CookieJar();
-
-    await expect(updateProfile(jar, {})).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, {})).rejects.toMatchObject({
       name: "ProfileError",
       code: "VALIDATION_ERROR",
       message: expect.stringMatching(/at least one of/i),
@@ -265,10 +233,9 @@ describe("updateProfile", () => {
   });
 
   it("fetches the profile first to obtain profileId, then issues UpdateBasicInfo", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { body: UPDATE_OK });
 
-    await updateProfile(jar, { bio: "new bio" });
+    await updateProfile(TOKEN, { bio: "new bio" });
 
     expect(mockedTransport).toHaveBeenCalledTimes(2);
     const showCall = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
@@ -280,11 +247,21 @@ describe("updateProfile", () => {
     expect(updateCall.body.query).toContain("updateBasicInfo(input: $input)");
   });
 
-  it("maps `bio` -> `about` and `headline` -> `quote` in the mutation input", async () => {
-    const jar = new CookieJar();
+  it("forwards the auth token on both the read and write call", async () => {
     reply({ body: PROFILE_OK }, { body: UPDATE_OK });
 
-    await updateProfile(jar, { bio: "long-form bio text", headline: "short tagline" });
+    await updateProfile(TOKEN, { bio: "x" });
+
+    const showCall = mockedTransport.mock.calls[0]?.[0] as TransportRequest;
+    const updateCall = mockedTransport.mock.calls[1]?.[0] as TransportRequest;
+    expect(showCall.authToken).toBe(TOKEN);
+    expect(updateCall.authToken).toBe(TOKEN);
+  });
+
+  it("maps `bio` -> `about` and `headline` -> `quote` in the mutation input", async () => {
+    reply({ body: PROFILE_OK }, { body: UPDATE_OK });
+
+    await updateProfile(TOKEN, { bio: "long-form bio text", headline: "short tagline" });
 
     const updateCall = mockedTransport.mock.calls[1]?.[0] as TransportRequest;
     expect(updateCall.body.variables).toEqual({
@@ -299,10 +276,9 @@ describe("updateProfile", () => {
   });
 
   it("omits unset fields from the mutation input (partial updates)", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { body: UPDATE_OK });
 
-    await updateProfile(jar, { headline: "only headline" });
+    await updateProfile(TOKEN, { headline: "only headline" });
 
     const updateCall = mockedTransport.mock.calls[1]?.[0] as TransportRequest;
     const variables = updateCall.body.variables as { input: { basicInfo: Record<string, unknown> } };
@@ -311,40 +287,19 @@ describe("updateProfile", () => {
   });
 
   it("preserves empty-string updates (clearing a field is a real intent, not an unset)", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { body: UPDATE_OK });
 
-    await updateProfile(jar, { bio: "" });
+    await updateProfile(TOKEN, { bio: "" });
 
     const updateCall = mockedTransport.mock.calls[1]?.[0] as TransportRequest;
     const variables = updateCall.body.variables as { input: { basicInfo: Record<string, unknown> } };
     expect(variables.input.basicInfo).toEqual({ about: "" });
   });
 
-  it("forwards the cookie header to the impersonated transport on the mutation call", async () => {
-    const jar = new CookieJar();
-    await jar.setCookie(
-      "_toptal_session_id=session-xyz; Path=/; Domain=.toptal.com",
-      "https://www.toptal.com/api/talent_profile/graphql",
-    );
-    await jar.setCookie(
-      "_csrf_token=tok-abc; Path=/; Domain=.toptal.com",
-      "https://www.toptal.com/api/talent_profile/graphql",
-    );
-    reply({ body: PROFILE_OK }, { body: UPDATE_OK });
-
-    await updateProfile(jar, { bio: "x" });
-
-    const updateCall = mockedTransport.mock.calls[1]?.[0] as TransportRequest;
-    expect(updateCall.cookieHeader).toContain("_toptal_session_id=session-xyz");
-    expect(updateCall.cookieHeader).toContain("_csrf_token=tok-abc");
-  });
-
   it("returns the updated bio/headline values from the server's confirmation payload", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { body: UPDATE_OK });
 
-    const result = await updateProfile(jar, { bio: "new bio", headline: "new headline" });
+    const result = await updateProfile(TOKEN, { bio: "new bio", headline: "new headline" });
 
     expect(result.profile.id).toBe("p1");
     expect(result.profile.about).toBe("new bio");
@@ -352,25 +307,22 @@ describe("updateProfile", () => {
   });
 
   it("normalizes a missing `notice` to null (callers can branch cleanly)", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { body: UPDATE_OK });
 
-    const result = await updateProfile(jar, { bio: "x" });
+    const result = await updateProfile(TOKEN, { bio: "x" });
     expect(result.notice).toBeNull();
   });
 
   it("propagates Cf403Error from the read-side getProfile call (write fails before issuing)", async () => {
-    const jar = new CookieJar();
     mockedTransport.mockRejectedValueOnce(
       new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
     );
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
     expect(mockedTransport).toHaveBeenCalledTimes(1); // never reached the mutation
   });
 
   it("propagates Cf403Error from the write-side mutation call", async () => {
-    const jar = new CookieJar();
     mockedTransport.mockResolvedValueOnce({
       status: 200,
       headers: {},
@@ -380,12 +332,11 @@ describe("updateProfile", () => {
       new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
     );
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
     expect(mockedTransport).toHaveBeenCalledTimes(2);
   });
 
   it("throws ProfileError USER_ERROR when the mutation payload returns a non-empty errors array", async () => {
-    const jar = new CookieJar();
     reply(
       { body: PROFILE_OK },
       {
@@ -402,7 +353,7 @@ describe("updateProfile", () => {
       },
     );
 
-    await expect(updateProfile(jar, { bio: "x".repeat(10000) })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x".repeat(10000) })).rejects.toMatchObject({
       name: "ProfileError",
       code: "USER_ERROR",
       message: expect.stringContaining("About is too long"),
@@ -410,7 +361,6 @@ describe("updateProfile", () => {
   });
 
   it("includes the field name in USER_ERROR messages when the server reports one", async () => {
-    const jar = new CookieJar();
     reply(
       { body: PROFILE_OK },
       {
@@ -426,13 +376,12 @@ describe("updateProfile", () => {
       },
     );
 
-    await expect(updateProfile(jar, { headline: "" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { headline: "" })).rejects.toMatchObject({
       message: expect.stringContaining("(quote)"),
     });
   });
 
   it("throws ProfileError USER_ERROR when payload.success === false (no errors array)", async () => {
-    const jar = new CookieJar();
     reply(
       { body: PROFILE_OK },
       {
@@ -449,14 +398,13 @@ describe("updateProfile", () => {
       },
     );
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "USER_ERROR",
       message: expect.stringContaining("Something went wrong"),
     });
   });
 
   it("throws ProfileError UNAUTHENTICATED on errors[0].extensions.code='UNAUTHENTICATED' from the mutation", async () => {
-    const jar = new CookieJar();
     reply(
       { body: PROFILE_OK },
       {
@@ -472,14 +420,13 @@ describe("updateProfile", () => {
       },
     );
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNAUTHENTICATED",
       message: expect.stringContaining("ttctl auth signin"),
     });
   });
 
   it("throws ProfileError GRAPHQL_ERROR on top-level errors (non-UNAUTHENTICATED)", async () => {
-    const jar = new CookieJar();
     reply(
       { body: PROFILE_OK },
       {
@@ -489,33 +436,30 @@ describe("updateProfile", () => {
       },
     );
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "GRAPHQL_ERROR",
       message: expect.stringContaining("not defined"),
     });
   });
 
   it("throws ProfileError UNAUTHENTICATED on HTTP 401 response", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNAUTHENTICATED",
     });
   });
 
   it("throws ProfileError UNKNOWN on unexpected non-2xx (e.g., 500)", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { status: 502, body: "<html>bad gateway</html>" });
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
       message: expect.stringContaining("502"),
     });
   });
 
   it("wraps generic transport throws (e.g., ECONNRESET) as ProfileError NETWORK_ERROR", async () => {
-    const jar = new CookieJar();
     mockedTransport.mockResolvedValueOnce({
       status: 200,
       headers: {},
@@ -523,17 +467,16 @@ describe("updateProfile", () => {
     } satisfies TransportResponse);
     mockedTransport.mockRejectedValueOnce(new Error("ECONNRESET"));
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "NETWORK_ERROR",
       message: expect.stringContaining("ECONNRESET"),
     });
   });
 
   it("throws ProfileError UNKNOWN when the mutation response has no data.updateBasicInfo", async () => {
-    const jar = new CookieJar();
     reply({ body: PROFILE_OK }, { body: { data: {} } });
 
-    await expect(updateProfile(jar, { bio: "x" })).rejects.toMatchObject({
+    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
       message: expect.stringMatching(/no `data\.updateBasicInfo`/),
     });

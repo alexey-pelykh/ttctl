@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 
-import { createCookieJar, resolveConfig, resolveCredentials, saveCookieJar, signIn } from "@ttctl/core";
+import { resolveConfig, resolveCredentials, saveAuthToken, signIn } from "@ttctl/core";
 import { afterAll, beforeAll } from "vitest";
 
 import { printPreflightBanner } from "./banner.js";
 import { acquireLock, releaseLock } from "./lockfile.js";
-import { findRepoRoot, resolveIsolatedJarPath, resolveLockfilePath } from "./paths.js";
+import {
+  findRepoRoot,
+  resolveIsolatedAuthTokenPath,
+  resolveLockfilePath,
+  resolveSandboxConfigPath,
+  resolveSandboxDir,
+  writeSandboxConfig,
+} from "./paths.js";
 
 /**
  * Public context returned by `withFreshSession()`. Test authors use this
- * to construct CLI / MCP clients bound to the isolated jar.
+ * to construct CLI / MCP clients bound to the sandbox.
  */
 export interface FreshSessionContext {
   /**
@@ -22,11 +29,24 @@ export interface FreshSessionContext {
    */
   email: string;
   /**
-   * Absolute path to the isolated cookie jar. Pass to `getCliClient` /
-   * `getMcpClient` as `jarPath`. Test authors should NEVER read this file
-   * directly — the harness owns its lifecycle.
+   * Absolute path to the isolated auth token (`<sandbox>/auth.token`).
+   * Test authors use this for existence / non-empty assertions; they
+   * should NEVER read or write the file's contents — the harness owns
+   * its lifecycle.
    */
-  jarPath: string;
+  tokenPath: string;
+  /**
+   * Absolute path to the sandbox directory (`<repo-root>/.tmp/e2e/`).
+   * Pass this as `cwd` to `getCliClient` / `getMcpClient` so the spawned
+   * subprocess discovers the sandbox `.ttctl.yaml` (with the redirected
+   * `auth-token-path`) instead of the user's config.
+   */
+  sandboxDir: string;
+  /**
+   * Absolute path to the sandbox `.ttctl.yaml` fixture. Useful for tests
+   * that need to assert the fixture's shape or modify it temporarily.
+   */
+  sandboxConfigPath: string;
   /**
    * Absolute path to the repo root, resolved at suite startup. Useful for
    * locating sibling fixtures (`.tmp/e2e-restore/`, etc.).
@@ -104,18 +124,45 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     printPreflightBanner();
 
     const repoRoot = findRepoRoot();
-    const jarPath = resolveIsolatedJarPath(repoRoot);
+    const sandboxDir = resolveSandboxDir(repoRoot);
+    const sandboxConfigPath = resolveSandboxConfigPath(repoRoot);
+    const tokenPath = resolveIsolatedAuthTokenPath(repoRoot);
     const lockPath = resolveLockfilePath(repoRoot);
 
+    // The lockfile lives inside the sandbox dir — make sure that dir
+    // exists before acquireLock writes the .lock file. `writeSandboxConfig`
+    // also mkdir-p's the same dir, but lock acquisition must succeed BEFORE
+    // any other harness state is created.
+    await mkdir(sandboxDir, { recursive: true });
     acquireLock(lockPath);
 
     try {
-      const { config } = resolveConfig();
-      const credentials = resolveCredentials(config.auth);
-      const jar = createCookieJar();
-      await signIn(credentials, jar);
-      await saveCookieJar(jarPath, jar);
-      context = { email: credentials.email, jarPath, repoRoot };
+      // Find the user's source config (the one OUTSIDE the sandbox).
+      // resolveConfig() walks CWD then $XDG_CONFIG_HOME — same logic the
+      // CLI uses in non-E2E mode.
+      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
+
+      // Mirror it into the sandbox with `auth-token-path: ./auth.token`.
+      // Spawned CLI subprocesses with cwd=sandboxDir will discover this
+      // fixture and write tokens to <sandbox>/auth.token, never touching
+      // the user's working session.
+      await writeSandboxConfig(repoRoot, sourceConfigPath);
+
+      // Sign in directly via core's signIn (the harness handles token
+      // capture itself; spawning `ttctl auth signin` would work too but
+      // is slower and indirect). The credentials come from the SOURCE
+      // config — secret resolution (1Password CLI, literal) is identical
+      // to a non-E2E run.
+      const credentials = resolveCredentials(sourceConfig.auth);
+      const { token } = await signIn(credentials);
+      await saveAuthToken(tokenPath, token);
+      context = {
+        email: credentials.email,
+        tokenPath,
+        sandboxDir,
+        sandboxConfigPath,
+        repoRoot,
+      };
     } catch (err) {
       // Sign-in failed — release lock so subsequent runs aren't stuck
       // behind a held lock from a never-completed setup.
@@ -132,13 +179,14 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     // failing beforeAll, so this branch is the right place for the reset.
     handleCount = 0;
     if (context === null) return;
-    const { jarPath, repoRoot } = context;
+    const { tokenPath, repoRoot } = context;
 
     // Local "SignOut": destroy the isolated session-of-record. The
-    // mobile gateway has no terminal SignOut mutation; deleting the jar
-    // is the canonical session-end action (matches `ttctl auth signout`).
+    // mobile gateway has no terminal SignOut mutation; deleting the
+    // token is the canonical session-end action (matches `ttctl auth
+    // signout`).
     try {
-      await unlink(jarPath);
+      await unlink(tokenPath);
     } catch {
       // ENOENT is fine (already gone); other errors swallowed because
       // afterAll throws would mask the real test failure.
@@ -179,14 +227,14 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
  *       2. Print pre-flight banner (once per process — AC E4)
  *       3. Acquire run-level lockfile (AC E1)
  *       4. Read & resolve credentials from .ttctl.yaml
- *       5. Sign in via `core.signIn` against an isolated jar (AC E2)
- *       6. Persist jar to `.tmp/e2e/session.cookies` (AC C1)
+ *       5. Sign in via `core.signIn` (AC E2), capturing the bearer token
+ *       6. Persist token to `.tmp/e2e/auth.token` (AC C1)
  *
  *   - `afterAll`:
  *       1. (skip if no session was established)
- *       2. Delete the isolated jar — this is the harness's "SignOut"
+ *       2. Delete the isolated token — this is the harness's "SignOut"
  *          (AC E2). The Toptal mobile gateway has no terminal SignOut
- *          mutation; the local jar is the session-of-record.
+ *          mutation; the local token is the session-of-record.
  *       3. Cool-off ≥5s (AC E3) — spaces successive runs to avoid
  *          rate-limit / abuse heuristics.
  *       4. Release lockfile.

@@ -42,7 +42,6 @@ Surfaces are gated to read-heavy / personal use. Operations that would enable ma
 - **Node.js** >= 24
 - A **Toptal Talent** profile (you must be a Toptal talent to use this — it has no value to anyone else)
 - Recommended: **[1Password CLI](https://developer.1password.com/docs/cli/get-started/)** (`op`) for credential resolution
-- Recommended: **A logged-in Chrome session at `talent.toptal.com`** so that Cloudflare's `cf_clearance` cookie is available when refresh is required
 
 ## Installation
 
@@ -76,7 +75,7 @@ ttctl auth status
 ttctl profile show
 ```
 
-> **First run** will sign in via `EmailPasswordSignIn`, capture session cookies into `~/.ttctl/session.cookies` (mode `0600`), and use them for subsequent calls. The `op` CLI will be invoked once per session to resolve your credentials.
+> **First run** will sign in via `EmailPasswordSignIn`, capture the session bearer token into `~/.ttctl/auth.token` (mode `0600`; `$XDG_DATA_HOME/ttctl/auth.token` on POSIX or `%APPDATA%/ttctl/auth.token` on Windows when set), and replay it as `Authorization: Token token=<X>` on every subsequent GraphQL request. The `op` CLI will be invoked once per session to resolve your credentials.
 
 ## Configuration
 
@@ -114,6 +113,19 @@ auth:
 > Discouraged for daily use. Plaintext credentials in config files leak through backups, sync clients, and accidental commits. Form A is what you want.
 
 > **Per-field references (4+ segments, e.g. `auth: "op://Personal/ttctl/Section/username"`) are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
+
+### `auth-token-path` — optional token storage location
+
+By default, TTCtl persists the captured session token at `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on Windows). Override the location by setting `auth-token-path` in `.ttctl.yaml`:
+
+```yaml
+auth: "op://Personal/ttctl"
+auth-token-path: "./auth.token"            # relative — resolved against the .ttctl.yaml dir
+# or:
+auth-token-path: "/var/run/ttctl.token"    # absolute — used verbatim
+```
+
+Absolute paths are used as-is. Relative paths are resolved against the directory containing `.ttctl.yaml` — so `./auth.token` under `/path/to/project/.ttctl.yaml` lands at `/path/to/project/auth.token`. The E2E test harness uses this branch to redirect tokens into a sandbox without touching the user's working session.
 
 ## MCP Integration
 
@@ -166,7 +178,7 @@ Add to `.cursor/mcp.json` in your project root:
 
 </details>
 
-> **Trust model**: any process that can spawn `ttctl mcp` gets full access to your Toptal Talent profile through your saved session cookies. Don't grant MCP access to untrusted AI agents. See [SECURITY.md](SECURITY.md).
+> **Trust model**: any process that can spawn `ttctl mcp` gets full access to your Toptal Talent profile through your saved auth token. Don't grant MCP access to untrusted AI agents. See [SECURITY.md](SECURITY.md).
 
 ## How TTCtl works under the hood
 
@@ -181,7 +193,7 @@ TTCtl uses two transports:
 - **Stock** ([`undici`](https://github.com/nodejs/undici)) for the mobile gateway endpoint
 - **TLS-impersonating** ([`node-wreq`](https://www.npmjs.com/package/node-wreq) with the `chrome_146` profile) for the Cloudflare-protected endpoints
 
-Authentication is **cookie-jar based** (per [ADR-002](https://github.com/ttctl/research/blob/main/docs/decisions/ADR-002-auth-cookie-jar.md)): TTCtl POSTs `EmailPasswordSignIn` in persisted-query mode (SHA-256 hash from a captured operations catalog), captures `Set-Cookie` headers into a Mozilla-format jar at `~/.ttctl/session.cookies` (or `$XDG_DATA_HOME/ttctl/session.cookies`), and replays them on subsequent calls.
+Authentication is **bearer-token based** (per ADR-005 in the private `ttctl/research` repo): TTCtl POSTs `EmailPasswordSignIn` in persisted-query mode (SHA-256 hash from a captured operations catalog), captures the returned session token, persists it at `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on Windows), and replays it as `Authorization: Token token=<X>` on every subsequent GraphQL request. Cookies are NOT used; Chrome TLS impersonation alone passes Cloudflare on the protected surfaces.
 
 The reverse-engineering artifacts (APK decoded, GraphQL operations catalog, schema synthesis, ADRs) live in a separate **private** repository (`ttctl/research`). They are not redistributable.
 

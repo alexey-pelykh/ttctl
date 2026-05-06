@@ -80,20 +80,20 @@ describe("impersonatedTransport", () => {
     expect(init.headers["user-agent"]).toContain("Chrome/145.0.0.0");
   });
 
-  it("forwards the supplied cookieHeader as the cookie request header", async () => {
+  it("forwards the supplied authToken as Authorization: Token token=...", async () => {
     mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 200, body: "{}" }) as never);
 
     await impersonatedTransport({
       surface: "talent-profile",
       body: { operationName: "X" },
-      cookieHeader: "session=abc; cf_clearance=xyz",
+      authToken: "tok-xyz",
     });
 
     const init = getCallInit();
-    expect(init.headers["cookie"]).toBe("session=abc; cf_clearance=xyz");
+    expect(init.headers["authorization"]).toBe("Token token=tok-xyz");
   });
 
-  it("omits the cookie header when no cookieHeader is supplied", async () => {
+  it("omits the authorization header when no authToken is supplied", async () => {
     mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 200, body: "{}" }) as never);
 
     await impersonatedTransport({
@@ -102,7 +102,19 @@ describe("impersonatedTransport", () => {
     });
 
     const init = getCallInit();
-    expect(init.headers).not.toHaveProperty("cookie");
+    expect(init.headers).not.toHaveProperty("authorization");
+  });
+
+  it("includes the x-toptal-analytics-origin: mobile fingerprint header by default", async () => {
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 200, body: "{}" }) as never);
+
+    await impersonatedTransport({
+      surface: "talent-profile",
+      body: { operationName: "X" },
+    });
+
+    const init = getCallInit();
+    expect(init.headers["x-toptal-analytics-origin"]).toBe("mobile");
   });
 
   it("propagates the response status and parses a JSON body", async () => {
@@ -215,7 +227,7 @@ describe("impersonatedTransport", () => {
     expect(captured?.endpoint).toBe("https://scheduler.toptal.com/api/graphql");
   });
 
-  it("Cf403Error message includes the verbatim cf_clearance refresh instructions", async () => {
+  it("Cf403Error message asks the user to file an issue (no manual cookie-refresh walkthrough)", async () => {
     mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
 
     let captured: Cf403Error | undefined;
@@ -225,41 +237,14 @@ describe("impersonatedTransport", () => {
       captured = err as Cf403Error;
     }
 
-    expect(captured?.message).toContain("`cf_clearance` cookie may have expired (Cloudflare 403). To refresh:");
-    expect(captured?.message).toContain("1. Open https://talent.toptal.com/ in Chrome.");
-    expect(captured?.message).toContain("2. Pass any bot-check (CAPTCHA / Turnstile) if shown.");
-    expect(captured?.message).toContain("3. From DevTools → Application → Cookies, copy the `cf_clearance` value.");
-    expect(captured?.message).toContain(
-      "4. Update your cookie jar with the new value (manually edit\n     ~/.ttctl/session.cookies, OR rerun `ttctl auth signin`).",
-    );
-  });
-
-  it("Cf403Error message swaps the refresh URL to scheduler.toptal.com for the scheduler surface", async () => {
-    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
-
-    let captured: Cf403Error | undefined;
-    try {
-      await impersonatedTransport({ surface: "scheduler", body: { operationName: "X" } });
-    } catch (err) {
-      captured = err as Cf403Error;
-    }
-
-    expect(captured?.message).toContain("1. Open https://scheduler.toptal.com/ in Chrome.");
-    expect(captured?.message).not.toContain("Open https://talent.toptal.com/ in Chrome.");
-  });
-
-  it("Cf403Error names the offending surface and endpoint in the message", async () => {
-    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 403, body: "<html>Cloudflare</html>" }) as never);
-
-    let captured: Cf403Error | undefined;
-    try {
-      await impersonatedTransport({ surface: "talent-profile", body: { operationName: "X" } });
-    } catch (err) {
-      captured = err as Cf403Error;
-    }
-
-    expect(captured?.message).toContain('Cloudflare returned 403 for surface "talent-profile"');
+    expect(captured?.message).toContain('Cloudflare returned HTTP 403 from surface "talent-profile"');
     expect(captured?.message).toContain("https://www.toptal.com/api/talent_profile/graphql");
+    expect(captured?.message).toContain("Chrome TLS impersonation alone passes Cloudflare");
+    expect(captured?.message).toContain("https://github.com/alexey-pelykh/ttctl/issues");
+    // Belt-and-suspenders — the old cookie-refresh walkthrough must NOT be present
+    expect(captured?.message).not.toContain("cf_clearance");
+    expect(captured?.message).not.toContain("DevTools");
+    expect(captured?.message).not.toContain("session.cookies");
   });
 
   it("does not throw Cf403Error for non-403 status codes from impersonated surfaces", async () => {
@@ -299,14 +284,11 @@ describe("stockTransport", () => {
     mockedUndici.mockReset();
   });
 
-  it("preserves multi-valued Set-Cookie headers as an array (not joined on comma)", async () => {
+  it("POSTs to the mobile-gateway endpoint with the configured headers", async () => {
     mockedUndici.mockResolvedValueOnce(
       fakeUndici({
         status: 200,
-        headers: {
-          "set-cookie": ["_toptal_session_id=abc; Expires=Sun, 06 Nov 2099 08:49:37 GMT; Path=/", "csrf=xyz; Path=/"],
-          "content-type": "application/json",
-        },
+        headers: { "content-type": "application/json" },
         body: '{"data":null}',
       }) as never,
     );
@@ -316,19 +298,62 @@ describe("stockTransport", () => {
       body: { operationName: "X" },
     });
 
-    expect(result.setCookies).toEqual([
-      "_toptal_session_id=abc; Expires=Sun, 06 Nov 2099 08:49:37 GMT; Path=/",
-      "csrf=xyz; Path=/",
-    ]);
-    expect(result.headers["set-cookie"]).toBeUndefined();
+    expect(result.status).toBe(200);
     expect(result.headers["content-type"]).toBe("application/json");
+    expect(mockedUndici).toHaveBeenCalledWith(
+      "https://www.toptal.com/gateway/graphql/talent/graphql",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ operationName: "X" }),
+      }),
+    );
   });
 
-  it("normalizes a single-string Set-Cookie header into a one-element array", async () => {
+  it("forwards the supplied authToken as Authorization: Token token=...", async () => {
+    mockedUndici.mockResolvedValueOnce(fakeUndici({ status: 200, headers: {}, body: "{}" }) as never);
+
+    await stockTransport({
+      surface: "mobile-gateway",
+      body: { operationName: "X" },
+      authToken: "tok-xyz",
+    });
+
+    const init = mockedUndici.mock.calls[0]?.[1] as { headers: Record<string, string> };
+    expect(init.headers["authorization"]).toBe("Token token=tok-xyz");
+  });
+
+  it("omits the authorization header when no authToken is supplied", async () => {
+    mockedUndici.mockResolvedValueOnce(fakeUndici({ status: 200, headers: {}, body: "{}" }) as never);
+
+    await stockTransport({
+      surface: "mobile-gateway",
+      body: { operationName: "X" },
+    });
+
+    const init = mockedUndici.mock.calls[0]?.[1] as { headers: Record<string, string> };
+    expect(init.headers).not.toHaveProperty("authorization");
+  });
+
+  it("includes the x-toptal-analytics-origin: mobile fingerprint header by default", async () => {
+    mockedUndici.mockResolvedValueOnce(fakeUndici({ status: 200, headers: {}, body: "{}" }) as never);
+
+    await stockTransport({
+      surface: "mobile-gateway",
+      body: { operationName: "X" },
+    });
+
+    const init = mockedUndici.mock.calls[0]?.[1] as { headers: Record<string, string> };
+    expect(init.headers["x-toptal-analytics-origin"]).toBe("mobile");
+  });
+
+  it("flattens multi-valued response headers into a comma-joined string", async () => {
     mockedUndici.mockResolvedValueOnce(
       fakeUndici({
         status: 200,
-        headers: { "set-cookie": "_toptal_session_id=abc; Path=/" },
+        headers: {
+          "x-multi": ["a", "b"],
+          "content-type": "application/json",
+        },
         body: "{}",
       }) as never,
     );
@@ -338,12 +363,17 @@ describe("stockTransport", () => {
       body: { operationName: "X" },
     });
 
-    expect(result.setCookies).toEqual(["_toptal_session_id=abc; Path=/"]);
+    expect(result.headers["x-multi"]).toBe("a, b");
+    expect(result.headers["content-type"]).toBe("application/json");
   });
 
-  it("omits setCookies when no Set-Cookie header is present (exactOptionalPropertyTypes)", async () => {
+  it("falls back to raw text when the body is not JSON", async () => {
     mockedUndici.mockResolvedValueOnce(
-      fakeUndici({ status: 200, headers: { "content-type": "application/json" }, body: "{}" }) as never,
+      fakeUndici({
+        status: 502,
+        headers: { "content-type": "text/html" },
+        body: "<html>bad gateway</html>",
+      }) as never,
     );
 
     const result = await stockTransport({
@@ -351,6 +381,7 @@ describe("stockTransport", () => {
       body: { operationName: "X" },
     });
 
-    expect("setCookies" in result).toBe(false);
+    expect(result.status).toBe(502);
+    expect(result.body).toBe("<html>bad gateway</html>");
   });
 });

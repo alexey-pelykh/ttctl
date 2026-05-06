@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import type { CookieJar } from "tough-cookie";
-
 import type { AuthValue } from "./config.js";
 import { resolveOnePasswordReference } from "./onepassword.js";
 import { stockTransport } from "./transport.js";
 import type { TransportResponse } from "./transport.js";
-import { SURFACE_ENDPOINTS } from "./types.js";
 import type { Credentials } from "./types.js";
 
 /**
@@ -87,28 +84,38 @@ export function resolveCredentials(auth: AuthValue): Credentials {
 
 /**
  * Sign in to Toptal Talent via `EmailPasswordSignIn` GraphQL mutation in
- * persisted-query mode against the mobile gateway, then verify the resulting
- * session by issuing a minimal `Viewer` query and checking `viewerRole.email`
- * matches the supplied credentials.
+ * persisted-query mode against the mobile gateway and capture the session
+ * token from the response.
  *
- * Captured `Set-Cookie` headers (including `_toptal_session_id`) are written
- * to the supplied `jar`. The jar is the only out-band mutation — `signIn`
- * returns `void` on success.
+ * Returns the captured token. The CLI persists it to disk via
+ * `saveAuthToken` so subsequent invocations can authenticate via
+ * `Authorization: Token token=<X>` without re-signing-in.
  *
- * Cookie persistence to disk is not handled here (see the cookie-jar
- * persistence work item).
+ * The next authenticated call (e.g. `auth status`) is the de-facto session
+ * verifier — we do NOT issue a redundant Viewer probe inside `signIn` itself.
+ *
+ * See `research/docs/decisions/ADR-005-token-auth.md` for the cross-surface
+ * auth model and `research/notes/02-auth-and-clients.md` for the empirical
+ * evidence behind it.
+ *
+ * Throws `SignInError("UNKNOWN", ...)` if the gateway reports `success: true`
+ * but does not return a token — that response shape is malformed and the
+ * caller has nothing useful to persist.
  */
-export async function signIn(credentials: Credentials, jar: CookieJar): Promise<void> {
-  const signInPayload = await postSignIn(credentials);
+export async function signIn(credentials: Credentials): Promise<{ token: string }> {
+  const signInResponse = await postSignIn(credentials);
 
-  await captureCookies(signInPayload, jar);
-
-  const payload = extractPayload(signInPayload.body);
+  const payload = extractPayload(signInResponse.body);
   if (!payload?.success) {
     throw mapSignInError(payload);
   }
 
-  await verifyViewer(credentials, jar);
+  const token = payload.token;
+  if (typeof token !== "string" || token === "") {
+    throw new SignInError("UNKNOWN", "Sign-in succeeded but no token was returned");
+  }
+
+  return { token };
 }
 
 async function postSignIn(credentials: Credentials): Promise<TransportResponse> {
@@ -125,19 +132,6 @@ async function postSignIn(credentials: Credentials): Promise<TransportResponse> 
     });
   } catch (err) {
     throw new SignInError("NETWORK_ERROR", `Sign-in request failed: ${(err as Error).message}`, { cause: err });
-  }
-}
-
-async function captureCookies(res: TransportResponse, jar: CookieJar): Promise<void> {
-  if (!res.setCookies?.length) return;
-  const url = SURFACE_ENDPOINTS["mobile-gateway"];
-  for (const raw of res.setCookies) {
-    try {
-      await jar.setCookie(raw, url);
-    } catch {
-      // Skip malformed cookies; the gateway occasionally emits exotic ones
-      // (e.g. invalid Domain attributes) that are not load-bearing.
-    }
   }
 }
 
@@ -166,43 +160,13 @@ function mapSignInError(payload: SignInPayload | null): SignInError {
   return new SignInError("UNKNOWN", message);
 }
 
-async function verifyViewer(credentials: Credentials, jar: CookieJar): Promise<void> {
-  const cookieHeader = await jar.getCookieString(SURFACE_ENDPOINTS["mobile-gateway"]);
-  if (!cookieHeader) {
-    throw new SignInError("UNKNOWN", "Sign-in succeeded but no session cookies were captured");
-  }
-
-  let res: TransportResponse;
-  try {
-    res = await stockTransport({
-      surface: "mobile-gateway",
-      cookieHeader,
-      body: {
-        operationName: "ViewerVerify",
-        query: VIEWER_VERIFY_QUERY,
-      },
-    });
-  } catch (err) {
-    throw new SignInError("NETWORK_ERROR", `Viewer verification failed: ${(err as Error).message}`, { cause: err });
-  }
-
-  const body = res.body as ViewerResponse | null;
-  const email = body?.data?.viewer?.viewerRole?.email;
-  if (!email) {
-    throw new SignInError("UNKNOWN", "Viewer verification returned no email — session may be invalid");
-  }
-  if (email.toLowerCase() !== credentials.email.toLowerCase()) {
-    throw new SignInError("UNKNOWN", `Viewer email '${email}' does not match credentials email '${credentials.email}'`);
-  }
-}
-
 /**
  * Result of a session-validity probe. Three terminal shapes:
  *
  *   - `valid` — `Viewer` query returned 2xx with an email; the session is
  *     active and bound to that account.
- *   - `invalid` — the cookie jar is missing/empty, OR the gateway responded
- *     with a non-2xx status, OR the response payload lacks `viewer.viewerRole.email`.
+ *   - `invalid` — no token persisted, OR the gateway responded with a
+ *     non-2xx status, OR the response payload lacks `viewer.viewerRole.email`.
  *     `reason` carries a stable machine-readable code so the CLI can pick the
  *     right user-facing message without re-classifying the failure.
  *   - `unreachable` — the transport itself rejected (DNS failure, connect
@@ -216,26 +180,31 @@ export type AuthStatusResult =
   | { status: "unreachable"; reason: string };
 
 export type AuthInvalidReason =
-  | "no-session" // jar empty / no cookies for the gateway domain
+  | "no-session" // no token persisted (first run, or post-signout)
   | "session-expired" // gateway returned 401/403
   | "no-email-in-response" // gateway returned 2xx but viewer.viewerRole.email was absent/null
   | "unexpected-status"; // gateway returned some other non-2xx code (e.g. 5xx)
 
 /**
- * Probe whether the persisted session in `jar` is currently valid.
+ * Probe whether the persisted session token is currently valid.
  *
- * Issues a minimal full-doc `Viewer` query against the mobile gateway (the
- * cataloged persisted `Viewer` query in `research/graphql/operations/Viewer.graphql`
+ * Issues a minimal full-doc `Viewer` query against the mobile gateway,
+ * authenticated with `Authorization: Token token=<X>`. The cataloged
+ * persisted `Viewer` query in `research/graphql/operations/Viewer.graphql`
  * does not return `viewerRole.email`, so we can't use APQ here — see
- * `VIEWER_VERIFY_QUERY` doc).
+ * `VIEWER_VERIFY_QUERY` doc.
+ *
+ * Pass `null` (or an empty string) when no token has been persisted yet;
+ * the function short-circuits to `invalid/no-session` without touching the
+ * network. CLI consumers should pass the result of `loadAuthToken(...)`
+ * directly.
  *
  * Never throws on auth or network failure; classifies into the three
  * `AuthStatusResult` shapes so CLI consumers can map cleanly to exit codes
  * and output messages without re-parsing exceptions.
  */
-export async function getAuthStatus(jar: CookieJar): Promise<AuthStatusResult> {
-  const cookieHeader = await jar.getCookieString(SURFACE_ENDPOINTS["mobile-gateway"]);
-  if (!cookieHeader) {
+export async function getAuthStatus(token: string | null): Promise<AuthStatusResult> {
+  if (token === null || token === "") {
     return { status: "invalid", reason: "no-session" };
   }
 
@@ -243,7 +212,7 @@ export async function getAuthStatus(jar: CookieJar): Promise<AuthStatusResult> {
   try {
     res = await stockTransport({
       surface: "mobile-gateway",
-      cookieHeader,
+      authToken: token,
       body: {
         operationName: "ViewerVerify",
         query: VIEWER_VERIFY_QUERY,

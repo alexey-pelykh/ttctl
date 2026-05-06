@@ -41,8 +41,8 @@ const BANNER_LINES: readonly string[] = [
   "E2E will sign in to Toptal as the configured account.",
   "Any concurrent browser session may be invalidated.",
   "",
-  "This run uses an isolated cookie jar at .tmp/e2e/session.cookies.",
-  "Your working session at ~/.ttctl/session.cookies will NOT be modified.",
+  "This run uses an isolated sandbox at .tmp/e2e/ — fixture .ttctl.yaml + token.",
+  "Your working session at ~/.ttctl/auth.token will NOT be modified.",
   "================================================================================",
   "",
 ];

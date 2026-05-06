@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { discoverCookieJarPath, getAuthStatus, loadCookieJar } from "@ttctl/core";
+import { ConfigError, getAuthStatus, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
 import type { AuthStatusResult } from "@ttctl/core";
 
 /**
@@ -71,10 +71,17 @@ export function formatAuthStatusOutput(result: AuthStatusResult, output: AuthSta
 
 /**
  * Run the `auth status` command end-to-end:
- *   1. Discover and load the on-disk cookie jar (empty if file missing).
- *   2. Probe the gateway for session validity via `getAuthStatus`.
- *   3. Emit the result in the requested format.
- *   4. Exit the process with the corresponding code.
+ *   1. Load `.ttctl.yaml` to resolve the auth-token path (honors the
+ *      optional `auth-token-path` field; falls back to platform defaults).
+ *      A missing/malformed config collapses to `invalid/no-session` — the
+ *      user-facing "Run `ttctl auth signin`" hint is still the right next
+ *      step, and surfacing the raw `ConfigError` would be more confusing
+ *      than helpful in the read-only status path.
+ *   2. Load the on-disk auth token (`null` if file missing).
+ *   3. Probe the gateway for session validity via `getAuthStatus(token)`.
+ *      No token → invalid/no-session, short-circuited (no network call).
+ *   4. Emit the result in the requested format.
+ *   5. Exit the process with the corresponding code.
  *
  * `process.exit` is the terminal step: action handlers in commander otherwise
  * resolve to `undefined` and the process keeps the libuv event loop spinning
@@ -82,9 +89,21 @@ export function formatAuthStatusOutput(result: AuthStatusResult, output: AuthSta
  * exit-code contract this command needs.
  */
 export async function runAuthStatus(options: AuthStatusOptions): Promise<void> {
-  const jarPath = discoverCookieJarPath();
-  const jar = await loadCookieJar(jarPath);
-  const result = await getAuthStatus(jar);
+  let tokenPath: string;
+  try {
+    const { config, path: configPath } = resolveConfig();
+    tokenPath = resolveAuthTokenPath({ config, configPath });
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      const noSession: AuthStatusResult = { status: "invalid", reason: "no-session" };
+      process.stdout.write(formatAuthStatusOutput(noSession, options.output) + "\n");
+      process.exit(exitCodeForAuthStatus(noSession));
+      return;
+    }
+    throw err;
+  }
+  const token = await loadAuthToken(tokenPath);
+  const result = await getAuthStatus(token);
   process.stdout.write(formatAuthStatusOutput(result, options.output) + "\n");
   process.exit(exitCodeForAuthStatus(result));
 }

@@ -25,7 +25,15 @@ export { LockfileError, acquireLock, isPidAlive, releaseLock } from "./lockfile.
 export type { LockState } from "./lockfile.js";
 export { getMcpClient } from "./mcp-client.js";
 export type { McpClient, McpClientOptions } from "./mcp-client.js";
-export { findRepoRoot, resolveIsolatedJarPath, resolveLockfilePath, resolveRestoreDir } from "./paths.js";
+export {
+  findRepoRoot,
+  resolveIsolatedAuthTokenPath,
+  resolveLockfilePath,
+  resolveRestoreDir,
+  resolveSandboxConfigPath,
+  resolveSandboxDir,
+  writeSandboxConfig,
+} from "./paths.js";
 export { formatRedacted, redact } from "./redaction.js";
 export { withFreshSession } from "./session.js";
 export type {

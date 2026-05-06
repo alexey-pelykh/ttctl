@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
-import { findRepoRoot, resolveIsolatedJarPath, resolveLockfilePath, resolveRestoreDir } from "../paths.js";
+import {
+  findRepoRoot,
+  resolveIsolatedAuthTokenPath,
+  resolveLockfilePath,
+  resolveRestoreDir,
+  resolveSandboxConfigPath,
+  resolveSandboxDir,
+  writeSandboxConfig,
+} from "../paths.js";
 
 let workDir: string;
 
@@ -59,8 +68,16 @@ describe("findRepoRoot", () => {
 });
 
 describe("path helpers", () => {
-  it("resolveIsolatedJarPath joins .tmp/e2e/session.cookies under the given root", () => {
-    expect(resolveIsolatedJarPath("/repo")).toBe(join("/repo", ".tmp", "e2e", "session.cookies"));
+  it("resolveSandboxDir joins .tmp/e2e under the given root", () => {
+    expect(resolveSandboxDir("/repo")).toBe(join("/repo", ".tmp", "e2e"));
+  });
+
+  it("resolveSandboxConfigPath joins .tmp/e2e/.ttctl.yaml under the given root", () => {
+    expect(resolveSandboxConfigPath("/repo")).toBe(join("/repo", ".tmp", "e2e", ".ttctl.yaml"));
+  });
+
+  it("resolveIsolatedAuthTokenPath joins .tmp/e2e/auth.token under the given root", () => {
+    expect(resolveIsolatedAuthTokenPath("/repo")).toBe(join("/repo", ".tmp", "e2e", "auth.token"));
   });
 
   it("resolveLockfilePath joins .tmp/e2e/.lock under the given root", () => {
@@ -71,13 +88,84 @@ describe("path helpers", () => {
     expect(resolveRestoreDir("/repo")).toBe(join("/repo", ".tmp", "e2e-restore"));
   });
 
-  it("paths are siblings (lock + jar live in same dir, restore is sibling)", () => {
+  it("sandbox children all live under resolveSandboxDir", () => {
     const root = "/r";
-    const jar = resolveIsolatedJarPath(root);
-    const lock = resolveLockfilePath(root);
-    const restore = resolveRestoreDir(root);
-    expect(jar.startsWith(join(root, ".tmp", "e2e"))).toBe(true);
-    expect(lock.startsWith(join(root, ".tmp", "e2e"))).toBe(true);
-    expect(restore).toBe(join(root, ".tmp", "e2e-restore"));
+    const sandbox = resolveSandboxDir(root);
+    expect(resolveSandboxConfigPath(root).startsWith(sandbox)).toBe(true);
+    expect(resolveIsolatedAuthTokenPath(root).startsWith(sandbox)).toBe(true);
+    expect(resolveLockfilePath(root).startsWith(sandbox)).toBe(true);
+    // restore-dir is intentionally a sibling of the sandbox, not a child —
+    // breadcrumbs survive `rm -rf .tmp/e2e/` cleanups.
+    expect(resolveRestoreDir(root)).toBe(join(root, ".tmp", "e2e-restore"));
+  });
+});
+
+describe("writeSandboxConfig", () => {
+  it("creates the sandbox dir and writes a fixture .ttctl.yaml mirroring the source `auth` field", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+
+    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
+
+    expect(fixturePath).toBe(resolveSandboxConfigPath(workDir));
+    const written = await readFile(fixturePath, "utf8");
+    const parsed = parseYaml(written) as Record<string, unknown>;
+    expect(parsed["auth"]).toBe("op://Personal/ttctl");
+    expect(parsed["auth-token-path"]).toBe("./auth.token");
+  });
+
+  it("forces auth-token-path to ./auth.token even if the source config sets a different value", async () => {
+    // The harness must own auth-token-path exactly, regardless of what the
+    // user has configured — otherwise a user with `auth-token-path:
+    // /custom/loc/auth.token` would have E2E write into that custom
+    // location, breaking the isolation contract.
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(
+      sourceConfigPath,
+      ['auth: "op://Personal/ttctl"', 'auth-token-path: "/custom/loc/auth.token"', ""].join("\n"),
+      "utf8",
+    );
+
+    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
+
+    const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
+    expect(parsed["auth-token-path"]).toBe("./auth.token");
+  });
+
+  it("mirrors the literal-credentials form (object auth)", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(
+      sourceConfigPath,
+      ["auth:", '  email: "user@example.com"', '  password: "hunter2"', ""].join("\n"),
+      "utf8",
+    );
+
+    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
+
+    const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
+    const auth = parsed["auth"] as Record<string, unknown>;
+    expect(auth["email"]).toBe("user@example.com");
+    expect(auth["password"]).toBe("hunter2");
+    expect(parsed["auth-token-path"]).toBe("./auth.token");
+  });
+
+  it("rejects a malformed source config (validation runs against ConfigSchema)", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    // No `auth` field — ConfigSchema rejects this.
+    await writeFile(sourceConfigPath, "not-auth: nope\n", "utf8");
+
+    await expect(writeSandboxConfig(workDir, sourceConfigPath)).rejects.toThrow();
+  });
+
+  it("creates the sandbox directory if it does not already exist", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+    // workDir is empty — no .tmp, no .tmp/e2e.
+
+    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
+
+    // Reading the fixture proves the dir was created (writeFile would
+    // otherwise reject with ENOENT for the missing parent).
+    await expect(readFile(fixturePath, "utf8")).resolves.toContain("auth-token-path");
   });
 });

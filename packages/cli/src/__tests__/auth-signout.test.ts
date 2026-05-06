@@ -7,11 +7,27 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@ttctl/core", () => ({
-  discoverCookieJarPath: vi.fn(),
-}));
+vi.mock("@ttctl/core", () => {
+  // Local ConfigError so the `instanceof` check in signout.ts resolves
+  // against THIS constructor (vi.mock replaces the imports). Tracks the real
+  // class shape from `packages/core/src/config.ts`.
+  class ConfigError extends Error {
+    override readonly name = "ConfigError";
+    constructor(
+      message: string,
+      public readonly path?: string,
+    ) {
+      super(message);
+    }
+  }
+  return {
+    ConfigError,
+    resolveAuthTokenPath: vi.fn(),
+    resolveConfig: vi.fn(),
+  };
+});
 
-import { discoverCookieJarPath } from "@ttctl/core";
+import { ConfigError, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
 
 import {
   exitCodeForSignOutResult,
@@ -20,7 +36,8 @@ import {
   runAuthSignOut,
 } from "../commands/auth/signout.js";
 
-const mockedDiscoverPath = vi.mocked(discoverCookieJarPath);
+const mockedResolveTokenPath = vi.mocked(resolveAuthTokenPath);
+const mockedResolveConfig = vi.mocked(resolveConfig);
 
 class ExitInvoked extends Error {
   constructor(public readonly code: number) {
@@ -59,7 +76,7 @@ describe("formatSignOutTable", () => {
     expect(formatSignOutTable({ status: "signed-out", removed: true, path: "/p" })).toBe("Signed out.");
   });
 
-  it("renders signed-out (removed=false, no jar present) ALSO as `Signed out.` (idempotent UX)", () => {
+  it("renders signed-out (removed=false, no token present) ALSO as `Signed out.` (idempotent UX)", () => {
     expect(formatSignOutTable({ status: "signed-out", removed: false, path: "/p" })).toBe("Signed out.");
   });
 
@@ -105,13 +122,18 @@ describe("exitCodeForSignOutResult", () => {
 
 describe("runAuthSignOut", () => {
   let tempDir: string;
-  let jarPath: string;
+  let tokenPath: string;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "ttctl-signout-test-"));
-    jarPath = join(tempDir, "session.cookies");
-    mockedDiscoverPath.mockReset();
-    mockedDiscoverPath.mockReturnValue(jarPath);
+    tokenPath = join(tempDir, "auth.token");
+    mockedResolveTokenPath.mockReset();
+    mockedResolveTokenPath.mockReturnValue(tokenPath);
+    mockedResolveConfig.mockReset();
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: "op://Personal/ttctl" },
+      path: join(tempDir, ".ttctl.yaml"),
+    });
   });
 
   afterEach(() => {
@@ -131,20 +153,20 @@ describe("runAuthSignOut", () => {
     return { stdout: streams.stdout, stderr: streams.stderr, exitCode: exit.exit.code };
   }
 
-  it("removes an existing cookie jar and exits 0", async () => {
-    writeFileSync(jarPath, "# Netscape HTTP Cookie File\n");
-    expect(existsSync(jarPath)).toBe(true);
+  it("removes an existing auth token and exits 0", async () => {
+    writeFileSync(tokenPath, "user_abc_123\n");
+    expect(existsSync(tokenPath)).toBe(true);
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toBe("Signed out.\n");
     expect(stderr.join("")).toBe("");
-    expect(existsSync(jarPath)).toBe(false);
+    expect(existsSync(tokenPath)).toBe(false);
   });
 
-  it("is idempotent — succeeds with exit 0 when no cookie jar exists (ENOENT swallowed)", async () => {
-    expect(existsSync(jarPath)).toBe(false);
+  it("is idempotent — succeeds with exit 0 when no auth token exists (ENOENT swallowed)", async () => {
+    expect(existsSync(tokenPath)).toBe(false);
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
@@ -154,18 +176,18 @@ describe("runAuthSignOut", () => {
   });
 
   it("is idempotent across consecutive invocations", async () => {
-    writeFileSync(jarPath, "# Netscape HTTP Cookie File\n");
+    writeFileSync(tokenPath, "user_abc_123\n");
 
     const first = await invoke("table");
     const second = await invoke("table");
 
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);
-    expect(existsSync(jarPath)).toBe(false);
+    expect(existsSync(tokenPath)).toBe(false);
   });
 
-  it("emits JSON success with removed=true when jar existed", async () => {
-    writeFileSync(jarPath, "# Netscape HTTP Cookie File\n");
+  it("emits JSON success with removed=true when token existed", async () => {
+    writeFileSync(tokenPath, "user_abc_123\n");
 
     const { stdout, exitCode } = await invoke("json");
 
@@ -173,33 +195,44 @@ describe("runAuthSignOut", () => {
     expect(JSON.parse(stdout.join("").trim())).toEqual({
       status: "signed-out",
       removed: true,
-      path: jarPath,
+      path: tokenPath,
     });
   });
 
-  it("emits JSON success with removed=false when jar was already absent (idempotent no-op)", async () => {
+  it("emits JSON success with removed=false when token was already absent (idempotent no-op)", async () => {
     const { stdout, exitCode } = await invoke("json");
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout.join("").trim())).toEqual({
       status: "signed-out",
       removed: false,
-      path: jarPath,
+      path: tokenPath,
     });
   });
 
   it("non-ENOENT errors propagate as error result with exit 1", async () => {
-    // Place a DIRECTORY at the jar path. `unlink` on a directory yields
+    // Place a DIRECTORY at the token path. `unlink` on a directory yields
     // EISDIR (Linux), EPERM (macOS, Windows) — neither is ENOENT, so the
-    // result must classify as `error`. The earlier "parent-is-file" trick
-    // produced ENOTDIR on POSIX but ENOENT on Windows (path-resolution
-    // semantics differ), so it's not portable.
-    mkdirSync(jarPath);
+    // result must classify as `error`.
+    mkdirSync(tokenPath);
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
     expect(stderr.join("")).toContain("Sign-out failed:");
+  });
+
+  it("ConfigError → exit 1 with the config error message on stderr (no resolveAuthTokenPath call)", async () => {
+    mockedResolveConfig.mockImplementation(() => {
+      throw new ConfigError("No .ttctl.yaml found in CWD or $XDG_CONFIG_HOME/ttctl/config.yaml. See README for setup.");
+    });
+
+    const { stdout, stderr, exitCode } = await invoke("table");
+
+    expect(exitCode).toBe(1);
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toContain("No .ttctl.yaml found");
+    expect(mockedResolveTokenPath).not.toHaveBeenCalled();
   });
 });

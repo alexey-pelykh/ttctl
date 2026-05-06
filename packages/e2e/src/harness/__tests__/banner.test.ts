@@ -33,8 +33,8 @@ describe("printPreflightBanner", () => {
     expect(text).toContain("TTCtl E2E HARNESS");
     expect(text).toContain("E2E will sign in to Toptal");
     expect(text).toContain("Any concurrent browser session may be invalidated");
-    expect(text).toContain(".tmp/e2e/session.cookies");
-    expect(text).toContain("~/.ttctl/session.cookies");
+    expect(text).toContain(".tmp/e2e/");
+    expect(text).toContain("~/.ttctl/auth.token");
     // Multi-line — contains at least 5 newlines (banner is ~10 lines)
     expect(text.split("\n").length).toBeGreaterThanOrEqual(5);
   });
