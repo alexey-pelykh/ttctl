@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Oleksii PELYKH
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(),
+}));
+
+import { execFileSync } from "node:child_process";
+
+import { OnePasswordError, resolveOnePasswordReference } from "../onepassword.js";
+
+const mockedExec = vi.mocked(execFileSync);
+
+interface OpField {
+  id?: string;
+  label?: string;
+  purpose?: string;
+  value?: string;
+}
+
+function reply(fields: OpField[]): void {
+  mockedExec.mockReturnValueOnce(JSON.stringify(fields));
+}
+
+function captureError(fn: () => unknown): Error {
+  try {
+    fn();
+  } catch (err) {
+    if (err instanceof Error) return err;
+    throw new Error(`Expected an Error, got: ${String(err)}`);
+  }
+  throw new Error("Expected fn to throw, but it returned normally");
+}
+
+describe("resolveOnePasswordReference", () => {
+  beforeEach(() => {
+    mockedExec.mockReset();
+  });
+
+  describe("reference parsing", () => {
+    it("rejects references that do not match op://VAULT/ITEM", () => {
+      expect(() => resolveOnePasswordReference("not-a-ref")).toThrow(OnePasswordError);
+      expect(() => resolveOnePasswordReference("op://only-vault")).toThrow(OnePasswordError);
+      expect(() => resolveOnePasswordReference("op://vault/item/extra")).toThrow(OnePasswordError);
+      expect(mockedExec).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("field matching by purpose (canonical LOGIN-category identifier)", () => {
+    // Fixture A — clean-label item: label happens to equal "username"/"password".
+    // Confirms backward compatibility: items with canonical labels still resolve.
+    it("resolves a clean-label LOGIN item (label=username, purpose=USERNAME)", () => {
+      reply([
+        { id: "username", label: "username", purpose: "USERNAME", value: "user@example.com" },
+        { id: "password", label: "password", purpose: "PASSWORD", value: "hunter2" },
+      ]);
+
+      const creds = resolveOnePasswordReference("op://Personal/ttctl");
+
+      expect(creds).toEqual({ email: "user@example.com", password: "hunter2" });
+    });
+
+    // Fixture B — form-scraped item: label is the HTML form input name (e.g. user[email]).
+    // This is the bug from #53. Currently fails; must pass after fix.
+    it("resolves a browser-autosaved item (label=user[email], purpose=USERNAME)", () => {
+      reply([
+        { id: "username", label: "user[email]", purpose: "USERNAME", value: "user@example.com" },
+        { id: "password", label: "user[password]", purpose: "PASSWORD", value: "hunter2" },
+      ]);
+
+      const creds = resolveOnePasswordReference("op://Personal/ttctl");
+
+      expect(creds).toEqual({ email: "user@example.com", password: "hunter2" });
+    });
+
+    // Fixture C — fields lack purpose: not a LOGIN-category item (e.g. Server, custom).
+    // Resolution fails with a message that points the user at the LOGIN category.
+    it("throws OnePasswordError when fields have no USERNAME/PASSWORD purpose (non-LOGIN item)", () => {
+      reply([
+        { id: "host", label: "host", value: "example.com" },
+        { id: "port", label: "port", value: "5432" },
+      ]);
+
+      const err = captureError(() => resolveOnePasswordReference("op://Personal/db"));
+      expect(err).toBeInstanceOf(OnePasswordError);
+      expect(err.message).toMatch(/USERNAME and PASSWORD purposes/);
+      expect(err.message).toMatch(/LOGIN/);
+    });
+
+    // Fixture D — only USERNAME present (no PASSWORD field): partial item.
+    it("throws OnePasswordError when PASSWORD purpose is missing", () => {
+      reply([{ id: "username", label: "user[email]", purpose: "USERNAME", value: "user@example.com" }]);
+
+      const err = captureError(() => resolveOnePasswordReference("op://Personal/incomplete"));
+      expect(err).toBeInstanceOf(OnePasswordError);
+      expect(err.message).toMatch(/USERNAME and PASSWORD purposes/);
+    });
+
+    it("throws OnePasswordError when USERNAME purpose is missing", () => {
+      reply([{ id: "password", label: "user[password]", purpose: "PASSWORD", value: "hunter2" }]);
+
+      const err = captureError(() => resolveOnePasswordReference("op://Personal/incomplete"));
+      expect(err).toBeInstanceOf(OnePasswordError);
+      expect(err.message).toMatch(/USERNAME and PASSWORD purposes/);
+    });
+  });
+
+  describe("op CLI invocation", () => {
+    it("shells out to `op item get` with vault and item parsed from the reference", () => {
+      reply([
+        { id: "username", label: "username", purpose: "USERNAME", value: "u" },
+        { id: "password", label: "password", purpose: "PASSWORD", value: "p" },
+      ]);
+
+      resolveOnePasswordReference("op://MyVault/MyItem");
+
+      expect(mockedExec).toHaveBeenCalledTimes(1);
+      const [cmd, args] = mockedExec.mock.calls[0] ?? [];
+      expect(cmd).toBe("op");
+      expect(args).toContain("item");
+      expect(args).toContain("get");
+      expect(args).toContain("MyItem");
+      expect(args).toContain("--vault");
+      expect(args).toContain("MyVault");
+      expect(args).toContain("--format");
+      expect(args).toContain("json");
+    });
+
+    it("translates ENOENT (op CLI not installed) into a friendly OnePasswordError", () => {
+      const enoent = new Error("spawn op ENOENT") as NodeJS.ErrnoException;
+      enoent.code = "ENOENT";
+      mockedExec.mockImplementationOnce(() => {
+        throw enoent;
+      });
+
+      const err = captureError(() => resolveOnePasswordReference("op://Personal/ttctl"));
+      expect(err).toBeInstanceOf(OnePasswordError);
+      expect(err.message).toMatch(/1Password CLI .* not found/);
+    });
+
+    it("wraps generic op exec failures (not ENOENT) into OnePasswordError", () => {
+      const failure = new Error("authentication required") as NodeJS.ErrnoException;
+      mockedExec.mockImplementationOnce(() => {
+        throw failure;
+      });
+
+      const err = captureError(() => resolveOnePasswordReference("op://Personal/ttctl"));
+      expect(err).toBeInstanceOf(OnePasswordError);
+      expect(err.message).toMatch(/op item get failed: authentication required/);
+    });
+
+    it("throws on non-JSON output from op", () => {
+      mockedExec.mockReturnValueOnce("not json at all");
+
+      const err = captureError(() => resolveOnePasswordReference("op://Personal/ttctl"));
+      expect(err).toBeInstanceOf(OnePasswordError);
+      expect(err.message).toMatch(/non-JSON output/);
+    });
+
+    // The reply() helper above exercises the bare-array shape on every test
+    // (it returns `JSON.stringify(fieldsArray)`); this test pins the wrapped
+    // `{fields: [...]}` shape explicitly so the normalization branch is
+    // covered against silent regression.
+    it("normalizes the wrapped {fields: [...]} JSON shape from op", () => {
+      mockedExec.mockReturnValueOnce(
+        JSON.stringify({
+          fields: [
+            { id: "username", purpose: "USERNAME", value: "u@example.com" },
+            { id: "password", purpose: "PASSWORD", value: "p" },
+          ],
+        }),
+      );
+
+      const creds = resolveOnePasswordReference("op://Personal/ttctl");
+      expect(creds).toEqual({ email: "u@example.com", password: "p" });
+    });
+  });
+});
