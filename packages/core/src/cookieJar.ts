@@ -164,6 +164,18 @@ function cookieToMozillaLine(cookie: Cookie): string {
 }
 
 /**
+ * Create a fresh, empty {@link CookieJar} backed by an in-memory store.
+ *
+ * Equivalent to `loadCookieJar()` against a non-existent path, but without
+ * the filesystem round-trip — useful when a caller needs a known-empty jar
+ * (e.g. `auth signin` deliberately starts from zero so a stale cookie can't
+ * shadow the newly-issued session).
+ */
+export function createCookieJar(): CookieJar {
+  return new CookieJar(new MemoryCookieStore());
+}
+
+/**
  * Load a {@link CookieJar} from a persisted Mozilla-format file.
  *
  * Returns an empty jar if the file does not exist (first-run case).

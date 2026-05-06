@@ -8,7 +8,7 @@ import { join, sep } from "node:path";
 import { Cookie, CookieJar, MemoryCookieStore } from "tough-cookie";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { discoverCookieJarPath, loadCookieJar, saveCookieJar } from "../cookieJar.js";
+import { createCookieJar, discoverCookieJarPath, loadCookieJar, saveCookieJar } from "../cookieJar.js";
 
 let workDir: string;
 
@@ -123,6 +123,31 @@ describe("discoverCookieJarPath", () => {
     expect(path).toContain("AppData");
     expect(path).toContain("Roaming");
     expect(path).toContain("ttctl");
+  });
+});
+
+describe("createCookieJar", () => {
+  it("returns a fresh jar with no cookies", async () => {
+    const jar = createCookieJar();
+    const cookies = await getAllCookies(jar);
+    expect(cookies).toEqual([]);
+  });
+
+  it("returns independent jar instances on each call (no shared store)", async () => {
+    const a = createCookieJar();
+    const b = createCookieJar();
+    await a.setCookie("k=v; Path=/", "https://example.com/");
+    expect((await getAllCookies(a)).map((c) => c.key)).toEqual(["k"]);
+    expect(await getAllCookies(b)).toEqual([]);
+  });
+
+  it("returns a jar that round-trips through save → load (smoke test for store compatibility)", async () => {
+    const path = join(workDir, "fresh.cookies");
+    const jar = createCookieJar();
+    await jar.setCookie("hello=world; Path=/", "https://example.com/");
+    await saveCookieJar(path, jar);
+    const restored = await loadCookieJar(path);
+    expect((await getAllCookies(restored)).map((c) => c.key)).toEqual(["hello"]);
   });
 });
 
