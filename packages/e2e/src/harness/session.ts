@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { mkdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
 
 import { resolveConfig, resolveCredentials, saveAuthToken, signIn } from "@ttctl/core";
 import { afterAll, beforeAll } from "vitest";
@@ -138,11 +139,12 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
 
     try {
       // Find the user's source config (the one OUTSIDE the sandbox).
-      // resolveConfig() walks CWD then $XDG_CONFIG_HOME — same logic the
-      // CLI uses in non-E2E mode. Pass `repoRoot` explicitly because under
-      // vitest, `process.cwd()` is the e2e package dir (not the repo root
-      // where `.ttctl.yaml` lives).
-      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig(repoRoot);
+      // Per #92, resolveConfig now uses TTCTL_CONFIG_FILE → XDG → home
+      // (no CWD-walking). Honor TTCTL_CONFIG_FILE if set; otherwise fall
+      // back to the repo-root `.ttctl.yaml` for the maintainer's legacy
+      // workflow. The proper sandbox env-injection redesign lives in #94.
+      const sourcePath = process.env["TTCTL_CONFIG_FILE"] ?? join(repoRoot, ".ttctl.yaml");
+      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig({ path: sourcePath });
 
       // Mirror it into the sandbox with `auth-token-path: ./auth.token`.
       // Spawned CLI subprocesses with cwd=sandboxDir will discover this
