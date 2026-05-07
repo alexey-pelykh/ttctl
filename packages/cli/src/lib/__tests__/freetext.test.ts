@@ -9,12 +9,7 @@ import { Readable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  _resetStdinClaimForTesting,
-  FreeTextError,
-  resolveFreeText,
-  type FreeTextErrorCode,
-} from "../freetext.js";
+import { _resetStdinClaimForTesting, FreeTextError, resolveFreeText, type FreeTextErrorCode } from "../freetext.js";
 
 // Reset the module-level stdin-claim guard between tests so each test runs
 // against a clean slate. The guard exists to prevent two flags from racing
@@ -85,9 +80,7 @@ describe("resolveFreeText: stdin mode", () => {
     await resolveFreeText("-", { flagName: "bio", stdin: first });
 
     const second = Readable.from("second flag content");
-    await expect(
-      resolveFreeText("-", { flagName: "headline", stdin: second }),
-    ).rejects.toMatchObject({
+    await expect(resolveFreeText("-", { flagName: "headline", stdin: second })).rejects.toMatchObject({
       name: "FreeTextError",
       code: "STDIN_DOUBLE_CLAIM" satisfies FreeTextErrorCode,
     });
@@ -100,9 +93,7 @@ describe("resolveFreeText: stdin mode", () => {
     const ttyStream = new Readable({ read() {} }) as Readable & { isTTY?: boolean };
     ttyStream.isTTY = true;
 
-    await expect(
-      resolveFreeText("-", { flagName: "bio", stdin: ttyStream }),
-    ).rejects.toMatchObject({
+    await expect(resolveFreeText("-", { flagName: "bio", stdin: ttyStream })).rejects.toMatchObject({
       name: "FreeTextError",
       code: "STDIN_UNAVAILABLE" satisfies FreeTextErrorCode,
     });
@@ -127,9 +118,7 @@ describe("resolveFreeText: file mode (@path)", () => {
     const enoent = Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
     const fakeReader = vi.fn().mockRejectedValue(enoent);
 
-    await expect(
-      resolveFreeText("@missing.md", { flagName: "bio", readFile: fakeReader }),
-    ).rejects.toMatchObject({
+    await expect(resolveFreeText("@missing.md", { flagName: "bio", readFile: fakeReader })).rejects.toMatchObject({
       name: "FreeTextError",
       code: "FILE_NOT_FOUND" satisfies FreeTextErrorCode,
       message: expect.stringContaining("missing.md") as string,
@@ -140,9 +129,7 @@ describe("resolveFreeText: file mode (@path)", () => {
     const eacces = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     const fakeReader = vi.fn().mockRejectedValue(eacces);
 
-    await expect(
-      resolveFreeText("@locked.md", { flagName: "bio", readFile: fakeReader }),
-    ).rejects.toMatchObject({
+    await expect(resolveFreeText("@locked.md", { flagName: "bio", readFile: fakeReader })).rejects.toMatchObject({
       name: "FreeTextError",
       code: "FILE_READ_ERROR" satisfies FreeTextErrorCode,
     });
@@ -386,15 +373,15 @@ describe("resolveFreeText: mode-conflict detection", () => {
   });
 
   it("rejects --edit + stdin ('-')", async () => {
-    await expect(
-      resolveFreeText("-", { flagName: "bio", enableEditor: true }),
-    ).rejects.toMatchObject({ code: "MODE_CONFLICT" satisfies FreeTextErrorCode });
+    await expect(resolveFreeText("-", { flagName: "bio", enableEditor: true })).rejects.toMatchObject({
+      code: "MODE_CONFLICT" satisfies FreeTextErrorCode,
+    });
   });
 
   it("rejects --edit + file ('@path')", async () => {
-    await expect(
-      resolveFreeText("@bio.md", { flagName: "bio", enableEditor: true }),
-    ).rejects.toMatchObject({ code: "MODE_CONFLICT" satisfies FreeTextErrorCode });
+    await expect(resolveFreeText("@bio.md", { flagName: "bio", enableEditor: true })).rejects.toMatchObject({
+      code: "MODE_CONFLICT" satisfies FreeTextErrorCode,
+    });
   });
 
   it("includes the user-facing flag name in the conflict message (so users know which flag tripped)", async () => {

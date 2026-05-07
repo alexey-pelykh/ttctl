@@ -38,30 +38,17 @@ export function buildProfileBasicCommand(): Command {
   basic
     .command("update")
     .description("Update editable fields on the signed-in user's profile (currently bio + headline)")
-    .option(
-      "--bio <text>",
-      'long-form bio (inline text, "-" for stdin, or "@path" to read from file)',
-    )
-    .option(
-      "--headline <text>",
-      'short tagline (inline text, "-" for stdin, or "@path" to read from file)',
-    )
+    .option("--bio <text>", 'long-form bio (inline text, "-" for stdin, or "@path" to read from file)')
+    .option("--headline <text>", 'short tagline (inline text, "-" for stdin, or "@path" to read from file)')
     .option("--edit", "open $EDITOR to compose the bio interactively (cannot be combined with --bio)")
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("text" satisfies ProfileOutputFormat),
     )
-    .action(
-      async (options: {
-        bio?: string;
-        headline?: string;
-        edit?: boolean;
-        output: ProfileOutputFormat;
-      }) => {
-        await runProfileBasicUpdate(options);
-      },
-    );
+    .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: ProfileOutputFormat }) => {
+      await runProfileBasicUpdate(options);
+    });
 
   return basic;
 }
