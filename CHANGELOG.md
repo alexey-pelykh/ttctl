@@ -65,6 +65,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Free-text input helper for CLI flags (#70)** — `lib/freetext.ts`'s
+  `resolveFreeText` lets any string-typed flag accept content via four input
+  modes:
+  - **Inline** — `ttctl profile update --bio "Senior backend engineer..."`
+  - **Stdin** — `cat bio.md | ttctl profile update --bio -`
+  - **File** — `ttctl profile update --bio @path/to/bio.md`
+  - **Editor** — `ttctl profile update --edit` (opens `$EDITOR` on the bio
+    buffer; falls back to `vi` if `$EDITOR` is unset)
+
+  Mode conflicts (`--edit` combined with any concrete value), missing files,
+  and double-stdin claims surface as typed `FreeTextError`s with stable
+  codes (`MODE_CONFLICT`, `FILE_NOT_FOUND`, `FILE_READ_ERROR`,
+  `STDIN_UNAVAILABLE`, `STDIN_DOUBLE_CLAIM`, `EDITOR_FAILED`). CLI handlers
+  render these as `<command> failed (CODE): <message>` and exit non-zero
+  before any network call. Wired into `ttctl profile update --bio` and
+  `ttctl profile update --headline` (and the canonical `ttctl profile basic
+  update` form) as the proof-of-integration; gates the per-sub-domain
+  implementation issues #73-#76.
 - Typed auth-error translation contract (`TtctlError` base + `AuthRevokedError`,
   `Cf403Error`, `Cf403PersistentError`, `SchedulerBearerExpired`). Each subclass
   carries a stable `code`, an actionable `recovery` hint, and an `autoRecover`
