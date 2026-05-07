@@ -168,10 +168,7 @@ export async function resolveFreeText(
       if (code === "ENOENT") {
         throw new FreeTextError("FILE_NOT_FOUND", `--${flagName}: file not found: ${filePath}`);
       }
-      throw new FreeTextError(
-        "FILE_READ_ERROR",
-        `--${flagName}: failed to read ${filePath}: ${message}`,
-      );
+      throw new FreeTextError("FILE_READ_ERROR", `--${flagName}: failed to read ${filePath}: ${message}`);
     }
   }
 
@@ -215,11 +212,7 @@ async function readAllFromStream(stream: NodeJS.ReadableStream): Promise<string>
  * The editor process inherits stdio so the user sees the editor UI
  * directly; the helper itself produces no terminal output during the edit.
  */
-async function invokeEditor(
-  editor: string,
-  seed: string,
-  spawn: typeof defaultSpawn,
-): Promise<string> {
+async function invokeEditor(editor: string, seed: string, spawn: typeof defaultSpawn): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "ttctl-edit-"));
   const tempFile = join(dir, "buffer.txt");
   try {
@@ -230,12 +223,7 @@ async function invokeEditor(
       child.on("error", (err) => {
         if (settled) return;
         settled = true;
-        reject(
-          new FreeTextError(
-            "EDITOR_FAILED",
-            `failed to launch editor '${editor}': ${err.message}`,
-          ),
-        );
+        reject(new FreeTextError("EDITOR_FAILED", `failed to launch editor '${editor}': ${err.message}`));
       });
       child.on("close", (code) => {
         if (settled) return;
@@ -243,12 +231,7 @@ async function invokeEditor(
         if (code === 0) {
           resolve();
         } else {
-          reject(
-            new FreeTextError(
-              "EDITOR_FAILED",
-              `editor '${editor}' exited with code ${String(code)}`,
-            ),
-          );
+          reject(new FreeTextError("EDITOR_FAILED", `editor '${editor}' exited with code ${String(code)}`));
         }
       });
     });

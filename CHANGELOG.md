@@ -79,10 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   codes (`MODE_CONFLICT`, `FILE_NOT_FOUND`, `FILE_READ_ERROR`,
   `STDIN_UNAVAILABLE`, `STDIN_DOUBLE_CLAIM`, `EDITOR_FAILED`). CLI handlers
   render these as `<command> failed (CODE): <message>` and exit non-zero
-  before any network call. Wired into `ttctl profile update --bio` and
-  `ttctl profile update --headline` (and the canonical `ttctl profile basic
-  update` form) as the proof-of-integration; gates the per-sub-domain
-  implementation issues #73-#76.
+  before any network call. Wired into the `ttctl profile update` and
+  `ttctl profile basic update` commands (`--bio` / `--headline` / `--edit`)
+  as the proof-of-integration; gates the per-sub-domain implementation
+  issues #73-#76.
+
 - Typed auth-error translation contract (`TtctlError` base + `AuthRevokedError`,
   `Cf403Error`, `Cf403PersistentError`, `SchedulerBearerExpired`). Each subclass
   carries a stable `code`, an actionable `recovery` hint, and an `autoRecover`
