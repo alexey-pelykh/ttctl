@@ -104,7 +104,8 @@ ESLint enforces this via `@tony.ganchev/eslint-plugin-header`.
 ## Auth Model
 
 TTCtl uses a session bearer **token** (no cookies, no API keys). The user
-provides credentials in `.ttctl.yaml` via two valid forms:
+provides credentials in a YAML config file (path resolution covered in §
+Config File Resolution below) via two valid forms:
 
 ```yaml
 # Form A — 1Password reference (recommended)
@@ -141,19 +142,23 @@ Cloudflare in the happy path on `talent-profile`; no `cf_clearance` cookie is
 required. (Scheduler has its own bearer chain — out of scope here, see
 `research/notes/12-scheduler-auth-chain.md`.)
 
-The on-disk path is configurable via the optional `auth-token-path` field in
-`.ttctl.yaml`. Absolute paths are used verbatim; relative paths are resolved
-against `dirname(.ttctl.yaml)`. When the field is absent, the platform
-default applies (`$XDG_DATA_HOME/ttctl/auth.token` if set on POSIX, else
-`~/.ttctl/auth.token`; `%APPDATA%/ttctl/auth.token` on Windows). The E2E
-harness uses the relative-path branch to redirect tokens into a sandbox
+The on-disk path of the persisted token is configurable via the optional
+`auth-token-path` field in the config file. Absolute paths are used verbatim;
+relative paths are resolved against the directory containing the config file.
+When the field is absent, the platform default applies
+(`$XDG_DATA_HOME/ttctl/auth.token` if set on POSIX, else `~/.ttctl/auth.token`;
+`%APPDATA%/ttctl/auth.token` on Windows). The E2E harness uses the
+relative-path branch to redirect tokens into a sandbox
 (`<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token`)
-without touching the user's working session. There is no env-var override.
+without touching the user's working session. There is no env-var override
+for `auth-token-path` itself — the env knob (`TTCTL_CONFIG_FILE`) governs
+_which_ config file to load, and `auth-token-path` is then read out of that
+file like any other field.
 
 ```yaml
 # Complete example — auth + custom token path
 auth: "op://Personal/ttctl"
-auth-token-path: "./auth.token" # → <dir-of-.ttctl.yaml>/auth.token
+auth-token-path: "./auth.token" # → <dir-of-config-file>/auth.token
 ```
 
 There are NO profiles. TTCtl operates against the user's own Toptal Talent

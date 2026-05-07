@@ -61,12 +61,12 @@ npx ttctl --help
 # 1. Install
 npm install -g ttctl
 
-# 2. Create a config file
-cat > .ttctl.yaml <<'EOF'
+# 2. Create a config file at the default location
+mkdir -p ~/.config/ttctl
+cat > ~/.config/ttctl/config.yaml <<'EOF'
 auth: "op://Personal/ttctl"
 EOF
-
-#    (Alternatively, in the global location at $XDG_CONFIG_HOME/ttctl/config.yaml)
+chmod 600 ~/.config/ttctl/config.yaml
 
 # 3. Verify you can sign in
 ttctl auth status
@@ -79,10 +79,20 @@ ttctl profile show
 
 ## Configuration
 
-TTCtl uses a single config file — **no profiles, no environment-variable overrides**. Discovery order:
+TTCtl uses a single config file — **no profiles**. The config-file path is resolved deterministically (highest precedence wins):
 
-1. `./.ttctl.yaml` (current working directory) — useful for project-scoped use
-2. `$XDG_CONFIG_HOME/ttctl/config.yaml` — defaults to `~/.config/ttctl/config.yaml`
+1. `TTCTL_CONFIG_FILE` env var — absolute or relative path; used verbatim. Useful for CI, agent deployments, multi-config dev, and per-directory pinning via direnv.
+2. `$XDG_CONFIG_HOME/ttctl/config.yaml` — when `XDG_CONFIG_HOME` is set and the file exists.
+3. `~/.config/ttctl/config.yaml` — POSIX home default; when the file exists.
+
+The current-working-directory `./.ttctl.yaml` is **not** auto-discovered. To use a project-local config, point `TTCTL_CONFIG_FILE` at it explicitly — direnv is the canonical pattern:
+
+```sh
+# .envrc in your project root (requires `direnv` installed and `direnv allow` run)
+export TTCTL_CONFIG_FILE="$PWD/.ttctl.yaml"
+```
+
+See [`docs/configuration.md`](docs/configuration.md) for the full reference, including migration guidance for users coming from versions that auto-discovered `./.ttctl.yaml`.
 
 ### `auth` — Two valid forms
 
@@ -116,16 +126,16 @@ auth:
 
 ### `auth-token-path` — optional token storage location
 
-By default, TTCtl persists the captured session token at `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on Windows). Override the location by setting `auth-token-path` in `.ttctl.yaml`:
+By default, TTCtl persists the captured session token at `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on Windows). Override the location by setting `auth-token-path` in your config file:
 
 ```yaml
 auth: "op://Personal/ttctl"
-auth-token-path: "./auth.token"            # relative — resolved against the .ttctl.yaml dir
+auth-token-path: "./auth.token"            # relative — resolved against the config file's dir
 # or:
 auth-token-path: "/var/run/ttctl.token"    # absolute — used verbatim
 ```
 
-Absolute paths are used as-is. Relative paths are resolved against the directory containing `.ttctl.yaml` — so `./auth.token` under `/path/to/project/.ttctl.yaml` lands at `/path/to/project/auth.token`. The E2E test harness uses this branch to redirect tokens into a sandbox without touching the user's working session.
+Absolute paths are used as-is. Relative paths are resolved against the directory containing the config file — so `./auth.token` next to a config file at `/path/to/project/.ttctl.yaml` (pointed to via `TTCTL_CONFIG_FILE`) lands at `/path/to/project/auth.token`. The E2E test harness uses this branch to redirect tokens into a sandbox without touching the user's working session.
 
 ## MCP Integration
 
