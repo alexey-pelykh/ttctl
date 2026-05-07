@@ -20,6 +20,7 @@ export function buildServer(): McpServer {
     version: "0.0.0",
   });
   registerAllTools(server);
+
   return server;
 }
 

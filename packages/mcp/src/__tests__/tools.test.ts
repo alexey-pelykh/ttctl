@@ -9,15 +9,15 @@ import { registerAllTools } from "../tools/index.js";
 /**
  * Smoke-test the tool-registration surface — every tool should register
  * without throwing, every tool name follows the canonical
- * `ttctl_profile_<sub-domain>_<verb>` shape, and the count matches the
- * #73 AC (4 basic + 7 skills = 11 tools).
+ * `ttctl_profile_<sub-domain>_<verb>` shape, and the registered set
+ * tracks the cumulative Wave-3 sub-domain landing (#73 + #75 so far).
  *
  * The MCP SDK does not expose a public listing of registered tools, so
  * we approximate by listing the keys on the underlying `_registeredTools`
  * record. If a future SDK version renames that internal field, update
  * this test — the expectation is structural, not the access mechanism.
  */
-describe("MCP tool registration (issue #73)", () => {
+describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
     const internals = server as unknown as { _registeredTools: Record<string, unknown> };
     return Object.keys(internals._registeredTools);
@@ -30,16 +30,31 @@ describe("MCP tool registration (issue #73)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the eleven tools the issue specifies", () => {
+  it("registers exactly the cumulative Wave-3 tool set (#73 basic+skills + #75 portfolio+visas+resume)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
 
     expect(names).toEqual([
+      // #73 — profile.basic (4)
       "ttctl_profile_basic_photo_show",
       "ttctl_profile_basic_photo_upload",
       "ttctl_profile_basic_show",
       "ttctl_profile_basic_update",
+      // #75 — profile.portfolio (8 tools: 7 leaves with `upload` exposed as
+      // two MCP tools per the dual `upload_cover` / `upload_file` flags)
+      "ttctl_profile_portfolio_add",
+      "ttctl_profile_portfolio_highlight",
+      "ttctl_profile_portfolio_list",
+      "ttctl_profile_portfolio_remove",
+      "ttctl_profile_portfolio_reorder",
+      "ttctl_profile_portfolio_update",
+      "ttctl_profile_portfolio_upload_cover",
+      "ttctl_profile_portfolio_upload_file",
+      // #75 — profile.resume (2)
+      "ttctl_profile_resume_cancel_upload",
+      "ttctl_profile_resume_upload",
+      // #73 — profile.skills (7)
       "ttctl_profile_skills_add",
       "ttctl_profile_skills_autocomplete",
       "ttctl_profile_skills_list",
@@ -47,6 +62,11 @@ describe("MCP tool registration (issue #73)", () => {
       "ttctl_profile_skills_remove",
       "ttctl_profile_skills_show",
       "ttctl_profile_skills_update",
+      // #75 — profile.visas (4)
+      "ttctl_profile_visas_add",
+      "ttctl_profile_visas_list",
+      "ttctl_profile_visas_remove",
+      "ttctl_profile_visas_update",
     ]);
   });
 

@@ -14,6 +14,9 @@ import { registerProfileSkillsReadinessTool } from "./profile_skills_readiness.j
 import { registerProfileSkillsRemoveTool } from "./profile_skills_remove.js";
 import { registerProfileSkillsShowTool } from "./profile_skills_show.js";
 import { registerProfileSkillsUpdateTool } from "./profile_skills_update.js";
+import { registerPortfolioTools } from "./profile/portfolio.js";
+import { registerResumeTools } from "./profile/resume.js";
+import { registerVisasTools } from "./profile/visas.js";
 
 /**
  * Register every tool TTCtl exposes via MCP. Called once at server
@@ -42,4 +45,9 @@ export function registerAllTools(server: McpServer): void {
   registerProfileSkillsListTool(server);
   registerProfileSkillsAutocompleteTool(server);
   registerProfileSkillsReadinessTool(server);
+
+  // profile.portfolio (7), profile.visas (4), profile.resume (2) — #75
+  registerPortfolioTools(server);
+  registerVisasTools(server);
+  registerResumeTools(server);
 }

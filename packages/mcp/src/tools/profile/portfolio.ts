@@ -1,0 +1,305 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Oleksii PELYKH
+
+import { profile } from "@ttctl/core";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+import { resolveToolAuth } from "../../auth.js";
+import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
+import type { ToolErrorResponse } from "../../errors.js";
+import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
+
+/**
+ * Register the seven `ttctl_profile_portfolio_*` MCP tools per the #75
+ * spec. Tool names use the canonical sub-domain `portfolio` (NOT the CLI
+ * alias `projects`) per project policy.
+ *
+ * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
+ * of fields, with file-upload tools accepting the dual `filePath` /
+ * `content` (base64) input per the spec.
+ */
+export function registerPortfolioTools(server: McpServer): void {
+  server.registerTool(
+    "ttctl_profile_portfolio_list",
+    {
+      title: "List portfolio items",
+      description: "List the signed-in user's portfolio items (id, title, link, highlight, etc).",
+      inputSchema: {},
+    },
+    async () => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      try {
+        const items = await profile.portfolio.list(auth.token);
+        return successResponse(items);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_add",
+    {
+      title: "Create a portfolio item",
+      description:
+        "Create a new portfolio item. `title` is required; other fields are optional. Use `ttctl_profile_portfolio_upload_cover` first if you want to attach a cover image, then pass the resulting `coverImageCacheName` via the `coverImage` field on a follow-up `update` call (or supply via the underlying GraphQL input — currently the cover-then-create flow is two-step).",
+      inputSchema: {
+        title: z.string().describe("Portfolio item title"),
+        description: z.string().optional().describe("Long-form description of the item"),
+        link: z.string().optional().describe("Primary URL for the item"),
+        websiteUrl: z.string().optional().describe("Public website URL associated with the item"),
+        accomplishment: z.string().optional().describe("Short accomplishment summary"),
+        clientOrCompanyName: z.string().optional().describe("Client or company name"),
+        publicationPermit: z.boolean().optional().describe("Whether the user has permission to publish this item"),
+        toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
+        showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
+        highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
+      },
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      try {
+        const items = await profile.portfolio.add(auth.token, buildPortfolioInput(args));
+        return successResponse(items);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_update",
+    {
+      title: "Update a portfolio item",
+      description: "Update fields on an existing portfolio item by id. Only supplied fields are updated.",
+      inputSchema: {
+        id: z.string().describe("Id of the portfolio item to update"),
+        title: z.string().optional().describe("Portfolio item title"),
+        description: z.string().optional().describe("Long-form description of the item"),
+        link: z.string().optional().describe("Primary URL for the item"),
+        websiteUrl: z.string().optional().describe("Public website URL associated with the item"),
+        accomplishment: z.string().optional().describe("Short accomplishment summary"),
+        clientOrCompanyName: z.string().optional().describe("Client or company name"),
+        publicationPermit: z.boolean().optional().describe("Whether the user has permission to publish this item"),
+        toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
+        showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
+        highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
+      },
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      const { id, ...rest } = args;
+      const changes = buildPortfolioInput(rest);
+      try {
+        const items = await profile.portfolio.update(auth.token, id, changes);
+        return successResponse(items);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_remove",
+    {
+      title: "Remove a portfolio item",
+      description: "Remove a portfolio item by id.",
+      inputSchema: {
+        id: z.string().describe("Id of the portfolio item to remove"),
+      },
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      try {
+        const items = await profile.portfolio.remove(auth.token, args.id);
+        return successResponse(items);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_reorder",
+    {
+      title: "Reorder a portfolio item",
+      description:
+        "Move a portfolio item to an absolute 0-based position. To compute relative-to-neighbour positions, list portfolio items first to find indices.",
+      inputSchema: {
+        id: z.string().describe("Id of the portfolio item to move"),
+        position: z.number().int().min(0).describe("Absolute 0-based position to move the item to"),
+      },
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      try {
+        const items = await profile.portfolio.reorder(auth.token, args.id, args.position);
+        return successResponse(items);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_highlight",
+    {
+      title: "Toggle highlight on a portfolio item",
+      description: "Set or clear the `highlight` flag on a portfolio item.",
+      inputSchema: {
+        id: z.string().describe("Id of the portfolio item"),
+        highlight: z.boolean().default(true).describe("`true` to set highlight, `false` to clear"),
+      },
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      try {
+        const result = await profile.portfolio.highlight(auth.token, args.id, args.highlight);
+        return successResponse(result);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_upload_cover",
+    {
+      title: "Upload a portfolio cover image",
+      description:
+        "Upload a cover image for the user's portfolio. Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `coverImageCacheName` and `coverImageUrl`; pass the cache name into a subsequent portfolio-add or portfolio-update call's `coverImage` field to bind the cover to a specific item.",
+      inputSchema: fileUploadInputSchema,
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      const decoded = decodeFileUploadInput(args);
+      if ("isError" in decoded) return decoded;
+      try {
+        const result = await profile.portfolio.uploadCover(auth.token, decoded);
+        return successResponse(result);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_portfolio_upload_file",
+    {
+      title: "Upload a portfolio attachment file",
+      description:
+        "Upload an arbitrary attachment file for the user's portfolio. Supply EITHER `filePath` (preferred when the host has filesystem access) OR `content` (base64). Returns `fileCacheName` and `fileUrl`.",
+      inputSchema: fileUploadInputSchema,
+    },
+    async (args) => {
+      const auth = await resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      const decoded = decodeFileUploadInput(args);
+      if ("isError" in decoded) return decoded;
+      try {
+        const result = await profile.portfolio.uploadFile(auth.token, decoded);
+        return successResponse(result);
+      } catch (err) {
+        return mapPortfolioError(err);
+      }
+    },
+  );
+}
+
+/**
+ * Tool success response. Carries the open `[x: string]: unknown` index
+ * signature the SDK's `CallToolResult` requires (so the structured-content
+ * path remains compatible). Each tool encodes its result as a single JSON
+ * blob in the `content[0].text` slot — MCP-aware clients render or parse.
+ */
+interface ToolSuccessResponse {
+  [x: string]: unknown;
+  content: [{ type: "text"; text: string }];
+}
+
+function successResponse(data: unknown): ToolSuccessResponse {
+  return {
+    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+/**
+ * Filter `undefined` values out of the optional-fields map so the
+ * resulting `PortfolioItemInput` satisfies `exactOptionalPropertyTypes`
+ * (which rejects `string | undefined` where `string` is expected).
+ *
+ * Zod's optional fields surface as `T | undefined` at the inferred type
+ * level; the service layer uses pure-optional `T?` keys. This helper
+ * bridges the two.
+ */
+function buildPortfolioInput(args: {
+  title?: string | undefined;
+  description?: string | undefined;
+  link?: string | undefined;
+  websiteUrl?: string | undefined;
+  accomplishment?: string | undefined;
+  clientOrCompanyName?: string | undefined;
+  publicationPermit?: boolean | undefined;
+  toptalRelated?: boolean | undefined;
+  showViaToptal?: boolean | undefined;
+  highlight?: boolean | undefined;
+}): profile.portfolio.PortfolioItemInput {
+  const out: profile.portfolio.PortfolioItemInput = {};
+  if (args.title !== undefined) out.title = args.title;
+  if (args.description !== undefined) out.description = args.description;
+  if (args.link !== undefined) out.link = args.link;
+  if (args.websiteUrl !== undefined) out.websiteUrl = args.websiteUrl;
+  if (args.accomplishment !== undefined) out.accomplishment = args.accomplishment;
+  if (args.clientOrCompanyName !== undefined) out.clientOrCompanyName = args.clientOrCompanyName;
+  if (args.publicationPermit !== undefined) out.publicationPermit = args.publicationPermit;
+  if (args.toptalRelated !== undefined) out.toptalRelated = args.toptalRelated;
+  if (args.showViaToptal !== undefined) out.showViaToptal = args.showViaToptal;
+  if (args.highlight !== undefined) out.highlight = args.highlight;
+  return out;
+}
+
+function mapPortfolioError(err: unknown): ToolErrorResponse {
+  const typed = ttctlErrorToToolResponseOrNull(err);
+  if (typed !== null) return typed;
+  if (err instanceof profile.portfolio.PortfolioError) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: [
+            `Error: ${err.message}`,
+            "",
+            "Recovery: Adjust the tool input or retry; see the code below.",
+            "",
+            `(Code: ${err.code})`,
+          ].join("\n"),
+        },
+      ],
+    };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: [
+          `Error: portfolio request failed: ${message}`,
+          "",
+          "Recovery: Retry; if the failure persists, file an issue.",
+          "",
+          "(Code: UNKNOWN)",
+        ].join("\n"),
+      },
+    ],
+  };
+}

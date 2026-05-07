@@ -9,6 +9,7 @@ import { buildProfileEmploymentCommand } from "../employment/index.js";
 import { buildProfileCommand } from "../index.js";
 import { buildProfilePortfolioCommand } from "../portfolio/index.js";
 import { buildProfileResumeCommand } from "../resume/index.js";
+import { buildProfileVisasCommand } from "../visas/index.js";
 
 /**
  * Tests for the per-sub-domain CLI aliases declared by issue #72:
@@ -83,4 +84,59 @@ describe("buildProfileCommand (sub-domain wiring + alias reachability)", () => {
       expect(sub?.aliases()).toContain(alias);
     });
   }
+});
+
+describe("buildProfileVisasCommand (no alias contract)", () => {
+  it("returns a Command named `visas`", () => {
+    const cmd = buildProfileVisasCommand();
+    expect(cmd.name()).toBe("visas");
+  });
+
+  it("declares no aliases — visas is canonical-only per project policy", () => {
+    const cmd = buildProfileVisasCommand();
+    expect(cmd.aliases()).toEqual([]);
+  });
+
+  it("is wired into buildProfileCommand and reachable as a sub-command", () => {
+    const profile = buildProfileCommand();
+    const sub = findSubcommand(profile, "visas");
+    expect(sub).toBeDefined();
+    expect(sub?.name()).toBe("visas");
+  });
+
+  it("exposes the four leaves: add, update, remove, list", () => {
+    const cmd = buildProfileVisasCommand();
+    const leafNames = cmd.commands.map((c) => c.name());
+    expect(leafNames).toEqual(expect.arrayContaining(["add", "update", "remove", "list"]));
+  });
+
+  it("registers `rm` as an alias on remove (per #72 convention)", () => {
+    const cmd = buildProfileVisasCommand();
+    const removeCmd = cmd.commands.find((c) => c.name() === "remove");
+    expect(removeCmd?.aliases()).toContain("rm");
+  });
+});
+
+describe("portfolio leaves wiring (#75)", () => {
+  it("exposes seven leaves: add, update, remove, list, reorder, highlight, upload", () => {
+    const cmd = buildProfilePortfolioCommand();
+    const leafNames = cmd.commands.map((c) => c.name());
+    expect(leafNames).toEqual(
+      expect.arrayContaining(["add", "update", "remove", "list", "reorder", "highlight", "upload"]),
+    );
+  });
+
+  it("registers `rm` as an alias on remove", () => {
+    const cmd = buildProfilePortfolioCommand();
+    const removeCmd = cmd.commands.find((c) => c.name() === "remove");
+    expect(removeCmd?.aliases()).toContain("rm");
+  });
+});
+
+describe("resume leaves wiring (#75)", () => {
+  it("exposes two leaves: upload and cancel-upload", () => {
+    const cmd = buildProfileResumeCommand();
+    const leafNames = cmd.commands.map((c) => c.name());
+    expect(leafNames).toEqual(expect.arrayContaining(["upload", "cancel-upload"]));
+  });
 });

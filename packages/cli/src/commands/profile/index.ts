@@ -13,6 +13,7 @@ import { buildProfileEmploymentCommand } from "./employment/index.js";
 import { buildProfilePortfolioCommand } from "./portfolio/index.js";
 import { buildProfileResumeCommand } from "./resume/index.js";
 import { buildProfileSkillsCommand } from "./skills/index.js";
+import { buildProfileVisasCommand } from "./visas/index.js";
 
 /**
  * Build the `ttctl profile` command tree. Hosts the 11 profile sub-domains
@@ -66,16 +67,18 @@ export function buildProfileCommand(): Command {
   // four sub-domains that ship CLI aliases (`certifications`/`certs`,
   // `employment`/`experience`, `portfolio`/`projects`, `resume`/`cv`) are
   // wired here too so their alias contracts (per issue #72) take effect
-  // before their operations land in #74/#75. The other sub-domains
-  // (`skills`, `industries`, `education`, `visas`, `external`, `reviews`)
-  // remain placeholder modules with no CLI alias and register their command
-  // trees when their respective issues land.
+  // before their operations land in #74/#75. `visas` (no alias) is wired
+  // here as part of #75 so its full operation set is reachable. The
+  // remaining sub-domains (`skills`, `industries`, `education`,
+  // `external`, `reviews`) remain placeholder modules with no CLI alias
+  // and register their command trees when their respective issues land.
   profile.addCommand(buildProfileBasicCommand());
   profile.addCommand(buildProfileCertificationsCommand());
   profile.addCommand(buildProfileEmploymentCommand());
   profile.addCommand(buildProfilePortfolioCommand());
   profile.addCommand(buildProfileResumeCommand());
   profile.addCommand(buildProfileSkillsCommand());
+  profile.addCommand(buildProfileVisasCommand());
 
   return profile;
 }
