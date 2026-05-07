@@ -38,7 +38,7 @@ export async function resolveToolAuth(): Promise<AuthResult> {
                 "",
                 "Recovery: See README for the .ttctl.yaml setup instructions.",
                 "",
-                "(Code: CONFIG_ERROR)",
+                `(Code: ${err.code})`,
               ].join("\n"),
             },
           ],

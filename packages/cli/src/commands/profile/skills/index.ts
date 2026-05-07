@@ -10,11 +10,12 @@ import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 
 /**
- * Resolve the auth-token path or exit with the standard `(CONFIG_ERROR):
- * ...` message. Mirrors `profile/basic/show.ts`'s helper of the same name —
- * keeping it local here avoids cross-sub-domain coupling between CLI
- * directories. The returned `commandLabel` is interpolated into the
- * stderr prefix.
+ * Resolve the auth-token path or exit with `(${err.code}): ...` where
+ * `err.code` is the `ConfigError` discriminator (`NO_CREDS` / `PARSE` /
+ * `VALIDATION` / `PERMISSION`). Mirrors `profile/basic/show.ts`'s helper
+ * of the same name — keeping it local here avoids cross-sub-domain
+ * coupling between CLI directories. The returned `commandLabel` is
+ * interpolated into the stderr prefix.
  */
 function resolveTokenPathOrExit(commandLabel: string): string {
   try {
@@ -22,7 +23,7 @@ function resolveTokenPathOrExit(commandLabel: string): string {
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (CONFIG_ERROR): ${err.message}\n`);
+      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
       process.exit(1);
     }
     throw err;

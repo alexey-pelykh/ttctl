@@ -21,9 +21,11 @@ import { ConfigError, loadAuthToken, resolveAuthTokenPath, resolveConfig } from 
  * Resolve the persisted auth-token path from the user's `.ttctl.yaml`.
  *
  * `commandLabel` is the user-visible prefix that the CLI prints when a
- * `ConfigError` surfaces (e.g. `profile external update failed (CONFIG_ERROR): …`).
- * Pass the full sub-command path so the user can map the error to the
- * exact command they invoked.
+ * `ConfigError` surfaces (e.g. `profile external update failed (NO_CREDS): …`).
+ * The parenthesized code is the `ConfigError.code` discriminator
+ * (`NO_CREDS` / `PARSE` / `VALIDATION` / `PERMISSION`). Pass the full
+ * sub-command path so the user can map the error to the exact command
+ * they invoked.
  *
  * Exits the process on `ConfigError`. Anything else is rethrown so the
  * caller's normal error flow handles it.
@@ -34,7 +36,7 @@ export function resolveAuthTokenPathOrExit(commandLabel: string): string {
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (CONFIG_ERROR): ${err.message}\n`);
+      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
       process.exit(1);
     }
     throw err;

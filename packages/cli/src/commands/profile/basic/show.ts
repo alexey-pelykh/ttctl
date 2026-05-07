@@ -24,7 +24,7 @@ function resolveAuthTokenPathOrExit(commandLabel: "profile show" | "profile upda
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (CONFIG_ERROR): ${err.message}\n`);
+      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
       process.exit(1);
     }
     throw err;

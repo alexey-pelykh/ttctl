@@ -15,6 +15,7 @@ vi.mock("@ttctl/core", () => {
     override readonly name = "ConfigError";
     constructor(
       message: string,
+      public readonly code: "NO_CREDS" | "PARSE" | "VALIDATION" | "PERMISSION" = "NO_CREDS",
       public readonly path?: string,
     ) {
       super(message);

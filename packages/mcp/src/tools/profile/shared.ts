@@ -106,7 +106,7 @@ export async function resolveTokenForTool(commandLabel: string): Promise<AuthRes
       return {
         error: {
           isError: true,
-          content: [{ type: "text", text: `${commandLabel} failed (CONFIG_ERROR): ${err.message}` }],
+          content: [{ type: "text", text: `${commandLabel} failed (${err.code}): ${err.message}` }],
         },
       };
     }

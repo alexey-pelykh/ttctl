@@ -12,6 +12,7 @@ vi.mock("@ttctl/core", async () => {
     override readonly name = "ConfigError";
     constructor(
       message: string,
+      public readonly code: "NO_CREDS" | "PARSE" | "VALIDATION" | "PERMISSION" = "NO_CREDS",
       public readonly path?: string,
     ) {
       super(message);
@@ -119,8 +120,11 @@ describe("exitCodeForSignInResult", () => {
     expect(exitCodeForSignInResult({ status: "error", code: "ONEPASSWORD_ERROR", message: "no op cli" })).toBe(1);
   });
 
-  it("returns 1 for CONFIG_ERROR", () => {
-    expect(exitCodeForSignInResult({ status: "error", code: "CONFIG_ERROR", message: "bad yaml" })).toBe(1);
+  it("returns 1 for ConfigError codes (NO_CREDS / PARSE / VALIDATION / PERMISSION)", () => {
+    expect(exitCodeForSignInResult({ status: "error", code: "NO_CREDS", message: "no config" })).toBe(1);
+    expect(exitCodeForSignInResult({ status: "error", code: "PARSE", message: "bad yaml" })).toBe(1);
+    expect(exitCodeForSignInResult({ status: "error", code: "VALIDATION", message: "bad shape" })).toBe(1);
+    expect(exitCodeForSignInResult({ status: "error", code: "PERMISSION", message: "denied" })).toBe(1);
   });
 
   it("returns 1 for SAVE_FAILED", () => {
@@ -223,9 +227,12 @@ describe("runAuthSignIn", () => {
     expect(JSON.parse(stdout.join("").trim())).toEqual({ status: "signed-in", email: "ada@example.com" });
   });
 
-  it("ConfigError → exit 1, error to stderr (with hint preserved verbatim)", async () => {
+  it("ConfigError → exit 1, error to stderr (code surfaced from ConfigError discriminator)", async () => {
     mockedResolveConfig.mockImplementation(() => {
-      throw new ConfigError("No .ttctl.yaml found in CWD or $XDG_CONFIG_HOME/ttctl/config.yaml. See README for setup.");
+      throw new ConfigError(
+        "No config found. Set TTCTL_CONFIG_FILE or place config at $XDG_CONFIG_HOME/ttctl/config.yaml or ~/.config/ttctl/config.yaml. See README for setup.",
+        "NO_CREDS",
+      );
     });
 
     const { stdout, stderr, exitCode } = await invoke("table");
@@ -233,7 +240,7 @@ describe("runAuthSignIn", () => {
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
     expect(stderr.join("")).toBe(
-      "Sign-in failed (CONFIG_ERROR): No .ttctl.yaml found in CWD or $XDG_CONFIG_HOME/ttctl/config.yaml. See README for setup.\n",
+      "Sign-in failed (NO_CREDS): No config found. Set TTCTL_CONFIG_FILE or place config at $XDG_CONFIG_HOME/ttctl/config.yaml or ~/.config/ttctl/config.yaml. See README for setup.\n",
     );
     // Should NOT proceed past config resolution
     expect(mockedResolveCredentials).not.toHaveBeenCalled();

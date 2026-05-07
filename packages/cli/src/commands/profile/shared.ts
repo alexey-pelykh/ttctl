@@ -8,7 +8,8 @@ import { presentTtctlError } from "../../errors.js";
 /**
  * Resolve the auth-token path from the user's `.ttctl.yaml` (honors
  * `auth-token-path`; falls back to platform defaults). On `ConfigError`,
- * surfaces the message verbatim and exits non-zero.
+ * surfaces the discriminator code (`NO_CREDS` / `PARSE` / `VALIDATION` /
+ * `PERMISSION`) and the message verbatim, then exits non-zero.
  *
  * Mirrors the helper on `basic/show.ts` — extracted here so the four
  * sub-domains landing in #74 don't each re-import the same five symbols.
@@ -23,7 +24,7 @@ export function resolveAuthTokenPathOrExit(commandLabel: string): string {
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (CONFIG_ERROR): ${err.message}\n`);
+      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
       process.exit(1);
     }
     throw err;
