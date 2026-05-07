@@ -404,27 +404,26 @@ export interface ProfileUpdate {
 }
 
 /**
- * `UpdateBasicInfoInput` is undocumented in the published web schema (the
- * unified SDL ships only a `_placeholder: String` stub) and was NOT captured
- * via the safe-mode interceptor (see
- * `research/notes/06-safe-mutation-capture.md`). The shape here is INFERRED
- * from the patterns in `research/notes/10-mutation-input-patterns.md` (Pattern
- * 1) which match nine sibling mutations:
+ * `UpdateBasicInfoInput` shape, validated against live `talent_profile/graphql`
+ * via captured browser curl 2026-05-06 (see
+ * `research/notes/10-mutation-input-patterns.md` § UPDATE_BASIC_INFO exception).
  *
- *   { profileId: ID!, basicInfo: BasicInfoInput! }
+ * Wire format:
+ *   input: { profileId: "VjEt…", profile: { about?, quote?, … } }
  *
- * `BasicInfoInput` mirrors writable fields of the `Profile` type as observed
- * in the response selection set of `UPDATE_BASIC_INFO.graphql`. Only the two
- * MVP-relevant fields (`about`, `quote`) are typed here. Field names assumed
- * to be optional `String` — sibling captures don't flag any nullability
- * surprises.
+ * NOT `{ profileId, basicInfo: { … } }` — that was an inference from sibling
+ * mutations (Pattern 1), falsified empirically. `UPDATE_BASIC_INFO` is the
+ * documented exception to Pattern 1.
  *
- * If a future capture reveals a different shape, this is the only place to
- * update.
+ * The full input shape supports many more fields than ttctl currently exposes
+ * (`fullName`, `legalName`, `city`, `placeIdentity`, `countryId`,
+ * `citizenshipId`, `languageIds`, social URLs, `softwareSkills`). Only
+ * `about` / `quote` are typed here, matching what `set()` writes. Adding more
+ * fields is a future enhancement (tracked separately).
  */
 interface UpdateBasicInfoInput {
   profileId: string;
-  basicInfo: {
+  profile: {
     about?: string;
     quote?: string;
   };
@@ -514,9 +513,9 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
     );
   }
 
-  const basicInfo: UpdateBasicInfoInput["basicInfo"] = {};
-  if (changes.bio !== undefined) basicInfo.about = changes.bio;
-  if (changes.headline !== undefined) basicInfo.quote = changes.headline;
+  const profileFields: UpdateBasicInfoInput["profile"] = {};
+  if (changes.bio !== undefined) profileFields.about = changes.bio;
+  if (changes.headline !== undefined) profileFields.quote = changes.headline;
 
   let res: TransportResponse;
   try {
@@ -526,7 +525,7 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
       body: {
         operationName: "UPDATE_BASIC_INFO",
         query: UPDATE_BASIC_INFO_MUTATION,
-        variables: { input: { profileId, basicInfo } satisfies UpdateBasicInfoInput },
+        variables: { input: { profileId, profile: profileFields } satisfies UpdateBasicInfoInput },
       },
     });
   } catch (err) {
