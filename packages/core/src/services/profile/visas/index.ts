@@ -5,6 +5,7 @@ import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedTransport, stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 import { show as showBasic } from "../basic/index.js";
+import { isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
  * Visas sub-domain error codes. Cross-cutting auth/Cloudflare failures
@@ -37,10 +38,6 @@ interface GraphQLErrorEntry {
 interface UserError {
   message?: string | null;
   field?: string | null;
-}
-
-function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
-  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
 }
 
 /**

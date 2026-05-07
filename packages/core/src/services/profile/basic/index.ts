@@ -8,6 +8,7 @@ import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { Cf403Error, IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 import { SURFACE_ENDPOINTS } from "../../../types.js";
+import { isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
  * Full-document `ProfileShow` query string.
@@ -247,23 +248,6 @@ interface GraphQLErrorEntry {
   extensions?: { code?: string | null } | null;
 }
 
-/**
- * Returns `true` when `extensions.code` on a GraphQL error indicates the
- * session token has been revoked or expired and the user must re-run
- * `ttctl auth signin`.
- *
- * The two backends emit different stable codes for the same logical state:
- *
- *   - `'UNAUTHENTICATED'`         — talent-profile (Cloudflare-protected, web-portal API)
- *   - `'AUTHENTICATION_REQUIRED'` — gateway (mobile-app API, see issue #77)
- *
- * Both collapse to `AuthRevokedError`. New backends with a third spelling
- * are added here.
- */
-function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
-  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
-}
-
 interface ProfileShowResponse {
   data?: ProfileShowQuery | null;
   errors?: GraphQLErrorEntry[] | null;
@@ -294,8 +278,10 @@ interface ProfileShowResponse {
  *
  * Errors:
  * - `AuthRevokedError` when the surface returns 401, OR the GraphQL
- *   response carries `extensions.code` of `'UNAUTHENTICATED'`
- *   (talent-profile form) or `'AUTHENTICATION_REQUIRED'` (gateway form).
+ *   response carries `extensions.code` matching `isAuthRevokedExtensionCode`
+ *   (`'UNAUTHENTICATED'`, `'AUTHENTICATION_REQUIRED'`, or `'UNAUTHORIZED'`
+ *   — see `services/profile/shared.ts` for per-code surface attribution and
+ *   empirical history; #89 added `'UNAUTHORIZED'` for mobile-gateway).
  *   Caller-agnostic — the CLI / MCP surfaces render `error.recovery`
  *   verbatim ("Run `ttctl auth signin` to re-authenticate.").
  * - `ProfileError` with code `NO_VIEWER` when the response is 200 but
@@ -333,11 +319,10 @@ export async function show(token: string): Promise<ProfileShowQuery> {
   if (body && Array.isArray(body.errors) && body.errors.length > 0) {
     const first = body.errors[0];
     const message = first?.message ?? "GraphQL error";
-    // Toptal returns HTTP 200 with `errors[0].extensions.code` set to one of
-    // `"UNAUTHENTICATED"` (talent-profile form) or `"AUTHENTICATION_REQUIRED"`
-    // (gateway form) for missing/expired sessions. Both collapse to
-    // `AuthRevokedError` so callers can apply a single, uniform recovery
-    // path regardless of which surface raised the failure.
+    // Toptal returns HTTP 200 with `errors[0].extensions.code` set for
+    // missing/expired/invalid sessions. Auth-revoked codes collapse to
+    // `AuthRevokedError` (see `isAuthRevokedExtensionCode` for the list and
+    // empirical history).
     if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
       throw new AuthRevokedError("Session is invalid or expired.");
     }
@@ -486,8 +471,9 @@ export interface UpdateProfileResult {
  *   `headline` is supplied — the contract requires at least one.
  * - `Cf403Error` propagates from the talent-profile transport when
  *   Cloudflare returns 403.
- * - `AuthRevokedError` on token expiry (HTTP 401, or GraphQL
- *   `extensions.code` of `'UNAUTHENTICATED'` / `'AUTHENTICATION_REQUIRED'`).
+ * - `AuthRevokedError` on token expiry (HTTP 401, or any GraphQL
+ *   `extensions.code` matching `isAuthRevokedExtensionCode` — currently
+ *   `'UNAUTHENTICATED'`, `'AUTHENTICATION_REQUIRED'`, or `'UNAUTHORIZED'`).
  * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
  * - `ProfileError` with code `USER_ERROR` when the mutation returns a
  *   non-empty `errors` array (validation failures from the server, e.g., a
@@ -734,8 +720,9 @@ function normalisePhoto(profile: NonNullable<GetPhotoData["profile"]>): PhotoUrl
  *
  * Errors:
  * - `Cf403Error` propagates from the talent-profile transport.
- * - `AuthRevokedError` on token expiry (HTTP 401, or `extensions.code`
- *   of `'UNAUTHENTICATED'` / `'AUTHENTICATION_REQUIRED'`).
+ * - `AuthRevokedError` on token expiry (HTTP 401, or any auth-revoked
+ *   `extensions.code` — see `isAuthRevokedExtensionCode` in
+ *   `services/profile/shared.ts`).
  * - `ProfileError` `NO_VIEWER` when no viewer is bound.
  * - `ProfileError` `GRAPHQL_ERROR` on top-level GraphQL errors.
  * - `ProfileError` `NETWORK_ERROR` on transport-level throws.

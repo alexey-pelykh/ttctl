@@ -8,6 +8,7 @@ import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedMultipartTransport, impersonatedTransport, stockTransport } from "../../../transport.js";
 import type { MultipartFile, TransportResponse } from "../../../transport.js";
 import { show as showBasic } from "../basic/index.js";
+import { isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
  * Portfolio sub-domain error codes. All file-shape and field-shape
@@ -45,11 +46,6 @@ interface GraphQLErrorEntry {
 interface UserError {
   message?: string | null;
   field?: string | null;
-}
-
-/** Stable extension codes that signal an expired/missing session token. */
-function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
-  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
 }
 
 /**

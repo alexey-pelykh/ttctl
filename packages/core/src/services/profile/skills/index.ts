@@ -55,6 +55,7 @@
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
+import { isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
  * Skills-domain error codes. Mirrors `profile.basic.ProfileErrorCode`'s
@@ -88,16 +89,6 @@ export class SkillsError extends Error {
 interface GraphQLErrorEntry {
   message?: string | null;
   extensions?: { code?: string | null } | null;
-}
-
-/**
- * Returns `true` when `extensions.code` on a GraphQL error indicates the
- * session token has been revoked or expired. Mirrors the helper in
- * `profile.basic` — both spellings (`UNAUTHENTICATED` from talent-profile,
- * `AUTHENTICATION_REQUIRED` from gateway) collapse to `AuthRevokedError`.
- */
-function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
-  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
 }
 
 /**

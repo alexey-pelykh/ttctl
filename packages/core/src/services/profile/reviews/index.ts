@@ -51,6 +51,7 @@ import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 import { ProfileError, show as basicShow } from "../basic/index.js";
 import type { ProfileErrorCode } from "../basic/index.js";
+import { isAuthRevokedExtensionCode } from "../shared.js";
 
 // Re-export the shared `ProfileError` / `ProfileErrorCode` so consumers can
 // continue to write `profile.reviews.ProfileError`.
@@ -60,10 +61,6 @@ export type { ProfileErrorCode };
 interface GraphQLErrorEntry {
   message?: string | null;
   extensions?: { code?: string | null } | null;
-}
-
-function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
-  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
 }
 
 interface UserErrorEntry {
