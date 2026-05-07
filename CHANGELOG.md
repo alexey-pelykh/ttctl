@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Profile basic + skills sub-domains (#73)**. First Wave-3 vertical-slice
+  bundle: end-to-end coverage of the `basic` (4 leaves) and `skills` (7
+  leaves) sub-domains across `@ttctl/core`, `@ttctl/cli`, and
+  `@ttctl/mcp`. Validates the v0 vertical-slice pattern; sister bundles
+  #74 / #75 / #76 replicate the shape established here.
+  - **`@ttctl/core` `profile.basic`** gains `photoShow` (returns the
+    user's profile photo URLs) and `photoUpload` (uploads a new photo
+    via the GraphQL multipart-upload spec). `photoUpload` accepts a path
+    string or a `Buffer`; content-type is inferred from the file
+    extension. Exposes a typed `PhotoUrl` shape and a `PhotoUploadInput`
+    interface. The multipart transport hand-rolls a `node-wreq` fetch
+    (the existing `impersonatedTransport` hardcodes `application/json`)
+    using the same Chrome TLS profile.
+  - **`@ttctl/core` `profile.skills`** ships seven leaves — `add(name)`,
+    `rm(id)`, `set(id, fields)`, `show(id)`, `list(profileId)`,
+    `autocomplete(profileId, query, options?)`, `readiness(profileId)` —
+    with a typed `SkillsError` enum (`VALIDATION_ERROR`, `USER_ERROR`,
+    `PARTIAL_FAILURE`, `GRAPHQL_ERROR`, `NETWORK_ERROR`, `NO_VIEWER`,
+    `UNKNOWN`). The cardinality collapse folds 18 raw GraphQL operations
+    into 7 leaves; the mapping table is documented in the module
+    top-comment. `set` is multi-flag atomic: each flag (`rating` /
+    `experience` / `public`) fires its own GraphQL mutation in the
+    deterministic order `rating → experience → public`; partial failures
+    raise `PARTIAL_FAILURE` carrying which fields landed.
+  - **Translation table** amended: `PROFILE_SKILL_FIELDS` registered as
+    a placeholder entry (currently empty — every `ProfileSkillSet` field
+    reads naturally as a CLI flag with no rename). Re-exported from
+    `@ttctl/core`. Future field renames land here without changing
+    call-sites.
+  - **CLI**: `ttctl profile basic photo show` / `… photo upload <file>`
+    join the `basic` tree (the `--bio` / `--headline` set, free-text
+    helper, and output formatter remain unchanged). New `ttctl profile
+skills` sub-tree carries seven leaves matching the issue's
+    specification — `add <name>`, `remove <id>` (alias: `rm`),
+    `update <id>` (with `--rating` / `--experience` / `--public` /
+    `--private`), `show <id>`, `list`, `autocomplete <query>`,
+    `readiness`. All `show` / `list` / `autocomplete` / `readiness`
+    accept `-o text|json|table`. `--experience` accepts a bare integer
+    (`"60"`), `Ny` (`"5y"` = 60 months), or `Nm` (`"60m"` = 60 months).
+  - **MCP**: 11 new tools registered at server build time —
+    `ttctl_profile_basic_show` / `_update` / `_photo_show` /
+    `_photo_upload` and `ttctl_profile_skills_add` / `_remove` /
+    `_update` / `_show` / `_list` / `_autocomplete` / `_readiness`. Each
+    tool ships a verbose `description` (3 example user-intent phrases),
+    a Zod-shaped `inputSchema` with property-level docstrings, and a
+    uniform `Error/Recovery/Code` rendering for failures. MCP tool names
+    use the canonical sub-domain spelling only (no aliases — `rm` /
+    `certs` / `experience` are CLI affordances per project policy).
+  - **Connection mutations** (`addProfileSkillSetConnection` /
+    `removeProfileSkillSetConnection`) fold semantically into `add` /
+    `rm` per the cardinality table but are NOT wired in this bundle:
+    the connection-id argument requires a UI flow surfacing selectable
+    candidates first. Tracked as a follow-up.
 - **Vocabulary translation table + CLI aliases (#72)**. Centralizes the
   server-field ↔ CLI-flag mapping in a new `core/src/services/translations.ts`
   and registers user-friendly Commander.js aliases on four profile

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import { fetch as wreqFetch } from "node-wreq";
+
 import type { ProfileShowQuery } from "../../../__generated__/graphql.js";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { impersonatedTransport, stockTransport } from "../../../transport.js";
+import { Cf403Error, IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
+import { SURFACE_ENDPOINTS } from "../../../types.js";
 
 /**
  * Full-document `ProfileShow` query string.
@@ -584,4 +587,463 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
     },
     notice: payload.notice ?? null,
   };
+}
+
+// =======================================================================
+// Photo: show + upload
+// =======================================================================
+//
+// Both operations target the Cloudflare-protected `talent_profile/graphql`
+// surface (the mobile gateway exposes only `viewer.viewerRole.profile.photo`
+// as a flat URL, not the full `Photo` shape with original/transformations).
+//
+// `photoShow` is a vanilla query — same transport pattern as `set` above.
+// `photoUpload` is the special case: GraphQL multipart-upload-spec
+// (https://github.com/jaydenseric/graphql-multipart-request-spec). It can't
+// share `impersonatedTransport()` directly because that helper hardcodes
+// `Content-Type: application/json`; instead it builds a `FormData` body and
+// dispatches via `node-wreq`'s `fetch` with the same TLS profile.
+// =======================================================================
+
+const GET_PHOTO_QUERY = `query GET_PHOTO($profileId: ID!) {
+  profile(id: $profileId) {
+    id
+    photo {
+      default
+      original
+      small
+      transformations {
+        cropped { height width x y }
+      }
+    }
+    profileReadiness {
+      isPhotoResolutionSatisfied
+    }
+  }
+}`;
+
+/**
+ * `UpdatePhotoInput` shape, derived from the bundle-extracted
+ * `UploadProfilePhoto` mutation (`research/graphql/talent_profile/
+ * operations/UploadProfilePhoto.graphql`) and Pattern-1-aligned per
+ * `research/notes/10-mutation-input-patterns.md` (`{profileId, transformation,
+ * file}`).
+ *
+ * `file` is `null` in the JSON `operations` payload — the actual file
+ * binary travels in a separate `0` form field per the multipart-upload
+ * spec; the JSON placeholder is mapped onto it via the `map` form field.
+ *
+ * `transformation` carries the crop rectangle the server uses to render
+ * the small/cropped variants; we default to "no crop" (a 0,0 to width,height
+ * rectangle) when the caller doesn't supply one — server falls back to
+ * its own auto-crop heuristic in that case.
+ */
+interface PhotoTransformationInput {
+  cropped: { x: number; y: number; width: number; height: number };
+}
+
+const UPLOAD_PROFILE_PHOTO_MUTATION = `mutation UploadProfilePhoto($input: UpdatePhotoInput!) {
+  updatePhoto(input: $input) {
+    success
+    notice
+    errors { message field }
+    profile {
+      id
+      photo {
+        default
+        original
+        small
+        transformations {
+          cropped { height width x y }
+        }
+      }
+    }
+  }
+}`;
+
+/**
+ * Photo URLs as exposed to consumers — mirrors the `Photo` selection set
+ * we ask for on the talent_profile surface. `transformations.cropped` is
+ * the server-recommended crop rectangle for the `small` variant; consumers
+ * typically use `default` for in-CLI display and `original` for export.
+ */
+export interface PhotoUrl {
+  default: string | null;
+  original: string | null;
+  small: string | null;
+  cropped: { x: number; y: number; width: number; height: number } | null;
+  isResolutionSatisfied: boolean;
+}
+
+interface GetPhotoData {
+  profile?: {
+    id: string;
+    photo: {
+      default: string | null;
+      original: string | null;
+      small: string | null;
+      transformations: { cropped: { x: number; y: number; width: number; height: number } | null } | null;
+    } | null;
+    profileReadiness: { isPhotoResolutionSatisfied: boolean };
+  } | null;
+}
+
+interface UploadPhotoUserError {
+  message?: string | null;
+  field?: string | null;
+}
+
+interface UploadPhotoData {
+  updatePhoto?: {
+    success?: boolean | null;
+    notice?: string | null;
+    errors?: UploadPhotoUserError[] | null;
+    profile?: GetPhotoData["profile"];
+  } | null;
+}
+
+interface UploadPhotoResponse {
+  data?: UploadPhotoData | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+function normalisePhoto(profile: NonNullable<GetPhotoData["profile"]>): PhotoUrl {
+  const photo = profile.photo;
+  const cropped = photo?.transformations?.cropped ?? null;
+  return {
+    default: photo?.default ?? null,
+    original: photo?.original ?? null,
+    small: photo?.small ?? null,
+    cropped: cropped,
+    isResolutionSatisfied: profile.profileReadiness.isPhotoResolutionSatisfied,
+  };
+}
+
+/**
+ * Fetch the URLs of the signed-in user's profile photo (default / original
+ * / small variants plus the server's recommended crop rectangle and the
+ * "is the resolution satisfactory?" boolean from `profileReadiness`).
+ *
+ * Routed against `talent_profile/graphql` via `impersonatedTransport`
+ * (Cloudflare-protected) because the mobile gateway exposes only a single
+ * flat URL on `Profile.photo` — not the variant shape we surface.
+ *
+ * Internally calls `show()` first to get the `profileId` (same pattern
+ * as `set()` — the talent-profile surface keys `profile(id: ID!)` rather
+ * than resolving from the auth token), then fires the typed query.
+ *
+ * Errors:
+ * - `Cf403Error` propagates from the talent-profile transport.
+ * - `AuthRevokedError` on token expiry (HTTP 401, or `extensions.code`
+ *   of `'UNAUTHENTICATED'` / `'AUTHENTICATION_REQUIRED'`).
+ * - `ProfileError` `NO_VIEWER` when no viewer is bound.
+ * - `ProfileError` `GRAPHQL_ERROR` on top-level GraphQL errors.
+ * - `ProfileError` `NETWORK_ERROR` on transport-level throws.
+ * - `ProfileError` `USER_ERROR` when the profile id doesn't resolve
+ *   (server returns `data.profile === null`).
+ */
+export async function photoShow(token: string): Promise<PhotoUrl> {
+  const profileResp = await show(token);
+  const profileId = profileResp.viewer?.viewerRole.profileId;
+  if (profileId === undefined) {
+    throw new ProfileError("NO_VIEWER", "Cannot fetch photo: viewer or profile id missing from the session response.");
+  }
+
+  let res: TransportResponse;
+  try {
+    res = await impersonatedTransport({
+      surface: "talent-profile",
+      authToken: token,
+      body: { operationName: "GET_PHOTO", query: GET_PHOTO_QUERY, variables: { profileId } },
+    });
+  } catch (err) {
+    if (err instanceof TtctlError) throw err;
+    throw new ProfileError("NETWORK_ERROR", `Photo request failed: ${(err as Error).message}`, { cause: err });
+  }
+
+  if (res.status === 401) {
+    throw new AuthRevokedError("Session is invalid or expired.");
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new ProfileError("UNKNOWN", `Photo request returned HTTP ${res.status.toString()}`);
+  }
+
+  const body = res.body as { data?: GetPhotoData | null; errors?: GraphQLErrorEntry[] | null } | null;
+  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
+    const first = body.errors[0];
+    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
+      throw new AuthRevokedError("Session is invalid or expired.");
+    }
+    throw new ProfileError("GRAPHQL_ERROR", `Photo query failed: ${first?.message ?? "GraphQL error"}`);
+  }
+  if (!body?.data) {
+    throw new ProfileError("UNKNOWN", "Photo response had no `data` field");
+  }
+  if (!body.data.profile) {
+    throw new ProfileError("USER_ERROR", `No profile found with id "${profileId}".`);
+  }
+  return normalisePhoto(body.data.profile);
+}
+
+/**
+ * Photo upload input. The caller supplies either a path to an image file
+ * (string) or an in-memory buffer. When a path is given, the helper reads
+ * the file via `node:fs/promises` and infers content-type from the
+ * extension. When a buffer is given, the caller may supply
+ * `contentType` and `filename` to control the multipart parts (defaults
+ * to `image/jpeg` and `photo.jpg`).
+ *
+ * `transformation` is optional: when omitted, the helper sends a default
+ * (no-crop) rectangle and lets the server's auto-crop heuristic pick.
+ */
+export interface PhotoUploadInput {
+  file: Buffer | string;
+  filename?: string;
+  contentType?: string;
+  transformation?: PhotoTransformationInput;
+}
+
+const DEFAULT_PHOTO_CONTENT_TYPE = "image/jpeg";
+const DEFAULT_PHOTO_FILENAME = "photo.jpg";
+const DEFAULT_PHOTO_TRANSFORMATION: PhotoTransformationInput = {
+  cropped: { x: 0, y: 0, width: 0, height: 0 },
+};
+
+function inferContentType(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".jpeg") || lower.endsWith(".jpg")) return "image/jpeg";
+  return DEFAULT_PHOTO_CONTENT_TYPE;
+}
+
+/**
+ * Upload a new profile photo. Implements the GraphQL multipart-upload
+ * spec — the request body is a `multipart/form-data` envelope with three
+ * named parts (`operations`, `map`, and the file payload at field `0`),
+ * NOT the JSON envelope every other operation in this module uses. The
+ * transport hand-rolls a `node-wreq` fetch call rather than going through
+ * `impersonatedTransport()` because that helper hardcodes
+ * `Content-Type: application/json`; both transports use the same Chrome
+ * TLS profile so Cloudflare treats them uniformly.
+ *
+ * `input.file` accepts either a path string or a Buffer. Path strings
+ * are read with `node:fs/promises` and the content-type is inferred from
+ * the extension; Buffer callers may override `contentType` / `filename`.
+ *
+ * Errors:
+ * - `Cf403Error` propagates from the multipart transport call.
+ * - `AuthRevokedError` on token expiry (HTTP 401, or auth-revoked
+ *   `extensions.code` on the GraphQL response).
+ * - `ProfileError` `VALIDATION_ERROR` when `input.file` is empty / missing.
+ * - `ProfileError` `NO_VIEWER` when no viewer is bound.
+ * - `ProfileError` `USER_ERROR` when the mutation returns user errors
+ *   (e.g., resolution too low, file format unsupported).
+ * - Standard transport-error path.
+ */
+export async function photoUpload(token: string, input: PhotoUploadInput): Promise<PhotoUrl> {
+  // Resolve the binary first so input failures surface BEFORE any
+  // network call — same UX principle the CLI uses for `--bio` / `--headline`.
+  const { fileBuffer, filename, contentType } = await resolvePhotoBinary(input);
+  if (fileBuffer.byteLength === 0) {
+    throw new ProfileError("VALIDATION_ERROR", "Photo file is empty.");
+  }
+
+  const profileResp = await show(token);
+  const profileId = profileResp.viewer?.viewerRole.profileId;
+  if (profileId === undefined) {
+    throw new ProfileError("NO_VIEWER", "Cannot upload photo: viewer or profile id missing from the session response.");
+  }
+
+  const operations = JSON.stringify({
+    operationName: "UploadProfilePhoto",
+    query: UPLOAD_PROFILE_PHOTO_MUTATION,
+    variables: {
+      input: {
+        profileId,
+        transformation: input.transformation ?? DEFAULT_PHOTO_TRANSFORMATION,
+        file: null,
+      },
+    },
+  });
+  const map = JSON.stringify({ "0": ["variables.input.file"] });
+
+  const form = new FormData();
+  form.set("operations", operations);
+  form.set("map", map);
+  // `Blob` is provided globally on Node 18+. The cast through Uint8Array
+  // is a TS-side shim because `BlobPart` doesn't accept `Buffer` directly;
+  // a Buffer is structurally a Uint8Array, so the conversion is zero-copy.
+  const blob = new Blob([new Uint8Array(fileBuffer)], { type: contentType });
+  form.set("0", blob, filename);
+
+  let res: TransportResponse;
+  try {
+    res = await multipartImpersonatedFetch(token, form);
+  } catch (err) {
+    if (err instanceof TtctlError) throw err;
+    throw new ProfileError("NETWORK_ERROR", `Photo upload request failed: ${(err as Error).message}`, { cause: err });
+  }
+
+  if (res.status === 401) {
+    throw new AuthRevokedError("Session is invalid or expired.");
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new ProfileError("UNKNOWN", `Photo upload returned HTTP ${res.status.toString()}`);
+  }
+
+  const body = res.body as UploadPhotoResponse | null;
+  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
+    const first = body.errors[0];
+    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
+      throw new AuthRevokedError("Session is invalid or expired.");
+    }
+    throw new ProfileError("GRAPHQL_ERROR", `Photo upload failed: ${first?.message ?? "GraphQL error"}`);
+  }
+
+  const payload = body?.data?.updatePhoto;
+  if (!payload) {
+    throw new ProfileError("UNKNOWN", "Photo upload response had no `data.updatePhoto` field");
+  }
+  if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+    const first = payload.errors[0];
+    const fieldHint = first?.field ? ` (${first.field})` : "";
+    throw new ProfileError("USER_ERROR", `Photo upload rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
+  }
+  if (payload.success === false) {
+    throw new ProfileError(
+      "USER_ERROR",
+      `Photo upload reported success=false${payload.notice ? `: ${payload.notice}` : ""}`,
+    );
+  }
+  if (!payload.profile) {
+    throw new ProfileError("UNKNOWN", "Photo upload succeeded but response had no profile payload");
+  }
+  return normalisePhoto(payload.profile);
+}
+
+interface ResolvedPhotoBinary {
+  fileBuffer: Buffer;
+  filename: string;
+  contentType: string;
+}
+
+/**
+ * Resolve the caller-supplied `file` (Buffer or path) into a Buffer plus
+ * the content-type / filename to use in the multipart envelope. Pulls
+ * `node:fs/promises` lazily so the module can still be imported in
+ * environments where the upload path isn't exercised (e.g., a future
+ * browser bundle that wraps the read APIs only).
+ */
+async function resolvePhotoBinary(input: PhotoUploadInput): Promise<ResolvedPhotoBinary> {
+  if (typeof input.file === "string") {
+    // Lazy import keeps the module tree-shakable for downstream bundlers
+    // that don't need the upload path. Top-level `import` would pull
+    // node:fs into every consumer of `profile.basic`.
+    const { readFile } = await import("node:fs/promises");
+    const { basename } = await import("node:path");
+    let buffer: Buffer;
+    try {
+      buffer = await readFile(input.file);
+    } catch (err) {
+      throw new ProfileError("VALIDATION_ERROR", `Photo file not readable: ${(err as Error).message}`, { cause: err });
+    }
+    const filename = input.filename ?? basename(input.file);
+    return {
+      fileBuffer: buffer,
+      filename,
+      contentType: input.contentType ?? inferContentType(filename),
+    };
+  }
+  return {
+    fileBuffer: input.file,
+    filename: input.filename ?? DEFAULT_PHOTO_FILENAME,
+    contentType: input.contentType ?? DEFAULT_PHOTO_CONTENT_TYPE,
+  };
+}
+
+/**
+ * Hand-rolled impersonated fetch for the multipart upload path. Mirrors
+ * the headers and TLS profile of `impersonatedTransport()` but lets
+ * `node-wreq` set `Content-Type` itself (with the multipart boundary)
+ * instead of forcing `application/json`. Kept private; production code
+ * goes through `photoUpload()` which composes the multipart envelope.
+ *
+ * Test injection: callers can pass an alternate `fetch` implementation
+ * via the `fetchOverride` parameter on the public {@link photoUpload}
+ * function (see {@link _setMultipartFetchForTesting}). Production never
+ * sets the override; the fallback `wreqFetch` import resolves at module
+ * load time.
+ */
+async function multipartImpersonatedFetch(token: string, form: FormData): Promise<TransportResponse> {
+  const url = SURFACE_ENDPOINTS["talent-profile"];
+  const fetchImpl = multipartFetchOverride ?? wreqFetch;
+
+  // Mirror COMMON_HEADERS minus the JSON content-type; node-wreq's FormData
+  // body sets multipart/form-data; boundary=... itself. The "x-toptal-..."
+  // header preserves fingerprint alignment with the rest of the surface.
+  const headers: Record<string, string> = {
+    accept: "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    authorization: `Token token=${token}`,
+    origin: "https://talent.toptal.com",
+    referer: "https://talent.toptal.com/",
+    "sec-fetch-site": "same-site",
+    "user-agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "x-toptal-analytics-origin": "mobile",
+  };
+
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers,
+    body: form,
+    browser: IMPERSONATE_PROFILE,
+  });
+
+  if (res.status === 403) {
+    throw new Cf403Error("talent-profile", url);
+  }
+
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = text;
+  }
+  return {
+    status: res.status,
+    headers: res.headers.toObject(),
+    body: parsed,
+  };
+}
+
+// Test-only override slot for the multipart fetch implementation. Production
+// code never sets this — production callers go through `photoUpload()` which
+// wires up the real `node-wreq` fetch by default.
+type MultipartFetchImpl = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: FormData; browser: string },
+) => Promise<{
+  status: number;
+  text: () => Promise<string>;
+  headers: { toObject: () => Record<string, string> };
+}>;
+
+let multipartFetchOverride: MultipartFetchImpl | null = null;
+
+/**
+ * Test-only: replace the multipart-fetch implementation used by
+ * {@link photoUpload}. Pass `null` to restore the default. The override
+ * receives the same arguments as `node-wreq`'s `fetch` and must return a
+ * shape compatible with its `Response` (we only rely on `.status`,
+ * `.text()`, and `.headers.toObject()`).
+ *
+ * @internal
+ */
+export function _setMultipartFetchForTesting(impl: MultipartFetchImpl | null): void {
+  multipartFetchOverride = impl;
 }
