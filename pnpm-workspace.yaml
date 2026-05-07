@@ -22,6 +22,7 @@ catalog:
   turbo: "^2.9.9"
   typedoc: "^0.28.18"
   "@clack/prompts": "^1.1.0"
+  "cli-table3": "^0.6.5"
   yaml: "^2.8.4"
   undici: "^8.2.0"
   "node-wreq": "^2.2.1"

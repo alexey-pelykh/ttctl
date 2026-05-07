@@ -3,9 +3,10 @@
 
 import { Command, Option } from "commander";
 
+import { OUTPUT_FORMATS } from "../../lib/output.js";
+import type { OutputFormat } from "../../lib/output.js";
 import { buildProfileBasicCommand } from "./basic/index.js";
-import { OUTPUT_FORMATS, runProfileBasicShow } from "./basic/show.js";
-import type { ProfileOutputFormat } from "./basic/show.js";
+import { runProfileBasicShow } from "./basic/show.js";
 import { runProfileBasicUpdate } from "./basic/set.js";
 import { buildProfileCertificationsCommand } from "./certifications/index.js";
 import { buildProfileEmploymentCommand } from "./employment/index.js";
@@ -39,9 +40,9 @@ export function buildProfileCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies ProfileOutputFormat),
+        .default("text" satisfies OutputFormat),
     )
-    .action(async (options: { output: ProfileOutputFormat }) => {
+    .action(async (options: { output: OutputFormat }) => {
       await runProfileBasicShow(options.output);
     });
 
@@ -54,9 +55,9 @@ export function buildProfileCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies ProfileOutputFormat),
+        .default("text" satisfies OutputFormat),
     )
-    .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: ProfileOutputFormat }) => {
+    .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: OutputFormat }) => {
       await runProfileBasicUpdate(options);
     });
 

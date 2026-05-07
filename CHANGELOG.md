@@ -65,6 +65,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cross-CLI output formatting helper (`@ttctl/cli` `lib/output.ts`, #71)**.
+  Generic helper that lets every `show` / `list` leaf accept a uniform
+  `--output={text,json,table}` flag. The helper exports `OutputFormat`,
+  `OUTPUT_FORMATS` (for `commander`'s `Option#choices`), `formatResult`
+  (pure, returns the string + optional stderr warning), and `emitResult`
+  (writes to `process.stdout` / `process.stderr`). Behavior:
+  - `text` (default): caller-supplied formatter; falls through to
+    `JSON.stringify(data, null, 2)` plus a stderr hint when no text
+    formatter is provided.
+  - `json`: single-line `JSON.stringify(data)` — no extra whitespace, so
+    consumers can pipe straight to `jq` / `yq`. The JSON shape commitment
+    is "may break across 0.x" pre-1.0 and "stable across majors per
+    semver" at 1.0+.
+  - `table`: caller-supplied formatter (consumers typically use
+    `cli-table3`); falls through to the `text` branch when absent.
+  - Wired to `ttctl profile basic show` (and the `ttctl profile show`
+    alias) as the proof-of-integration; the table branch now uses
+    `cli-table3` and respects the terminal width.
+  - Adds `cli-table3` (`^0.6.5`, MIT) to the workspace catalog and to
+    `@ttctl/cli`'s production dependencies.
+
+  Usage from a `show` / `list` action handler inside `@ttctl/cli` (the
+  helper is package-internal — relative-path import, not a public
+  `exports` entry):
+
+  ```ts
+  // packages/cli/src/commands/<area>/<sub>/show.ts
+  import { emitResult } from "../../../lib/output.js";
+  import type { OutputFormat } from "../../../lib/output.js";
+
+  emitResult(payload, format, {
+    text: (d) => formatPayloadAsText(d),
+    table: (d) => formatPayloadAsTable(d),
+  });
+  ```
+
+  Note: this changes the `ttctl profile show --output json` byte stream
+  from pretty-printed (`JSON.stringify(_, null, 2)`) to single-line. The
+  parsed shape is unchanged. Pre-1.0 (`0.x`) tolerates this break; the
+  shape becomes contractually stable at 1.0.
+
 - **Free-text input helper for CLI flags (#70)** — `lib/freetext.ts`'s
   `resolveFreeText` lets any string-typed flag accept content via four input
   modes:

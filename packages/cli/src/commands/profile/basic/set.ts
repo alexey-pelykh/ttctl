@@ -5,8 +5,8 @@ import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
+import type { OutputFormat } from "../../../lib/output.js";
 import { resolveAuthTokenPathOrExit, truncate } from "./show.js";
-import type { ProfileOutputFormat } from "./show.js";
 
 /**
  * Action handler for `ttctl profile basic update` (also reachable as the
@@ -42,7 +42,7 @@ export async function runProfileBasicUpdate(options: {
   bio?: string;
   headline?: string;
   edit?: boolean;
-  output: ProfileOutputFormat;
+  output: OutputFormat;
 }): Promise<void> {
   let bio: string | undefined;
   let headline: string | undefined;
@@ -122,7 +122,7 @@ function handleProfileUpdateError(err: unknown): never {
  * the server returned. JSON returns the raw structured payload; table
  * emits one `key\tvalue` row per returned field for shell-pipe consumption.
  */
-export function formatUpdateResult(result: profile.basic.UpdateProfileResult, format: ProfileOutputFormat): string {
+export function formatUpdateResult(result: profile.basic.UpdateProfileResult, format: OutputFormat): string {
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }

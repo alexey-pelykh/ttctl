@@ -46,6 +46,7 @@
   "dependencies": {
     "@clack/prompts": "catalog:",
     "@ttctl/core": "workspace:^",
+    "cli-table3": "catalog:",
     "commander": "catalog:"
   }
 }

@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import Table from "cli-table3";
 import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
 import type { ProfileShowQuery } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-
-/**
- * Output format for `ttctl profile show`. The default `text` is a
- * human-readable summary trimmed to fit an 80-column terminal. `json` returns
- * the raw typed payload (no formatting). `table` is the same fields as `text`
- * but laid out as a `key\tvalue` table for shell pipe consumption (cut, awk).
- */
-export type ProfileOutputFormat = "text" | "json" | "table";
-
-export const OUTPUT_FORMATS: ProfileOutputFormat[] = ["text", "json", "table"];
+import { emitResult } from "../../../lib/output.js";
+import type { OutputFormat } from "../../../lib/output.js";
 
 /**
  * Resolve the auth-token path from the user's `.ttctl.yaml` (honors the
@@ -41,15 +34,19 @@ function resolveAuthTokenPathOrExit(commandLabel: "profile show" | "profile upda
 /**
  * Action handler for `ttctl profile basic show` (also reachable as the
  * short-form `ttctl profile show`). Loads the persisted auth token, fetches
- * the profile via `profile.basic.show()` from `@ttctl/core`, and prints the
- * chosen format to stdout. Maps domain errors to actionable stderr messages
- * and a non-zero exit code.
+ * the profile via `profile.basic.show()` from `@ttctl/core`, and emits the
+ * payload through the shared `emitResult` helper. Maps domain errors to
+ * actionable stderr messages and a non-zero exit code.
+ *
+ * Wired to the cross-CLI output helper (`packages/cli/src/lib/output.ts`)
+ * as the proof-of-integration for #71: every other `show` / `list` leaf
+ * adopts the same helper + formatter pattern.
  *
  * No-token case: surface as `UNAUTHENTICATED` with the same hint as a
  * gateway 401, so the user-visible message ("run `ttctl auth signin`") is
  * uniform across "never signed in" and "signed in but expired".
  */
-export async function runProfileBasicShow(format: ProfileOutputFormat): Promise<void> {
+export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
   const tokenPath = resolveAuthTokenPathOrExit("profile show");
   const token = await loadAuthToken(tokenPath);
   if (token === null) {
@@ -67,8 +64,10 @@ export async function runProfileBasicShow(format: ProfileOutputFormat): Promise<
     return;
   }
 
-  const output = formatProfile(payload, format);
-  process.stdout.write(`${output}\n`);
+  emitResult(payload, format, {
+    text: formatProfileText,
+    table: formatProfileTable,
+  });
 }
 
 /**
@@ -93,84 +92,133 @@ function handleProfileShowError(err: unknown): never {
   process.exit(1);
 }
 
-/**
- * Format the typed profile payload according to the requested output mode.
- *
- * Pure function — no I/O — so it's directly unit-testable. The text branch
- * trims to 80 columns at most so the default terminal width is honored;
- * truncated strings end with `…`. The text/table branches surface a curated
- * subset of the rich `ProfileShowQuery` payload (identity + role + selected
- * derived fields); `json` returns the entire typed payload verbatim so power
- * users can pipe it through `jq` / `yq` for fields the curated views omit.
- */
-export function formatProfile(payload: ProfileShowQuery, format: ProfileOutputFormat): string {
-  if (format === "json") {
-    return JSON.stringify(payload, null, 2);
-  }
+type ViewerRole = NonNullable<ProfileShowQuery["viewer"]>["viewerRole"];
+type ViewerProfile = ViewerRole["profile"];
 
-  const viewer = payload.viewer;
-  if (viewer === null) {
-    return format === "table" ? "name\t(no viewer)" : "(no viewer bound to this session)";
-  }
-
-  const role = viewer.viewerRole;
-  const profileSubObject = role.profile;
-  const skills = profileSubObject.skillSets.nodes
+function collectPublicSkills(viewerProfile: ViewerProfile): string[] {
+  return viewerProfile.skillSets.nodes
     .filter((n): n is NonNullable<typeof n> => n !== null)
     .filter((n) => n.public)
     .slice(0, 5)
     .map((n) => n.skill.name);
-  const specializations = role.specializations
+}
+
+function collectSpecializations(role: ViewerRole): string[] {
+  return role.specializations
     .filter((s): s is NonNullable<typeof s> => s !== null)
     .slice(0, 3)
     .map((s) => s.title);
-  const allocatedHours = role.allocatedHours.toString();
-  const hiredHours = role.hiredHours.toString();
-  const hoursRatio = `${hiredHours}/${allocatedHours}h`;
-  const availability = role.availability;
-  const verticalName = role.vertical.name;
-  const hourlyRate = role.hourlyRate.verbose;
-  const timeZoneId = role.timeZone.value;
+}
 
-  if (format === "table") {
-    const rows: [string, string][] = [
-      ["name", role.fullName],
-      ["email", role.email],
-      ["phone", role.phoneNumber],
-      ["city", profileSubObject.city || "(unset)"],
-      ["vertical", verticalName],
-      ["specializations", specializations.join(",")],
-      ["availability", availability],
-      ["allocated_hours", allocatedHours],
-      ["hired_hours", hiredHours],
-      ["hours", hoursRatio],
-      ["hourly_rate", hourlyRate],
-      ["time_zone", timeZoneId],
-      ["public_resume_url", role.publicResumeUrl],
-      ["skills", skills.join(",")],
-    ];
-    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+function formatHoursRatio(role: ViewerRole): string {
+  return `${role.hiredHours.toString()}/${role.allocatedHours.toString()}h`;
+}
+
+/**
+ * Format the typed profile payload as the text-mode summary. Pure function —
+ * no I/O — directly unit-testable. Trims to 80 columns at most so the
+ * default terminal width is honored; truncated strings end with `…`.
+ *
+ * Returns a curated subset of the rich `ProfileShowQuery` payload (identity
+ * + role + selected derived fields). For the full payload, callers should
+ * use `--output json`.
+ */
+export function formatProfileText(payload: ProfileShowQuery): string {
+  const viewer = payload.viewer;
+  if (viewer === null) {
+    return "(no viewer bound to this session)";
   }
 
-  // text — 80-column friendly
+  const role = viewer.viewerRole;
+  const viewerProfile = role.profile;
+  const skills = collectPublicSkills(viewerProfile);
+  const specializations = collectSpecializations(role);
+  const hoursRatio = formatHoursRatio(role);
+
   const lines: string[] = [truncate(role.fullName, 80), truncate(`  ${role.email}`, 80)];
   if (role.phoneNumber !== "") {
     lines.push(truncate(`  ${role.phoneNumber}`, 80));
   }
-  if (profileSubObject.city !== "") {
-    lines.push(truncate(`  ${profileSubObject.city}`, 80));
+  if (viewerProfile.city !== "") {
+    lines.push(truncate(`  ${viewerProfile.city}`, 80));
   }
-  lines.push(truncate(`  Vertical: ${verticalName}`, 80));
+  lines.push(truncate(`  Vertical: ${role.vertical.name}`, 80));
   if (specializations.length > 0) {
     lines.push(truncate(`  Specializations: ${specializations.join(", ")}`, 80));
   }
-  lines.push(truncate(`  Availability: ${availability} (${hoursRatio})`, 80));
-  lines.push(truncate(`  Rate: ${hourlyRate}/hr`, 80));
-  lines.push(truncate(`  TimeZone: ${timeZoneId}`, 80));
+  lines.push(truncate(`  Availability: ${role.availability} (${hoursRatio})`, 80));
+  lines.push(truncate(`  Rate: ${role.hourlyRate.verbose}/hr`, 80));
+  lines.push(truncate(`  TimeZone: ${role.timeZone.value}`, 80));
   if (skills.length > 0) {
     lines.push(truncate(`  Skills: ${skills.join(", ")}`, 80));
   }
   return lines.join("\n");
+}
+
+/**
+ * Format the typed profile payload as a `cli-table3`-rendered key/value
+ * table. Pure function — no I/O — directly unit-testable. The table sizes
+ * itself to `terminalWidth` (defaulting to `process.stdout.columns || 80`)
+ * with `wordWrap` enabled; long values wrap inside the value column rather
+ * than overflowing the terminal.
+ *
+ * The same curated field selection as `formatProfileText` (identity + role
+ * + selected derived fields). Use `--output json` for the full payload.
+ *
+ * `terminalWidth` is parameterised so tests can verify width adaptation
+ * without monkey-patching `process.stdout.columns`.
+ */
+export function formatProfileTable(
+  payload: ProfileShowQuery,
+  terminalWidth: number = process.stdout.columns || 80,
+): string {
+  const viewer = payload.viewer;
+  if (viewer === null) {
+    const table = new Table({ head: ["Field", "Value"] });
+    table.push(["name", "(no viewer)"]);
+    return table.toString();
+  }
+
+  const role = viewer.viewerRole;
+  const viewerProfile = role.profile;
+  const skills = collectPublicSkills(viewerProfile);
+  const specializations = collectSpecializations(role);
+  const hoursRatio = formatHoursRatio(role);
+
+  const rows: [string, string][] = [
+    ["name", role.fullName],
+    ["email", role.email],
+    ["phone", role.phoneNumber],
+    ["city", viewerProfile.city || "(unset)"],
+    ["vertical", role.vertical.name],
+    ["specializations", specializations.join(",")],
+    ["availability", role.availability],
+    ["allocated_hours", role.allocatedHours.toString()],
+    ["hired_hours", role.hiredHours.toString()],
+    ["hours", hoursRatio],
+    ["hourly_rate", role.hourlyRate.verbose],
+    ["time_zone", role.timeZone.value],
+    ["public_resume_url", role.publicResumeUrl],
+    ["skills", skills.join(",")],
+  ];
+
+  // Allocate the field column at 20 cols. cli-table3 reserves 2 chars of
+  // each column for left+right cell padding, so the visible content area
+  // is 18 chars — enough for the longest key ("public_resume_url" at 17
+  // chars). The value column gets the rest minus ~5 for box drawing + the
+  // outer padding. Floor at 20 so the table stays readable on very narrow
+  // terminals.
+  const fieldWidth = 20;
+  const valueWidth = Math.max(20, terminalWidth - fieldWidth - 5);
+  const table = new Table({
+    head: ["Field", "Value"],
+    colWidths: [fieldWidth, valueWidth],
+    wordWrap: true,
+  });
+  for (const [k, v] of rows) {
+    table.push([k, v]);
+  }
+  return table.toString();
 }
 
 function truncate(s: string, width: number): string {
@@ -179,6 +227,6 @@ function truncate(s: string, width: number): string {
 }
 
 // Helper re-exports for the sibling `set.ts` to share the auth-token
-// resolution and ellipsis truncation without duplicating either. Internal to
-// this folder; not part of the package's public surface.
+// resolution and ellipsis truncation without duplicating either. Internal
+// to this folder; not part of the package's public surface.
 export { resolveAuthTokenPathOrExit, truncate };
