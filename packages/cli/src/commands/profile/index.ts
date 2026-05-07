@@ -7,6 +7,10 @@ import { buildProfileBasicCommand } from "./basic/index.js";
 import { OUTPUT_FORMATS, runProfileBasicShow } from "./basic/show.js";
 import type { ProfileOutputFormat } from "./basic/show.js";
 import { runProfileBasicUpdate } from "./basic/set.js";
+import { buildProfileCertificationsCommand } from "./certifications/index.js";
+import { buildProfileEmploymentCommand } from "./employment/index.js";
+import { buildProfilePortfolioCommand } from "./portfolio/index.js";
+import { buildProfileResumeCommand } from "./resume/index.js";
 
 /**
  * Build the `ttctl profile` command tree. Hosts the 11 profile sub-domains
@@ -55,10 +59,19 @@ export function buildProfileCommand(): Command {
       await runProfileBasicUpdate(options);
     });
 
-  // Canonical sub-domain tree. Only `basic` is wired today; the other 10
-  // sub-domains are placeholder modules that register their command trees
-  // when their respective issues (#73-#76) land.
+  // Canonical sub-domain tree. `basic` is wired with operations today; the
+  // four sub-domains that ship CLI aliases (`certifications`/`certs`,
+  // `employment`/`experience`, `portfolio`/`projects`, `resume`/`cv`) are
+  // wired here too so their alias contracts (per issue #72) take effect
+  // before their operations land in #74/#75. The other sub-domains
+  // (`skills`, `industries`, `education`, `visas`, `external`, `reviews`)
+  // remain placeholder modules with no CLI alias and register their command
+  // trees when their respective issues land.
   profile.addCommand(buildProfileBasicCommand());
+  profile.addCommand(buildProfileCertificationsCommand());
+  profile.addCommand(buildProfileEmploymentCommand());
+  profile.addCommand(buildProfilePortfolioCommand());
+  profile.addCommand(buildProfileResumeCommand());
 
   return profile;
 }
