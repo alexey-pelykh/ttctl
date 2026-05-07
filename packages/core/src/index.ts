@@ -19,11 +19,13 @@ export {
   Cf403PersistentError,
   IMPERSONATE_PROFILE,
   SchedulerBearerExpired,
+  buildGraphQLMultipart,
   callSurface,
+  impersonatedMultipartTransport,
   impersonatedTransport,
   stockTransport,
 } from "./transport.js";
-export type { TransportRequest, TransportResponse } from "./transport.js";
+export type { MultipartFile, MultipartTransportRequest, TransportRequest, TransportResponse } from "./transport.js";
 
 export { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 export type { Credentials, GraphQLRequest, ToptalSurface } from "./types.js";

@@ -62,6 +62,63 @@ skills` sub-tree carries seven leaves matching the issue's
     `rm` per the cardinality table but are NOT wired in this bundle:
     the connection-id argument requires a UI flow surfacing selectable
     candidates first. Tracked as a follow-up.
+- **Profile portfolio + visas + resume sub-domains (#75)**. Three profile
+  sub-domains land with their full operation set across `@ttctl/core`,
+  `@ttctl/cli`, and `@ttctl/mcp` — 13 leaves total. Includes new
+  multipart-upload transport infrastructure for the file-upload
+  operations.
+  - **Multipart transport**: `core/src/transport.ts` gains
+    `impersonatedMultipartTransport` and `buildGraphQLMultipart` for
+    GraphQL-multipart-spec uploads via the impersonated TLS path. Both
+    are re-exported from `@ttctl/core`. The build helper takes a body +
+    files + map and produces a `globalThis.FormData` payload conforming
+    to the `jaydenseric/graphql-multipart-request-spec` shape.
+  - **Portfolio service** (`core/src/services/profile/portfolio/`): 8
+    operations — `list`, `add`, `update`, `remove`, `reorder` (absolute
+    position; helpers `positionBefore` / `positionAfter` translate
+    neighbour-anchored intent to absolute), `highlight`, `uploadCover`
+    (multipart), `uploadFile` (multipart). `PortfolioError` covers the
+    domain failure modes (`NO_VIEWER`, `GRAPHQL_ERROR`, `USER_ERROR`,
+    `VALIDATION_ERROR`, `FILE_NOT_FOUND`, `FILE_READ_ERROR`,
+    `NETWORK_ERROR`, `UNKNOWN`).
+  - **Visas service** (`core/src/services/profile/visas/`): 4
+    operations — `list`, `add`, `update`, `remove`. `VisasError`
+    follows the same code taxonomy minus the file-related codes.
+  - **Resume service** (`core/src/services/profile/resume/`): 2
+    operations — `upload` (multipart) and `cancelUpload`. `ResumeError`.
+  - **CLI commands**:
+    - `ttctl profile portfolio {add,update,remove,list,reorder,highlight,upload}`
+      (alias `projects` continues to work). `add` and `update` consume
+      the free-text helper from #70 for `--description` (inline /
+      stdin / `@path` / `--edit`). `list` consumes the output helper
+      from #71 (text / json / table). `reorder` accepts mutually
+      exclusive `--before <id>` / `--after <id>` / `--to <position>`.
+      `upload` accepts mutually exclusive `--cover <file>` /
+      `--file <file>`. `remove` carries `rm` alias per #72 convention.
+    - `ttctl profile visas {add,update,remove,list}`. `list` consumes
+      the output helper. `remove` carries `rm` alias.
+    - `ttctl profile resume {upload <file>,cancel-upload}` (alias `cv`
+      continues to work).
+  - **MCP tools**: 13 tools registered on the MCP server, all using the
+    canonical sub-domain names (no CLI aliases per project policy).
+    File-upload tools (`ttctl_profile_portfolio_upload_cover`,
+    `ttctl_profile_portfolio_upload_file`, `ttctl_profile_resume_upload`)
+    accept either a server-relative `filePath` (preferred when the host
+    has filesystem access — Claude Desktop, Claude Code) or a base64
+    `content` payload (for web-hosted clients). Service-layer
+    `FileSource` accepts both shapes uniformly.
+  - **Profile command tree**: `cli/src/commands/profile/index.ts` adds
+    one wiring for `visas` (visas had no alias contract from #72 so was
+    not pre-wired); the other six sub-domains remain as before.
+  - **GraphQL operation shapes**: `createPortfolioItem`,
+    `updatePortfolioItem`, `createTravelVisa`, and `updateTravelVisa`
+    use `[INFERRED]` wrapper keys (`portfolioItem`, `travelVisa`) per
+    the inference patterns in `research/notes/10-mutation-input-patterns.md`
+    Patterns 1/2. The `UPDATE_BASIC_INFO` precedent (issue #74905
+    elsewhere; falsified by live capture) showed that wrapper keys
+    occasionally diverge from inference; if any of these mutations is
+    rejected by the server, capture the live shape via curl and amend.
+
 - **Vocabulary translation table + CLI aliases (#72)**. Centralizes the
   server-field ↔ CLI-flag mapping in a new `core/src/services/translations.ts`
   and registers user-friendly Commander.js aliases on four profile

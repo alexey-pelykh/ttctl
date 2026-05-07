@@ -256,3 +256,156 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
     body: parsed,
   };
 }
+
+/**
+ * One file slot in a GraphQL multipart request — the binary content plus the
+ * filename and (optional) content-type the server will see in the
+ * `Content-Disposition` of the corresponding form part. The variable path
+ * the file binds to is supplied separately via the `map` argument of
+ * {@link buildGraphQLMultipart}, keeping this struct purely about file
+ * material.
+ */
+export interface MultipartFile {
+  filename: string;
+  content: Buffer | Uint8Array;
+  contentType?: string;
+}
+
+/**
+ * Multipart variant of {@link TransportRequest} for GraphQL operations that
+ * carry one or more `Upload`-typed variables. The caller supplies the file
+ * material and a `map` describing where each file slots into the
+ * `variables` tree (per the GraphQL multipart request spec —
+ * https://github.com/jaydenseric/graphql-multipart-request-spec).
+ *
+ * The `body` carries the operation envelope as in JSON requests; the
+ * variables it sends include `null` placeholders at the file slots, and the
+ * `map` form field tells the server how to reconstitute them from the
+ * trailing file parts.
+ */
+export interface MultipartTransportRequest {
+  surface: ToptalSurface;
+  body: GraphQLRequest;
+  authToken?: string;
+  /**
+   * Files keyed by an arbitrary slot label. The label is what the spec
+   * calls the "file part name" — appears as the form-part name (`"0"`,
+   * `"1"`, …) and as the key in `map` that points to the variable path(s)
+   * the file binds to.
+   */
+  files: Record<string, MultipartFile>;
+  /**
+   * GraphQL multipart map: `slotLabel → [variablePath, ...]`. Variable
+   * paths are dotted strings (e.g. `"variables.input.file"`). The same file
+   * may bind to multiple variable paths (the spec allows it) but TTCtl's
+   * services use a 1:1 mapping today.
+   */
+  map: Record<string, string[]>;
+}
+
+/**
+ * Build a `globalThis.FormData` payload conforming to the GraphQL multipart
+ * request spec (https://github.com/jaydenseric/graphql-multipart-request-spec).
+ * The wire layout is:
+ *
+ * ```
+ * --boundary
+ * Content-Disposition: form-data; name="operations"
+ * <JSON-encoded { operationName, query, variables }>
+ *
+ * --boundary
+ * Content-Disposition: form-data; name="map"
+ * <JSON-encoded { "0": ["variables.input.file"], ... }>
+ *
+ * --boundary
+ * Content-Disposition: form-data; name="0"; filename="<filename>"
+ * Content-Type: <contentType>
+ * <binary>
+ *
+ * --boundary--
+ * ```
+ *
+ * `node-wreq`'s `BodyInit` accepts `FormData` directly (verified against
+ * `node-wreq@2.2.1`'s `dist/types/shared.d.ts` — `BodyInit` includes
+ * `FormData`). When the body is a `FormData`, the runtime sets the
+ * `Content-Type: multipart/form-data; boundary=...` header automatically;
+ * the caller should NOT pre-set a JSON content-type or it will be
+ * overwritten with the boundary-aware multipart one.
+ *
+ * Pure function — no I/O. Tests construct expected `FormData` instances
+ * and inspect the entries via `for-of` iteration.
+ */
+export function buildGraphQLMultipart(
+  body: GraphQLRequest,
+  files: Record<string, MultipartFile>,
+  map: Record<string, string[]>,
+): FormData {
+  const form = new FormData();
+  form.append("operations", JSON.stringify(body));
+  form.append("map", JSON.stringify(map));
+  for (const [slot, file] of Object.entries(files)) {
+    const blob = new Blob([new Uint8Array(file.content)], {
+      type: file.contentType ?? "application/octet-stream",
+    });
+    form.append(slot, blob, file.filename);
+  }
+  return form;
+}
+
+/**
+ * Multipart variant of {@link impersonatedTransport}. Sends a
+ * GraphQL-multipart-spec request through the impersonated transport so
+ * file-upload mutations (`uploadResume`, `uploadPortfolioCover`,
+ * `uploadPortfolioFile`) clear Cloudflare on the `talent-profile` surface.
+ *
+ * Why a separate function rather than overloading `impersonatedTransport`:
+ * the JSON path sets `content-type: application/json` and stringifies the
+ * body; the multipart path lets the runtime supply the multipart
+ * content-type with its own boundary and passes the `FormData` through
+ * unchanged. The two paths have different body wire formats and different
+ * header expectations, so they are kept as separate functions for clarity.
+ *
+ * Errors:
+ * - `Cf403Error` on HTTP 403 (Cloudflare bot-management has tightened — see
+ *   the `Cf403Error` doc-comment for the recovery hint).
+ * - All other transport-level failures propagate as the underlying
+ *   `node-wreq` error; service callers wrap them in their domain-specific
+ *   `*Error` with `code: 'NETWORK_ERROR'`.
+ */
+export async function impersonatedMultipartTransport(req: MultipartTransportRequest): Promise<TransportResponse> {
+  const url = SURFACE_ENDPOINTS[req.surface];
+  const headers: Record<string, string> = { ...COMMON_HEADERS };
+  // Strip the JSON content-type — when the body is a `FormData`, node-wreq
+  // (like the platform `fetch`) sets the multipart/form-data content-type
+  // with its own boundary parameter. Leaving the JSON one would either
+  // get overwritten silently or, worse, lock the runtime onto a header
+  // that doesn't match the wire body and Cloudflare flags as malformed.
+  delete headers["content-type"];
+  if (req.authToken) headers["authorization"] = `Token token=${req.authToken}`;
+
+  const formData = buildGraphQLMultipart(req.body, req.files, req.map);
+
+  const res = await wreqFetch(url, {
+    method: "POST",
+    headers,
+    body: formData,
+    browser: IMPERSONATE_PROFILE,
+  });
+
+  if (res.status === 403) {
+    throw new Cf403Error(req.surface, url);
+  }
+
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = text;
+  }
+  return {
+    status: res.status,
+    headers: res.headers.toObject(),
+    body: parsed,
+  };
+}
