@@ -452,7 +452,7 @@ describe("set", () => {
     expect(updateCall.body.variables).toEqual({
       input: {
         profileId: "p1",
-        basicInfo: {
+        profile: {
           about: "long-form bio text",
           quote: "short tagline",
         },
@@ -467,9 +467,9 @@ describe("set", () => {
     await set(TOKEN, { headline: "only headline" });
 
     const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
-    const variables = updateCall.body.variables as { input: { basicInfo: Record<string, unknown> } };
-    expect(variables.input.basicInfo).toEqual({ quote: "only headline" });
-    expect(variables.input.basicInfo).not.toHaveProperty("about");
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile).toEqual({ quote: "only headline" });
+    expect(variables.input.profile).not.toHaveProperty("about");
   });
 
   it("preserves empty-string updates (clearing a field is a real intent, not an unset)", async () => {
@@ -479,8 +479,8 @@ describe("set", () => {
     await set(TOKEN, { bio: "" });
 
     const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
-    const variables = updateCall.body.variables as { input: { basicInfo: Record<string, unknown> } };
-    expect(variables.input.basicInfo).toEqual({ about: "" });
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile).toEqual({ about: "" });
   });
 
   it("returns the updated bio/headline values from the server's confirmation payload", async () => {
@@ -608,7 +608,7 @@ describe("set", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({
       body: {
-        errors: [{ message: "Field UpdateBasicInfoInput.basicInfo not defined", extensions: { code: "VALIDATION" } }],
+        errors: [{ message: "Field 'updateBasicInfo' not defined", extensions: { code: "VALIDATION" } }],
       },
     });
 
