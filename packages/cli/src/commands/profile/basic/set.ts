@@ -4,6 +4,7 @@
 import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import { resolveAuthTokenPathOrExit, truncate } from "./show.js";
 import type { ProfileOutputFormat } from "./show.js";
 
@@ -14,6 +15,17 @@ import type { ProfileOutputFormat } from "./show.js";
  * persisted auth token, dispatches the mutation via `profile.basic.set()`,
  * then prints either a human-readable confirmation or the raw payload
  * depending on the `--output` format.
+ *
+ * Both `--bio` and `--headline` accept the four-mode free-text input
+ * surface from `lib/freetext.ts` (#70):
+ *   - inline text (`--bio "..."`)
+ *   - stdin (`--bio -`)
+ *   - file (`--bio @path/to/bio.md`)
+ *   - editor (`--edit`, opens `$EDITOR` on the bio buffer)
+ *
+ * Free-text resolution happens BEFORE auth/token I/O — input mistakes
+ * (missing file, mode conflict) surface as `profile update failed (CODE)`
+ * with an actionable code, never as a confusing post-network error.
  *
  * Note on naming: the user-facing CLI verb is `update` (per #69 AC and the
  * #68 epic verb economy `add / remove / update / show / list`); the core
@@ -29,18 +41,35 @@ import type { ProfileOutputFormat } from "./show.js";
 export async function runProfileBasicUpdate(options: {
   bio?: string;
   headline?: string;
+  edit?: boolean;
   output: ProfileOutputFormat;
 }): Promise<void> {
-  if (options.bio === undefined && options.headline === undefined) {
+  let bio: string | undefined;
+  let headline: string | undefined;
+  try {
+    bio = await resolveFreeText(options.bio, {
+      flagName: "bio",
+      enableEditor: options.edit ?? false,
+    });
+    headline = await resolveFreeText(options.headline, { flagName: "headline" });
+  } catch (err) {
+    if (err instanceof FreeTextError) {
+      process.stderr.write(`profile update failed (${err.code}): ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  if (bio === undefined && headline === undefined) {
     process.stderr.write(
-      'profile update requires at least one of --bio or --headline.\nExample: ttctl profile update --headline "Senior backend engineer"\n',
+      'profile update requires at least one of --bio, --headline, or --edit.\nExample: ttctl profile update --headline "Senior backend engineer"\n',
     );
     process.exit(1);
   }
 
   const changes: profile.basic.ProfileUpdate = {};
-  if (options.bio !== undefined) changes.bio = options.bio;
-  if (options.headline !== undefined) changes.headline = options.headline;
+  if (bio !== undefined) changes.bio = bio;
+  if (headline !== undefined) changes.headline = headline;
 
   const tokenPath = resolveAuthTokenPathOrExit("profile update");
   const token = await loadAuthToken(tokenPath);
