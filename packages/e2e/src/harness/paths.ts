@@ -47,11 +47,11 @@ export function findRepoRoot(start: string = process.cwd()): string {
 /**
  * Sandbox directory for an E2E run — `<repo-root>/.tmp/e2e/`.
  *
- * The harness writes a fixture `.ttctl.yaml` here and spawns CLI / MCP
- * subprocesses with `cwd` set to this directory. CLI config discovery
- * (which checks `./.ttctl.yaml` first) picks up the fixture; the
- * fixture's relative `auth-token-path: ./auth.token` resolves to
- * `<sandbox>/auth.token`. The user's everyday session at
+ * The harness writes a fixture `.ttctl.yaml` here and exposes its absolute
+ * path as `cliConfigPath()` for injection into spawned CLI / MCP
+ * subprocesses as `TTCTL_CONFIG_FILE`. The fixture's relative
+ * `auth-token-path: ./auth.token` resolves against the config file's
+ * directory → `<sandbox>/auth.token`. The user's everyday session at
  * `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token`) is never
  * touched.
  */
@@ -65,6 +65,16 @@ export function resolveSandboxDir(repoRoot: string): string {
  */
 export function resolveSandboxConfigPath(repoRoot: string): string {
   return join(resolveSandboxDir(repoRoot), ".ttctl.yaml");
+}
+
+/**
+ * Path to the sandbox `.ttctl.yaml` fixture, named for the env-injection
+ * use case. Identical to `resolveSandboxConfigPath`; this alias documents
+ * the intent at the call site (the value injected as `TTCTL_CONFIG_FILE`
+ * into spawned CLI / MCP subprocesses, per #94).
+ */
+export function cliConfigPath(repoRoot: string): string {
+  return resolveSandboxConfigPath(repoRoot);
 }
 
 /**

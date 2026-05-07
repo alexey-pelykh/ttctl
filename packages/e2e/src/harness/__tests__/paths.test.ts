@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import {
+  cliConfigPath,
   findRepoRoot,
   resolveIsolatedAuthTokenPath,
   resolveLockfilePath,
@@ -83,10 +84,15 @@ describe("path helpers", () => {
     expect(resolveLockfilePath("/repo")).toBe(join("/repo", ".tmp", "e2e", ".lock"));
   });
 
+  it("cliConfigPath returns the same path as resolveSandboxConfigPath (env-injection alias, #94)", () => {
+    expect(cliConfigPath("/repo")).toBe(resolveSandboxConfigPath("/repo"));
+  });
+
   it("sandbox children all live under resolveSandboxDir", () => {
     const root = "/r";
     const sandbox = resolveSandboxDir(root);
     expect(resolveSandboxConfigPath(root).startsWith(sandbox)).toBe(true);
+    expect(cliConfigPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveIsolatedAuthTokenPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveLockfilePath(root).startsWith(sandbox)).toBe(true);
   });

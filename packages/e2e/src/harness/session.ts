@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { mkdir, unlink } from "node:fs/promises";
-import { join } from "node:path";
 
 import { resolveConfig, resolveCredentials, saveAuthToken, signIn } from "@ttctl/core";
 import { afterAll, beforeAll } from "vitest";
@@ -38,14 +37,18 @@ export interface FreshSessionContext {
   tokenPath: string;
   /**
    * Absolute path to the sandbox directory (`<repo-root>/.tmp/e2e/`).
-   * Pass this as `cwd` to `getCliClient` / `getMcpClient` so the spawned
-   * subprocess discovers the sandbox `.ttctl.yaml` (with the redirected
-   * `auth-token-path`) instead of the user's config.
+   * Useful for tests that need a stable working directory or for sibling-
+   * fixture lookups (lockfile, isolated token). The harness no longer
+   * spawns subprocesses with `cwd: sandboxDir` — isolation flows through
+   * `TTCTL_CONFIG_FILE` env injection (#94), not CWD.
    */
   sandboxDir: string;
   /**
-   * Absolute path to the sandbox `.ttctl.yaml` fixture. Useful for tests
-   * that need to assert the fixture's shape or modify it temporarily.
+   * Absolute path to the sandbox `.ttctl.yaml` fixture. Pass this to
+   * `getCliClient({ configPath })` / `getMcpClient({ configPath })` so the
+   * spawned subprocess receives `TTCTL_CONFIG_FILE=<this>` in its env and
+   * resolves config to the sandbox (with the redirected `auth-token-path`)
+   * instead of the user's everyday session.
    */
   sandboxConfigPath: string;
   /**
@@ -138,18 +141,18 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     acquireLock(lockPath);
 
     try {
-      // Find the user's source config (the one OUTSIDE the sandbox).
-      // Per #92, resolveConfig now uses TTCTL_CONFIG_FILE → XDG → home
-      // (no CWD-walking). Honor TTCTL_CONFIG_FILE if set; otherwise fall
-      // back to the repo-root `.ttctl.yaml` for the maintainer's legacy
-      // workflow. The proper sandbox env-injection redesign lives in #94.
-      const sourcePath = process.env["TTCTL_CONFIG_FILE"] ?? join(repoRoot, ".ttctl.yaml");
-      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig({ path: sourcePath });
+      // Find the user's source config (the one OUTSIDE the sandbox) via
+      // standard discovery: TTCTL_CONFIG_FILE → $XDG_CONFIG_HOME/ttctl/
+      // config.yaml → ~/.config/ttctl/config.yaml. No CWD walking, no
+      // repo-root fallback. The maintainer's legacy `<repo-root>/.ttctl.yaml`
+      // is honored only when `TTCTL_CONFIG_FILE` points at it.
+      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
 
       // Mirror it into the sandbox with `auth-token-path: ./auth.token`.
-      // Spawned CLI subprocesses with cwd=sandboxDir will discover this
-      // fixture and write tokens to <sandbox>/auth.token, never touching
-      // the user's working session.
+      // Spawned CLI / MCP subprocesses get `TTCTL_CONFIG_FILE=<sandbox>/
+      // .ttctl.yaml` injected (#94), so they read this fixture and write
+      // tokens to <sandbox>/auth.token, never touching the user's working
+      // session.
       await writeSandboxConfig(repoRoot, sourceConfigPath);
 
       // Sign in directly via core's signIn (the harness handles token

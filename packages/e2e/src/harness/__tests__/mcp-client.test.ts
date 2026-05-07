@@ -57,9 +57,10 @@ describe("getMcpClient — lifecycle", () => {
     expect(client.process.exitCode !== null || client.process.signalCode !== null).toBe(true);
   });
 
-  it("inherits process.env into the spawned MCP server (the harness adds no env of its own)", async () => {
-    // Isolation flows through cwd (config discovery), not env injection.
-    // Verify that an arbitrary parent env var lands in the child verbatim.
+  it("inherits process.env into the spawned MCP server when configPath is unset", async () => {
+    // Construction-only mode (no `configPath`): the harness adds no env
+    // of its own. Verify that an arbitrary parent env var lands in the
+    // child verbatim.
     const stub = join(workDir, "env-passthrough.js");
     await writeFile(
       stub,
@@ -74,6 +75,68 @@ describe("getMcpClient — lifecycle", () => {
     const client = getMcpClient({ cliEntryPoint: stub, repoRoot: workDir });
     await new Promise<void>((resolveWait) => client.process.on("close", () => resolveWait()));
     expect(client.getStderr()).toContain(`PATH=${process.env["PATH"] ?? "<unset>"}`);
+  });
+
+  it("injects TTCTL_CONFIG_FILE into the spawned MCP server when configPath is set (#94)", async () => {
+    const stub = join(workDir, "config-passthrough.js");
+    await writeFile(
+      stub,
+      ["process.stderr.write(`CFG=${process.env.TTCTL_CONFIG_FILE || '<unset>'}`);", "process.exit(0);", ""].join("\n"),
+    );
+    const sandboxConfig = join(workDir, "sandbox", ".ttctl.yaml");
+    const client = getMcpClient({
+      configPath: sandboxConfig,
+      cliEntryPoint: stub,
+      repoRoot: workDir,
+    });
+    await new Promise<void>((resolveWait) => client.process.on("close", () => resolveWait()));
+    expect(client.getStderr()).toContain(`CFG=${sandboxConfig}`);
+  });
+
+  it("override-injects TTCTL_CONFIG_FILE even when the parent process has it set", async () => {
+    const stub = join(workDir, "config-override.js");
+    await writeFile(
+      stub,
+      ["process.stderr.write(`CFG=${process.env.TTCTL_CONFIG_FILE || '<unset>'}`);", "process.exit(0);", ""].join("\n"),
+    );
+    const sandboxConfig = join(workDir, "sandbox", ".ttctl.yaml");
+    const original = process.env["TTCTL_CONFIG_FILE"];
+    process.env["TTCTL_CONFIG_FILE"] = "/some/parent/config.yaml";
+    try {
+      const client = getMcpClient({
+        configPath: sandboxConfig,
+        cliEntryPoint: stub,
+        repoRoot: workDir,
+      });
+      await new Promise<void>((resolveWait) => client.process.on("close", () => resolveWait()));
+      expect(client.getStderr()).toContain(`CFG=${sandboxConfig}`);
+    } finally {
+      if (original === undefined) delete process.env["TTCTL_CONFIG_FILE"];
+      else process.env["TTCTL_CONFIG_FILE"] = original;
+    }
+  });
+
+  it("construction env overlay can drop the harness-injected TTCTL_CONFIG_FILE (negative-case escape hatch)", async () => {
+    const stub = join(workDir, "config-cleared.js");
+    await writeFile(
+      stub,
+      ["process.stderr.write(`CFG=${process.env.TTCTL_CONFIG_FILE || '<unset>'}`);", "process.exit(0);", ""].join("\n"),
+    );
+    const sandboxConfig = join(workDir, "sandbox", ".ttctl.yaml");
+    const original = process.env["TTCTL_CONFIG_FILE"];
+    delete process.env["TTCTL_CONFIG_FILE"];
+    try {
+      const client = getMcpClient({
+        configPath: sandboxConfig,
+        cliEntryPoint: stub,
+        repoRoot: workDir,
+        env: { TTCTL_CONFIG_FILE: undefined },
+      });
+      await new Promise<void>((resolveWait) => client.process.on("close", () => resolveWait()));
+      expect(client.getStderr()).toContain("CFG=<unset>");
+    } finally {
+      if (original !== undefined) process.env["TTCTL_CONFIG_FILE"] = original;
+    }
   });
 
   it("getStderr returns accumulated stderr", async () => {

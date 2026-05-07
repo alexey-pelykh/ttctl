@@ -10,7 +10,7 @@ Because E2E runs against a real Toptal Talent profile, the harness is engineered
 
 ### Isolation guarantees
 
-- **Isolated auth token** — the harness writes a fixture `.ttctl.yaml` at `<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token` and spawns CLI / MCP subprocesses with `cwd=<repo-root>/.tmp/e2e/`. CLI config discovery (which checks `./.ttctl.yaml` in CWD first) picks up the fixture; the relative `auth-token-path` resolves to `<repo-root>/.tmp/e2e/auth.token`. Your everyday session at `~/.ttctl/auth.token` is untouched before, during, and after the run. No environment variable is involved.
+- **Isolated auth token** — the harness writes a fixture `.ttctl.yaml` at `<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token` and spawns CLI / MCP subprocesses with `TTCTL_CONFIG_FILE=<repo-root>/.tmp/e2e/.ttctl.yaml` injected into their env. The CLI's `resolveConfig` reads that path verbatim; the fixture's relative `auth-token-path` resolves against the config file's directory → `<repo-root>/.tmp/e2e/auth.token`. Your everyday session at `~/.ttctl/auth.token` is untouched before, during, and after the run.
 - **Run-level lockfile** — `<repo-root>/.tmp/e2e/.lock` records the PID of the active harness invocation. Concurrent invocations on the same machine are refused with a clear error message naming the holding PID. Stale lockfiles (PID no longer alive) are auto-cleared with a warning.
 - **One signin per suite** — the harness exposes `withFreshSession()` which signs in once in `beforeAll` and signs out once in `afterAll`. Tests inherit the established session — no per-test login. Bounds account churn to **one** `EmailPasswordSignIn` event per `pnpm test:e2e` run.
 - **Cool-off after signout** — the harness waits ≥5s after signout before exit, spacing successive runs to avoid Toptal's rate-limit / abuse heuristics.
@@ -29,7 +29,7 @@ The Toptal mobile gateway has no terminal `SignOut` GraphQL mutation. The sessio
 
 ### Prerequisites
 
-- A `.ttctl.yaml` file in the repo root (or `$XDG_CONFIG_HOME/ttctl/config.yaml`) with valid Toptal credentials. Both `op://VAULT/ITEM` and `op://ACCOUNT/VAULT/ITEM` (3-segment) forms are supported by the resolver.
+- A `.ttctl.yaml` resolvable via standard discovery (`TTCTL_CONFIG_FILE` env var → `$XDG_CONFIG_HOME/ttctl/config.yaml` → `~/.config/ttctl/config.yaml`) with valid Toptal credentials. Both `op://VAULT/ITEM` and `op://ACCOUNT/VAULT/ITEM` (3-segment) forms are supported by the resolver. Note: the legacy CWD `./.ttctl.yaml` is no longer auto-discovered (see core's `resolveConfig`); set `TTCTL_CONFIG_FILE=<path>` if you keep your config at a non-standard location.
 - 1Password CLI (`op`) installed and signed in if you use the `op://` form.
 - A built workspace — `pnpm build` before invoking E2E.
 - `TTCTL_E2E=1` set in the environment.
@@ -62,8 +62,8 @@ const session = withFreshSession();
 
 describe("my E2E case", () => {
   it.skipIf(process.env.TTCTL_E2E !== "1")("does the thing", async () => {
-    const { sandboxDir } = session.getContext();
-    const cli = getCliClient({ cwd: sandboxDir });
+    const { sandboxConfigPath } = session.getContext();
+    const cli = getCliClient({ configPath: sandboxConfigPath });
     const result = await cli.run(["auth", "status"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("@");
@@ -71,7 +71,7 @@ describe("my E2E case", () => {
 });
 ```
 
-The harness session also exposes `tokenPath` (`<repo-root>/.tmp/e2e/auth.token`) for existence assertions, `sandboxConfigPath` (`<repo-root>/.tmp/e2e/.ttctl.yaml`) for fixture inspection, and `repoRoot` for sibling-fixture lookups.
+The harness session also exposes `tokenPath` (`<repo-root>/.tmp/e2e/auth.token`) for existence assertions, `sandboxDir` (`<repo-root>/.tmp/e2e/`) for sibling-fixture lookups, and `repoRoot` for cross-package paths.
 
 ## CI behavior
 

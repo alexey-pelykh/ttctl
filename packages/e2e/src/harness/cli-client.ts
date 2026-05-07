@@ -20,15 +20,26 @@ export interface CliInvocationResult {
 
 export interface CliClientOptions {
   /**
-   * Working directory for the spawned CLI. The harness's session setup
-   * passes `<repo-root>/.tmp/e2e/` here so CLI config discovery (which
-   * checks `./.ttctl.yaml` first) picks up the sandbox fixture. The
-   * fixture's `auth-token-path: ./auth.token` then resolves to
-   * `<repo-root>/.tmp/e2e/auth.token`, isolating the run from the user's
-   * everyday session at `~/.ttctl/auth.token`.
+   * Absolute path to the sandbox `.ttctl.yaml` fixture. Injected into the
+   * spawned CLI subprocess's env as `TTCTL_CONFIG_FILE`, which (per #92)
+   * the CLI's `resolveConfig` reads verbatim. The fixture's
+   * `auth-token-path: ./auth.token` resolves against the config file's
+   * directory → `<sandbox>/auth.token`, isolating the run from the user's
+   * everyday session at `~/.config/ttctl/config.yaml` (or
+   * `$XDG_CONFIG_HOME/ttctl/config.yaml`).
    *
-   * Defaults to the repo root for harness-internal unit tests that exercise
-   * the spawn mechanics without needing config discovery.
+   * Optional in the type so harness-internal unit tests can construct a
+   * client to exercise spawn mechanics without needing isolation. Production
+   * E2E callers MUST pass this (the source of the path is `cliConfigPath()`
+   * in `paths.ts`, also exposed as `sandboxConfigPath` on the session
+   * context).
+   */
+  configPath?: string;
+  /**
+   * Working directory for the spawned CLI. Defaults to the repo root.
+   * Isolation no longer flows through CWD (see #92, #94 — `TTCTL_CONFIG_FILE`
+   * env injection is the canonical mechanism); this option exists for
+   * harness-internal tests that assert spawn-time CWD behavior.
    */
   cwd?: string;
   /**
@@ -51,10 +62,10 @@ export interface CliInvocationOptions {
    */
   input?: string;
   /**
-   * Per-invocation env overlay. Merged onto `process.env`. The harness
-   * does NOT inject any auth-related env vars — the spawned CLI discovers
-   * its config (and therefore its token path) via the sandbox `cwd` set
-   * at client-construction time, not via env.
+   * Per-invocation env overlay. Merged onto `process.env` (with the
+   * harness-injected `TTCTL_CONFIG_FILE` already in place — per-invocation
+   * overlay wins, so a test that wants to exercise the negative case can
+   * `env: { TTCTL_CONFIG_FILE: undefined }` to remove the injection).
    */
   env?: Record<string, string | undefined>;
   /**
@@ -85,7 +96,7 @@ export interface CliClient {
 }
 
 /**
- * Build a programmatic CLI invoker bound to a sandbox working directory.
+ * Build a programmatic CLI invoker bound to a sandbox config path.
  *
  * The CLI is invoked as `node <repo-root>/packages/ttctl/dist/cli.js`. We
  * deliberately avoid the `pnpm exec ttctl` path (slower, depends on the
@@ -97,11 +108,13 @@ export interface CliClient {
  * missing — running E2E against an unbuilt workspace would surface as
  * cryptic "Cannot find module" errors deep inside the spawn output.
  *
- * Isolation strategy: the spawned CLI inherits the configured `cwd` and
- * uses normal `.ttctl.yaml` config discovery. The harness writes a
- * fixture `.ttctl.yaml` to the sandbox before any subprocess spawn (see
- * `writeSandboxConfig` in `paths.ts`); that fixture's `auth-token-path:
- * ./auth.token` redirects token persistence to the sandbox.
+ * Isolation strategy (per #94): each `run()` injects
+ * `TTCTL_CONFIG_FILE=<options.configPath>` into the spawned CLI's env. The
+ * CLI's `resolveConfig` (per #92) reads that path verbatim — no CWD
+ * walking, no XDG/home fallback. The fixture `.ttctl.yaml` (written by
+ * `writeSandboxConfig` in `paths.ts`) carries `auth-token-path:
+ * ./auth.token`, which resolves against the config file's directory and
+ * redirects token persistence to the sandbox.
  */
 export function getCliClient(options: CliClientOptions): CliClient {
   const repoRoot = options.repoRoot ?? findRepoRoot();
@@ -112,12 +125,20 @@ export function getCliClient(options: CliClientOptions): CliClient {
     );
   }
   const cwd = options.cwd ?? repoRoot;
+  const configPath = options.configPath;
 
   return {
     cliEntryPoint,
     cwd,
     run: async (args, runOptions = {}) => {
       const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+      // Inject TTCTL_CONFIG_FILE FIRST — this overrides any value the
+      // parent process inherited from its own shell. The per-invocation
+      // overlay applies AFTER, so a test asserting the negative case can
+      // `env: { TTCTL_CONFIG_FILE: undefined }` to drop the injection.
+      if (configPath !== undefined) {
+        baseEnv["TTCTL_CONFIG_FILE"] = configPath;
+      }
       // Merge user overlay. `Reflect.deleteProperty` (vs `delete env[k]`)
       // sidesteps eslint's `no-dynamic-delete`; both erase the key but the
       // static-analyzer-friendly form is preferred throughout this repo.

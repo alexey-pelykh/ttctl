@@ -51,8 +51,8 @@ describe("auth + profile E2E (live Toptal)", () => {
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxDir } = session.getContext();
-    cli = getCliClient({ cwd: sandboxDir });
+    const { sandboxConfigPath } = session.getContext();
+    cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
   it.skipIf(!e2eEnabled)(

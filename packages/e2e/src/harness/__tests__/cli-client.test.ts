@@ -111,14 +111,70 @@ describe("getCliClient — run", () => {
     expect(await readFile(join(sandbox, "marker.txt"), "utf8")).toBe("present");
   });
 
-  it("inherits process.env into the spawned subprocess (the harness adds no env of its own)", async () => {
-    // Isolation flows through cwd (config discovery), not env injection.
-    // Verify that an arbitrary parent env var lands in the child verbatim.
+  it("inherits process.env into the spawned subprocess when configPath is unset", async () => {
+    // Construction-only mode (no `configPath`): the harness adds no env
+    // of its own. Verify that an arbitrary parent env var lands in the
+    // child verbatim.
     const stub = join(workDir, "env-passthrough.js");
     await writeFile(stub, 'process.stdout.write(process.env.PATH || "<unset>");\n');
     const client = getCliClient({ cliEntryPoint: stub, repoRoot: workDir });
     const result = await client.run([]);
     expect(result.stdout).toBe(process.env["PATH"] ?? "<unset>");
+  });
+
+  it("injects TTCTL_CONFIG_FILE into the spawned subprocess when configPath is set (#94)", async () => {
+    const stub = join(workDir, "config-passthrough.js");
+    await writeFile(stub, 'process.stdout.write(process.env.TTCTL_CONFIG_FILE || "<unset>");\n');
+    const sandboxConfig = join(workDir, "sandbox", ".ttctl.yaml");
+    const client = getCliClient({
+      configPath: sandboxConfig,
+      cliEntryPoint: stub,
+      repoRoot: workDir,
+    });
+    const result = await client.run([]);
+    expect(result.stdout).toBe(sandboxConfig);
+  });
+
+  it("override-injects TTCTL_CONFIG_FILE even when the parent process has it set", async () => {
+    const stub = join(workDir, "config-override.js");
+    await writeFile(stub, 'process.stdout.write(process.env.TTCTL_CONFIG_FILE || "<unset>");\n');
+    const sandboxConfig = join(workDir, "sandbox", ".ttctl.yaml");
+    const original = process.env["TTCTL_CONFIG_FILE"];
+    process.env["TTCTL_CONFIG_FILE"] = "/some/parent/config.yaml";
+    try {
+      const client = getCliClient({
+        configPath: sandboxConfig,
+        cliEntryPoint: stub,
+        repoRoot: workDir,
+      });
+      const result = await client.run([]);
+      expect(result.stdout).toBe(sandboxConfig);
+    } finally {
+      if (original === undefined) delete process.env["TTCTL_CONFIG_FILE"];
+      else process.env["TTCTL_CONFIG_FILE"] = original;
+    }
+  });
+
+  it("per-invocation env overlay can drop the harness-injected TTCTL_CONFIG_FILE (negative-case escape hatch)", async () => {
+    // Per-invocation env wins over the harness's injection — tests can
+    // exercise the `no config injected` path by passing
+    // `env: { TTCTL_CONFIG_FILE: undefined }`.
+    const stub = join(workDir, "config-cleared.js");
+    await writeFile(stub, 'process.stdout.write(process.env.TTCTL_CONFIG_FILE || "<unset>");\n');
+    const sandboxConfig = join(workDir, "sandbox", ".ttctl.yaml");
+    const original = process.env["TTCTL_CONFIG_FILE"];
+    delete process.env["TTCTL_CONFIG_FILE"];
+    try {
+      const client = getCliClient({
+        configPath: sandboxConfig,
+        cliEntryPoint: stub,
+        repoRoot: workDir,
+      });
+      const result = await client.run([], { env: { TTCTL_CONFIG_FILE: undefined } });
+      expect(result.stdout).toBe("<unset>");
+    } finally {
+      if (original !== undefined) process.env["TTCTL_CONFIG_FILE"] = original;
+    }
   });
 
   it("merges per-invocation env overlay onto process.env", async () => {
