@@ -15,7 +15,15 @@
     "test:e2e": {
       "dependsOn": ["build"],
       "cache": false,
-      "passThroughEnv": ["TTCTL_E2E"]
+      "passThroughEnv": [
+        "TTCTL_E2E",
+        "TTCTL_CONFIG_FILE",
+        "XDG_CONFIG_HOME",
+        "HOME",
+        "OP_ACCOUNT",
+        "OP_SERVICE_ACCOUNT_TOKEN",
+        "OP_SESSION_*"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^build"]
