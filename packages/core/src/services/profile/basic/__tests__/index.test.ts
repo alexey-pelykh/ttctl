@@ -352,6 +352,30 @@ describe("show", () => {
     await expect(show(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
+  // Regression for issue #89 — empirical capture of an invalid bearer token
+  // shows the federated `talent_schema` subgraph emits `'UNAUTHORIZED'` (with
+  // a top-level `status: 403`) on the mobile-gateway surface, not the
+  // documented `'AUTHENTICATION_REQUIRED'`. See
+  // `research/notes/14-auth-error-extensions-code.md`.
+  it("routes errors[0].extensions.code='UNAUTHORIZED' (mobile-gateway empirical, issue #89) to AuthRevokedError", async () => {
+    replyStock({
+      status: 200,
+      body: {
+        errors: [
+          {
+            message:
+              "That account isn't in our system. Make sure you're using a valid email and try again, or contact support.",
+            extensions: { code: "UNAUTHORIZED", status: 403, serviceName: "talent_schema" },
+            status: 403,
+          },
+        ],
+        data: null,
+      },
+    });
+
+    await expect(show(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
   it("throws ProfileError NO_VIEWER when data.viewer is null on a 200 response", async () => {
     replyStock({ body: { data: { viewer: null } } });
 
@@ -598,6 +622,28 @@ describe("set", () => {
       status: 200,
       body: {
         errors: [{ message: "Authentication required", extensions: { code: "AUTHENTICATION_REQUIRED" } }],
+      },
+    });
+
+    await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  // Regression for issue #89 — see the matching read-side test for the
+  // empirical-capture context.
+  it("throws AuthRevokedError on errors[0].extensions.code='UNAUTHORIZED' (issue #89) from the mutation", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      status: 200,
+      body: {
+        errors: [
+          {
+            message:
+              "That account isn't in our system. Make sure you're using a valid email and try again, or contact support.",
+            extensions: { code: "UNAUTHORIZED", status: 403, serviceName: "talent_schema" },
+            status: 403,
+          },
+        ],
+        data: null,
       },
     });
 

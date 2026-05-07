@@ -33,12 +33,33 @@ export interface UserError {
  * session token has been revoked or expired and the user must re-run
  * `ttctl auth signin`.
  *
- * The two backends emit different stable codes for the same logical state:
- * `'UNAUTHENTICATED'` (talent-profile) and `'AUTHENTICATION_REQUIRED'`
- * (gateway, see issue #77).
+ * Recognized stable codes (accumulated across surfaces and history):
+ *
+ *   - `'UNAUTHENTICATED'`         — talent-profile (Cloudflare-protected, web-portal API)
+ *   - `'AUTHENTICATION_REQUIRED'` — defensive carryover from #77 (provenance unverified;
+ *                                    see "Empirical history" below)
+ *   - `'UNAUTHORIZED'`            — mobile-gateway (federated `talent_schema` subgraph,
+ *                                    empirically observed 2026-05-07 for invalid bearer
+ *                                    tokens; see `research/notes/14-auth-error-extensions-code.md`)
+ *
+ * All three collapse to `AuthRevokedError` so the CLI / MCP surfaces apply a
+ * uniform "Run `ttctl auth signin`" recovery hint regardless of which surface
+ * raised the failure.
+ *
+ * **Empirical history** (issue #89): the original predicate (#77) recognized
+ * only the first two codes. Live mobile-gateway capture for an invalid bearer
+ * token returned HTTP 200 with `errors[0].extensions.code = 'UNAUTHORIZED'`
+ * (NOT `'AUTHENTICATION_REQUIRED'` as documentation suggested). All token-
+ * shape variants (corrupted, malformed, no-auth, plausible-but-invalid) flow
+ * through the same code path with identical responses, so this single code
+ * covers every "gateway can't resolve the token to an account" case.
+ *
+ * Future drift: a server-side rename adds another `||` clause here. New codes
+ * MUST be empirically captured before being added — see the research note for
+ * the capture procedure.
  */
 export function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
-  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
+  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED" || code === "UNAUTHORIZED";
 }
 
 /**
