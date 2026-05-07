@@ -17,6 +17,7 @@ vi.mock("../../../../transport.js", async () => {
 });
 
 import { ProfileError, set, show } from "../index.js";
+import { AuthRevokedError } from "../../../../auth/errors.js";
 import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
 
@@ -296,14 +297,10 @@ describe("show", () => {
     expect(result.viewer?.viewerRole.profile.skillSets.nodes[0]?.skill.name).toBe("Analytical Engine");
   });
 
-  it("throws ProfileError UNAUTHENTICATED on HTTP 401", async () => {
+  it("throws AuthRevokedError on HTTP 401 (#77 — uniform typed-error contract)", async () => {
     replyStock({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    await expect(show(TOKEN)).rejects.toMatchObject({
-      name: "ProfileError",
-      code: "UNAUTHENTICATED",
-      message: expect.stringContaining("ttctl auth signin"),
-    });
+    await expect(show(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("wraps generic transport throws as ProfileError NETWORK_ERROR", async () => {
@@ -328,7 +325,7 @@ describe("show", () => {
     });
   });
 
-  it("routes errors[0].extensions.code='UNAUTHENTICATED' to ProfileError UNAUTHENTICATED (Toptal returns HTTP 200 + this code, not 401)", async () => {
+  it("routes errors[0].extensions.code='UNAUTHENTICATED' (talent-profile form) to AuthRevokedError (Toptal returns HTTP 200 + this code, not 401)", async () => {
     replyStock({
       status: 200,
       body: {
@@ -341,11 +338,18 @@ describe("show", () => {
       },
     });
 
-    await expect(show(TOKEN)).rejects.toMatchObject({
-      name: "ProfileError",
-      code: "UNAUTHENTICATED",
-      message: expect.stringContaining("ttctl auth signin"),
+    await expect(show(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("routes errors[0].extensions.code='AUTHENTICATION_REQUIRED' (gateway form) to AuthRevokedError", async () => {
+    replyStock({
+      status: 200,
+      body: {
+        errors: [{ message: "Authentication required", extensions: { code: "AUTHENTICATION_REQUIRED" } }],
+      },
     });
+
+    await expect(show(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws ProfileError NO_VIEWER when data.viewer is null on a 200 response", async () => {
@@ -571,7 +575,7 @@ describe("set", () => {
     });
   });
 
-  it("throws ProfileError UNAUTHENTICATED on errors[0].extensions.code='UNAUTHENTICATED' from the mutation", async () => {
+  it("throws AuthRevokedError on errors[0].extensions.code='UNAUTHENTICATED' from the mutation", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({
       status: 200,
@@ -585,10 +589,19 @@ describe("set", () => {
       },
     });
 
-    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
-      code: "UNAUTHENTICATED",
-      message: expect.stringContaining("ttctl auth signin"),
+    await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("throws AuthRevokedError on errors[0].extensions.code='AUTHENTICATION_REQUIRED' (gateway form) from the mutation", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      status: 200,
+      body: {
+        errors: [{ message: "Authentication required", extensions: { code: "AUTHENTICATION_REQUIRED" } }],
+      },
     });
+
+    await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws ProfileError GRAPHQL_ERROR on top-level errors (non-UNAUTHENTICATED)", async () => {
@@ -605,13 +618,11 @@ describe("set", () => {
     });
   });
 
-  it("throws ProfileError UNAUTHENTICATED on HTTP 401 response", async () => {
+  it("throws AuthRevokedError on HTTP 401 response from the mutation", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
-      code: "UNAUTHENTICATED",
-    });
+    await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws ProfileError UNKNOWN on unexpected non-2xx (e.g., 500)", async () => {

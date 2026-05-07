@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { buildProgram } from "@ttctl/cli";
+import { buildProgram, TtctlError, presentTtctlError } from "@ttctl/cli";
 import { runMcpStdio } from "@ttctl/mcp";
 
 /**
@@ -23,6 +23,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  // Top-level safety net: any TtctlError that escapes a command handler is
+  // rendered in the uniform Error/Recovery/Code format (issue #77). Other
+  // unexpected errors fall through to the generic single-line stderr.
+  if (err instanceof TtctlError) presentTtctlError(err);
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

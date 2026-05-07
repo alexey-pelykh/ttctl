@@ -2,3 +2,5 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 export { buildServer, runMcpStdio } from "./server.js";
+export { ttctlErrorToToolResponse, ttctlErrorToToolResponseOrNull } from "./errors.js";
+export type { ToolErrorResponse } from "./errors.js";
