@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { mkdir, unlink } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { rm, unlink } from "node:fs/promises";
 
 import { resolveConfig, resolveCredentials, saveAuthToken, signIn } from "@ttctl/core";
 import { afterAll, beforeAll } from "vitest";
 
-import { printPreflightBanner } from "./banner.js";
-import { acquireLock, releaseLock } from "./lockfile.js";
 import {
   findRepoRoot,
-  resolveIsolatedAuthTokenPath,
-  resolveLockfilePath,
-  resolveSandboxConfigPath,
-  resolveSandboxDir,
-  writeSandboxConfig,
+  resolveIsolatedSessionConfigPath,
+  resolveIsolatedSessionDir,
+  resolveIsolatedSessionTokenPath,
+  resolveSharedSessionFilePath,
+  writeIsolatedSessionConfig,
 } from "./paths.js";
 
 /**
- * Public context returned by `withFreshSession()`. Test authors use this
- * to construct CLI / MCP clients bound to the sandbox.
+ * Public context returned by `withFreshSession()` and `getSharedSession()`.
+ * Test authors use this to construct CLI / MCP clients bound to the
+ * relevant sandbox (shared for `getSharedSession`, isolated for
+ * `withFreshSession`).
  */
 export interface FreshSessionContext {
   /**
@@ -29,56 +30,56 @@ export interface FreshSessionContext {
    */
   email: string;
   /**
-   * Absolute path to the isolated auth token (`<sandbox>/auth.token`).
-   * Test authors use this for existence / non-empty assertions; they
-   * should NEVER read or write the file's contents — the harness owns
-   * its lifecycle.
+   * Absolute path to the auth token file. For `getSharedSession()`, the
+   * shared `<sandbox>/auth.token` written by globalSetup. For
+   * `withFreshSession()`, the per-call isolated `<sandbox>/isolated-<id>/
+   * auth.token`. Test authors use this for existence / non-empty
+   * assertions; they should NEVER read the file's contents — the harness
+   * owns its lifecycle.
    */
   tokenPath: string;
   /**
-   * Absolute path to the sandbox directory (`<repo-root>/.tmp/e2e/`).
-   * Useful for tests that need a stable working directory or for sibling-
-   * fixture lookups (lockfile, isolated token). The harness no longer
-   * spawns subprocesses with `cwd: sandboxDir` — isolation flows through
-   * `TTCTL_CONFIG_FILE` env injection (#94), not CWD.
+   * Absolute path to the relevant sandbox directory. For shared sessions,
+   * `<repo-root>/.tmp/e2e/`. For isolated sessions,
+   * `<repo-root>/.tmp/e2e/isolated-<id>/`.
    */
   sandboxDir: string;
   /**
    * Absolute path to the sandbox `.ttctl.yaml` fixture. Pass this to
    * `getCliClient({ configPath })` / `getMcpClient({ configPath })` so the
    * spawned subprocess receives `TTCTL_CONFIG_FILE=<this>` in its env and
-   * resolves config to the sandbox (with the redirected `auth-token-path`)
-   * instead of the user's everyday session.
+   * resolves config to the (shared or isolated) sandbox.
    */
   sandboxConfigPath: string;
   /**
-   * Absolute path to the repo root, resolved at suite startup. Useful for
-   * locating sibling fixtures under `<repo-root>/.tmp/`.
+   * Absolute path to the repo root, resolved at session establishment.
+   * Useful for locating sibling fixtures under `<repo-root>/.tmp/`.
    */
   repoRoot: string;
 }
 
 export interface WithFreshSessionOptions {
   /**
-   * Cool-off duration after sign-out, in milliseconds. AC E3 requires
-   * ≥5s. Defaults to 5_000. Tests may extend this when they hit rate
-   * limits empirically; values below 5_000 are clamped up.
+   * Cool-off duration after isolated-session tearDown, in milliseconds.
+   * AC E3 of #21 requires ≥5s. Defaults to 5_000. Tests may extend this
+   * when they hit rate limits empirically; values below 5_000 are clamped
+   * up.
    */
   coolOffMs?: number;
 }
 
 export interface FreshSessionHandle {
   /**
-   * Get the active session context. Throws if the session was not
+   * Get the active isolated-session context. Throws if the session was not
    * established (e.g. test runs without `TTCTL_E2E=1`, or `beforeAll`
    * threw). Test bodies SHOULD wrap accesses in `it.skipIf(...)` to
    * cooperate with the env-gate cleanly.
    */
   getContext(): FreshSessionContext;
   /**
-   * Whether the session is currently established. Useful for guarding
-   * test-body code without crashing the assertion runner with a thrown
-   * "session not established" error during a skipped run.
+   * Whether the isolated session is currently established. Useful for
+   * guarding test-body code without crashing the assertion runner with a
+   * thrown "session not established" error during a skipped run.
    */
   isActive(): boolean;
 }
@@ -96,7 +97,26 @@ export interface SessionRegistration {
 
 const COOL_OFF_FLOOR_MS = 5_000;
 
+/**
+ * Per-file gate counter. `withFreshSession()` may be called once per file;
+ * a second call indicates a test-author error (would register two
+ * `beforeAll` / `afterAll` pairs and produce two signins).
+ */
 let handleCount = 0;
+
+/**
+ * Per-process counter for isolation-id generation. With `singleFork: true`
+ * + `fileParallelism: false`, vitest runs all files in one Node process
+ * sequentially, so this counter is monotonic across the run. Each
+ * `withFreshSession()` call gets a distinct id — the resulting paths
+ * `<sandbox>/isolated-<id>/` never collide.
+ */
+let isolationCounter = 0;
+
+function nextIsolationId(): string {
+  isolationCounter += 1;
+  return String(isolationCounter);
+}
 
 /**
  * Build the lifecycle callbacks and a session handle WITHOUT registering
@@ -107,75 +127,65 @@ let handleCount = 0;
  *
  * Production code must NOT call this directly — without hook registration,
  * the session's `setUp` would never run.
+ *
+ * Lockfile note: this function does NOT acquire the run-level lock. The
+ * lock is held for the duration of the test run by `globalSetup`. Per-file
+ * `withFreshSession()` calls obtain isolation by writing to a per-call
+ * subdirectory under the sandbox.
  */
 export function buildSessionRegistration(options: WithFreshSessionOptions = {}): SessionRegistration {
   handleCount += 1;
   if (handleCount > 1) {
     // Vitest's lifecycle hooks accumulate — registering two pairs would
-    // cause two signins per suite, violating AC E2. Surface this loudly.
+    // cause two signins per file, defeating the per-file isolation contract.
     throw new Error(
       `withFreshSession: called more than once in the same file (call count = ${handleCount.toString()}). ` +
-        `AC E2 requires exactly one EmailPasswordSignIn per suite. Call withFreshSession() once per file.`,
+        `Each adversarial test file gets exactly one isolated EmailPasswordSignIn. ` +
+        `Call withFreshSession() once per file.`,
     );
   }
   const coolOffMs = Math.max(options.coolOffMs ?? COOL_OFF_FLOOR_MS, COOL_OFF_FLOOR_MS);
 
   let context: FreshSessionContext | null = null;
+  let isolationDir: string | null = null;
 
   const setUp = async (): Promise<void> => {
     if (!isE2EEnabled()) return;
 
-    printPreflightBanner();
+    // No banner here — globalSetup already printed it once per process.
+    // No lockfile acquisition — globalSetup is the run-level lock holder.
 
     const repoRoot = findRepoRoot();
-    const sandboxDir = resolveSandboxDir(repoRoot);
-    const sandboxConfigPath = resolveSandboxConfigPath(repoRoot);
-    const tokenPath = resolveIsolatedAuthTokenPath(repoRoot);
-    const lockPath = resolveLockfilePath(repoRoot);
+    const id = nextIsolationId();
+    isolationDir = resolveIsolatedSessionDir(repoRoot, id);
+    const isolatedConfigPath = resolveIsolatedSessionConfigPath(repoRoot, id);
+    const isolatedTokenPath = resolveIsolatedSessionTokenPath(repoRoot, id);
 
-    // The lockfile lives inside the sandbox dir — make sure that dir
-    // exists before acquireLock writes the .lock file. `writeSandboxConfig`
-    // also mkdir-p's the same dir, but lock acquisition must succeed BEFORE
-    // any other harness state is created.
-    await mkdir(sandboxDir, { recursive: true });
-    acquireLock(lockPath);
+    // Find the user's source config (the one OUTSIDE the sandbox) via
+    // standard discovery, identical to globalSetup's path.
+    const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
 
-    try {
-      // Find the user's source config (the one OUTSIDE the sandbox) via
-      // standard discovery: TTCTL_CONFIG_FILE → $XDG_CONFIG_HOME/ttctl/
-      // config.yaml → ~/.config/ttctl/config.yaml. No CWD walking, no
-      // repo-root fallback. The maintainer's legacy `<repo-root>/.ttctl.yaml`
-      // is honored only when `TTCTL_CONFIG_FILE` points at it.
-      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
+    // Mirror it into the per-call isolated subdirectory. The fixture's
+    // `auth-token-path: ./auth.token` resolves against the file's
+    // directory → <sandbox>/isolated-<id>/auth.token. Spawned subprocesses
+    // get `TTCTL_CONFIG_FILE=<isolated config path>` injected via the CLI
+    // client, isolating their tokens from BOTH the user's working session
+    // AND the shared session that `getSharedSession()`-using tests consume.
+    await writeIsolatedSessionConfig(repoRoot, id, sourceConfigPath);
 
-      // Mirror it into the sandbox with `auth-token-path: ./auth.token`.
-      // Spawned CLI / MCP subprocesses get `TTCTL_CONFIG_FILE=<sandbox>/
-      // .ttctl.yaml` injected (#94), so they read this fixture and write
-      // tokens to <sandbox>/auth.token, never touching the user's working
-      // session.
-      await writeSandboxConfig(repoRoot, sourceConfigPath);
+    // Live signin — this is the ISOLATED signin (the second of the AC's
+    // "exactly two signins per run", the first being globalSetup's).
+    const credentials = resolveCredentials(sourceConfig.auth);
+    const { token } = await signIn(credentials);
+    await saveAuthToken(isolatedTokenPath, token);
 
-      // Sign in directly via core's signIn (the harness handles token
-      // capture itself; spawning `ttctl auth signin` would work too but
-      // is slower and indirect). The credentials come from the SOURCE
-      // config — secret resolution (1Password CLI, literal) is identical
-      // to a non-E2E run.
-      const credentials = resolveCredentials(sourceConfig.auth);
-      const { token } = await signIn(credentials);
-      await saveAuthToken(tokenPath, token);
-      context = {
-        email: credentials.email,
-        tokenPath,
-        sandboxDir,
-        sandboxConfigPath,
-        repoRoot,
-      };
-    } catch (err) {
-      // Sign-in failed — release lock so subsequent runs aren't stuck
-      // behind a held lock from a never-completed setup.
-      releaseLock(lockPath);
-      throw err;
-    }
+    context = {
+      email: credentials.email,
+      tokenPath: isolatedTokenPath,
+      sandboxDir: isolationDir,
+      sandboxConfigPath: isolatedConfigPath,
+      repoRoot,
+    };
   };
 
   const tearDown = async (): Promise<void> => {
@@ -186,12 +196,11 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     // failing beforeAll, so this branch is the right place for the reset.
     handleCount = 0;
     if (context === null) return;
-    const { tokenPath, repoRoot } = context;
+    const { tokenPath } = context;
 
-    // Local "SignOut": destroy the isolated session-of-record. The
-    // mobile gateway has no terminal SignOut mutation; deleting the
-    // token is the canonical session-end action (matches `ttctl auth
-    // signout`).
+    // Local "SignOut" of the isolated session — destroy its token. The
+    // mobile gateway has no terminal SignOut mutation; deleting the token
+    // is the canonical session-end action.
     try {
       await unlink(tokenPath);
     } catch {
@@ -199,11 +208,23 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
       // afterAll throws would mask the real test failure.
     }
 
-    // Cool-off — AC E3.
+    // Cool-off — AC E3. Even though globalSetup also cools off at run
+    // teardown, this per-isolated-session cool-off paces successive
+    // signins WITHIN a single run.
     await sleep(coolOffMs);
 
-    releaseLock(resolveLockfilePath(repoRoot));
+    // Best-effort cleanup of the isolated subdirectory so the sandbox
+    // doesn't accumulate stale `isolated-N/` directories across runs.
+    if (isolationDir !== null) {
+      try {
+        await rm(isolationDir, { recursive: true, force: true });
+      } catch {
+        // Ignore — non-essential cleanup.
+      }
+    }
+
     context = null;
+    isolationDir = null;
   };
 
   const handle: FreshSessionHandle = {
@@ -223,33 +244,35 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
 }
 
 /**
- * Establish a single signed-in session for the calling vitest suite.
+ * Establish a single ISOLATED signed-in session for the calling vitest
+ * file.
  *
- * Call this at the top of a test file (outside or inside a `describe`).
- * The returned handle exposes `getContext()` for use within `it(...)`
- * bodies. Internally registers `beforeAll` and `afterAll` hooks:
+ * Use this when a test file needs to corrupt or otherwise mutate the
+ * on-disk auth token (e.g. `50-auth-error-revoked.e2e.test.ts`). The
+ * isolation guarantees that the corruption stays inside this file's
+ * subdirectory — sibling tests using `getSharedSession()` keep their
+ * shared session intact.
+ *
+ * Use `getSharedSession()` instead when the test only needs to READ a
+ * live session that globalSetup already established.
+ *
+ * Internally registers `beforeAll` and `afterAll` hooks:
  *
  *   - `beforeAll`:
  *       1. (skip if `TTCTL_E2E !== "1"`)
- *       2. Print pre-flight banner (once per process — AC E4)
- *       3. Acquire run-level lockfile (AC E1)
- *       4. Read & resolve credentials from .ttctl.yaml
- *       5. Sign in via `core.signIn` (AC E2), capturing the bearer token
- *       6. Persist token to `.tmp/e2e/auth.token` (AC C1)
+ *       2. Allocate a fresh isolation id; write fixture to the
+ *          per-call subdirectory
+ *       3. Sign in via `core.signIn`; persist token to the isolated path
  *
  *   - `afterAll`:
  *       1. (skip if no session was established)
- *       2. Delete the isolated token — this is the harness's "SignOut"
- *          (AC E2). The Toptal mobile gateway has no terminal SignOut
- *          mutation; the local token is the session-of-record.
- *       3. Cool-off ≥5s (AC E3) — spaces successive runs to avoid
- *          rate-limit / abuse heuristics.
- *       4. Release lockfile.
+ *       2. Delete the isolated token
+ *       3. Cool-off ≥5s (AC E3)
+ *       4. Best-effort `rm -rf` the isolated subdirectory
  *
  * Idempotency: `withFreshSession` may be called once per file. Calling it
- * twice in the same file would register two `beforeAll`/`afterAll` pairs,
- * causing two signins per suite — the harness throws on the second call
- * to surface the misuse loudly.
+ * twice in the same file would register two `beforeAll`/`afterAll` pairs
+ * — the harness throws on the second call to surface the misuse loudly.
  */
 export function withFreshSession(options: WithFreshSessionOptions = {}): FreshSessionHandle {
   const { setUp, tearDown, handle } = buildSessionRegistration(options);
@@ -259,12 +282,90 @@ export function withFreshSession(options: WithFreshSessionOptions = {}): FreshSe
 }
 
 /**
- * Reset the per-process call counter. Tests inject this between simulated
- * vitest runs to verify the "exactly once per file" guard. Production
- * code MUST NOT call it.
+ * Read the SHARED session that globalSetup established at run start.
+ *
+ * Use this in test files that consume the run-level signed-in session
+ * (e.g. `01-auth-signin.e2e.test.ts`, `99-auth-signout.e2e.test.ts`).
+ * Multiple test files may call `getSharedSession()` in the same run; they
+ * all see the same `FreshSessionContext` because they all read the same
+ * `<sandbox>/.session.json` file.
+ *
+ * Throws if the session file is absent — that means either:
+ *
+ *   - `TTCTL_E2E !== "1"` (globalSetup is a no-op and the suite is gated
+ *     off), OR
+ *   - `vitest.e2e.config.ts` is missing the `globalSetup:
+ *     ['./src/harness/globalSetup.ts']` wiring.
+ *
+ * Test bodies SHOULD wrap accesses in
+ * `it.skipIf(process.env.TTCTL_E2E !== "1")` so the env-gated case skips
+ * silently rather than throwing.
+ *
+ * The `repoRoot` option is for testability only — production callers
+ * leave it unset so the harness walks up from `process.cwd()`.
+ */
+export function getSharedSession(opts: { repoRoot?: string } = {}): FreshSessionContext {
+  const repoRoot = opts.repoRoot ?? findRepoRoot();
+  const sessionFilePath = resolveSharedSessionFilePath(repoRoot);
+
+  if (!existsSync(sessionFilePath)) {
+    throw new Error(
+      `getSharedSession: shared-session file at ${sessionFilePath} not found. ` +
+        `Either TTCTL_E2E !== "1" (the suite is gated off — wrap test bodies in ` +
+        `\`it.skipIf(process.env["TTCTL_E2E"] !== "1")\`), or vitest.e2e.config.ts ` +
+        `is missing the globalSetup wiring.`,
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(sessionFilePath, "utf8");
+  } catch (err) {
+    throw new Error(
+      `getSharedSession: failed to read shared-session file at ${sessionFilePath}: ${(err as Error).message}`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `getSharedSession: shared-session file at ${sessionFilePath} is malformed JSON: ${(err as Error).message}`,
+    );
+  }
+
+  if (!isValidSharedSessionMetadata(parsed)) {
+    throw new Error(
+      `getSharedSession: shared-session file at ${sessionFilePath} has unexpected shape. ` +
+        `Expected object with string fields { email, tokenPath, sandboxDir, sandboxConfigPath, repoRoot }.`,
+    );
+  }
+
+  return parsed;
+}
+
+function isValidSharedSessionMetadata(value: unknown): value is FreshSessionContext {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v["email"] === "string" &&
+    typeof v["tokenPath"] === "string" &&
+    typeof v["sandboxDir"] === "string" &&
+    typeof v["sandboxConfigPath"] === "string" &&
+    typeof v["repoRoot"] === "string"
+  );
+}
+
+/**
+ * Reset the per-process call counter and isolation counter. Tests inject
+ * this between simulated vitest runs to verify the "exactly once per file"
+ * guard and to obtain deterministic isolation ids. Production code MUST
+ * NOT call it.
  */
 export function resetSessionForTesting(): void {
   handleCount = 0;
+  isolationCounter = 0;
 }
 
 function isE2EEnabled(): boolean {

@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildSessionRegistration, resetSessionForTesting } from "../session.js";
+import { buildSessionRegistration, getSharedSession, resetSessionForTesting } from "../session.js";
 
 beforeEach(() => {
   // Each test starts with a fresh per-process counter — simulates a new
@@ -25,10 +29,10 @@ describe("buildSessionRegistration — call counter", () => {
     expect(typeof handle.isActive).toBe("function");
   });
 
-  it("throws on the SECOND call within the same file (AC E2 — exactly one signin)", () => {
+  it("throws on the SECOND call within the same file (one isolated signin per adversarial file)", () => {
     buildSessionRegistration();
     expect(() => buildSessionRegistration()).toThrow(
-      /called more than once in the same file.*exactly one EmailPasswordSignIn/,
+      /called more than once in the same file.*one isolated EmailPasswordSignIn/,
     );
   });
 
@@ -121,5 +125,80 @@ describe("buildSessionRegistration — coolOff clamp", () => {
     // the API does not throw on a low value — the floor is applied
     // internally and only matters during a real signout.
     expect(() => buildSessionRegistration({ coolOffMs: 100 })).not.toThrow();
+  });
+});
+
+describe("getSharedSession", () => {
+  let workDir: string;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(join(tmpdir(), "ttctl-shared-session-"));
+  });
+
+  afterEach(async () => {
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  it("throws when the shared-session file does not exist (TTCTL_E2E gated off OR globalSetup not wired)", () => {
+    expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/shared-session file at .* not found/);
+  });
+
+  it("error message guides users toward the env-gate / globalSetup wiring", () => {
+    expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/TTCTL_E2E/);
+    expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/globalSetup/);
+  });
+
+  it("returns the parsed metadata when the session file exists and is well-formed", async () => {
+    const sandboxDir = join(workDir, ".tmp", "e2e");
+    await mkdir(sandboxDir, { recursive: true });
+    const meta = {
+      email: "test@example.com",
+      tokenPath: join(sandboxDir, "auth.token"),
+      sandboxDir,
+      sandboxConfigPath: join(sandboxDir, ".ttctl.yaml"),
+      repoRoot: workDir,
+    };
+    await writeFile(join(sandboxDir, ".session.json"), JSON.stringify(meta) + "\n");
+
+    const result = getSharedSession({ repoRoot: workDir });
+    expect(result.email).toBe("test@example.com");
+    expect(result.tokenPath).toBe(meta.tokenPath);
+    expect(result.sandboxDir).toBe(sandboxDir);
+    expect(result.sandboxConfigPath).toBe(meta.sandboxConfigPath);
+    expect(result.repoRoot).toBe(workDir);
+  });
+
+  it("throws when the session file is malformed JSON", async () => {
+    const sandboxDir = join(workDir, ".tmp", "e2e");
+    await mkdir(sandboxDir, { recursive: true });
+    await writeFile(join(sandboxDir, ".session.json"), "not valid json{{{");
+
+    expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/malformed JSON/);
+  });
+
+  it("throws when the session file has unexpected shape (missing required fields)", async () => {
+    const sandboxDir = join(workDir, ".tmp", "e2e");
+    await mkdir(sandboxDir, { recursive: true });
+    // Missing `email`, `sandboxDir`, etc.
+    await writeFile(join(sandboxDir, ".session.json"), JSON.stringify({ tokenPath: "/x" }));
+
+    expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/unexpected shape/);
+  });
+
+  it("throws when the session file has wrong-typed fields (e.g. tokenPath as number)", async () => {
+    const sandboxDir = join(workDir, ".tmp", "e2e");
+    await mkdir(sandboxDir, { recursive: true });
+    await writeFile(
+      join(sandboxDir, ".session.json"),
+      JSON.stringify({
+        email: "x@y",
+        tokenPath: 42,
+        sandboxDir: "/a",
+        sandboxConfigPath: "/b",
+        repoRoot: "/c",
+      }),
+    );
+
+    expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/unexpected shape/);
   });
 });

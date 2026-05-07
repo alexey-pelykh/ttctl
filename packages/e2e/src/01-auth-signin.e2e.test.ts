@@ -2,63 +2,52 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * First E2E test cases against the live Toptal Talent platform — issue #21.
+ * First file in the E2E sequence (numeric prefix `01-`). Asserts that
+ * `globalSetup` successfully established a live session, then exercises
+ * the read-side shape of the gateway via `auth status` and `profile show`.
  *
- * Suite shape (per #21 AC E2: exactly one EmailPasswordSignIn + one SignOut
- * per run): a single `withFreshSession()` registered at the top of this
- * file establishes the session in `beforeAll` and tears it down in
- * `afterAll`. All tests share that session.
+ * The signout assertion lives in `99-auth-signout.e2e.test.ts` — it must
+ * run LAST so the shared session remains live for `profile show` and other
+ * downstream cases. Numeric prefixes pin the logical order via the
+ * explicit `BaseSequencer` in `vitest.e2e.config.ts`.
  *
- * Test order (sequential — vitest default within one file):
- *
- *   1. signin    — assert beforeAll established the session
- *   2. auth status   — assert exit 0 + email visible
- *   3. profile show  — assert JSON parses + has expected rich-shape fields
- *   4. signout   — `ttctl auth signout` + post-state checks
+ * Suite shape: this file uses `getSharedSession()` to read the session
+ * metadata that `globalSetup` wrote. No per-file signin happens here —
+ * the live signin is amortized across all `getSharedSession()`-using files
+ * (AC #1 of #105: exactly one shared signin per run).
  *
  * Skip-gate: every test is `.skipIf(!e2eEnabled)`. Without `TTCTL_E2E=1`,
- * vitest discovers the file, the harness's beforeAll is a no-op (per
- * `withFreshSession` setUp's env gate), and every test reports SKIPPED.
- * `pnpm test:e2e` exits 0 silently — verified by CI (which never sets
- * TTCTL_E2E=1).
+ * vitest discovers the file (only when `vitest.e2e.config.ts` includes it,
+ * which itself env-gates), and every test reports SKIPPED.
  *
  * Output redaction (#21 C3): tests extract specific fields BEFORE
  * asserting, so a failing test diff never includes the full profile JSON.
  * Existence checks use `key in obj` so failure diffs collapse to
  * `Expected: true / Received: false` instead of dumping the host object.
- *
- * Note: the profile-update round-trip test from earlier #21 iterations was
- * removed in #66 when the read path migrated to mobile-gateway. The bio
- * (`Profile.about`) and headline (`Profile.quote`) fields are NOT on
- * mobile-gateway's `Profile` type, so a `profile show`-based round-trip
- * verification is no longer feasible. `profile update` itself remains
- * exercised at the unit-test layer; live-API write-side coverage will
- * return when a follow-up issue restores read-side bio/headline visibility.
  */
 
 import { existsSync, statSync } from "node:fs";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { getCliClient, withFreshSession } from "./harness/index.js";
+import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
 
-const session = withFreshSession();
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("auth + profile E2E (live Toptal)", () => {
+describe("auth signin + profile (live Toptal, shared session)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxConfigPath } = session.getContext();
+    const { sandboxConfigPath } = getSharedSession();
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
   it.skipIf(!e2eEnabled)(
-    "signin: beforeAll established a session (auth status reports the email; isolated token non-empty)",
+    "signin: globalSetup established a session — token exists, auth status reports the email",
     async () => {
-      const { tokenPath, email } = session.getContext();
+      const { tokenPath, email } = getSharedSession();
 
       // Isolated auth token exists and is non-empty (#21 spec: "isolated
       // session-of-record present after signin"). The token is plain
@@ -76,7 +65,7 @@ describe("auth + profile E2E (live Toptal)", () => {
   );
 
   it.skipIf(!e2eEnabled)("auth status: returns exit 0 with the configured email", async () => {
-    const { email } = session.getContext();
+    const { email } = getSharedSession();
     const result = await cli.run(["auth", "status"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(email);
@@ -136,31 +125,6 @@ describe("auth + profile E2E (live Toptal)", () => {
       expect("id" in profile).toBe(true);
       expect("city" in profile).toBe(true);
       expect("skillSets" in profile).toBe(true);
-    },
-  );
-
-  it.skipIf(!e2eEnabled)(
-    "signout: ttctl auth signout exits 0; subsequent auth status reports no session; token deleted",
-    async () => {
-      const { tokenPath } = session.getContext();
-
-      // #21 spec: this is the suite's only `auth signout` invocation. The
-      // harness's afterAll also unlinks the token, but ENOENT is silently
-      // swallowed there — the count of *logical* signouts remains exactly
-      // one (this CLI call) per AC E2.
-      const signoutResult = await cli.run(["auth", "signout"]);
-      expect(signoutResult.exitCode).toBe(0);
-
-      // Token gone (signout's contract: idempotent unlink).
-      expect(existsSync(tokenPath)).toBe(false);
-
-      // Status now reports invalid (exit 1 — no-session branch).
-      const statusAfter = await cli.run(["auth", "status"]);
-      expect(statusAfter.exitCode).toBe(1);
-      // Tolerate either "No session found" (no-session) or "Session
-      // expired" (session-expired) — both are user-equivalent and the AC
-      // says "shows 'not signed in' (or equivalent)".
-      expect(statusAfter.stdout).toMatch(/no session|session expired/i);
     },
   );
 });
