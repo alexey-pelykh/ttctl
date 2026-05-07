@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { AuthSchema, ConfigError, ConfigSchema, discoverConfigPath, loadConfigFile, resolveConfig } from "../config.js";
 
@@ -177,10 +177,16 @@ describe("config resolution", () => {
    * Write a valid config file at `path` (creating parent dirs as needed)
    * and return the path. Used by precedence tests that need fixture files
    * to exist on disk so `existsSync` checks in `discoverConfigPath` pass.
+   *
+   * Uses `path.dirname` for parent extraction so the helper works on
+   * Windows (where `\\` is the separator) as well as POSIX. A naive
+   * regex like `/\/[^/]+$/` matches only POSIX paths and silently
+   * collapses to the input path on Windows, which then makes
+   * `mkdirSync(parent, { recursive: true })` create a directory at the
+   * intended file path — `writeFileSync` then fails with `EISDIR`.
    */
   function writeConfig(path: string, body = "auth: op://Personal/ttctl\n"): string {
-    const parent = path.replace(/\/[^/]+$/, "");
-    mkdirSync(parent, { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
     return path;
   }
