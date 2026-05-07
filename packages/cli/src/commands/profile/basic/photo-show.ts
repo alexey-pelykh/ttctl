@@ -1,6 +1,107 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// Placeholder for the `ttctl profile basic photo show` command. Implementation
-// lands in #73 along with the rest of the profile.basic + skills sub-domain.
-export {};
+import Table from "cli-table3";
+import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
+
+import { presentTtctlError } from "../../../errors.js";
+import { emitResult } from "../../../lib/output.js";
+import type { OutputFormat } from "../../../lib/output.js";
+import { resolveAuthTokenPathOrExit } from "./show.js";
+
+/**
+ * Action handler for `ttctl profile basic photo show`. Loads the persisted
+ * auth token and dispatches `profile.basic.photoShow()` to fetch the URLs
+ * of the user's profile photo (default / original / small variants plus
+ * the server's recommended crop rectangle). Routes the typed payload
+ * through `emitResult` (#71) so users can switch between text / JSON /
+ * table output.
+ *
+ * Domain errors are surfaced via `handlePhotoShowError`, which knows how
+ * to render `Cf403Error` walkthroughs and `ProfileError` codes.
+ */
+export async function runProfileBasicPhotoShow(format: OutputFormat): Promise<void> {
+  const tokenPath = resolveAuthTokenPathOrExit("profile show");
+  const token = await loadAuthToken(tokenPath);
+  if (token === null) {
+    process.stderr.write(
+      "profile photo show failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
+    );
+    process.exit(1);
+  }
+
+  let photo: profile.basic.PhotoUrl;
+  try {
+    photo = await profile.basic.photoShow(token);
+  } catch (err) {
+    handlePhotoShowError(err);
+    return;
+  }
+
+  emitResult(photo, format, {
+    text: formatPhotoText,
+    table: formatPhotoTable,
+  });
+}
+
+function handlePhotoShowError(err: unknown): never {
+  if (err instanceof TtctlError) presentTtctlError(err);
+  if (err instanceof profile.basic.ProfileError) {
+    process.stderr.write(`profile photo show failed (${err.code}): ${err.message}\n`);
+    process.exit(1);
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`profile photo show failed: ${message}\n`);
+  process.exit(1);
+}
+
+/**
+ * Format the typed photo payload as a multi-line summary. Pure function —
+ * no I/O — directly unit-testable. Each variant URL gets its own line;
+ * the cropped rectangle and resolution-readiness flag are summarised at
+ * the bottom for quick visual inspection.
+ */
+export function formatPhotoText(payload: profile.basic.PhotoUrl): string {
+  const lines: string[] = [];
+  if (payload.default !== null) lines.push(`default:  ${payload.default}`);
+  if (payload.original !== null) lines.push(`original: ${payload.original}`);
+  if (payload.small !== null) lines.push(`small:    ${payload.small}`);
+  if (lines.length === 0) {
+    lines.push("(no photo set)");
+  }
+  if (payload.cropped !== null) {
+    const c = payload.cropped;
+    lines.push(`cropped:  x=${c.x.toString()} y=${c.y.toString()} ${c.width.toString()}×${c.height.toString()}`);
+  }
+  lines.push(`resolution: ${payload.isResolutionSatisfied ? "OK" : "below requirements"}`);
+  return lines.join("\n");
+}
+
+/**
+ * Format the typed photo payload as a `cli-table3`-rendered key/value
+ * table. Same field selection as `formatPhotoText`. Width adapts to the
+ * terminal but never narrower than enough for a wrapped URL.
+ */
+export function formatPhotoTable(
+  payload: profile.basic.PhotoUrl,
+  terminalWidth: number = process.stdout.columns || 80,
+): string {
+  // 18 cols leaves room for "resolution_ok" (13 chars) plus cli-table3
+  // padding (2 chars per side), the longest key in the table.
+  const fieldWidth = 18;
+  const valueWidth = Math.max(40, terminalWidth - fieldWidth - 5);
+  const table = new Table({
+    head: ["Field", "Value"],
+    colWidths: [fieldWidth, valueWidth],
+    wordWrap: true,
+  });
+  table.push(["default", payload.default ?? "(unset)"]);
+  table.push(["original", payload.original ?? "(unset)"]);
+  table.push(["small", payload.small ?? "(unset)"]);
+  if (payload.cropped !== null) {
+    const c = payload.cropped;
+    table.push(["cropped", `x=${c.x.toString()} y=${c.y.toString()} ${c.width.toString()}×${c.height.toString()}`]);
+  }
+  table.push(["resolution_ok", payload.isResolutionSatisfied ? "true" : "false"]);
+  return table.toString();
+}

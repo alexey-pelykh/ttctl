@@ -12,6 +12,7 @@ import { buildProfileCertificationsCommand } from "./certifications/index.js";
 import { buildProfileEmploymentCommand } from "./employment/index.js";
 import { buildProfilePortfolioCommand } from "./portfolio/index.js";
 import { buildProfileResumeCommand } from "./resume/index.js";
+import { buildProfileSkillsCommand } from "./skills/index.js";
 
 /**
  * Build the `ttctl profile` command tree. Hosts the 11 profile sub-domains
@@ -74,6 +75,7 @@ export function buildProfileCommand(): Command {
   profile.addCommand(buildProfileEmploymentCommand());
   profile.addCommand(buildProfilePortfolioCommand());
   profile.addCommand(buildProfileResumeCommand());
+  profile.addCommand(buildProfileSkillsCommand());
 
   return profile;
 }

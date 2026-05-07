@@ -49,6 +49,30 @@ export const PROFILE_BASIC_FIELDS = {
 } as const satisfies Readonly<Record<string, string>>;
 
 /**
+ * Server-field → CLI-flag mapping for the `skills` profile sub-domain.
+ *
+ * Currently empty: every field on `ProfileSkillSet` (`experience`, `rating`,
+ * `public`, `position`, `skill.{id,name}`) reads naturally as a CLI flag
+ * with no rename. The empty table is registered for two reasons:
+ *
+ *   1. **Structural symmetry** with `PROFILE_BASIC_FIELDS` — consumers can
+ *      mechanically derive `serverToCli`/`cliToServer` calls per sub-domain
+ *      regardless of whether any field actually renames, so future entries
+ *      can be added in-place without changing call-sites.
+ *   2. **Discovery surface** — when a future field needs renaming
+ *      (e.g., a server-side `experience` that's actually expressed in months
+ *      while the CLI exposes `--experience-years`), this is the documented
+ *      home for that mapping.
+ *
+ * The empty `as const` literal still produces a `Readonly<Record<string,
+ * string>>` per the `satisfies` clause, so `serverToCli(_, PROFILE_SKILL_FIELDS)`
+ * type-checks without the consumer having to special-case the empty case.
+ */
+export const PROFILE_SKILL_FIELDS = {
+  // Currently empty — see module docstring above for rationale.
+} as const satisfies Readonly<Record<string, string>>;
+
+/**
  * Reverse the direction of a translation table — CLI-flag → server-field.
  *
  * Used by `cliToServer` to translate user-supplied option objects into the
@@ -65,6 +89,7 @@ function invertTable(table: Readonly<Record<string, string>>): Readonly<Record<s
 }
 
 const INVERSE_PROFILE_BASIC_FIELDS = invertTable(PROFILE_BASIC_FIELDS);
+const INVERSE_PROFILE_SKILL_FIELDS = invertTable(PROFILE_SKILL_FIELDS);
 
 /**
  * Pre-computed inverse tables (CLI-flag → server-field) keyed by their
@@ -74,6 +99,7 @@ const INVERSE_PROFILE_BASIC_FIELDS = invertTable(PROFILE_BASIC_FIELDS);
  */
 const INVERSES = new WeakMap<Readonly<Record<string, string>>, Readonly<Record<string, string>>>([
   [PROFILE_BASIC_FIELDS, INVERSE_PROFILE_BASIC_FIELDS],
+  [PROFILE_SKILL_FIELDS, INVERSE_PROFILE_SKILL_FIELDS],
 ]);
 
 function getInverse(table: Readonly<Record<string, string>>): Readonly<Record<string, string>> {

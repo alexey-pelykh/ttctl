@@ -11,10 +11,17 @@ import { TtctlError } from "@ttctl/core";
  * to keep the typing focused on what TTCtl emits — the upstream SDK type is
  * a wide union covering all content types we don't return. This shape is
  * the SUBSET we promise.
+ *
+ * The `[key: string]: unknown` index signature keeps the type structurally
+ * compatible with the SDK's `CallToolResult` (whose own type carries the
+ * same signature for forward-compatibility with new optional fields).
+ * Without it, returning this shape from a `registerTool` callback fails
+ * strict type-checking even though the runtime values are identical.
  */
 export interface ToolErrorResponse {
   isError: true;
   content: [{ type: "text"; text: string }];
+  [key: string]: unknown;
 }
 
 /**
