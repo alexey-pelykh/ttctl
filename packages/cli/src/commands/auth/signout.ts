@@ -3,7 +3,9 @@
 
 import { unlink } from "node:fs/promises";
 
-import { ConfigError, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, resolveAuthTokenPath } from "@ttctl/core";
+
+import { resolveConfigForCli } from "../../lib/config-context.js";
 
 /**
  * Output format for `ttctl auth signout`. Mirrors the rest of the auth
@@ -92,7 +94,7 @@ export async function runAuthSignOut(options: AuthSignOutOptions): Promise<void>
 async function performSignOut(): Promise<SignOutResult> {
   let tokenPath: string;
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     tokenPath = resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {

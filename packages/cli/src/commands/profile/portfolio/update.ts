@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { emitListResult, handlePortfolioError } from "./add.js";
@@ -61,7 +62,7 @@ export async function runProfilePortfolioUpdate(
   }
 
   const tokenPath = handleConfigError("portfolio update", () => {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   });
   const token = await loadAuthToken(tokenPath);

@@ -2,10 +2,11 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 import type { ProfileShowQuery } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 
@@ -20,7 +21,7 @@ import type { OutputFormat } from "../../../lib/output.js";
  */
 function resolveAuthTokenPathOrExit(commandLabel: "profile show" | "profile update"): string {
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {

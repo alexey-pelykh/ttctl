@@ -3,9 +3,10 @@
 
 import Table from "cli-table3";
 import { Command, Option } from "commander";
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 
@@ -19,7 +20,7 @@ import type { OutputFormat } from "../../../lib/output.js";
  */
 function resolveTokenPathOrExit(commandLabel: string): string {
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {

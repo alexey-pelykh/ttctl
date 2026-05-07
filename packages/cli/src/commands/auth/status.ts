@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, getAuthStatus, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, getAuthStatus, loadAuthToken, resolveAuthTokenPath } from "@ttctl/core";
 import type { AuthStatusResult } from "@ttctl/core";
+
+import { resolveConfigForCli } from "../../lib/config-context.js";
 
 /**
  * Output format for `ttctl auth status`. `table` (the default) emits a
@@ -91,7 +93,7 @@ export function formatAuthStatusOutput(result: AuthStatusResult, output: AuthSta
 export async function runAuthStatus(options: AuthStatusOptions): Promise<void> {
   let tokenPath: string;
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     tokenPath = resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {

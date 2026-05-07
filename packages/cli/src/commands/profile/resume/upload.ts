@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 import type { OutputFormat } from "../../../lib/output.js";
 
 /**
@@ -17,7 +18,7 @@ import type { OutputFormat } from "../../../lib/output.js";
 export async function runProfileResumeUpload(file: string, format: OutputFormat): Promise<void> {
   let tokenPath: string;
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     tokenPath = resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
