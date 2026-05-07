@@ -10,7 +10,9 @@ import { registerAllTools } from "../tools/index.js";
  * Smoke-test the tool-registration surface — every tool should register
  * without throwing, every tool name follows the canonical
  * `ttctl_profile_<sub-domain>_<verb>` shape, and the registered set
- * tracks the cumulative Wave-3 sub-domain landing (#73 + #75 so far).
+ * tracks the cumulative Wave-3 sub-domain landing (#73 basic+skills,
+ * #74 industries+education+certifications+employment, #75
+ * portfolio+visas+resume = 46 tools total).
  *
  * The MCP SDK does not expose a public listing of registered tools, so
  * we approximate by listing the keys on the underlying `_registeredTools`
@@ -30,7 +32,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative Wave-3 tool set (#73 basic+skills + #75 portfolio+visas+resume)", () => {
+  it("registers exactly the cumulative Wave-3 tool set (46 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -41,6 +43,31 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_basic_photo_upload",
       "ttctl_profile_basic_show",
       "ttctl_profile_basic_update",
+      // #74 — profile.certifications (5)
+      "ttctl_profile_certifications_add",
+      "ttctl_profile_certifications_highlight",
+      "ttctl_profile_certifications_remove",
+      "ttctl_profile_certifications_show",
+      "ttctl_profile_certifications_update",
+      // #74 — profile.education (5)
+      "ttctl_profile_education_add",
+      "ttctl_profile_education_highlight",
+      "ttctl_profile_education_remove",
+      "ttctl_profile_education_show",
+      "ttctl_profile_education_update",
+      // #74 — profile.employment (6, includes employer_autocomplete)
+      "ttctl_profile_employment_add",
+      "ttctl_profile_employment_employer_autocomplete",
+      "ttctl_profile_employment_highlight",
+      "ttctl_profile_employment_remove",
+      "ttctl_profile_employment_show",
+      "ttctl_profile_employment_update",
+      // #74 — profile.industries (5)
+      "ttctl_profile_industries_add",
+      "ttctl_profile_industries_autocomplete",
+      "ttctl_profile_industries_list",
+      "ttctl_profile_industries_remove",
+      "ttctl_profile_industries_update",
       // #75 — profile.portfolio (8 tools: 7 leaves with `upload` exposed as
       // two MCP tools per the dual `upload_cover` / `upload_file` flags)
       "ttctl_profile_portfolio_add",

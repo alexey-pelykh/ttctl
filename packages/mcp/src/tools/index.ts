@@ -34,7 +34,7 @@ import { registerProfileSkillsUpdateTool } from "./profile_skills_update.js";
  * one tool per file) + 5 `profile.industries` + 5 `profile.education` +
  * 5 `profile.certifications` + 6 `profile.employment` (#74, one file per
  * sub-domain registering its full leaf set) + 8 `profile.portfolio` +
- * 4 `profile.visas` + 2 `profile.resume` (#75) = 45 tools. Sister bundle
+ * 4 `profile.visas` + 2 `profile.resume` (#75) = 46 tools. Sister bundle
  * #76 adds more tools when its sub-domains land.
  */
 export function registerAllTools(server: McpServer): void {

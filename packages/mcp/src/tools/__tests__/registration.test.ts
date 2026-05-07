@@ -9,16 +9,19 @@ import { registerAllTools } from "../index.js";
 /**
  * Verify the wave-3 tool registration:
  *
- * | Sub-domain     | Tools |
- * |----------------|-------|
- * | basic (#73)    | 4 (show, update, photo_show, photo_upload) |
- * | skills (#73)   | 7 (add, remove, update, show, list, autocomplete, readiness) |
- * | industries     | 5 (add, update, remove, list, autocomplete) |
- * | education      | 5 (add, update, remove, show, highlight) |
- * | certifications | 5 (add, update, remove, show, highlight) |
- * | employment     | 6 (add, update, remove, show, highlight, employer-autocomplete) |
+ * | Sub-domain          | Tools |
+ * |---------------------|-------|
+ * | basic (#73)         | 4 (show, update, photo_show, photo_upload) |
+ * | skills (#73)        | 7 (add, remove, update, show, list, autocomplete, readiness) |
+ * | industries (#74)    | 5 (add, update, remove, list, autocomplete) |
+ * | education (#74)     | 5 (add, update, remove, show, highlight) |
+ * | certifications (#74)| 5 (add, update, remove, show, highlight) |
+ * | employment (#74)    | 6 (add, update, remove, show, highlight, employer-autocomplete) |
+ * | portfolio (#75)     | 8 (add, update, remove, list, reorder, highlight, upload_cover, upload_file) |
+ * | visas (#75)         | 4 (add, update, remove, list) |
+ * | resume (#75)        | 2 (upload, cancel_upload) |
  *
- * Total: 32 tools.
+ * Total: 46 tools.
  *
  * Per project policy (#72), MCP tool names use ONLY the canonical sub-domain
  * names — no `certs`, no `experience`. These tests assert exact tool name
@@ -64,6 +67,23 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_employment_show",
   "ttctl_profile_employment_highlight",
   "ttctl_profile_employment_employer_autocomplete",
+  // portfolio (#75, 8 tools — `upload` exposed as two MCP tools)
+  "ttctl_profile_portfolio_add",
+  "ttctl_profile_portfolio_update",
+  "ttctl_profile_portfolio_remove",
+  "ttctl_profile_portfolio_list",
+  "ttctl_profile_portfolio_reorder",
+  "ttctl_profile_portfolio_highlight",
+  "ttctl_profile_portfolio_upload_cover",
+  "ttctl_profile_portfolio_upload_file",
+  // visas (#75)
+  "ttctl_profile_visas_add",
+  "ttctl_profile_visas_update",
+  "ttctl_profile_visas_remove",
+  "ttctl_profile_visas_list",
+  // resume (#75)
+  "ttctl_profile_resume_upload",
+  "ttctl_profile_resume_cancel_upload",
 ];
 
 /**
@@ -79,7 +99,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (32 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (46 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
