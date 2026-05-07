@@ -159,6 +159,39 @@ auth-token-path: "./auth.token" # → <dir-of-.ttctl.yaml>/auth.token
 There are NO profiles. TTCtl operates against the user's own Toptal Talent
 profile, period.
 
+### Config File Resolution
+
+`resolveConfig()` in `packages/core/src/config.ts` selects ONE config-file
+path per invocation, in this precedence (highest → lowest):
+
+1. **Explicit `path` argument** — `resolveConfig({ path })` from a future
+   `--config` CLI flag (companion issue). Used verbatim, no existence
+   pre-check.
+2. **`TTCTL_CONFIG_FILE` env var** — same verbatim treatment as the
+   explicit arg. Useful for CI, multi-config setups, and direnv.
+3. **`$XDG_CONFIG_HOME/ttctl/config.yaml`** — when `XDG_CONFIG_HOME` is
+   set AND the file exists.
+4. **`~/.config/ttctl/config.yaml`** — POSIX home default; when the file
+   exists.
+
+The CWD `./.ttctl.yaml` is NOT auto-discovered (breaking change vs prior
+versions). When the resolution chain finds nothing AND a CWD `.ttctl.yaml`
+exists, `resolveConfig` throws `ConfigError(code: "NO_CREDS")` with a
+deprecation note pointing at `TTCTL_CONFIG_FILE` (or the `--config` flag
+once it lands).
+
+`ConfigError` carries a `code` discriminator —
+`'NO_CREDS' | 'PARSE' | 'VALIDATION' | 'PERMISSION'` — so CLI/MCP error
+handlers can branch on the code rather than string-match the message. The
+CLI surfaces it as the JSON wire-format `code` field; the MCP server
+includes it in the rendered tool-error text.
+
+`loadConfigFile` performs a pre-flight `fs.stat` and emits a stderr
+warning when the config file is group/world readable on POSIX
+(`mode & 0o077 != 0`). The recommended posture is `chmod 600
+<config-file>` because the file may carry a 1Password reference (low risk
+on its own) or, in literal form, a plaintext password.
+
 ## TLS Impersonation
 
 The Toptal Talent platform exposes three GraphQL endpoints:

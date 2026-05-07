@@ -11,7 +11,7 @@ import {
   saveAuthToken,
   signIn,
 } from "@ttctl/core";
-import type { SignInErrorCode } from "@ttctl/core";
+import type { ConfigErrorCode, SignInErrorCode } from "@ttctl/core";
 
 /**
  * Output format for `ttctl auth signin`. Mirrors `auth status` — `table` is
@@ -28,11 +28,12 @@ export interface AuthSignInOptions {
 /**
  * CLI-level error code surfaced in JSON output. Extends `SignInErrorCode`
  * (from core) with codes specific to the orchestration this command performs
- * around the core `signIn` call (config loading, 1Password resolution, token
- * persistence). Stable strings — script consumers can branch on them without
- * pattern-matching prose messages.
+ * around the core `signIn` call (1Password resolution, token persistence)
+ * plus the `ConfigErrorCode` discriminator from core's resolver. Stable
+ * strings — script consumers can branch on them without pattern-matching
+ * prose messages.
  */
-export type SignInResultErrorCode = SignInErrorCode | "CONFIG_ERROR" | "ONEPASSWORD_ERROR" | "SAVE_FAILED";
+export type SignInResultErrorCode = SignInErrorCode | ConfigErrorCode | "ONEPASSWORD_ERROR" | "SAVE_FAILED";
 
 /**
  * Terminal outcome of `ttctl auth signin`. `signed-in` carries the verified
@@ -99,7 +100,7 @@ function classifyError(err: unknown): SignInResult {
     return { status: "error", code: "ONEPASSWORD_ERROR", message: err.message };
   }
   if (err instanceof ConfigError) {
-    return { status: "error", code: "CONFIG_ERROR", message: err.message };
+    return { status: "error", code: err.code, message: err.message };
   }
   const message = err instanceof Error ? err.message : String(err);
   return { status: "error", code: "UNKNOWN", message };

@@ -21,7 +21,7 @@ export async function runProfileResumeUpload(file: string, format: OutputFormat)
     tokenPath = resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`resume upload failed (CONFIG_ERROR): ${err.message}\n`);
+      process.stderr.write(`resume upload failed (${err.code}): ${err.message}\n`);
       process.exit(1);
     }
     throw err;

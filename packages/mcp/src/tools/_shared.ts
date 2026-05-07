@@ -74,7 +74,10 @@ export function unauthenticatedResponse(toolName: string): ToolErrorResponse {
 }
 
 /**
- * Build a tool-error response for a config-resolution failure.
+ * Build a tool-error response for a config-resolution failure. The
+ * `ConfigError.code` discriminator (`NO_CREDS` / `PARSE` / `VALIDATION` /
+ * `PERMISSION`) is surfaced verbatim as the wire-format code so MCP
+ * clients can branch on it without string-matching the prose message.
  */
 export function configErrorResponse(toolName: string, err: ConfigError): ToolErrorResponse {
   return {
@@ -82,7 +85,7 @@ export function configErrorResponse(toolName: string, err: ConfigError): ToolErr
     content: [
       {
         type: "text",
-        text: `Error: ${toolName} failed (CONFIG_ERROR): ${err.message}\n\n(Code: CONFIG_ERROR)`,
+        text: `Error: ${toolName} failed (${err.code}): ${err.message}\n\n(Code: ${err.code})`,
       },
     ],
   };

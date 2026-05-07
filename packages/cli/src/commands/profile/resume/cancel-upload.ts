@@ -18,7 +18,7 @@ export async function runProfileResumeCancelUpload(format: OutputFormat): Promis
     tokenPath = resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`resume cancel-upload failed (CONFIG_ERROR): ${err.message}\n`);
+      process.stderr.write(`resume cancel-upload failed (${err.code}): ${err.message}\n`);
       process.exit(1);
     }
     throw err;

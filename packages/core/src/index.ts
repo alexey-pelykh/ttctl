@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 export { AuthSchema, ConfigSchema, ConfigError, discoverConfigPath, loadConfigFile, resolveConfig } from "./config.js";
-export type { AuthValue, TtctlConfig } from "./config.js";
+export type { AuthValue, ConfigErrorCode, ResolveConfigOptions, TtctlConfig } from "./config.js";
 
 export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js";
 
