@@ -6,12 +6,13 @@ import {
   OnePasswordError,
   SignInError,
   resolveAuthTokenPath,
-  resolveConfig,
   resolveCredentials,
   saveAuthToken,
   signIn,
 } from "@ttctl/core";
 import type { ConfigErrorCode, SignInErrorCode } from "@ttctl/core";
+
+import { resolveConfigForCli } from "../../lib/config-context.js";
 
 /**
  * Output format for `ttctl auth signin`. Mirrors `auth status` — `table` is
@@ -129,9 +130,9 @@ export async function runAuthSignIn(options: AuthSignInOptions): Promise<void> {
 }
 
 async function performSignIn(): Promise<SignInResult> {
-  let configResult: ReturnType<typeof resolveConfig>;
+  let configResult: ReturnType<typeof resolveConfigForCli>;
   try {
-    configResult = resolveConfig();
+    configResult = resolveConfigForCli();
   } catch (err) {
     return classifyError(err);
   }

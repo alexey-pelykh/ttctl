@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 
 import { presentTtctlError } from "../../errors.js";
+import { resolveConfigForCli } from "../../lib/config-context.js";
 
 /**
  * Resolve the auth-token path from the user's `.ttctl.yaml` (honors
@@ -20,7 +21,7 @@ import { presentTtctlError } from "../../errors.js";
  */
 export function resolveAuthTokenPathOrExit(commandLabel: string): string {
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {

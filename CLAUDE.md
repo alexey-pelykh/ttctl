@@ -164,9 +164,10 @@ profile, period.
 `resolveConfig()` in `packages/core/src/config.ts` selects ONE config-file
 path per invocation, in this precedence (highest → lowest):
 
-1. **Explicit `path` argument** — `resolveConfig({ path })` from a future
-   `--config` CLI flag (companion issue). Used verbatim, no existence
-   pre-check.
+1. **Explicit `path` argument** — `resolveConfig({ path })` from the
+   CLI's `--config <path>` global flag (#93). Used verbatim by core; the
+   CLI layer pre-checks existence at invocation time and surfaces
+   `ConfigError(code: NO_CREDS)` if missing, before any sub-command runs.
 2. **`TTCTL_CONFIG_FILE` env var** — same verbatim treatment as the
    explicit arg. Useful for CI, multi-config setups, and direnv.
 3. **`$XDG_CONFIG_HOME/ttctl/config.yaml`** — when `XDG_CONFIG_HOME` is
@@ -177,8 +178,7 @@ path per invocation, in this precedence (highest → lowest):
 The CWD `./.ttctl.yaml` is NOT auto-discovered (breaking change vs prior
 versions). When the resolution chain finds nothing AND a CWD `.ttctl.yaml`
 exists, `resolveConfig` throws `ConfigError(code: "NO_CREDS")` with a
-deprecation note pointing at `TTCTL_CONFIG_FILE` (or the `--config` flag
-once it lands).
+deprecation note pointing at `TTCTL_CONFIG_FILE` or the `--config` flag.
 
 `ConfigError` carries a `code` discriminator —
 `'NO_CREDS' | 'PARSE' | 'VALIDATION' | 'PERMISSION'` — so CLI/MCP error

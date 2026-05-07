@@ -15,7 +15,9 @@
  * their own sub-trees in parallel.
  */
 
-import { ConfigError, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, loadAuthToken, resolveAuthTokenPath } from "@ttctl/core";
+
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 
 /**
  * Resolve the persisted auth-token path from the user's `.ttctl.yaml`.
@@ -32,7 +34,7 @@ import { ConfigError, loadAuthToken, resolveAuthTokenPath, resolveConfig } from 
  */
 export function resolveAuthTokenPathOrExit(commandLabel: string): string {
   try {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   } catch (err) {
     if (err instanceof ConfigError) {

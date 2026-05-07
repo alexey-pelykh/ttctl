@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { emitVisaListResult } from "./list.js";
 import { handleConfigError, handleVisasError } from "./shared.js";
@@ -12,7 +13,7 @@ import { handleConfigError, handleVisasError } from "./shared.js";
  */
 export async function runProfileVisasRemove(id: string, format: OutputFormat): Promise<void> {
   const tokenPath = handleConfigError("visas remove", () => {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   });
   const token = await loadAuthToken(tokenPath);

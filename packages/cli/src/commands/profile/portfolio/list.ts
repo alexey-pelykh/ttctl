@@ -2,8 +2,9 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
 
+import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handlePortfolioError } from "./add.js";
@@ -18,7 +19,7 @@ import { handleConfigError } from "./shared.js";
  */
 export async function runProfilePortfolioList(format: OutputFormat): Promise<void> {
   const tokenPath = handleConfigError("portfolio list", () => {
-    const { config, path: configPath } = resolveConfig();
+    const { config, path: configPath } = resolveConfigForCli();
     return resolveAuthTokenPath({ config, configPath });
   });
   const token = await loadAuthToken(tokenPath);
