@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import type { ProfileShowQuery } from "../../../__generated__/graphql.js";
+import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedTransport, stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 
@@ -212,8 +213,14 @@ const PROFILE_SHOW_QUERY = `query ProfileShow {
   }
 }`;
 
+/**
+ * Profile-domain error codes. The `'UNAUTHENTICATED'` member was retired
+ * under issue #77 — auth-revoked failures now throw `AuthRevokedError`
+ * (cross-cutting `TtctlError` subclass) so the CLI / MCP surfaces can apply
+ * a uniform "Run `ttctl auth signin`" recovery hint regardless of which
+ * service raised the failure.
+ */
 export type ProfileErrorCode =
-  | "UNAUTHENTICATED"
   | "NO_VIEWER"
   | "GRAPHQL_ERROR"
   | "NETWORK_ERROR"
@@ -235,6 +242,23 @@ export class ProfileError extends Error {
 interface GraphQLErrorEntry {
   message?: string | null;
   extensions?: { code?: string | null } | null;
+}
+
+/**
+ * Returns `true` when `extensions.code` on a GraphQL error indicates the
+ * session token has been revoked or expired and the user must re-run
+ * `ttctl auth signin`.
+ *
+ * The two backends emit different stable codes for the same logical state:
+ *
+ *   - `'UNAUTHENTICATED'`         — talent-profile (Cloudflare-protected, web-portal API)
+ *   - `'AUTHENTICATION_REQUIRED'` — gateway (mobile-app API, see issue #77)
+ *
+ * Both collapse to `AuthRevokedError`. New backends with a third spelling
+ * are added here.
+ */
+function isAuthRevokedExtensionCode(code: string | null | undefined): boolean {
+  return code === "UNAUTHENTICATED" || code === "AUTHENTICATION_REQUIRED";
 }
 
 interface ProfileShowResponse {
@@ -266,14 +290,16 @@ interface ProfileShowResponse {
  * issue to add a second talent-profile call.
  *
  * Errors:
- * - `ProfileError` with code `UNAUTHENTICATED` when the surface returns 401
- *   (token expired or invalid). Caller should suggest `ttctl auth signin`
- *   to recover.
+ * - `AuthRevokedError` when the surface returns 401, OR the GraphQL
+ *   response carries `extensions.code` of `'UNAUTHENTICATED'`
+ *   (talent-profile form) or `'AUTHENTICATION_REQUIRED'` (gateway form).
+ *   Caller-agnostic — the CLI / MCP surfaces render `error.recovery`
+ *   verbatim ("Run `ttctl auth signin` to re-authenticate.").
  * - `ProfileError` with code `NO_VIEWER` when the response is 200 but
  *   `data.viewer` is `null` (the API contract says this means the token
  *   does not bind to a viewer).
  * - `ProfileError` with code `GRAPHQL_ERROR` when the response carries a
- *   non-empty `errors` array.
+ *   non-empty `errors` array (other than auth-revoked).
  * - `ProfileError` with code `NETWORK_ERROR` when the transport itself
  *   throws (DNS, connection reset, etc).
  */
@@ -293,7 +319,7 @@ export async function show(token: string): Promise<ProfileShowQuery> {
   }
 
   if (res.status === 401) {
-    throw new ProfileError("UNAUTHENTICATED", "Session is invalid or expired. Run `ttctl auth signin` to refresh it.");
+    throw new AuthRevokedError("Session is invalid or expired.");
   }
 
   if (res.status < 200 || res.status >= 300) {
@@ -304,14 +330,13 @@ export async function show(token: string): Promise<ProfileShowQuery> {
   if (body && Array.isArray(body.errors) && body.errors.length > 0) {
     const first = body.errors[0];
     const message = first?.message ?? "GraphQL error";
-    // Toptal returns HTTP 200 with `errors[0].extensions.code = "UNAUTHENTICATED"`
-    // for missing/expired sessions — surface it as UNAUTHENTICATED so the CLI
-    // suggests `ttctl auth signin` instead of a generic GraphQL-error message.
-    if (first?.extensions?.code === "UNAUTHENTICATED") {
-      throw new ProfileError(
-        "UNAUTHENTICATED",
-        "Session is invalid or expired. Run `ttctl auth signin` to refresh it.",
-      );
+    // Toptal returns HTTP 200 with `errors[0].extensions.code` set to one of
+    // `"UNAUTHENTICATED"` (talent-profile form) or `"AUTHENTICATION_REQUIRED"`
+    // (gateway form) for missing/expired sessions. Both collapse to
+    // `AuthRevokedError` so callers can apply a single, uniform recovery
+    // path regardless of which surface raised the failure.
+    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
+      throw new AuthRevokedError("Session is invalid or expired.");
     }
     throw new ProfileError("GRAPHQL_ERROR", `Profile query failed: ${message}`);
   }
@@ -459,13 +484,15 @@ export interface UpdateProfileResult {
  *   `headline` is supplied — the contract requires at least one.
  * - `Cf403Error` propagates from the talent-profile transport when
  *   Cloudflare returns 403.
- * - `ProfileError` with code `UNAUTHENTICATED` on token expiry.
+ * - `AuthRevokedError` on token expiry (HTTP 401, or GraphQL
+ *   `extensions.code` of `'UNAUTHENTICATED'` / `'AUTHENTICATION_REQUIRED'`).
  * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
  * - `ProfileError` with code `USER_ERROR` when the mutation returns a
  *   non-empty `errors` array (validation failures from the server, e.g., a
  *   bio that exceeds the platform's length limit). The message includes the
  *   first reported error.
- * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors.
+ * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors
+ *   (other than auth-revoked).
  * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
  */
 export async function set(token: string, changes: ProfileUpdate): Promise<UpdateProfileResult> {
@@ -503,12 +530,15 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
       },
     });
   } catch (err) {
-    if (err instanceof Error && err.name === "Cf403Error") throw err;
+    // Typed-error subclasses (Cf403Error, AuthRevokedError, …) propagate as-is so
+    // the CLI / MCP surfaces can render their `recovery` hints. Anything else is
+    // a transport-level failure and surfaces as a domain ProfileError.
+    if (err instanceof TtctlError) throw err;
     throw new ProfileError("NETWORK_ERROR", `Profile update request failed: ${(err as Error).message}`, { cause: err });
   }
 
   if (res.status === 401) {
-    throw new ProfileError("UNAUTHENTICATED", "Session is invalid or expired. Run `ttctl auth signin` to refresh it.");
+    throw new AuthRevokedError("Session is invalid or expired.");
   }
 
   if (res.status < 200 || res.status >= 300) {
@@ -519,11 +549,8 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
   if (body && Array.isArray(body.errors) && body.errors.length > 0) {
     const first = body.errors[0];
     const message = first?.message ?? "GraphQL error";
-    if (first?.extensions?.code === "UNAUTHENTICATED") {
-      throw new ProfileError(
-        "UNAUTHENTICATED",
-        "Session is invalid or expired. Run `ttctl auth signin` to refresh it.",
-      );
+    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
+      throw new AuthRevokedError("Session is invalid or expired.");
     }
     throw new ProfileError("GRAPHQL_ERROR", `Profile update failed: ${message}`);
   }

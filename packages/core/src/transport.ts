@@ -5,6 +5,7 @@ import { fetch as wreqFetch } from "node-wreq";
 import type { BrowserProfile } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
+import { TtctlError } from "./auth/errors.js";
 import { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 import type { GraphQLRequest, ToptalSurface } from "./types.js";
 
@@ -18,9 +19,22 @@ import type { GraphQLRequest, ToptalSurface } from "./types.js";
  * challenge or a new bot-management heuristic) that we don't currently
  * handle. There is no documented manual workaround; the user is asked to
  * file an issue so we can investigate.
+ *
+ * Refined under issue #77 to extend `TtctlError`. Carries the stable
+ * `code = 'CF_403_CLEARANCE'` and a short `recovery` hint that the CLI /
+ * MCP surfaces render alongside the existing multi-line `message`.
+ *
+ * See also `Cf403PersistentError` (defined for future use when an explicit
+ * retry-with-fresh-clearance heuristic is added — currently TTCtl cannot
+ * distinguish "clearance expired" from "persistent block" at runtime, so
+ * `Cf403Error` is the only class actually thrown by the transport).
  */
-export class Cf403Error extends Error {
+export class Cf403Error extends TtctlError {
   override readonly name = "Cf403Error";
+  readonly code = "CF_403_CLEARANCE";
+  readonly recovery =
+    "Cloudflare returned 403. Try the request again; if the block persists, file an issue at " +
+    "https://github.com/alexey-pelykh/ttctl/issues with the surface name and a timestamp.";
 
   constructor(
     public readonly surface: ToptalSurface,
@@ -39,6 +53,62 @@ export class Cf403Error extends Error {
       `Please file an issue at https://github.com/alexey-pelykh/ttctl/issues with the surface name ("${surface}") ` +
         "and a timestamp so we can investigate.",
     ].join("\n");
+  }
+}
+
+/**
+ * Thrown when Cloudflare is *persistently* blocking an impersonated surface
+ * — i.e. clearance refresh and re-attempts have failed and the only
+ * remaining recovery is the cookie-jar break-glass path documented in
+ * `SECURITY.md`.
+ *
+ * **Currently defined for future use.** TTCtl's transport has no automated
+ * retry-with-fresh-clearance heuristic, so a single 403 cannot be
+ * distinguished from a persistent block at runtime. The transport throws
+ * the more general `Cf403Error`. When a future iteration adds retry +
+ * clearance refresh, that layer will re-classify a confirmed-persistent
+ * block to `Cf403PersistentError`. See issue #77 § Out of Scope.
+ */
+export class Cf403PersistentError extends TtctlError {
+  override readonly name = "Cf403PersistentError";
+  readonly code = "CF_403_PERSISTENT";
+  readonly recovery =
+    "Cloudflare is persistently blocking this surface. The cookie-jar auxiliary auth path is the only " +
+    "remaining recovery — see SECURITY.md for break-glass details, and file an issue at " +
+    "https://github.com/alexey-pelykh/ttctl/issues so we can investigate.";
+
+  constructor(
+    public readonly surface: ToptalSurface,
+    public readonly endpoint: string,
+    message: string = `Cloudflare persistently blocked surface "${surface}" (${endpoint}).`,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Thrown when the scheduler bearer token has expired.
+ *
+ * **Scaffolded for post-v1 scheduler-surface coverage.** TTCtl currently
+ * has no scheduler operations wired in; transport routes scheduler →
+ * impersonated, but no service module issues scheduler GraphQL calls. When
+ * scheduler coverage lands (post-v1), this class will be thrown by the
+ * scheduler service module on bearer-expiry detection.
+ *
+ * `autoRecover = true` signals to the transport layer that an automated
+ * re-mint via `GetTopSchedulerToken` should be attempted once before
+ * surfacing this error. The auto-recovery contract is intentionally
+ * defined here so callers can plan against it; the actual re-mint
+ * orchestration ships with the scheduler surface implementation.
+ */
+export class SchedulerBearerExpired extends TtctlError {
+  override readonly name = "SchedulerBearerExpired";
+  readonly code = "SCHEDULER_BEARER_EXPIRED";
+  readonly recovery = "Scheduler bearer token expired; will be re-minted automatically on next call.";
+  override readonly autoRecover = true;
+
+  constructor(message: string = "Scheduler bearer token expired.") {
+    super(message);
   }
 }
 

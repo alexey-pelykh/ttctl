@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed auth-error translation contract (`TtctlError` base + `AuthRevokedError`,
+  `Cf403Error`, `Cf403PersistentError`, `SchedulerBearerExpired`). Each subclass
+  carries a stable `code`, an actionable `recovery` hint, and an `autoRecover`
+  flag the transport layer may consult. CLI surfaces auth failures in a uniform
+  `Error: <message> / Recovery: <recovery> / (Code: <code>)` three-block layout;
+  MCP tool wrappers emit the same content as a structured `isError` response.
+  Recovery messages: AuthRevokedError — "Run `ttctl auth signin` to
+  re-authenticate."; Cf403Error — try again, file an issue if persistent;
+  Cf403PersistentError — see SECURITY.md break-glass; SchedulerBearerExpired —
+  re-minted automatically (post-v1). Issue #77.
 - Monorepo scaffolding with pnpm workspace and Turbo build orchestration
 - `@ttctl/core` package skeleton: config schema (Zod), auth flow stubs, 1Password CLI integration, dual-transport HTTP layer
 - `@ttctl/cli` package skeleton with Commander.js program builder

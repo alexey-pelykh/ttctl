@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { Cf403Error, loadAuthToken, profile } from "@ttctl/core";
+import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
 
+import { presentTtctlError } from "../../../errors.js";
 import { resolveAuthTokenPathOrExit, truncate } from "./show.js";
 import type { ProfileOutputFormat } from "./show.js";
 
@@ -67,12 +68,15 @@ export async function runProfileBasicUpdate(options: {
  * non-zero exit. Mirrors `handleProfileShowError` from `show.ts` — kept
  * separate so the user-visible "profile update failed (CODE)" prefix is
  * accurate (vs. a "profile show failed" prefix that would be misleading).
+ *
+ * `TtctlError` subclasses (`Cf403Error`, `Cf403PersistentError`,
+ * `AuthRevokedError`, `SchedulerBearerExpired`) render in the uniform
+ * `Error: ... / Recovery: ... / (Code: ...)` format defined in #77.
+ * Domain `ProfileError` codes keep the existing "(CODE): message" rendering;
+ * anything else gets a generic prefix.
  */
 function handleProfileUpdateError(err: unknown): never {
-  if (err instanceof Cf403Error) {
-    process.stderr.write(`${err.message}\n`);
-    process.exit(2);
-  }
+  if (err instanceof TtctlError) presentTtctlError(err);
   if (err instanceof profile.basic.ProfileError) {
     process.stderr.write(`profile update failed (${err.code}): ${err.message}\n`);
     process.exit(1);

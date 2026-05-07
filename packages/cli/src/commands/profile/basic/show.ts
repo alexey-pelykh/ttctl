@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { Cf403Error, ConfigError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
 import type { ProfileShowQuery } from "@ttctl/core";
+
+import { presentTtctlError } from "../../../errors.js";
 
 /**
  * Output format for `ttctl profile show`. The default `text` is a
@@ -73,15 +75,15 @@ export async function runProfileBasicShow(format: ProfileOutputFormat): Promise<
  * Map `profile.basic.show()` errors to actionable stderr messages and a
  * non-zero exit.
  *
- * `Cf403Error.message` is already a multi-line walkthrough — print it
- * verbatim. `ProfileError.UNAUTHENTICATED` already contains the
- * `ttctl auth signin` hint. Other `ProfileError` codes get a generic prefix.
+ * `TtctlError` subclasses (`Cf403Error`, `Cf403PersistentError`,
+ * `AuthRevokedError`, `SchedulerBearerExpired`) render in the uniform
+ * `Error: ... / Recovery: ... / (Code: ...)` format defined in #77.
+ * Domain `ProfileError` codes (NO_VIEWER, GRAPHQL_ERROR, USER_ERROR, …)
+ * keep the existing "(CODE): message" rendering. Anything else gets a
+ * generic prefix.
  */
 function handleProfileShowError(err: unknown): never {
-  if (err instanceof Cf403Error) {
-    process.stderr.write(`${err.message}\n`);
-    process.exit(2);
-  }
+  if (err instanceof TtctlError) presentTtctlError(err);
   if (err instanceof profile.basic.ProfileError) {
     process.stderr.write(`profile show failed (${err.code}): ${err.message}\n`);
     process.exit(1);
