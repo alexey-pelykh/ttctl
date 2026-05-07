@@ -14,7 +14,8 @@
     },
     "test:e2e": {
       "dependsOn": ["build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["TTCTL_E2E"]
     },
     "typecheck": {
       "dependsOn": ["^build"]

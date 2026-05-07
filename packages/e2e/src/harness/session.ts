@@ -139,8 +139,10 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     try {
       // Find the user's source config (the one OUTSIDE the sandbox).
       // resolveConfig() walks CWD then $XDG_CONFIG_HOME — same logic the
-      // CLI uses in non-E2E mode.
-      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
+      // CLI uses in non-E2E mode. Pass `repoRoot` explicitly because under
+      // vitest, `process.cwd()` is the e2e package dir (not the repo root
+      // where `.ttctl.yaml` lives).
+      const { config: sourceConfig, path: sourceConfigPath } = resolveConfig(repoRoot);
 
       // Mirror it into the sandbox with `auth-token-path: ./auth.token`.
       // Spawned CLI subprocesses with cwd=sandboxDir will discover this
