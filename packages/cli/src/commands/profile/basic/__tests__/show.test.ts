@@ -4,7 +4,7 @@
 import type { ProfileShowQuery } from "@ttctl/core";
 import { describe, expect, it } from "vitest";
 
-import { formatProfile } from "../show.js";
+import { formatProfileTable, formatProfileText } from "../show.js";
 
 /**
  * Rich `ProfileShowQuery` fixture mirroring the mobile-gateway-native
@@ -227,9 +227,20 @@ const PROFILE: ProfileShowQuery = {
 
 const PROFILE_NO_VIEWER: ProfileShowQuery = { viewer: null };
 
-describe("formatProfile (text)", () => {
+/**
+ * Strip ANSI escape sequences (color codes) so test assertions can
+ * measure the visible width of cli-table3 rows without worrying about
+ * the surrounding control bytes. cli-table3 emits ANSI by default for
+ * border colors; line-width assertions count visible characters only.
+ */
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1B\[[0-9;]*m/g, "");
+}
+
+describe("formatProfileText", () => {
   it("renders a multi-line summary with name, email, city, vertical, availability, rate, time zone, and public skills", () => {
-    const out = formatProfile(PROFILE, "text");
+    const out = formatProfileText(PROFILE);
     const lines = out.split("\n");
 
     expect(lines[0]).toBe("Ada Lovelace");
@@ -245,12 +256,12 @@ describe("formatProfile (text)", () => {
   });
 
   it("does NOT include private (public=false) skills in the text summary", () => {
-    const out = formatProfile(PROFILE, "text");
+    const out = formatProfileText(PROFILE);
     expect(out).not.toContain("Mechanical Computing");
   });
 
   it("trims every line to at most 80 columns (AC: readable on an 80-column terminal)", () => {
-    const out = formatProfile(PROFILE, "text");
+    const out = formatProfileText(PROFILE);
     for (const line of out.split("\n")) {
       expect(line.length).toBeLessThanOrEqual(80);
     }
@@ -272,7 +283,7 @@ describe("formatProfile (text)", () => {
       ];
     }
 
-    const out = formatProfile(wide, "text");
+    const out = formatProfileText(wide);
     const skillLine = out.split("\n").find((l) => l.includes("Skills:"));
     expect(skillLine).toBeDefined();
     expect(skillLine?.length).toBeLessThanOrEqual(80);
@@ -283,7 +294,7 @@ describe("formatProfile (text)", () => {
     const noCity: ProfileShowQuery = structuredClone(PROFILE);
     if (noCity.viewer !== null) noCity.viewer.viewerRole.profile.city = "";
 
-    const out = formatProfile(noCity, "text");
+    const out = formatProfileText(noCity);
     expect(out).not.toContain("  London");
     expect(out).not.toMatch(/^\s+\s*$/m);
   });
@@ -292,7 +303,7 @@ describe("formatProfile (text)", () => {
     const noPhone: ProfileShowQuery = structuredClone(PROFILE);
     if (noPhone.viewer !== null) noPhone.viewer.viewerRole.phoneNumber = "";
 
-    const out = formatProfile(noPhone, "text");
+    const out = formatProfileText(noPhone);
     expect(out).not.toContain("+1 555 0001");
   });
 
@@ -302,69 +313,110 @@ describe("formatProfile (text)", () => {
       noSkills.viewer.viewerRole.profile.skillSets.nodes = [];
     }
 
-    const out = formatProfile(noSkills, "text");
+    const out = formatProfileText(noSkills);
     expect(out).not.toContain("Skills:");
   });
 
   it("falls back to a placeholder line when the viewer is null", () => {
-    const out = formatProfile(PROFILE_NO_VIEWER, "text");
+    const out = formatProfileText(PROFILE_NO_VIEWER);
     expect(out).toContain("(no viewer bound to this session)");
   });
 });
 
-describe("formatProfile (json)", () => {
-  it("returns the raw typed payload as pretty-printed JSON (AC: -o json returns the entire rich payload)", () => {
-    const out = formatProfile(PROFILE, "json");
-    const parsed: unknown = JSON.parse(out);
-    expect(parsed).toEqual(PROFILE);
+describe("formatProfileTable", () => {
+  it("renders a cli-table3 table containing every curated field (AC: table output uses cli-table3)", () => {
+    const out = formatProfileTable(PROFILE, 120);
+    // cli-table3 box-drawing characters confirm we're not seeing the prior tab-separated output
+    expect(out).toMatch(/[┌┬┐├┼┤└┴┘─│]/);
+    // Every field key appears
+    expect(out).toContain("name");
+    expect(out).toContain("email");
+    expect(out).toContain("phone");
+    expect(out).toContain("city");
+    expect(out).toContain("vertical");
+    expect(out).toContain("specializations");
+    expect(out).toContain("availability");
+    expect(out).toContain("allocated_hours");
+    expect(out).toContain("hired_hours");
+    expect(out).toContain("hours");
+    expect(out).toContain("hourly_rate");
+    expect(out).toContain("time_zone");
+    expect(out).toContain("public_resume_url");
+    expect(out).toContain("skills");
+    // And every value (or fragment of long ones, since wordWrap may break them)
+    expect(out).toContain("Ada Lovelace");
+    expect(out).toContain("ada@example.com");
+    expect(out).toContain("+1 555 0001");
+    expect(out).toContain("London");
+    expect(out).toContain("Engineering");
+    expect(out).toContain("PART_TIME");
+    expect(out).toContain("30/40h");
+    expect(out).toContain("$110.00");
+    expect(out).toContain("Etc/UTC");
   });
 
-  it("does not apply human-readable formatting to the json branch", () => {
-    const out = formatProfile(PROFILE, "json");
-    expect(out).not.toContain("Availability:");
-    expect(out).not.toContain("Skills:");
+  it("respects the supplied terminal width (AC: respects terminal width)", () => {
+    const wideOut = formatProfileTable(PROFILE, 200);
+    const narrowOut = formatProfileTable(PROFILE, 60);
+    const wideLines = wideOut.split("\n").map(stripAnsi);
+    const narrowLines = narrowOut.split("\n").map(stripAnsi);
+
+    const maxWide = Math.max(...wideLines.map((l) => l.length));
+    const maxNarrow = Math.max(...narrowLines.map((l) => l.length));
+
+    // Every line of the wide rendering fits within the wide terminal …
+    expect(maxWide).toBeLessThanOrEqual(200);
+    // … and the narrow rendering is materially narrower.
+    expect(maxNarrow).toBeLessThan(maxWide);
   });
 
-  it("emits valid JSON when the viewer is null", () => {
-    const out = formatProfile(PROFILE_NO_VIEWER, "json");
-    expect(JSON.parse(out)).toEqual({ viewer: null });
-  });
-});
+  it("wraps long values inside the table rather than overflowing the requested width", () => {
+    const longSkill = "x".repeat(200);
+    const wide: ProfileShowQuery = structuredClone(PROFILE);
+    if (wide.viewer !== null) {
+      wide.viewer.viewerRole.profile.skillSets.nodes = [
+        {
+          __typename: "ProfileSkillSet",
+          id: "s1",
+          experience: 1,
+          rating: "EXPERT",
+          public: true,
+          skill: { __typename: "Skill", id: "sk1", name: longSkill },
+        },
+      ];
+    }
 
-describe("formatProfile (table)", () => {
-  it("emits one `key\\tvalue` row per field, suitable for shell pipes (rich shape)", () => {
-    const out = formatProfile(PROFILE, "table");
-    const rows = out.split("\n").map((r) => r.split("\t"));
-    const map = new Map(rows.map(([k, v]) => [k, v]));
-
-    expect(map.get("name")).toBe("Ada Lovelace");
-    expect(map.get("email")).toBe("ada@example.com");
-    expect(map.get("phone")).toBe("+1 555 0001");
-    expect(map.get("city")).toBe("London");
-    expect(map.get("vertical")).toBe("Engineering");
-    expect(map.get("specializations")).toBe("Core,Marketplace Core");
-    expect(map.get("availability")).toBe("PART_TIME");
-    expect(map.get("allocated_hours")).toBe("40");
-    expect(map.get("hired_hours")).toBe("30");
-    expect(map.get("hours")).toBe("30/40h");
-    expect(map.get("hourly_rate")).toBe("$110.00");
-    expect(map.get("time_zone")).toBe("Etc/UTC");
-    expect(map.get("public_resume_url")).toBe("https://www.toptal.com/resume/ada");
-    expect(map.get("skills")).toBe("Analytical Engine,Difference Engine");
-  });
-
-  it("falls back to a single `name\\t(no viewer)` row when the viewer is null", () => {
-    const out = formatProfile(PROFILE_NO_VIEWER, "table");
-    expect(out).toBe("name\t(no viewer)");
+    const out = formatProfileTable(wide, 80);
+    for (const line of out.split("\n").map(stripAnsi)) {
+      expect(line.length).toBeLessThanOrEqual(80);
+    }
   });
 
   it("uses `(unset)` placeholder for empty city in table mode", () => {
     const noCity: ProfileShowQuery = structuredClone(PROFILE);
     if (noCity.viewer !== null) noCity.viewer.viewerRole.profile.city = "";
 
-    const out = formatProfile(noCity, "table");
-    const rows = out.split("\n").map((r) => r.split("\t"));
-    const map = new Map(rows.map(([k, v]) => [k, v]));
-    expect(map.get("city")).toBe("(unset)");
+    const out = formatProfileTable(noCity, 120);
+    expect(out).toContain("(unset)");
+  });
+
+  it("renders a single `name → (no viewer)` row when the viewer is null", () => {
+    const out = formatProfileTable(PROFILE_NO_VIEWER, 80);
+    expect(out).toContain("name");
+    expect(out).toContain("(no viewer)");
+    // Other curated keys MUST NOT appear in the no-viewer fallback.
+    expect(out).not.toContain("email");
+    expect(out).not.toContain("vertical");
+  });
+
+  it("floors the value column at 20 chars on very narrow terminals so the table stays readable", () => {
+    // Terminal width 30 would otherwise compute valueWidth = 30 - 20 - 5 = 5,
+    // which collapses values to a few characters per row. The floor of 20
+    // keeps the table usable.
+    const out = formatProfileTable(PROFILE, 30);
+    const lines = out.split("\n").map(stripAnsi);
+    const maxLine = Math.max(...lines.map((l) => l.length));
+    // Total layout: fieldWidth 20 + valueWidth ≥ 20 + ~3 chars of borders ≈ ≥ 43.
+    expect(maxLine).toBeGreaterThanOrEqual(40);
   });
 });
