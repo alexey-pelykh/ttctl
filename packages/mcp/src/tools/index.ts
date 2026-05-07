@@ -14,6 +14,16 @@ import { registerProfileBasicPhotoShowTool } from "./profile_basic_photo_show.js
 import { registerProfileBasicPhotoUploadTool } from "./profile_basic_photo_upload.js";
 import { registerProfileBasicShowTool } from "./profile_basic_show.js";
 import { registerProfileBasicUpdateTool } from "./profile_basic_update.js";
+import { registerProfileExternalAdvancedWizardShowTool } from "./profile_external_advanced_wizard_show.js";
+import { registerProfileExternalCustomRequirementsSetTool } from "./profile_external_custom_requirements_set.js";
+import { registerProfileExternalCustomRequirementsShowTool } from "./profile_external_custom_requirements_show.js";
+import { registerProfileExternalReadinessTool } from "./profile_external_readiness.js";
+import { registerProfileExternalRecommendationsTool } from "./profile_external_recommendations.js";
+import { registerProfileExternalUpdateTool } from "./profile_external_update.js";
+import { registerProfileReviewsApproveItemTool } from "./profile_reviews_approve_item.js";
+import { registerProfileReviewsApproveSectionTool } from "./profile_reviews_approve_section.js";
+import { registerProfileReviewsListTool } from "./profile_reviews_list.js";
+import { registerProfileReviewsSubmitForReviewTool } from "./profile_reviews_submit_for_review.js";
 import { registerProfileSkillsAddTool } from "./profile_skills_add.js";
 import { registerProfileSkillsAutocompleteTool } from "./profile_skills_autocomplete.js";
 import { registerProfileSkillsListTool } from "./profile_skills_list.js";
@@ -34,8 +44,8 @@ import { registerProfileSkillsUpdateTool } from "./profile_skills_update.js";
  * one tool per file) + 5 `profile.industries` + 5 `profile.education` +
  * 5 `profile.certifications` + 6 `profile.employment` (#74, one file per
  * sub-domain registering its full leaf set) + 8 `profile.portfolio` +
- * 4 `profile.visas` + 2 `profile.resume` (#75) = 46 tools. Sister bundle
- * #76 adds more tools when its sub-domains land.
+ * 4 `profile.visas` + 2 `profile.resume` (#75) + 6 `profile.external` +
+ * 4 `profile.reviews` (#76, one tool per file) = 56 tools.
  */
 export function registerAllTools(server: McpServer): void {
   // profile.basic — 4 leaves (#73)
@@ -63,4 +73,18 @@ export function registerAllTools(server: McpServer): void {
   registerPortfolioTools(server);
   registerVisasTools(server);
   registerResumeTools(server);
+
+  // profile.external — 6 leaves (#76)
+  registerProfileExternalUpdateTool(server);
+  registerProfileExternalCustomRequirementsShowTool(server);
+  registerProfileExternalCustomRequirementsSetTool(server);
+  registerProfileExternalReadinessTool(server);
+  registerProfileExternalRecommendationsTool(server);
+  registerProfileExternalAdvancedWizardShowTool(server);
+
+  // profile.reviews — 4 leaves (#76)
+  registerProfileReviewsListTool(server);
+  registerProfileReviewsApproveItemTool(server);
+  registerProfileReviewsApproveSectionTool(server);
+  registerProfileReviewsSubmitForReviewTool(server);
 }

@@ -12,7 +12,7 @@ import { registerAllTools } from "../tools/index.js";
  * `ttctl_profile_<sub-domain>_<verb>` shape, and the registered set
  * tracks the cumulative Wave-3 sub-domain landing (#73 basic+skills,
  * #74 industries+education+certifications+employment, #75
- * portfolio+visas+resume = 46 tools total).
+ * portfolio+visas+resume, #76 external+reviews = 56 tools total).
  *
  * The MCP SDK does not expose a public listing of registered tools, so
  * we approximate by listing the keys on the underlying `_registeredTools`
@@ -32,7 +32,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative Wave-3 tool set (46 tools)", () => {
+  it("registers exactly the cumulative Wave-3 tool set (56 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -62,6 +62,13 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_employment_remove",
       "ttctl_profile_employment_show",
       "ttctl_profile_employment_update",
+      // #76 — profile.external (6)
+      "ttctl_profile_external_advanced_wizard_show",
+      "ttctl_profile_external_custom_requirements_set",
+      "ttctl_profile_external_custom_requirements_show",
+      "ttctl_profile_external_readiness",
+      "ttctl_profile_external_recommendations",
+      "ttctl_profile_external_update",
       // #74 — profile.industries (5)
       "ttctl_profile_industries_add",
       "ttctl_profile_industries_autocomplete",
@@ -81,6 +88,11 @@ describe("MCP tool registration (Wave 3)", () => {
       // #75 — profile.resume (2)
       "ttctl_profile_resume_cancel_upload",
       "ttctl_profile_resume_upload",
+      // #76 — profile.reviews (4)
+      "ttctl_profile_reviews_approve_item",
+      "ttctl_profile_reviews_approve_section",
+      "ttctl_profile_reviews_list",
+      "ttctl_profile_reviews_submit_for_review",
       // #73 — profile.skills (7)
       "ttctl_profile_skills_add",
       "ttctl_profile_skills_autocomplete",
@@ -105,5 +117,9 @@ describe("MCP tool registration (Wave 3)", () => {
     // Aliases the issue/project policy specifically forbids on MCP names.
     expect(names).not.toContain("ttctl_profile_skills_rm");
     expect(names).not.toContain("ttctl_profile_skills_remove_alias");
+    // External & reviews aliases the project policy forbids on MCP names
+    // (CLI-only ergonomics — see #72 vocab table).
+    expect(names).not.toContain("ttctl_profile_external_links_update");
+    expect(names).not.toContain("ttctl_profile_reviews_approve");
   });
 });

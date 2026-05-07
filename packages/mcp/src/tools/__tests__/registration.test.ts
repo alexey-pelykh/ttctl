@@ -20,8 +20,10 @@ import { registerAllTools } from "../index.js";
  * | portfolio (#75)     | 8 (add, update, remove, list, reorder, highlight, upload_cover, upload_file) |
  * | visas (#75)         | 4 (add, update, remove, list) |
  * | resume (#75)        | 2 (upload, cancel_upload) |
+ * | external (#76)      | 6 (update, custom_requirements_show/set, readiness, recommendations, advanced_wizard_show) |
+ * | reviews (#76)       | 4 (list, approve_item, approve_section, submit_for_review) |
  *
- * Total: 46 tools.
+ * Total: 56 tools.
  *
  * Per project policy (#72), MCP tool names use ONLY the canonical sub-domain
  * names — no `certs`, no `experience`. These tests assert exact tool name
@@ -84,6 +86,18 @@ const EXPECTED_TOOLS = [
   // resume (#75)
   "ttctl_profile_resume_upload",
   "ttctl_profile_resume_cancel_upload",
+  // external (#76)
+  "ttctl_profile_external_update",
+  "ttctl_profile_external_custom_requirements_show",
+  "ttctl_profile_external_custom_requirements_set",
+  "ttctl_profile_external_readiness",
+  "ttctl_profile_external_recommendations",
+  "ttctl_profile_external_advanced_wizard_show",
+  // reviews (#76)
+  "ttctl_profile_reviews_list",
+  "ttctl_profile_reviews_approve_item",
+  "ttctl_profile_reviews_approve_section",
+  "ttctl_profile_reviews_submit_for_review",
 ];
 
 /**
@@ -99,7 +113,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (46 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (56 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
