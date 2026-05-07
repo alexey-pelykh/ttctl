@@ -9,7 +9,9 @@ import { buildProfileBasicCommand } from "./basic/index.js";
 import { runProfileBasicShow } from "./basic/show.js";
 import { runProfileBasicUpdate } from "./basic/set.js";
 import { buildProfileCertificationsCommand } from "./certifications/index.js";
+import { buildProfileEducationCommand } from "./education/index.js";
 import { buildProfileEmploymentCommand } from "./employment/index.js";
+import { buildProfileIndustriesCommand } from "./industries/index.js";
 import { buildProfilePortfolioCommand } from "./portfolio/index.js";
 import { buildProfileResumeCommand } from "./resume/index.js";
 import { buildProfileSkillsCommand } from "./skills/index.js";
@@ -17,10 +19,11 @@ import { buildProfileVisasCommand } from "./visas/index.js";
 
 /**
  * Build the `ttctl profile` command tree. Hosts the 11 profile sub-domains
- * landing across #69 → #76. Today only `basic` carries operations
- * (`profile basic show`, `profile basic update`); the other 10 sub-domains
- * are placeholder modules that wire in their commands when their
- * implementations land.
+ * landing across #69 → #76. Today `basic`, `skills` (#73), `industries`,
+ * `education`, `certifications`, `employment` (#74), `portfolio`, `visas`,
+ * and `resume` (#75) carry full operations; the remaining sub-domains
+ * (`external`, `reviews`) are placeholder modules that wire in their
+ * commands when their implementations land.
  *
  * The tree also preserves the wave-0 short-form CLI surface: `ttctl profile
  * show` and `ttctl profile update --bio --headline` continue to work as
@@ -63,16 +66,14 @@ export function buildProfileCommand(): Command {
       await runProfileBasicUpdate(options);
     });
 
-  // Canonical sub-domain tree. `basic` is wired with operations today; the
-  // four sub-domains that ship CLI aliases (`certifications`/`certs`,
-  // `employment`/`experience`, `portfolio`/`projects`, `resume`/`cv`) are
-  // wired here too so their alias contracts (per issue #72) take effect
-  // before their operations land in #74/#75. `visas` (no alias) is wired
-  // here as part of #75 so its full operation set is reachable. The
-  // remaining sub-domains (`skills`, `industries`, `education`,
-  // `external`, `reviews`) remain placeholder modules with no CLI alias
-  // and register their command trees when their respective issues land.
+  // Canonical sub-domain tree. `basic` and `skills` (#73), `industries`,
+  // `education`, `certifications`, `employment` (#74), and `portfolio`,
+  // `visas`, `resume` (#75) carry full operations today. The remaining
+  // sub-domains (`external`, `reviews`) are placeholder modules that
+  // register their command trees when their respective issues land.
   profile.addCommand(buildProfileBasicCommand());
+  profile.addCommand(buildProfileIndustriesCommand());
+  profile.addCommand(buildProfileEducationCommand());
   profile.addCommand(buildProfileCertificationsCommand());
   profile.addCommand(buildProfileEmploymentCommand());
   profile.addCommand(buildProfilePortfolioCommand());

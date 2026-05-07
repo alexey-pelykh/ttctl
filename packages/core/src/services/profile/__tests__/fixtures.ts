@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Oleksii PELYKH
+
+/**
+ * Shared `ProfileShowQuery`-shaped fixture used by the four sub-domain
+ * service test suites (education, certifications, employment, industries)
+ * to satisfy the `extractProfileId()` round-trip via mocked
+ * `stockTransport`. Every selected field is populated because codegen
+ * runs with `avoidOptionals: true` — missing keys are TS errors at the
+ * cast site.
+ *
+ * Single-source the fixture so updates to the rich `ProfileShowQuery`
+ * shape don't need to be applied across four test files.
+ */
+export const VIEWER_OK = {
+  data: {
+    viewer: {
+      __typename: "Viewer",
+      id: "v1",
+      appliedAt: "2020-01-01T00:00:00+00:00",
+      hasSearchSubscription: false,
+      availabilityRequestTalentCardEnabled: true,
+      coachingEligibility: "QUICK",
+      referralUrl: {
+        __typename: "ReferralUrl",
+        legacySlug: "u",
+        pathSuffix: "/u",
+        shortenedUrl: "https://x",
+        url: "https://x",
+      },
+      hireMeBanner: {
+        __typename: "HireMeBanner",
+        enabled: false,
+        submitted: false,
+        experimentVariant: "control",
+        referralUrl: "",
+        personalWebsiteUrl: "",
+        verificationStatus: "IDLE",
+        verifiedCount: 0,
+      },
+      codeOfConduct: {
+        __typename: "CodeOfConduct",
+        id: "c1",
+        acceptedAt: "2024-01-01T00:00:00+00:00",
+        title: "CoC",
+        revisedOn: "2024-01-01",
+      },
+      termsOfService: {
+        __typename: "TermsOfService",
+        id: "t1",
+        title: "ToS",
+        revisedOn: "2024-01-01",
+        requiredAction: "NONE",
+      },
+      preliminarySearchSetting: { __typename: "PreliminarySearchSetting", enabled: false },
+      viewerRole: {
+        __typename: "ViewerRole",
+        activatedAt: "2018-06-15T00:00:00+00:00",
+        askExpertMenuVisible: true,
+        blockedStatus: { __typename: "BlockedStatus", isBlocked: false },
+        roleId: 1,
+        profileId: "p1",
+        availability: "PART_TIME",
+        allocatedHours: 40,
+        hiredHours: 30,
+        fullName: "Ada Lovelace",
+        firstName: "Ada",
+        phoneNumber: "+1",
+        email: "a@b",
+        toptalEmail: "a@toptal",
+        toptalEmailSuspended: false,
+        sendNotificationsToPrivateEmail: false,
+        specializationType: "CORE_WITH_MARKETPLACE",
+        specializations: [],
+        photo: { __typename: "Photo", large: "", small: "" },
+        postActivationStepsStatus: "COMPLETED",
+        publicResumeUrl: "",
+        timeZone: {
+          __typename: "TimeZone",
+          name: "UTC",
+          value: "Etc/UTC",
+          location: "UTC",
+          utcOffset: 0,
+          stdOffset: 0,
+        },
+        hourlyRate: { __typename: "Money", verbose: "$0", decimal: "0" },
+        isPassThroughTalent: false,
+        isFakeSession: false,
+        availableShiftRangeFrom: "00:00",
+        availableShiftRangeTo: "00:00",
+        workingTimeFrom: "00:00",
+        workingTimeTo: "00:00",
+        contactFields: {
+          __typename: "ContactFields",
+          communitySlackId: "",
+          email: "a@b",
+          phoneNumber: "",
+          skype: null as string | null,
+        },
+        talentVerticals: [],
+        vertical: {
+          __typename: "TalentVertical",
+          name: "Eng",
+          slug: "eng",
+          hasSingleSpecialization: false,
+          isMarketplaceAccessEnabled: true,
+          profileHandbookUrl: "",
+          minPortfolioItems: 0,
+          marketCondition: { __typename: "VerticalMarketCondition", condition: "POOR" },
+          globalMarketCondition: {
+            __typename: "VerticalGlobalMarketCondition",
+            condition: "POOR",
+            conditionVerbose: "Poor",
+            conditionColor: "WARNING",
+            reportUrl: "",
+          },
+          talentJobApplicationConfig: {
+            __typename: "TalentJobApplicationConfig",
+            portfolioRequired: false,
+            careerHighlightRequired: false,
+            highlightFields: [],
+          },
+        },
+        lastAllocatedHoursChangeRequest: {
+          __typename: "AllocatedHoursChangeRequest",
+          id: "x",
+          allocatedHours: 40,
+          comment: "",
+          reviewedManually: false,
+          statusV2: { __typename: "AllocatedHoursChangeRequestStatus", value: "ACCEPTED", verbose: "Accepted" },
+        },
+        lastMobileAccess: { __typename: "MobileAccess", deviceType: "IOS", startedAt: "2025-01-01" },
+        rateInsight: {
+          __typename: "TalentRateInsight",
+          hourly: {
+            __typename: "TalentRateInsightForCommitment",
+            currentRateCompetitive: true,
+            recentApplicationRate: "0",
+            recommendedRate: "0",
+          },
+        },
+        operations: {
+          __typename: "ViewerRoleOperations",
+          createRateChangeRequest: { __typename: "Operation", callable: "ENABLED" },
+          startSearchSubscription: { __typename: "Operation", callable: "DISABLED" },
+          promoteGigs: { __typename: "ViewerRoleOperationsPromoteGigs", callable: "ENABLED" },
+        },
+        permissions: {
+          __typename: "TalentPermissions",
+          canApplyToJobs: true,
+          canFillInAdvancedProfile: true,
+          canHaveReferrals: true,
+          canViewAskAnExpert: true,
+          canViewCoachingRequests: true,
+          canViewCommunity: true,
+          canViewConsultations: true,
+          canViewEligibleJobs: true,
+          canViewPayments: true,
+          canViewRateInsights: true,
+          canViewRecognitionBadges: true,
+          canViewRecommendedJobs: true,
+          canViewSlackCommunity: true,
+          canViewSpecializations: true,
+        },
+        profile: {
+          __typename: "Profile",
+          id: "p1",
+          fullName: "Ada",
+          city: "London",
+          photo: { __typename: "ProfilePhotoType", large: "" },
+          skillSets: { __typename: "ProfileSkillSetConnection", nodes: [] },
+        },
+      },
+    },
+  },
+};

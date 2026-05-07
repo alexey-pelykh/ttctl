@@ -19,9 +19,9 @@ import { TtctlError } from "@ttctl/core";
  * strict type-checking even though the runtime values are identical.
  */
 export interface ToolErrorResponse {
+  [key: string]: unknown;
   isError: true;
   content: [{ type: "text"; text: string }];
-  [key: string]: unknown;
 }
 
 /**
