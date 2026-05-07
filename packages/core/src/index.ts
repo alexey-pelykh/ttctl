@@ -30,4 +30,6 @@ export type { Credentials, GraphQLRequest, ToptalSurface } from "./types.js";
 
 export * as profile from "./services/profile/index.js";
 
+export { PROFILE_BASIC_FIELDS, cliToServer, serverToCli } from "./services/translations.js";
+
 export type { ProfileShowQuery, ProfileShowQueryVariables } from "./__generated__/graphql.js";

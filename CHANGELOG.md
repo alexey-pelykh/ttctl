@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vocabulary translation table + CLI aliases (#72)**. Centralizes the
+  server-field ↔ CLI-flag mapping in a new `core/src/services/translations.ts`
+  and registers user-friendly Commander.js aliases on four profile
+  sub-domains.
+  - **Translation table**: `PROFILE_BASIC_FIELDS` maps GraphQL field names
+    on the `basic` sub-domain to the canonical CLI flag names —
+    `quote → headline`, `about → bio`. New helpers `serverToCli` and
+    `cliToServer` rename keys in either direction (values pass through;
+    unmapped keys pass through unchanged). Future sub-domains amend the
+    same module rather than scattering inline literals across services.
+    All three are re-exported from `@ttctl/core`.
+  - **CLI aliases**: each of the four sub-domains in this batch now
+    accepts a user-friendly alongside its canonical name —
+    `certifications`/`certs`, `employment`/`experience`,
+    `portfolio`/`projects`, `resume`/`cv`. Both forms route to the same
+    handler; `--help` renders the canonical name with the alias listed
+    parenthetically (Commander.js default).
+  - **MCP excludes aliases**: per project policy, MCP tool names use only
+    the canonical sub-domain name (e.g.,
+    `ttctl_profile_portfolio_add`, never `ttctl_profile_projects_add`).
+    Aliases are a CLI ergonomics affordance, not a public API surface.
+  - **Convention** (no v0 commands ship `remove` yet): when a sub-domain
+    introduces a `remove` verb, it MUST also register `rm` as a
+    Commander.js alias on that verb so users can type either form.
+
 ### Changed
 
 - **Profile surface refactored to services-tree shape (#69)**. The flat
