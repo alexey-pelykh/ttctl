@@ -38,17 +38,24 @@ import { findRepoRoot } from "./paths.js";
  * `await client.close()` in `afterAll` themselves — the client is opt-in
  * per test (most cases don't need MCP).
  *
- * Isolation strategy is identical to `getCliClient`: the spawned MCP
- * server inherits the configured `cwd` (the harness's sandbox) and
- * discovers its `.ttctl.yaml` (with the redirected `auth-token-path`)
- * via normal config discovery. No environment variable is involved.
+ * Isolation strategy (per #94): identical to `getCliClient` — when
+ * `configPath` is set, the harness injects
+ * `TTCTL_CONFIG_FILE=<configPath>` into the spawned MCP server's env. The
+ * server's `resolveConfig` (per #92) reads that path verbatim, isolating
+ * the run from the user's everyday session.
  */
 export interface McpClientOptions {
   /**
-   * Working directory for the spawned MCP server. The harness's session
-   * setup passes the sandbox dir here so config discovery picks up the
-   * fixture `.ttctl.yaml`. Defaults to the repo root for harness-internal
-   * unit tests.
+   * Absolute path to the sandbox `.ttctl.yaml` fixture. Injected into the
+   * spawned MCP server's env as `TTCTL_CONFIG_FILE`. Optional in the type
+   * for harness-internal unit tests; production E2E callers MUST pass it.
+   */
+  configPath?: string;
+  /**
+   * Working directory for the spawned MCP server. Defaults to the repo
+   * root. Isolation no longer flows through CWD (see #92, #94 — env
+   * injection is the canonical mechanism); this option exists for
+   * harness-internal tests that assert spawn-time CWD behavior.
    */
   cwd?: string;
   /**
@@ -61,9 +68,10 @@ export interface McpClientOptions {
    */
   repoRoot?: string;
   /**
-   * Per-invocation env overlay. Merged onto `process.env`. The harness
-   * does NOT inject any auth-related env vars — isolation flows through
-   * `cwd`.
+   * Per-invocation env overlay. Merged onto `process.env` (with the
+   * harness-injected `TTCTL_CONFIG_FILE` already in place — overlay
+   * wins, so a test that wants to drop the injection can pass
+   * `env: { TTCTL_CONFIG_FILE: undefined }`).
    */
   env?: Record<string, string | undefined>;
 }
@@ -112,6 +120,13 @@ export function getMcpClient(options: McpClientOptions): McpClient {
   const cwd = options.cwd ?? repoRoot;
 
   const env: NodeJS.ProcessEnv = { ...process.env };
+  // Inject TTCTL_CONFIG_FILE FIRST — overrides any inherited value from
+  // the parent shell. The per-construction overlay applies AFTER, so a
+  // negative-case test can drop the injection via
+  // `env: { TTCTL_CONFIG_FILE: undefined }`.
+  if (options.configPath !== undefined) {
+    env["TTCTL_CONFIG_FILE"] = options.configPath;
+  }
   if (options.env) {
     for (const [k, v] of Object.entries(options.env)) {
       if (v === undefined) {

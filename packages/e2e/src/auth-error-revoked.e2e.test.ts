@@ -36,8 +36,8 @@ describe("auth error: deliberately-revoked token (#77)", () => {
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxDir } = session.getContext();
-    cli = getCliClient({ cwd: sandboxDir });
+    const { sandboxConfigPath } = session.getContext();
+    cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
   it.skipIf(!e2eEnabled)(

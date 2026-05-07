@@ -26,6 +26,7 @@ export type { LockState } from "./lockfile.js";
 export { getMcpClient } from "./mcp-client.js";
 export type { McpClient, McpClientOptions } from "./mcp-client.js";
 export {
+  cliConfigPath,
   findRepoRoot,
   resolveIsolatedAuthTokenPath,
   resolveLockfilePath,
