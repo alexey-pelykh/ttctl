@@ -35,3 +35,8 @@ export * as profile from "./services/profile/index.js";
 export { PROFILE_BASIC_FIELDS, PROFILE_SKILL_FIELDS, cliToServer, serverToCli } from "./services/translations.js";
 
 export type { ProfileShowQuery, ProfileShowQueryVariables } from "./__generated__/graphql.js";
+
+export { DateInputError, parseDateInput } from "./lib/date.js";
+export type { DateInputErrorCode, ParsedDate } from "./lib/date.js";
+
+export { splitParagraphs } from "./lib/text.js";

@@ -1,6 +1,277 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// Placeholder for the `ttctl profile education` sub-tree. Implementation
-// lands in #74.
-export {};
+import { DateInputError, parseDateInput, profile } from "@ttctl/core";
+import { Command, Option } from "commander";
+
+import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
+import type { OutputFormat } from "../../../lib/output.js";
+import { loadAuthTokenOrExit, presentSubDomainError } from "../shared.js";
+
+/**
+ * Build the `ttctl profile education` command tree.
+ *
+ * Five leaves:
+ *   - `add --institution --degree [--from --to]`
+ *   - `update <id> [field-flags]`
+ *   - `remove <id>`
+ *   - `show <id> [-o text|json|table]`
+ *   - `highlight <id>`
+ *
+ * Date input flags (`--from`, `--to`) accept ISO-8601 (`2023-01-15`) or
+ * year-only (`2023`); the date helper at `core/src/lib/date.ts` enforces
+ * format and rejects impossible calendar dates. Education stores year
+ * only, so the month/day are dropped before sending to the API.
+ */
+export function buildProfileEducationCommand(): Command {
+  const education = new Command("education").description("View and update the education section of your profile");
+
+  education
+    .command("add")
+    .description("Add a new education entry to your profile")
+    .requiredOption("--institution <name>", "school / university name")
+    .requiredOption("--degree <type>", "degree (e.g. BSc, MSc, PhD)")
+    .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
+    .option("--to <date>", "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
+    .option("--field-of-study <text>", "field of study (optional)")
+    .option("--location <text>", "city / country (optional)")
+    .option("--title <text>", "thesis or program title (optional)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("text" satisfies OutputFormat),
+    )
+    .action(async (options: AddOptions) => {
+      await runAdd(options);
+    });
+
+  education
+    .command("update")
+    .description("Update an existing education entry by id")
+    .argument("<id>", "education id (V1-Education-NNN)")
+    .option("--institution <name>", "school / university name")
+    .option("--degree <type>", "degree")
+    .option("--from <date>", "start date — ISO-8601 or YYYY")
+    .option("--to <date>", "end date — ISO-8601 or YYYY")
+    .option("--field-of-study <text>", "field of study")
+    .option("--location <text>", "city / country")
+    .option("--title <text>", "thesis or program title")
+    .option("--highlight <bool>", "set highlight flag (true|false)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("text" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: UpdateOptions) => {
+      await runUpdate(id, options);
+    });
+
+  education
+    .command("remove")
+    .description("Remove an education entry by id")
+    .argument("<id>", "education id")
+    .action(async (id: string) => {
+      await runRemove(id);
+    });
+
+  education
+    .command("show")
+    .description("Show a single education entry by id")
+    .argument("<id>", "education id")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("text" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runShow(id, options.output);
+    });
+
+  education
+    .command("highlight")
+    .description("Toggle highlight on an education entry")
+    .argument("<id>", "education id")
+    .option("--off", "un-highlight (default is to highlight)", false)
+    .action(async (id: string, options: { off: boolean }) => {
+      await runHighlight(id, !options.off);
+    });
+
+  return education;
+}
+
+interface AddOptions {
+  institution: string;
+  degree: string;
+  from?: string;
+  to?: string;
+  fieldOfStudy?: string;
+  location?: string;
+  title?: string;
+  output: OutputFormat;
+}
+
+interface UpdateOptions {
+  institution?: string;
+  degree?: string;
+  from?: string;
+  to?: string;
+  fieldOfStudy?: string;
+  location?: string;
+  title?: string;
+  highlight?: string;
+  output: OutputFormat;
+}
+
+async function runAdd(options: AddOptions): Promise<void> {
+  const fields: profile.education.EducationFields = {
+    institution: options.institution,
+    degree: options.degree,
+  };
+  applyDateFlags(fields, options, "profile education add");
+  applyOptionalStrings(fields, options);
+
+  const token = await loadAuthTokenOrExit("profile education add");
+  let result: profile.education.Education;
+  try {
+    result = await profile.education.add(token, fields);
+  } catch (err) {
+    presentSubDomainError("profile education add", err);
+  }
+  emitResult(result, options.output, { text: formatEducationText, table: formatEducationTable });
+}
+
+async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
+  const fields: profile.education.EducationFields = {};
+  if (options.institution !== undefined) fields.institution = options.institution;
+  if (options.degree !== undefined) fields.degree = options.degree;
+  if (options.fieldOfStudy !== undefined) fields.fieldOfStudy = options.fieldOfStudy;
+  if (options.location !== undefined) fields.location = options.location;
+  if (options.title !== undefined) fields.title = options.title;
+  if (options.highlight !== undefined) {
+    if (options.highlight !== "true" && options.highlight !== "false") {
+      process.stderr.write(
+        `profile education update failed (VALIDATION_ERROR): --highlight expects "true" or "false"\n`,
+      );
+      process.exit(1);
+    }
+    fields.highlight = options.highlight === "true";
+  }
+  applyDateFlags(fields, options, "profile education update");
+
+  if (Object.keys(fields).length === 0) {
+    process.stderr.write(`profile education update failed (VALIDATION_ERROR): at least one field flag is required\n`);
+    process.exit(1);
+  }
+
+  const token = await loadAuthTokenOrExit("profile education update");
+  let result: profile.education.Education;
+  try {
+    result = await profile.education.update(token, id, fields);
+  } catch (err) {
+    presentSubDomainError("profile education update", err);
+  }
+  emitResult(result, options.output, { text: formatEducationText, table: formatEducationTable });
+}
+
+async function runRemove(id: string): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile education remove");
+  let removedId: string;
+  try {
+    removedId = await profile.education.remove(token, id);
+  } catch (err) {
+    presentSubDomainError("profile education remove", err);
+  }
+  process.stdout.write(`Education ${removedId} removed.\n`);
+}
+
+async function runShow(id: string, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile education show");
+  let result: profile.education.Education;
+  try {
+    result = await profile.education.show(token, id);
+  } catch (err) {
+    presentSubDomainError("profile education show", err);
+  }
+  emitResult(result, format, { text: formatEducationText, table: formatEducationTable });
+}
+
+async function runHighlight(id: string, value: boolean): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile education highlight");
+  let result: { id: string; highlight: boolean };
+  try {
+    result = await profile.education.highlight(token, id, value);
+  } catch (err) {
+    presentSubDomainError("profile education highlight", err);
+  }
+  process.stdout.write(`Education ${result.id} highlight set to ${result.highlight.toString()}.\n`);
+}
+
+/**
+ * Map `--from` / `--to` flag strings to `yearFrom` / `yearTo` Ints (year
+ * only, dropping any provided month/day per Education's GraphQL field
+ * shape). The date helper validates ISO-8601 and year-only formats and
+ * surfaces malformed input as `DateInputError`.
+ */
+function applyDateFlags(
+  fields: profile.education.EducationFields,
+  options: { from?: string; to?: string },
+  commandLabel: string,
+): void {
+  try {
+    if (options.from !== undefined) fields.yearFrom = parseDateInput(options.from, "from").year;
+    if (options.to !== undefined) fields.yearTo = parseDateInput(options.to, "to").year;
+  } catch (err) {
+    if (err instanceof DateInputError) {
+      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+function applyOptionalStrings(
+  fields: profile.education.EducationFields,
+  options: { fieldOfStudy?: string; location?: string; title?: string },
+): void {
+  if (options.fieldOfStudy !== undefined) fields.fieldOfStudy = options.fieldOfStudy;
+  if (options.location !== undefined) fields.location = options.location;
+  if (options.title !== undefined) fields.title = options.title;
+}
+
+/**
+ * Pretty-print an Education row. Pure — no I/O. Years render as "YYYY"
+ * or "YYYY–YYYY" or "YYYY–present"; missing years collapse to a hyphen.
+ */
+export function formatEducationText(e: profile.education.Education): string {
+  const lines: string[] = [`${e.degree}${e.fieldOfStudy ? `, ${e.fieldOfStudy}` : ""} — ${e.institution}`];
+  if (e.location) lines.push(`  ${e.location}`);
+  lines.push(`  ${formatYearRange(e.yearFrom, e.yearTo)}`);
+  if (e.title) lines.push(`  ${e.title}`);
+  if (e.highlight) lines.push(`  highlighted`);
+  lines.push(`  id: ${e.id}`);
+  return lines.join("\n");
+}
+
+/**
+ * Pretty-print an Education row as a key/value table.
+ */
+export function formatEducationTable(e: profile.education.Education): string {
+  const rows: [string, string][] = [
+    ["id", e.id],
+    ["institution", e.institution],
+    ["degree", e.degree],
+    ["field_of_study", e.fieldOfStudy ?? ""],
+    ["location", e.location ?? ""],
+    ["title", e.title ?? ""],
+    ["years", formatYearRange(e.yearFrom, e.yearTo)],
+    ["highlight", e.highlight.toString()],
+  ];
+  return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+}
+
+function formatYearRange(from: number | null, to: number | null): string {
+  if (from === null && to === null) return "—";
+  if (from !== null && to === null) return `${from.toString()}–present`;
+  if (from === null && to !== null) return `?–${to.toString()}`;
+  return `${(from ?? 0).toString()}–${(to ?? 0).toString()}`;
+}

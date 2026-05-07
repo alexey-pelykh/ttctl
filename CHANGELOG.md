@@ -62,6 +62,7 @@ skills` sub-tree carries seven leaves matching the issue's
     `rm` per the cardinality table but are NOT wired in this bundle:
     the connection-id argument requires a UI flow surfacing selectable
     candidates first. Tracked as a follow-up.
+
 - **Profile portfolio + visas + resume sub-domains (#75)**. Three profile
   sub-domains land with their full operation set across `@ttctl/core`,
   `@ttctl/cli`, and `@ttctl/mcp` — 13 leaves total. Includes new
@@ -118,6 +119,57 @@ skills` sub-tree carries seven leaves matching the issue's
     elsewhere; falsified by live capture) showed that wrapper keys
     occasionally diverge from inference; if any of these mutations is
     rejected by the server, capture the live shape via curl and amend.
+
+- **Profile industries + education + certifications + employment (#74)**.
+  Implements the natural-CRUD shape for four profile sub-domains, landing
+  21 leaves (5 + 5 + 5 + 6) across CLI and MCP surfaces. All four reuse
+  the wave-3 infrastructure already merged: free-text helper (#70) for
+  `employment update --description`, output formatter (#71) for every
+  `show` / `list` leaf, vocabulary aliases (#72) for `certs` and
+  `experience`, and the typed auth-error contract (#77) at the transport
+  layer.
+  - **Core services** at `@ttctl/core/services/profile/{industries,
+education,certifications,employment}/index.ts`. Each exposes the
+    canonical CRUD verbs plus sub-domain extras (`industries.list` +
+    `industries.autocomplete` for the catalog lookup;
+    `employment.employerAutocomplete` for the employer-name catalog;
+    `highlight` toggles on education / certifications / employment).
+    All services run against the Cloudflare-protected talent-profile
+    surface via `impersonatedTransport`; `profileId` is resolved lazily
+    via the new `services/profile/shared.ts` helper (which wraps
+    `profile.basic.show()` and re-uses `ProfileError`).
+  - **CLI commands** at `@ttctl/cli/commands/profile/{industries,
+education,certifications,employment}/index.ts`. Each sub-tree
+    expands into its full leaf set: - `profile industries add <name> [--connection]` (+ `update`,
+    `remove`, `list`, `autocomplete`) - `profile education add --institution --degree [--from --to]`
+    (+ `update`, `remove`, `show`, `highlight`) - `profile certifications add --name --issuer [--issued --expires]`
+    (+ `update`, `remove`, `show`, `highlight`) - `profile employment add --company --role [--from --to --current]`
+    (+ `update`, `remove`, `show`, `highlight`,
+    `employer-autocomplete`) - The `certs` and `experience` aliases registered in #72 are
+    preserved when each sub-tree expands. `--description` on
+    `employment update` consumes the four-mode free-text helper from
+    #70 (inline / stdin `-` / file `@path` / `$EDITOR`).
+  - **MCP tools** registered under `@ttctl/mcp/tools/profile/*.ts` —
+    21 tools total, named with the `ttctl_profile_<sub-domain>_<verb>`
+    convention. CLI-only aliases (`certs`, `experience`) do NOT appear
+    in the MCP catalog per #72 project policy. Each tool ships rich Zod
+    input schemas and intent-example descriptions.
+  - **Date input helper** at `core/src/lib/date.ts` (re-exported from
+    `@ttctl/core` for both CLI and MCP). Accepts ISO-8601
+    (`2023-01-15`) or year-only (`2023`, defaulted to January 1st).
+    Validates real calendar dates (rejects 2023-02-30, Feb 29 in
+    non-leap years, etc.) and rejects out-of-range years (before 1900,
+    after current year + 30).
+  - **Wire-format mapping** matches the empirical capture in
+    `research/captures/web/inputs/`: Education stores year only
+    (`yearFrom` / `yearTo` Int); Employment stores year only
+    (`startDate` / `endDate` Int) — month/day are dropped before
+    sending; Certification stores month + year as separate Int fields
+    (`validFromMonth` / `validFromYear`, `validToMonth` /
+    `validToYear`). All four follow Pattern 1 (`{<entity>Id, <entity>:
+<Entity>Input}`) for update, Pattern 2 (`{profileId, <entity>:
+<Entity>Input}`) for create, Pattern 3 (`{<entity>Id}`) for remove,
+    and Pattern 4 (`{<entity>Id, highlight: Boolean}`) for highlight.
 
 - **Vocabulary translation table + CLI aliases (#72)**. Centralizes the
   server-field ↔ CLI-flag mapping in a new `core/src/services/translations.ts`
