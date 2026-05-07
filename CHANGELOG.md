@@ -171,6 +171,79 @@ education,certifications,employment}/index.ts`. Each sub-tree
 <Entity>Input}`) for create, Pattern 3 (`{<entity>Id}`) for remove,
     and Pattern 4 (`{<entity>Id, highlight: Boolean}`) for highlight.
 
+- **Profile `external` and `reviews` sub-domains — CLI + MCP (#76)**.
+  Second Wave-3 vertical-slice bundle (after #73): two heterogeneous
+  profile sub-domains end-to-end across `@ttctl/core`, `@ttctl/cli`, and
+  `@ttctl/mcp`. 6 external leaves + 4 reviews leaves + 10 MCP tools.
+  - **External (`packages/core/src/services/profile/external/index.ts`)**.
+    Six exports: `update` (LinkedIn / GitHub / website / Twitter / Behance /
+    Dribbble URLs via `UpdateExternalProfiles`), `customRequirementsShow` /
+    `customRequirementsSet` (the three onboarding-readiness booleans —
+    background-check, drug-test, time-tracking-tools — backed by
+    `getCustomRequirements` / `updateCustomRequirements`), `readiness`
+    (`getProfileReadiness` — per-section completion checklist plus the
+    rolled-up `submitAvailable` flag), `recommendations`
+    (`getProfileRecommendations` — discriminated-union list of "do this
+    next" items), `advancedWizardShow` (`getAdvancedProfileData` — wizard
+    status + travel-visa summary).
+  - **Reviews (`packages/core/src/services/profile/reviews/index.ts`)**.
+    Four exports: `list` (`sectionReviews`), `approveItem` /
+    `approveSection` (final approvals — destructive per platform
+    semantics), `submitForReview` (re-submit profile for platform-side
+    re-review).
+  - **CLI** (`packages/cli/src/commands/profile/{external,reviews}/`). Each
+    leaf is a separate file with pure formatters that consume the #71
+    output helper (`text` / `json` / `table`). The `external update`
+    leaf accepts six URL flags; `custom-requirements set` accepts the
+    three booleans (see § Spec/API divergences below). Approval leaves
+    use named flags (`--review-id`, `--item-id`, `--kind`, `--section`)
+    rather than the issue's `<id>` shorthand because the API requires
+    three fields per call.
+  - **MCP** (`packages/mcp/src/tools/profile_{external,reviews}_*.ts`).
+    Ten tools wired through `registerAllTools`:
+    `ttctl_profile_external_*` (6) and `ttctl_profile_reviews_*` (4),
+    matching the per-tool-file convention established by #73. Tool
+    descriptions include example user intents to help AI clients route
+    natural-language requests.
+  - **Tests**. New core service tests cover happy paths, validation
+    guards, auth-revoked routing, USER_ERROR rendering, and Cf403
+    propagation. New CLI formatter tests cover text/json/table modes for
+    every show/list/update leaf. New MCP tests cover tool registration
+    shape.
+
+  **Spec/API divergences from issue #76 — documented to surface
+  divergences for future maintainers**:
+  - `custom-requirements set` is **NOT** free-text. Issue #76 described
+    it as multi-paragraph free-text consuming the #70 helper. The
+    underlying `UpdateCustomRequirementsInput` schema is in fact three
+    booleans (`backgroundCheck`, `drugTest`, `timeTrackingTools`); no
+    free-text field exists. The leaf accepts
+    `--background-check / --drug-test / --time-tracking-tools <true|false>`.
+    The AC item "Free-text helper (#70) consumed by `external
+custom-requirements set`" is **not satisfied** — no free-text input
+    exists for this leaf. Empirically validated against
+    `research/captures/web/inputs/UpdateCustomRequirementsInput.json`.
+  - `external update` exposes the schema-supported URL fields
+    (`linkedin / github / website / twitter / behance / dribbble`); the
+    issue's `--portfolio-url` is **not** a settable field on the schema
+    and is dropped (the talent's public profile URL is a server-
+    determined read via `getPublicProfileUrl`).
+  - Review-approval leaves use named flags rather than the issue's
+    single-positional `<id>` shorthand (the API requires `reviewId +
+itemId + itemKind` for items, `reviewId + section` for sections).
+  - `submitForReview` input shape is **INFERRED — UNVERIFIED** (Pattern 2:
+    `{ profileId: ID! }`); no live curl capture exists in
+    `research/captures/web/inputs/`. Mismatches surface as `USER_ERROR`
+    at runtime.
+
+  **Operations explicitly NOT exposed at v0** (per issue #76 §
+  "Operations explicitly NOT exposed as user-facing CLI leaves"):
+  `getStepsAndLinks`, `getProfilePrefillStatus`, `getProfileSettingsUrls`,
+  `getPublicProfileUrl`, `getProfileVersionsCount`, `analyticsInfo`,
+  `getProfileTimestamps`, `getProfileItems`,
+  `UpdateAdvancedProfileWizardStatus`. None is exported from the service
+  module. File a follow-up issue if user demand surfaces.
+
 - **Vocabulary translation table + CLI aliases (#72)**. Centralizes the
   server-field ↔ CLI-flag mapping in a new `core/src/services/translations.ts`
   and registers user-friendly Commander.js aliases on four profile

@@ -11,9 +11,11 @@ import { runProfileBasicUpdate } from "./basic/set.js";
 import { buildProfileCertificationsCommand } from "./certifications/index.js";
 import { buildProfileEducationCommand } from "./education/index.js";
 import { buildProfileEmploymentCommand } from "./employment/index.js";
+import { buildProfileExternalCommand } from "./external/index.js";
 import { buildProfileIndustriesCommand } from "./industries/index.js";
 import { buildProfilePortfolioCommand } from "./portfolio/index.js";
 import { buildProfileResumeCommand } from "./resume/index.js";
+import { buildProfileReviewsCommand } from "./reviews/index.js";
 import { buildProfileSkillsCommand } from "./skills/index.js";
 import { buildProfileVisasCommand } from "./visas/index.js";
 
@@ -21,9 +23,7 @@ import { buildProfileVisasCommand } from "./visas/index.js";
  * Build the `ttctl profile` command tree. Hosts the 11 profile sub-domains
  * landing across #69 → #76. Today `basic`, `skills` (#73), `industries`,
  * `education`, `certifications`, `employment` (#74), `portfolio`, `visas`,
- * and `resume` (#75) carry full operations; the remaining sub-domains
- * (`external`, `reviews`) are placeholder modules that wire in their
- * commands when their implementations land.
+ * `resume` (#75), `external`, and `reviews` (#76) carry full operations.
  *
  * The tree also preserves the wave-0 short-form CLI surface: `ttctl profile
  * show` and `ttctl profile update --bio --headline` continue to work as
@@ -66,18 +66,19 @@ export function buildProfileCommand(): Command {
       await runProfileBasicUpdate(options);
     });
 
-  // Canonical sub-domain tree. `basic` and `skills` (#73), `industries`,
-  // `education`, `certifications`, `employment` (#74), and `portfolio`,
-  // `visas`, `resume` (#75) carry full operations today. The remaining
-  // sub-domains (`external`, `reviews`) are placeholder modules that
-  // register their command trees when their respective issues land.
+  // Canonical sub-domain tree. All 11 sub-domains carry full operations:
+  // `basic` and `skills` (#73), `industries`, `education`, `certifications`,
+  // `employment` (#74), `portfolio`, `visas`, `resume` (#75), and
+  // `external`, `reviews` (#76).
   profile.addCommand(buildProfileBasicCommand());
   profile.addCommand(buildProfileIndustriesCommand());
   profile.addCommand(buildProfileEducationCommand());
   profile.addCommand(buildProfileCertificationsCommand());
   profile.addCommand(buildProfileEmploymentCommand());
+  profile.addCommand(buildProfileExternalCommand());
   profile.addCommand(buildProfilePortfolioCommand());
   profile.addCommand(buildProfileResumeCommand());
+  profile.addCommand(buildProfileReviewsCommand());
   profile.addCommand(buildProfileSkillsCommand());
   profile.addCommand(buildProfileVisasCommand());
 
