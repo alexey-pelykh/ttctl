@@ -3,12 +3,12 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// `getProfile` runs against mobile-gateway via `stockTransport` (no Cloudflare,
-// no impersonation needed). `updateProfile` runs against talent-profile via
+// `show` runs against mobile-gateway via `stockTransport` (no Cloudflare,
+// no impersonation needed). `set` runs against talent-profile via
 // `impersonatedTransport` (Cloudflare-protected). Mocks need to be split so a
-// single `updateProfile()` call exercises BOTH (stock → impersonated chain).
-vi.mock("../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../transport.js")>("../transport.js");
+// single `set()` call exercises BOTH (stock → impersonated chain).
+vi.mock("../../../../transport.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -16,9 +16,9 @@ vi.mock("../transport.js", async () => {
   };
 });
 
-import { getProfile, ProfileError, updateProfile } from "../profile.js";
-import { Cf403Error, impersonatedTransport, stockTransport } from "../transport.js";
-import type { TransportRequest, TransportResponse } from "../transport.js";
+import { ProfileError, set, show } from "../index.js";
+import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
+import type { TransportRequest, TransportResponse } from "../../../../transport.js";
 
 const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);
@@ -243,7 +243,7 @@ const PROFILE_OK = {
   },
 };
 
-describe("getProfile", () => {
+describe("show", () => {
   beforeEach(() => {
     mockedStock.mockReset();
     mockedImpersonated.mockReset();
@@ -252,7 +252,7 @@ describe("getProfile", () => {
   it("targets the mobile-gateway surface with the ProfileShow operation", async () => {
     replyStock({ body: PROFILE_OK });
 
-    await getProfile(TOKEN);
+    await show(TOKEN);
 
     expect(mockedStock).toHaveBeenCalledTimes(1);
     expect(mockedImpersonated).not.toHaveBeenCalled();
@@ -272,7 +272,7 @@ describe("getProfile", () => {
   it("forwards the auth token via Authorization: Token token=... (authToken field)", async () => {
     replyStock({ body: PROFILE_OK });
 
-    await getProfile(TOKEN);
+    await show(TOKEN);
 
     const call = mockedStock.mock.calls[0]?.[0] as TransportRequest;
     expect(call.authToken).toBe(TOKEN);
@@ -281,7 +281,7 @@ describe("getProfile", () => {
   it("returns the typed `data` payload on a 200 response with viewer present", async () => {
     replyStock({ body: PROFILE_OK });
 
-    const result = await getProfile(TOKEN);
+    const result = await show(TOKEN);
 
     expect(result.viewer?.id).toBe("v1");
     expect(result.viewer?.viewerRole.email).toBe("user@example.com");
@@ -299,7 +299,7 @@ describe("getProfile", () => {
   it("throws ProfileError UNAUTHENTICATED on HTTP 401", async () => {
     replyStock({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    await expect(getProfile(TOKEN)).rejects.toMatchObject({
+    await expect(show(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNAUTHENTICATED",
       message: expect.stringContaining("ttctl auth signin"),
@@ -309,7 +309,7 @@ describe("getProfile", () => {
   it("wraps generic transport throws as ProfileError NETWORK_ERROR", async () => {
     mockedStock.mockRejectedValueOnce(new Error("ECONNRESET"));
 
-    const promise = getProfile(TOKEN);
+    const promise = show(TOKEN);
     await expect(promise).rejects.toBeInstanceOf(ProfileError);
     await expect(promise).rejects.toMatchObject({ code: "NETWORK_ERROR" });
   });
@@ -321,7 +321,7 @@ describe("getProfile", () => {
       },
     });
 
-    await expect(getProfile(TOKEN)).rejects.toMatchObject({
+    await expect(show(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "GRAPHQL_ERROR",
       message: expect.stringContaining("Schema field not found"),
@@ -341,7 +341,7 @@ describe("getProfile", () => {
       },
     });
 
-    await expect(getProfile(TOKEN)).rejects.toMatchObject({
+    await expect(show(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNAUTHENTICATED",
       message: expect.stringContaining("ttctl auth signin"),
@@ -351,7 +351,7 @@ describe("getProfile", () => {
   it("throws ProfileError NO_VIEWER when data.viewer is null on a 200 response", async () => {
     replyStock({ body: { data: { viewer: null } } });
 
-    await expect(getProfile(TOKEN)).rejects.toMatchObject({
+    await expect(show(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "NO_VIEWER",
     });
@@ -360,7 +360,7 @@ describe("getProfile", () => {
   it("throws ProfileError UNKNOWN when the response has no data field", async () => {
     replyStock({ body: { data: null } });
 
-    await expect(getProfile(TOKEN)).rejects.toMatchObject({
+    await expect(show(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNKNOWN",
     });
@@ -369,7 +369,7 @@ describe("getProfile", () => {
   it("throws ProfileError UNKNOWN on unexpected non-2xx status codes (e.g., 500)", async () => {
     replyStock({ status: 500, body: "<html>internal server error</html>" });
 
-    await expect(getProfile(TOKEN)).rejects.toMatchObject({
+    await expect(show(TOKEN)).rejects.toMatchObject({
       name: "ProfileError",
       code: "UNKNOWN",
       message: expect.stringContaining("500"),
@@ -392,14 +392,14 @@ const UPDATE_OK = {
   },
 };
 
-describe("updateProfile", () => {
+describe("set", () => {
   beforeEach(() => {
     mockedStock.mockReset();
     mockedImpersonated.mockReset();
   });
 
   it("rejects calls with neither bio nor headline (CLI/contract guard)", async () => {
-    await expect(updateProfile(TOKEN, {})).rejects.toMatchObject({
+    await expect(set(TOKEN, {})).rejects.toMatchObject({
       name: "ProfileError",
       code: "VALIDATION_ERROR",
       message: expect.stringMatching(/at least one of/i),
@@ -412,7 +412,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    await updateProfile(TOKEN, { bio: "new bio" });
+    await set(TOKEN, { bio: "new bio" });
 
     expect(mockedStock).toHaveBeenCalledTimes(1);
     expect(mockedImpersonated).toHaveBeenCalledTimes(1);
@@ -430,7 +430,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    await updateProfile(TOKEN, { bio: "x" });
+    await set(TOKEN, { bio: "x" });
 
     const showCall = mockedStock.mock.calls[0]?.[0] as TransportRequest;
     const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
@@ -442,7 +442,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    await updateProfile(TOKEN, { bio: "long-form bio text", headline: "short tagline" });
+    await set(TOKEN, { bio: "long-form bio text", headline: "short tagline" });
 
     const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(updateCall.body.variables).toEqual({
@@ -460,7 +460,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    await updateProfile(TOKEN, { headline: "only headline" });
+    await set(TOKEN, { headline: "only headline" });
 
     const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     const variables = updateCall.body.variables as { input: { basicInfo: Record<string, unknown> } };
@@ -472,7 +472,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    await updateProfile(TOKEN, { bio: "" });
+    await set(TOKEN, { bio: "" });
 
     const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     const variables = updateCall.body.variables as { input: { basicInfo: Record<string, unknown> } };
@@ -483,7 +483,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    const result = await updateProfile(TOKEN, { bio: "new bio", headline: "new headline" });
+    const result = await set(TOKEN, { bio: "new bio", headline: "new headline" });
 
     expect(result.profile.id).toBe("p1");
     expect(result.profile.about).toBe("new bio");
@@ -494,7 +494,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    const result = await updateProfile(TOKEN, { bio: "x" });
+    const result = await set(TOKEN, { bio: "x" });
     expect(result.notice).toBeNull();
   });
 
@@ -504,7 +504,7 @@ describe("updateProfile", () => {
       new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
     );
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
+    await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
     expect(mockedStock).toHaveBeenCalledTimes(1);
     expect(mockedImpersonated).toHaveBeenCalledTimes(1);
   });
@@ -524,7 +524,7 @@ describe("updateProfile", () => {
       },
     });
 
-    await expect(updateProfile(TOKEN, { bio: "x".repeat(10000) })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x".repeat(10000) })).rejects.toMatchObject({
       name: "ProfileError",
       code: "USER_ERROR",
       message: expect.stringContaining("About is too long"),
@@ -545,7 +545,7 @@ describe("updateProfile", () => {
       },
     });
 
-    await expect(updateProfile(TOKEN, { headline: "" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { headline: "" })).rejects.toMatchObject({
       message: expect.stringContaining("(quote)"),
     });
   });
@@ -565,7 +565,7 @@ describe("updateProfile", () => {
       },
     });
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "USER_ERROR",
       message: expect.stringContaining("Something went wrong"),
     });
@@ -585,7 +585,7 @@ describe("updateProfile", () => {
       },
     });
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNAUTHENTICATED",
       message: expect.stringContaining("ttctl auth signin"),
     });
@@ -599,7 +599,7 @@ describe("updateProfile", () => {
       },
     });
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "GRAPHQL_ERROR",
       message: expect.stringContaining("not defined"),
     });
@@ -609,7 +609,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNAUTHENTICATED",
     });
   });
@@ -618,7 +618,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ status: 502, body: "<html>bad gateway</html>" });
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
       message: expect.stringContaining("502"),
     });
@@ -628,7 +628,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     mockedImpersonated.mockRejectedValueOnce(new Error("ECONNRESET"));
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "NETWORK_ERROR",
       message: expect.stringContaining("ECONNRESET"),
     });
@@ -638,7 +638,7 @@ describe("updateProfile", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: { data: {} } });
 
-    await expect(updateProfile(TOKEN, { bio: "x" })).rejects.toMatchObject({
+    await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
       message: expect.stringMatching(/no `data\.updateBasicInfo`/),
     });

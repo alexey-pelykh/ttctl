@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import type { ProfileShowQuery } from "./__generated__/graphql.js";
-import { impersonatedTransport, stockTransport } from "./transport.js";
-import type { TransportResponse } from "./transport.js";
+import type { ProfileShowQuery } from "../../../__generated__/graphql.js";
+import { impersonatedTransport, stockTransport } from "../../../transport.js";
+import type { TransportResponse } from "../../../transport.js";
 
 /**
  * Full-document `ProfileShow` query string.
@@ -261,7 +261,7 @@ interface ProfileShowResponse {
  *
  * Note: `Profile.about` (bio) and `Profile.quote` (headline) are NOT on
  * mobile-gateway's `Profile` type. They are write-side fields surfaced by
- * `updateProfile()`'s response payload via the talent-profile surface. If a
+ * `set()`'s response payload via the talent-profile surface. If a
  * read-side bio/headline display becomes needed, that requires a follow-up
  * issue to add a second talent-profile call.
  *
@@ -277,7 +277,7 @@ interface ProfileShowResponse {
  * - `ProfileError` with code `NETWORK_ERROR` when the transport itself
  *   throws (DNS, connection reset, etc).
  */
-export async function getProfile(token: string): Promise<ProfileShowQuery> {
+export async function show(token: string): Promise<ProfileShowQuery> {
   let res: TransportResponse;
   try {
     res = await stockTransport({
@@ -370,7 +370,7 @@ const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBas
  * `research/graphql/talent_profile/operations/UPDATE_BASIC_INFO.graphql`).
  *
  * Both fields are optional. The caller is responsible for ensuring at least
- * one is supplied — `updateProfile` rejects an empty object with a
+ * one is supplied — `set()` rejects an empty object with a
  * `VALIDATION_ERROR`.
  */
 export interface ProfileUpdate {
@@ -427,7 +427,7 @@ interface UpdateBasicInfoResponse {
 }
 
 /**
- * Result of a successful `updateProfile` call. Mirrors the GraphQL field
+ * Result of a successful `set()` call. Mirrors the GraphQL field
  * names so callers see `about`/`quote` rather than the CLI flag names — the
  * mapping back to user-facing `bio`/`headline` is a presentation concern
  * handled at the CLI layer.
@@ -448,7 +448,7 @@ export interface UpdateProfileResult {
  *
  * Authenticates via `Authorization: Token token=<token>` (the canonical
  * Toptal auth mechanism). Cookies are NOT load-bearing — Chrome TLS
- * impersonation alone passes Cloudflare. Internally calls `getProfile`
+ * impersonation alone passes Cloudflare. Internally calls `show()`
  * (against mobile-gateway) first to obtain the `profileId` required by the
  * mutation input, then issues the typed `UpdateBasicInfo` mutation against
  * talent-profile via `impersonatedTransport`. Returns the server-confirmed
@@ -468,17 +468,17 @@ export interface UpdateProfileResult {
  * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors.
  * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
  */
-export async function updateProfile(token: string, changes: ProfileUpdate): Promise<UpdateProfileResult> {
+export async function set(token: string, changes: ProfileUpdate): Promise<UpdateProfileResult> {
   if (changes.bio === undefined && changes.headline === undefined) {
-    throw new ProfileError("VALIDATION_ERROR", "updateProfile requires at least one of `bio` or `headline`.");
+    throw new ProfileError("VALIDATION_ERROR", "Profile update requires at least one of `bio` or `headline`.");
   }
 
   // Need profileId for the mutation input — fetch the current profile first.
-  // Errors from getProfile (ProfileError) propagate verbatim: a write attempt
+  // Errors from show() (ProfileError) propagate verbatim: a write attempt
   // that can't read its own profile is unrecoverable, and surfacing the
   // read-side error gives the user the same actionable message they'd get
   // from `ttctl profile show`.
-  const profile = await getProfile(token);
+  const profile = await show(token);
   const profileId = profile.viewer?.viewerRole.profileId;
   if (profileId === undefined) {
     throw new ProfileError(

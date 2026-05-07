@@ -4,7 +4,7 @@
 import { Command } from "commander";
 
 import { registerAuthCommand } from "./commands/auth/index.js";
-import { buildProfileCommand } from "./commands/profile.js";
+import { buildProfileCommand } from "./commands/profile/index.js";
 
 /**
  * Build the root TTCtl Commander program. Sub-commands are registered as they
