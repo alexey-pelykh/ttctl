@@ -29,13 +29,18 @@ export {
   cliConfigPath,
   findRepoRoot,
   resolveIsolatedAuthTokenPath,
+  resolveIsolatedSessionConfigPath,
+  resolveIsolatedSessionDir,
+  resolveIsolatedSessionTokenPath,
   resolveLockfilePath,
   resolveSandboxConfigPath,
   resolveSandboxDir,
+  resolveSharedSessionFilePath,
+  writeIsolatedSessionConfig,
   writeSandboxConfig,
 } from "./paths.js";
 export { formatRedacted, redact } from "./redaction.js";
-export { withFreshSession } from "./session.js";
+export { getSharedSession, withFreshSession } from "./session.js";
 export type {
   FreshSessionContext,
   FreshSessionHandle,

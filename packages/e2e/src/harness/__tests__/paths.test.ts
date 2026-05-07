@@ -12,9 +12,14 @@ import {
   cliConfigPath,
   findRepoRoot,
   resolveIsolatedAuthTokenPath,
+  resolveIsolatedSessionConfigPath,
+  resolveIsolatedSessionDir,
+  resolveIsolatedSessionTokenPath,
   resolveLockfilePath,
   resolveSandboxConfigPath,
   resolveSandboxDir,
+  resolveSharedSessionFilePath,
+  writeIsolatedSessionConfig,
   writeSandboxConfig,
 } from "../paths.js";
 
@@ -88,6 +93,43 @@ describe("path helpers", () => {
     expect(cliConfigPath("/repo")).toBe(resolveSandboxConfigPath("/repo"));
   });
 
+  it("resolveSharedSessionFilePath joins .tmp/e2e/.session.json under the given root", () => {
+    expect(resolveSharedSessionFilePath("/repo")).toBe(join("/repo", ".tmp", "e2e", ".session.json"));
+  });
+
+  it("resolveIsolatedSessionDir joins .tmp/e2e/isolated-<id> under the given root", () => {
+    expect(resolveIsolatedSessionDir("/repo", "1")).toBe(join("/repo", ".tmp", "e2e", "isolated-1"));
+    expect(resolveIsolatedSessionDir("/repo", "42")).toBe(join("/repo", ".tmp", "e2e", "isolated-42"));
+  });
+
+  it("resolveIsolatedSessionConfigPath joins .ttctl.yaml inside the isolated subdirectory", () => {
+    expect(resolveIsolatedSessionConfigPath("/repo", "1")).toBe(
+      join("/repo", ".tmp", "e2e", "isolated-1", ".ttctl.yaml"),
+    );
+  });
+
+  it("resolveIsolatedSessionTokenPath joins auth.token inside the isolated subdirectory", () => {
+    expect(resolveIsolatedSessionTokenPath("/repo", "1")).toBe(
+      join("/repo", ".tmp", "e2e", "isolated-1", "auth.token"),
+    );
+  });
+
+  it("isolated children all live under their own isolated subdirectory (separation from shared sandbox)", () => {
+    const root = "/r";
+    const isolatedDir = resolveIsolatedSessionDir(root, "1");
+    expect(resolveIsolatedSessionConfigPath(root, "1").startsWith(isolatedDir)).toBe(true);
+    expect(resolveIsolatedSessionTokenPath(root, "1").startsWith(isolatedDir)).toBe(true);
+    // Critically, isolated paths do NOT collide with the SHARED token/config
+    // — adversarial corruption is contained to its own subtree.
+    expect(resolveIsolatedSessionTokenPath(root, "1")).not.toBe(resolveIsolatedAuthTokenPath(root));
+    expect(resolveIsolatedSessionConfigPath(root, "1")).not.toBe(resolveSandboxConfigPath(root));
+  });
+
+  it("isolated subdirectories with different ids do not collide", () => {
+    expect(resolveIsolatedSessionDir("/r", "1")).not.toBe(resolveIsolatedSessionDir("/r", "2"));
+    expect(resolveIsolatedSessionTokenPath("/r", "1")).not.toBe(resolveIsolatedSessionTokenPath("/r", "2"));
+  });
+
   it("sandbox children all live under resolveSandboxDir", () => {
     const root = "/r";
     const sandbox = resolveSandboxDir(root);
@@ -95,6 +137,10 @@ describe("path helpers", () => {
     expect(cliConfigPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveIsolatedAuthTokenPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveLockfilePath(root).startsWith(sandbox)).toBe(true);
+    expect(resolveSharedSessionFilePath(root).startsWith(sandbox)).toBe(true);
+    // Isolated subdirs ALSO live under the sandbox — same `rm -rf .tmp/e2e/`
+    // cleanup contract.
+    expect(resolveIsolatedSessionDir(root, "1").startsWith(sandbox)).toBe(true);
   });
 });
 
@@ -165,5 +211,54 @@ describe("writeSandboxConfig", () => {
     // Reading the fixture proves the dir was created (writeFile would
     // otherwise reject with ENOENT for the missing parent).
     await expect(readFile(fixturePath, "utf8")).resolves.toContain("auth-token-path");
+  });
+});
+
+describe("writeIsolatedSessionConfig", () => {
+  it("writes a fixture .ttctl.yaml inside .tmp/e2e/isolated-<id>/, mirroring the source `auth` field", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+
+    const fixturePath = await writeIsolatedSessionConfig(workDir, "1", sourceConfigPath);
+
+    expect(fixturePath).toBe(resolveIsolatedSessionConfigPath(workDir, "1"));
+    const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
+    expect(parsed["auth"]).toBe("op://Personal/ttctl");
+    expect(parsed["auth-token-path"]).toBe("./auth.token");
+  });
+
+  it("forces auth-token-path to ./auth.token even when source sets a different value (isolation contract)", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(
+      sourceConfigPath,
+      ['auth: "op://Personal/ttctl"', 'auth-token-path: "/custom/loc/auth.token"', ""].join("\n"),
+      "utf8",
+    );
+
+    const fixturePath = await writeIsolatedSessionConfig(workDir, "1", sourceConfigPath);
+
+    const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
+    expect(parsed["auth-token-path"]).toBe("./auth.token");
+  });
+
+  it("creates the isolated subdirectory if it does not already exist", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+
+    const fixturePath = await writeIsolatedSessionConfig(workDir, "42", sourceConfigPath);
+
+    // Reading proves the parent dir was created.
+    await expect(readFile(fixturePath, "utf8")).resolves.toContain("auth-token-path");
+    expect(fixturePath).toContain(join(".tmp", "e2e", "isolated-42"));
+  });
+
+  it("isolated config is at a different path than the shared sandbox config (separation invariant)", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+
+    await writeSandboxConfig(workDir, sourceConfigPath);
+    const isolatedPath = await writeIsolatedSessionConfig(workDir, "1", sourceConfigPath);
+
+    expect(isolatedPath).not.toBe(resolveSandboxConfigPath(workDir));
   });
 });

@@ -102,6 +102,94 @@ export function resolveLockfilePath(repoRoot: string): string {
 }
 
 /**
+ * Path to the shared-session metadata file written by vitest's globalSetup.
+ *
+ * globalSetup runs in vitest's parent process; test workers run in separate
+ * forks. The handoff between them is filesystem-mediated — globalSetup
+ * persists `{ email, tokenPath, sandboxDir, sandboxConfigPath, repoRoot }`
+ * to this JSON file, and `getSharedSession()` reads it from a worker.
+ *
+ * Lives next to the lockfile and the isolated token so one `rm -rf
+ * .tmp/e2e/` cleans all run state.
+ */
+export function resolveSharedSessionFilePath(repoRoot: string): string {
+  return join(resolveSandboxDir(repoRoot), ".session.json");
+}
+
+/**
+ * Sandbox subdirectory for a single `withFreshSession()` invocation.
+ *
+ * globalSetup owns the SHARED session at `<sandbox>/auth.token` (consumed
+ * by `getSharedSession()`-using tests). Adversarial tests that corrupt the
+ * on-disk token call `withFreshSession()` to obtain an ISOLATED session
+ * under this subdirectory — so the corruption never leaks into the shared
+ * token consumed by sibling tests.
+ *
+ * `id` is a per-process counter (see `session.ts`) so multiple
+ * `withFreshSession()` calls in the same vitest run get distinct
+ * subdirectories. With `singleFork: true` + `fileParallelism: false`, the
+ * counter is monotonic within the run.
+ */
+export function resolveIsolatedSessionDir(repoRoot: string, id: string): string {
+  return join(resolveSandboxDir(repoRoot), `isolated-${id}`);
+}
+
+/**
+ * Path to the isolated-session config file (`<sandbox>/isolated-<id>/
+ * .ttctl.yaml`). The fixture's relative `auth-token-path: ./auth.token`
+ * resolves against this file's directory → `<sandbox>/isolated-<id>/
+ * auth.token`. Spawned CLI / MCP subprocesses receive
+ * `TTCTL_CONFIG_FILE=<this>` and read tokens from / write tokens to the
+ * isolated subdirectory, never the shared token.
+ */
+export function resolveIsolatedSessionConfigPath(repoRoot: string, id: string): string {
+  return join(resolveIsolatedSessionDir(repoRoot, id), ".ttctl.yaml");
+}
+
+/**
+ * Path to the isolated-session token (`<sandbox>/isolated-<id>/auth.token`).
+ * `withFreshSession()` writes the captured bearer here in setUp and
+ * unlinks it in tearDown.
+ */
+export function resolveIsolatedSessionTokenPath(repoRoot: string, id: string): string {
+  return join(resolveIsolatedSessionDir(repoRoot, id), "auth.token");
+}
+
+/**
+ * Like `writeSandboxConfig` but writes to an isolated subdirectory under
+ * the sandbox.
+ *
+ *   - Reads + validates the user's source config at `sourceConfigPath`.
+ *   - Composes a fixture object: `{ auth: <copied>, "auth-token-path":
+ *     "./auth.token" }`. The relative path resolves at CLI startup time
+ *     against `dirname(<sandbox>/isolated-<id>/.ttctl.yaml)` →
+ *     `<sandbox>/isolated-<id>/auth.token`.
+ *   - Writes the YAML file to `<sandbox>/isolated-<id>/.ttctl.yaml`,
+ *     creating the directory if needed.
+ *
+ * Returns the absolute path to the written fixture.
+ */
+export async function writeIsolatedSessionConfig(
+  repoRoot: string,
+  id: string,
+  sourceConfigPath: string,
+): Promise<string> {
+  const sourceConfig = loadConfigFile(sourceConfigPath);
+
+  const fixture: Record<string, unknown> = {
+    auth: sourceConfig.auth,
+    "auth-token-path": "./auth.token",
+  };
+
+  const dir = resolveIsolatedSessionDir(repoRoot, id);
+  await mkdir(dir, { recursive: true });
+
+  const fixturePath = resolveIsolatedSessionConfigPath(repoRoot, id);
+  await writeFile(fixturePath, stringifyYaml(fixture), "utf8");
+  return fixturePath;
+}
+
+/**
  * Write the fixture `.ttctl.yaml` that isolates the harness from the user's
  * working session.
  *
