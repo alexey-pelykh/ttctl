@@ -3,145 +3,27 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { AuthSchema, ConfigError, ConfigSchema, discoverConfigPath, loadConfigFile, resolveConfig } from "../config.js";
-
-describe("AuthSchema", () => {
-  it("accepts a 1Password item reference (op://vault/item)", () => {
-    const result = AuthSchema.safeParse("op://Personal/ttctl");
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts a 3-segment 1Password reference (op://account/vault/item)", () => {
-    const result = AuthSchema.safeParse("op://my-account/Personal/ttctl");
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts a 3-segment reference with sign-in email as account", () => {
-    const result = AuthSchema.safeParse("op://oleksii@example.com/Private/Toptal");
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts a 3-segment reference with account UUID", () => {
-    const result = AuthSchema.safeParse("op://FB4OMM7TV5GW7HGY2A2NCC7PP4/Private/Toptal");
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts a literal { email, password } object", () => {
-    const result = AuthSchema.safeParse({ email: "user@example.com", password: "hunter2" });
-    expect(result.success).toBe(true);
-  });
-
-  it("REJECTS per-field op:// references (4-segment op://account/vault/item/field)", () => {
-    const result = AuthSchema.safeParse("op://my-account/Personal/ttctl/username");
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.message).toMatch(/no \/field suffix/);
-    }
-  });
-
-  it("REJECTS 1-segment op:// references (op://VAULT only)", () => {
-    const result = AuthSchema.safeParse("op://Personal");
-    expect(result.success).toBe(false);
-  });
-
-  it("REJECTS bare item names without op:// prefix", () => {
-    const result = AuthSchema.safeParse("ttctl");
-    expect(result.success).toBe(false);
-  });
-
-  it("REJECTS malformed objects (missing password)", () => {
-    const result = AuthSchema.safeParse({ email: "user@example.com" });
-    expect(result.success).toBe(false);
-  });
-
-  it("REJECTS objects with non-email values", () => {
-    const result = AuthSchema.safeParse({ email: "not-an-email", password: "x" });
-    expect(result.success).toBe(false);
-  });
-
-  it("REJECTS arrays", () => {
-    const result = AuthSchema.safeParse(["op://Personal/ttctl"]);
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("ConfigSchema", () => {
-  it("validates a minimal config with op:// auth", () => {
-    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl" });
-    expect(result.success).toBe(true);
-  });
-
-  it("validates a config with literal auth", () => {
-    const result = ConfigSchema.safeParse({
-      auth: { email: "user@example.com", password: "hunter2" },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("REJECTS missing auth", () => {
-    const result = ConfigSchema.safeParse({});
-    expect(result.success).toBe(false);
-  });
-
-  it("auth-token-path is optional — config without it is valid (default platform path applies)", () => {
-    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl" });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data["auth-token-path"]).toBeUndefined();
-    }
-  });
-
-  it("accepts an absolute auth-token-path string", () => {
-    const result = ConfigSchema.safeParse({
-      auth: "op://Personal/ttctl",
-      "auth-token-path": "/var/run/ttctl/auth.token",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data["auth-token-path"]).toBe("/var/run/ttctl/auth.token");
-    }
-  });
-
-  it("accepts a relative auth-token-path string (resolved at runtime against the config-file dir)", () => {
-    const result = ConfigSchema.safeParse({
-      auth: "op://Personal/ttctl",
-      "auth-token-path": "./auth.token",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data["auth-token-path"]).toBe("./auth.token");
-    }
-  });
-
-  it("REJECTS empty-string auth-token-path (zod min(1))", () => {
-    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl", "auth-token-path": "" });
-    expect(result.success).toBe(false);
-  });
-
-  it("REJECTS non-string auth-token-path", () => {
-    const result = ConfigSchema.safeParse({ auth: "op://Personal/ttctl", "auth-token-path": 42 });
-    expect(result.success).toBe(false);
-  });
-});
+import { ConfigError, discoverConfigPath, loadConfigFile, resolveConfig } from "../config.js";
 
 /**
- * Filesystem-backed tests for the resolution chain. Each test is isolated:
+ * Filesystem-backed tests for the post-#107 3-step resolution chain
+ * (`--config` → `TTCTL_CONFIG_FILE` → `~/.ttctl.yaml`) and `loadConfigFile`.
+ * Schema tests live in `config-schema.test.ts` to keep concerns split.
  *
- *   - A fresh tmp dir for fixtures.
- *   - `HOME` / `USERPROFILE` redirected to the tmp dir so `os.homedir()`
- *     points there — the home default (`~/.config/ttctl/config.yaml`) can
- *     therefore be tested deterministically without leaking the real user's
- *     config file.
- *   - `TTCTL_CONFIG_FILE` and `XDG_CONFIG_HOME` cleared per test, set
- *     explicitly when the test exercises them.
- *   - `process.cwd()` left untouched (we use mkdtempSync absolute paths
- *     so legacy CWD `.ttctl.yaml` discovery isn't accidentally exercised).
+ * Each test is isolated:
+ *   - Fresh tmp dir for fixtures.
+ *   - HOME / USERPROFILE redirected to tmp dir so `~/.ttctl.yaml`
+ *     resolves into the fixture, not the user's real config.
+ *   - TTCTL_CONFIG_FILE / XDG_CONFIG_HOME cleared per test, set explicitly
+ *     when the test exercises them.
+ *   - process.cwd() left untouched (we use absolute mkdtemp paths so
+ *     legacy CWD `.ttctl.yaml` discovery isn't accidentally exercised).
  */
-describe("config resolution", () => {
+describe("config resolution (3-step chain — post-#107)", () => {
   let tmpRoot: string;
   let savedEnv: { TTCTL_CONFIG_FILE?: string; XDG_CONFIG_HOME?: string; HOME?: string; USERPROFILE?: string };
 
@@ -174,87 +56,74 @@ describe("config resolution", () => {
   });
 
   /**
-   * Write a valid config file at `path` (creating parent dirs as needed)
-   * and return the path. Used by precedence tests that need fixture files
-   * to exist on disk so `existsSync` checks in `discoverConfigPath` pass.
-   *
-   * Uses `path.dirname` for parent extraction so the helper works on
-   * Windows (where `\\` is the separator) as well as POSIX. A naive
-   * regex like `/\/[^/]+$/` matches only POSIX paths and silently
-   * collapses to the input path on Windows, which then makes
-   * `mkdirSync(parent, { recursive: true })` create a directory at the
-   * intended file path — `writeFileSync` then fails with `EISDIR`.
+   * Write a valid Form A config at `path` (creating parent dirs as needed)
+   * and return the path.
    */
-  function writeConfig(path: string, body = "auth: op://Personal/ttctl\n"): string {
+  function writeConfig(path: string, body = "auth:\n  credentials: op://Personal/ttctl\n"): string {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, body);
+    writeFileSync(path, body, { mode: 0o600 });
     return path;
   }
 
   describe("discoverConfigPath", () => {
-    it("explicit path argument wins over TTCTL_CONFIG_FILE, XDG, and home defaults", () => {
+    it("step 1: explicit `path` wins over env and home", () => {
       const explicit = join(tmpRoot, "explicit.yaml");
       process.env["TTCTL_CONFIG_FILE"] = "/should/not/win.yaml";
-      const xdgDir = join(tmpRoot, "xdg");
-      writeConfig(join(xdgDir, "ttctl", "config.yaml"));
-      process.env["XDG_CONFIG_HOME"] = xdgDir;
-      writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
+      writeConfig(join(tmpRoot, ".ttctl.yaml"));
 
       // Explicit path is returned verbatim, no existence check.
       expect(discoverConfigPath(explicit)).toBe(explicit);
     });
 
-    it("TTCTL_CONFIG_FILE env wins over XDG and home defaults", () => {
+    it("step 2: TTCTL_CONFIG_FILE env wins over ~/.ttctl.yaml", () => {
       const envFile = join(tmpRoot, "from-env.yaml");
       process.env["TTCTL_CONFIG_FILE"] = envFile;
-      const xdgDir = join(tmpRoot, "xdg");
-      writeConfig(join(xdgDir, "ttctl", "config.yaml"));
-      process.env["XDG_CONFIG_HOME"] = xdgDir;
-      writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
+      writeConfig(join(tmpRoot, ".ttctl.yaml"));
 
       // Env value is returned verbatim, no existence check.
       expect(discoverConfigPath()).toBe(envFile);
     });
 
-    it("returns $XDG_CONFIG_HOME/ttctl/config.yaml when set and exists, no env override", () => {
-      const xdgDir = join(tmpRoot, "xdg");
-      const xdgConfig = writeConfig(join(xdgDir, "ttctl", "config.yaml"));
-      process.env["XDG_CONFIG_HOME"] = xdgDir;
-      // Also seed home default — XDG should win.
-      writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
+    it("step 3: ~/.ttctl.yaml when TTCTL_CONFIG_FILE is unset and the file exists", () => {
+      const homeFile = writeConfig(join(tmpRoot, ".ttctl.yaml"));
 
-      expect(discoverConfigPath()).toBe(xdgConfig);
+      expect(discoverConfigPath()).toBe(homeFile);
     });
 
-    it("falls through to ~/.config/ttctl/config.yaml when XDG is unset", () => {
-      const homeConfig = writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
+    it("step 3 — empty TTCTL_CONFIG_FILE treated as unset, falls through to ~/.ttctl.yaml", () => {
+      const homeFile = writeConfig(join(tmpRoot, ".ttctl.yaml"));
+      process.env["TTCTL_CONFIG_FILE"] = "";
 
-      expect(discoverConfigPath()).toBe(homeConfig);
+      expect(discoverConfigPath()).toBe(homeFile);
     });
 
-    it("falls through to ~/.config/ttctl/config.yaml when XDG is set but the XDG config file does not exist", () => {
-      process.env["XDG_CONFIG_HOME"] = join(tmpRoot, "xdg-empty");
-      const homeConfig = writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
-
-      expect(discoverConfigPath()).toBe(homeConfig);
-    });
-
-    it("returns null when no config can be found anywhere in the chain", () => {
-      // No env, no XDG file, no home file. HOME → empty tmpRoot.
+    it("returns null when no source produces a path", () => {
+      // No env, no home file. HOME → empty tmpRoot.
       expect(discoverConfigPath()).toBeNull();
     });
 
-    it("does NOT auto-discover ./.ttctl.yaml in CWD (breaking change)", () => {
-      // Write a config at the legacy CWD location (within tmpRoot to keep
-      // the test hermetic, then chdir into it just for this test).
+    it("REGRESSION: does NOT consult $XDG_CONFIG_HOME/ttctl/config.yaml (post-#107)", () => {
+      const xdgDir = join(tmpRoot, "xdg");
+      writeConfig(join(xdgDir, "ttctl", "config.yaml"));
+      process.env["XDG_CONFIG_HOME"] = xdgDir;
+
+      expect(discoverConfigPath()).toBeNull();
+    });
+
+    it("REGRESSION: does NOT consult ~/.config/ttctl/config.yaml (post-#107)", () => {
+      writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
+
+      expect(discoverConfigPath()).toBeNull();
+    });
+
+    it("REGRESSION: does NOT auto-discover ./.ttctl.yaml in CWD (preserved from #92)", () => {
+      // Write a config at the legacy CWD location and chdir into it.
       const fakeCwd = join(tmpRoot, "fake-cwd");
       mkdirSync(fakeCwd, { recursive: true });
-      writeFileSync(join(fakeCwd, ".ttctl.yaml"), "auth: op://Personal/ttctl\n");
+      writeFileSync(join(fakeCwd, ".ttctl.yaml"), "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
       const originalCwd = process.cwd();
       process.chdir(fakeCwd);
       try {
-        // Ambient HOME tmpRoot is empty, no XDG, no env. CWD discovery is
-        // dropped, so result is null even though `./.ttctl.yaml` exists.
         expect(discoverConfigPath()).toBeNull();
       } finally {
         process.chdir(originalCwd);
@@ -265,27 +134,30 @@ describe("config resolution", () => {
   describe("resolveConfig", () => {
     it("path option wins over TTCTL_CONFIG_FILE env var", () => {
       const explicit = writeConfig(join(tmpRoot, "explicit.yaml"));
-      const envFile = writeConfig(join(tmpRoot, "from-env.yaml"), "auth: op://Personal/from-env\n");
+      const envFile = writeConfig(join(tmpRoot, "from-env.yaml"), "auth:\n  credentials: op://Personal/from-env\n");
       process.env["TTCTL_CONFIG_FILE"] = envFile;
 
       const result = resolveConfig({ path: explicit });
 
       expect(result.path).toBe(explicit);
-      expect(result.config.auth).toBe("op://Personal/ttctl");
+      expect(result.config.auth.credentials).toBe("op://Personal/ttctl");
     });
 
-    it("missing config (resolution chain returns null) → ConfigError code NO_CREDS", () => {
-      // No env, no XDG, no home file.
+    it("missing config (resolution chain returns null) → ConfigError(NO_CREDS) listing all 3 candidates", () => {
       try {
         resolveConfig();
         expect.fail("expected ConfigError");
       } catch (err) {
         expect(err).toBeInstanceOf(ConfigError);
         expect((err as ConfigError).code).toBe("NO_CREDS");
+        const message = (err as ConfigError).message;
+        expect(message).toMatch(/--config/);
+        expect(message).toMatch(/TTCTL_CONFIG_FILE/);
+        expect(message).toMatch(/~\/\.ttctl\.yaml/);
       }
     });
 
-    it("missing config when explicit path doesn't exist → ConfigError code NO_CREDS", () => {
+    it("explicit path doesn't exist → ConfigError(NO_CREDS) carries the path", () => {
       const missing = join(tmpRoot, "does-not-exist.yaml");
       try {
         resolveConfig({ path: missing });
@@ -297,7 +169,7 @@ describe("config resolution", () => {
       }
     });
 
-    it("missing config when TTCTL_CONFIG_FILE points to a non-existent path → ConfigError code NO_CREDS", () => {
+    it("TTCTL_CONFIG_FILE points to non-existent path → ConfigError(NO_CREDS)", () => {
       const missing = join(tmpRoot, "env-missing.yaml");
       process.env["TTCTL_CONFIG_FILE"] = missing;
       try {
@@ -309,10 +181,10 @@ describe("config resolution", () => {
       }
     });
 
-    it("CWD .ttctl.yaml exists but resolution chain finds nothing → migration message in the NO_CREDS error", () => {
+    it("CWD .ttctl.yaml exists but resolution chain finds nothing → migration message names TTCTL_CONFIG_FILE + ~/.ttctl.yaml", () => {
       const fakeCwd = join(tmpRoot, "fake-cwd");
       mkdirSync(fakeCwd, { recursive: true });
-      writeFileSync(join(fakeCwd, ".ttctl.yaml"), "auth: op://Personal/ttctl\n");
+      writeFileSync(join(fakeCwd, ".ttctl.yaml"), "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
       const originalCwd = process.cwd();
       process.chdir(fakeCwd);
       try {
@@ -323,13 +195,14 @@ describe("config resolution", () => {
         expect((err as ConfigError).code).toBe("NO_CREDS");
         expect((err as ConfigError).message).toMatch(/CWD \.ttctl\.yaml was found/);
         expect((err as ConfigError).message).toMatch(/TTCTL_CONFIG_FILE=/);
+        expect((err as ConfigError).message).toMatch(/~\/\.ttctl\.yaml/);
       } finally {
         process.chdir(originalCwd);
       }
     });
 
-    it("malformed YAML → ConfigError code PARSE", () => {
-      const badPath = writeConfig(join(tmpRoot, "bad.yaml"), "auth: : invalid yaml :::\n");
+    it("malformed YAML → ConfigError(PARSE)", () => {
+      const badPath = writeConfig(join(tmpRoot, "bad.yaml"), ":::\nthis is\n  not valid yaml :::\n");
       try {
         resolveConfig({ path: badPath });
         expect.fail("expected ConfigError");
@@ -340,8 +213,9 @@ describe("config resolution", () => {
       }
     });
 
-    it("schema validation failure → ConfigError code VALIDATION", () => {
-      const badPath = writeConfig(join(tmpRoot, "invalid.yaml"), "auth: not-a-valid-op-ref\n");
+    it("schema validation failure → ConfigError(VALIDATION) with field-named message", () => {
+      // Wrong shape: `auth` as bare string (the pre-#107 form) is rejected.
+      const badPath = writeConfig(join(tmpRoot, "invalid.yaml"), "auth: not-a-valid-shape\n");
       try {
         resolveConfig({ path: badPath });
         expect.fail("expected ConfigError");
@@ -352,11 +226,8 @@ describe("config resolution", () => {
       }
     });
 
-    it("permission warning fires for 0o644 config file on POSIX, NOT for 0o600", () => {
-      if (process.platform === "win32") {
-        // Windows mode bits are not meaningful; chmod is a no-op or noisy.
-        return;
-      }
+    it("permission warning fires for 0o644 config (POSIX), NOT for 0o600", () => {
+      if (process.platform === "win32") return;
       const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       try {
         const wide = writeConfig(join(tmpRoot, "wide.yaml"));
@@ -377,38 +248,52 @@ describe("config resolution", () => {
       }
     });
 
-    it("loads a valid config via the explicit path option", () => {
+    it("REFUSE LOAD — world-writable config (mode 0o666) → ConfigError(PERMISSION)", () => {
+      if (process.platform === "win32") return;
+      const path = writeConfig(join(tmpRoot, "world-writable.yaml"));
+      chmodSync(path, 0o666);
+
+      try {
+        resolveConfig({ path });
+        expect.fail("expected ConfigError(PERMISSION)");
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        expect((err as ConfigError).code).toBe("PERMISSION");
+        expect((err as ConfigError).message).toMatch(/world-writable/i);
+        expect((err as ConfigError).message).toMatch(/0666/);
+      }
+    });
+
+    it("loads a valid Form A config via the explicit path option", () => {
       const path = writeConfig(join(tmpRoot, "good.yaml"));
       const result = resolveConfig({ path });
       expect(result.path).toBe(path);
-      expect(result.config.auth).toBe("op://Personal/ttctl");
+      expect(result.config.auth.credentials).toBe("op://Personal/ttctl");
     });
 
-    it("loads a valid config via TTCTL_CONFIG_FILE env var", () => {
-      const path = writeConfig(join(tmpRoot, "good.yaml"));
+    it("loads a valid Form C (token-only) config via TTCTL_CONFIG_FILE env var", () => {
+      const path = writeConfig(join(tmpRoot, "token-only.yaml"), "auth:\n  token: user_xxx_yyy\n");
       process.env["TTCTL_CONFIG_FILE"] = path;
       const result = resolveConfig();
       expect(result.path).toBe(path);
-      expect(result.config.auth).toBe("op://Personal/ttctl");
+      expect(result.config.auth.token).toBe("user_xxx_yyy");
+      expect(result.config.auth.credentials).toBeUndefined();
     });
 
-    it("loads a valid config via $XDG_CONFIG_HOME/ttctl/config.yaml", () => {
-      const xdgDir = join(tmpRoot, "xdg");
-      const path = writeConfig(join(xdgDir, "ttctl", "config.yaml"));
-      process.env["XDG_CONFIG_HOME"] = xdgDir;
+    it("loads a Form D (credentials + token) config via ~/.ttctl.yaml", () => {
+      const path = writeConfig(
+        join(tmpRoot, ".ttctl.yaml"),
+        "auth:\n  credentials: op://Personal/ttctl\n  token: user_xxx_yyy\n",
+      );
       const result = resolveConfig();
       expect(result.path).toBe(path);
-    });
-
-    it("loads a valid config via ~/.config/ttctl/config.yaml when XDG is unset", () => {
-      const path = writeConfig(join(tmpRoot, ".config", "ttctl", "config.yaml"));
-      const result = resolveConfig();
-      expect(result.path).toBe(path);
+      expect(result.config.auth.credentials).toBe("op://Personal/ttctl");
+      expect(result.config.auth.token).toBe("user_xxx_yyy");
     });
   });
 
   describe("loadConfigFile", () => {
-    it("ENOENT on the resolved path → ConfigError code NO_CREDS with path attached", () => {
+    it("ENOENT on the resolved path → ConfigError(NO_CREDS) with path attached", () => {
       const missing = join(tmpRoot, "missing.yaml");
       try {
         loadConfigFile(missing);
@@ -420,13 +305,13 @@ describe("config resolution", () => {
       }
     });
 
-    it("EACCES on the resolved path → ConfigError code PERMISSION (POSIX only)", () => {
+    it("EACCES on the resolved path → ConfigError(PERMISSION) (POSIX only)", () => {
       if (process.platform === "win32") return;
       // Skip when running as root — chmod 0o000 doesn't restrict root.
       if (typeof process.getuid === "function" && process.getuid() === 0) return;
 
       const target = join(tmpRoot, "no-read.yaml");
-      writeFileSync(target, "auth: op://Personal/ttctl\n");
+      writeFileSync(target, "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
       chmodSync(target, 0o000);
       try {
         loadConfigFile(target);
@@ -436,9 +321,26 @@ describe("config resolution", () => {
         expect((err as ConfigError).code).toBe("PERMISSION");
         expect((err as ConfigError).path).toBe(target);
       } finally {
-        // Restore so afterEach's rmSync can clean up.
         chmodSync(target, 0o600);
       }
+    });
+  });
+
+  describe("symlink behavior at load time", () => {
+    it("ALLOWS loading from a symlink (read-only path); persistAuthToken is the gate that refuses symlinks for WRITE", () => {
+      if (process.platform === "win32") return;
+
+      const real = join(tmpRoot, "real.yaml");
+      writeFileSync(real, "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
+      const link = join(tmpRoot, "link.yaml");
+      symlinkSync(real, link);
+
+      // Read is permitted — the load-side risk (TOCTOU on the symlink) is
+      // mitigated by the fact that we don't write to the load path. The
+      // attack surface that matters is the WRITE path, gated separately
+      // in persistAuthToken.
+      const result = resolveConfig({ path: link });
+      expect(result.config.auth.credentials).toBe("op://Personal/ttctl");
     });
   });
 });
