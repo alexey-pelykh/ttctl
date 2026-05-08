@@ -2,13 +2,12 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { profile } from "@ttctl/core";
 
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handlePortfolioError } from "./add.js";
-import { handleConfigError } from "./shared.js";
+import { loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile portfolio list`. Reads the user's
@@ -18,17 +17,7 @@ import { handleConfigError } from "./shared.js";
  * stringifies the typed array.
  */
 export async function runProfilePortfolioList(format: OutputFormat): Promise<void> {
-  const tokenPath = handleConfigError("portfolio list", () => {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  });
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "portfolio list failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("portfolio list");
 
   let items: profile.portfolio.PortfolioItem[];
   try {

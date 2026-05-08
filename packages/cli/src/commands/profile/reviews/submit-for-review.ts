@@ -5,7 +5,7 @@ import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { loadAuthTokenOrExit, resolveAuthTokenPathOrExit } from "./_shared.js";
+import { loadAuthTokenOrExit } from "./_shared.js";
 
 const COMMAND_LABEL = "profile reviews submit-for-review";
 
@@ -17,8 +17,7 @@ const COMMAND_LABEL = "profile reviews submit-for-review";
  * shape is INFERRED — UNVERIFIED (see the service module top-comment).
  */
 export async function runProfileReviewsSubmitForReview(options: { output: OutputFormat }): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit(COMMAND_LABEL);
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL, tokenPath);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
 
   let result: profile.reviews.SubmitForReviewResult;
   try {

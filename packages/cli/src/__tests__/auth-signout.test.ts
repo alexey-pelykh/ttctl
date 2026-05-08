@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@ttctl/core", () => {
-  // Local ConfigError so the `instanceof` check in signout.ts resolves
-  // against THIS constructor (vi.mock replaces the imports). Tracks the real
-  // class shape from `packages/core/src/config.ts`.
+  // Local error classes so the `instanceof` checks in signout.ts resolve
+  // against THESE constructors (vi.mock replaces the imports). Track real
+  // class shapes from `packages/core/src/{config,configWriter}.ts`.
   class ConfigError extends Error {
     override readonly name = "ConfigError";
     constructor(
@@ -21,14 +17,24 @@ vi.mock("@ttctl/core", () => {
       super(message);
     }
   }
+  class AuthTokenPersistError extends Error {
+    override readonly name = "AuthTokenPersistError";
+    constructor(
+      message: string,
+      public readonly configPath: string,
+    ) {
+      super(message);
+    }
+  }
   return {
+    AuthTokenPersistError,
     ConfigError,
-    resolveAuthTokenPath: vi.fn(),
+    clearAuthToken: vi.fn(),
     resolveConfig: vi.fn(),
   };
 });
 
-import { ConfigError, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { AuthTokenPersistError, ConfigError, clearAuthToken, resolveConfig } from "@ttctl/core";
 
 import {
   exitCodeForSignOutResult,
@@ -37,7 +43,7 @@ import {
   runAuthSignOut,
 } from "../commands/auth/signout.js";
 
-const mockedResolveTokenPath = vi.mocked(resolveAuthTokenPath);
+const mockedClearAuthToken = vi.mocked(clearAuthToken);
 const mockedResolveConfig = vi.mocked(resolveConfig);
 
 class ExitInvoked extends Error {
@@ -122,23 +128,12 @@ describe("exitCodeForSignOutResult", () => {
 });
 
 describe("runAuthSignOut", () => {
-  let tempDir: string;
-  let tokenPath: string;
-
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "ttctl-signout-test-"));
-    tokenPath = join(tempDir, "auth.token");
-    mockedResolveTokenPath.mockReset();
-    mockedResolveTokenPath.mockReturnValue(tokenPath);
     mockedResolveConfig.mockReset();
-    mockedResolveConfig.mockReturnValue({
-      config: { auth: "op://Personal/ttctl" },
-      path: join(tempDir, ".ttctl.yaml"),
-    });
+    mockedClearAuthToken.mockReset();
   });
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -154,86 +149,84 @@ describe("runAuthSignOut", () => {
     return { stdout: streams.stdout, stderr: streams.stderr, exitCode: exit.exit.code };
   }
 
-  it("removes an existing auth token and exits 0", async () => {
-    writeFileSync(tokenPath, "user_abc_123\n");
-    expect(existsSync(tokenPath)).toBe(true);
-
-    const { stdout, stderr, exitCode } = await invoke("table");
-
-    expect(exitCode).toBe(0);
-    expect(stdout.join("")).toBe("Signed out.\n");
-    expect(stderr.join("")).toBe("");
-    expect(existsSync(tokenPath)).toBe(false);
-  });
-
-  it("is idempotent — succeeds with exit 0 when no auth token exists (ENOENT swallowed)", async () => {
-    expect(existsSync(tokenPath)).toBe(false);
-
-    const { stdout, stderr, exitCode } = await invoke("table");
-
-    expect(exitCode).toBe(0);
-    expect(stdout.join("")).toBe("Signed out.\n");
-    expect(stderr.join("")).toBe("");
-  });
-
-  it("is idempotent across consecutive invocations", async () => {
-    writeFileSync(tokenPath, "user_abc_123\n");
-
-    const first = await invoke("table");
-    const second = await invoke("table");
-
-    expect(first.exitCode).toBe(0);
-    expect(second.exitCode).toBe(0);
-    expect(existsSync(tokenPath)).toBe(false);
-  });
-
-  it("emits JSON success with removed=true when token existed", async () => {
-    writeFileSync(tokenPath, "user_abc_123\n");
-
-    const { stdout, exitCode } = await invoke("json");
-
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout.join("").trim())).toEqual({
-      status: "signed-out",
-      removed: true,
-      path: tokenPath,
+  it("Form D (cred + token) → calls clearAuthToken; exits 0; removed=true; path is the YAML config", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl", token: "user_xxx_yyy" } },
+      path: "/home/u/.ttctl.yaml",
     });
+    mockedClearAuthToken.mockResolvedValue(undefined);
+
+    const { stdout, stderr, exitCode } = await invoke("table");
+
+    expect(exitCode).toBe(0);
+    expect(stdout.join("")).toBe("Signed out.\n");
+    expect(stderr.join("")).toBe("");
+    expect(mockedClearAuthToken).toHaveBeenCalledTimes(1);
+    expect(mockedClearAuthToken).toHaveBeenCalledWith("/home/u/.ttctl.yaml");
   });
 
-  it("emits JSON success with removed=false when token was already absent (idempotent no-op)", async () => {
-    const { stdout, exitCode } = await invoke("json");
+  it("Form A (cred only) → idempotent no-op; exits 0; removed=false; clearAuthToken NOT called", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/home/u/.ttctl.yaml",
+    });
 
+    const { stdout, exitCode } = await invoke("json");
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout.join("").trim())).toEqual({
       status: "signed-out",
       removed: false,
-      path: tokenPath,
+      path: "/home/u/.ttctl.yaml",
     });
+    expect(mockedClearAuthToken).not.toHaveBeenCalled();
   });
 
-  it("non-ENOENT errors propagate as error result with exit 1", async () => {
-    // Place a DIRECTORY at the token path. `unlink` on a directory yields
-    // EISDIR (Linux), EPERM (macOS, Windows) — neither is ENOENT, so the
-    // result must classify as `error`.
-    mkdirSync(tokenPath);
+  it("Form C (token only) → calls clearAuthToken; removed=true (token field is removed)", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { token: "user_xxx_yyy" } },
+      path: "/home/u/.ttctl.yaml",
+    });
+    mockedClearAuthToken.mockResolvedValue(undefined);
+
+    const { stdout, exitCode } = await invoke("json");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.join("").trim())).toEqual({
+      status: "signed-out",
+      removed: true,
+      path: "/home/u/.ttctl.yaml",
+    });
+    expect(mockedClearAuthToken).toHaveBeenCalledWith("/home/u/.ttctl.yaml");
+  });
+
+  it("AuthTokenPersistError from clearAuthToken (e.g. mtime drift) → exit 1 with error", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl", token: "user_xxx_yyy" } },
+      path: "/home/u/.ttctl.yaml",
+    });
+    mockedClearAuthToken.mockRejectedValue(
+      new AuthTokenPersistError("Config file at /home/u/.ttctl.yaml was modified concurrently", "/home/u/.ttctl.yaml"),
+    );
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
     expect(stderr.join("")).toContain("Sign-out failed:");
+    expect(stderr.join("")).toContain("modified concurrently");
   });
 
-  it("ConfigError → exit 1 with the config error message on stderr (no resolveAuthTokenPath call)", async () => {
+  it("ConfigError from resolve → exit 1 with config error message; clearAuthToken NOT called", async () => {
     mockedResolveConfig.mockImplementation(() => {
-      throw new ConfigError("No .ttctl.yaml found in CWD or $XDG_CONFIG_HOME/ttctl/config.yaml. See README for setup.");
+      throw new ConfigError(
+        "No config found. Pass --config <path>, set TTCTL_CONFIG_FILE, or place config at ~/.ttctl.yaml.",
+      );
     });
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
-    expect(stderr.join("")).toContain("No .ttctl.yaml found");
-    expect(mockedResolveTokenPath).not.toHaveBeenCalled();
+    expect(stderr.join("")).toContain("No config found");
+    expect(mockedClearAuthToken).not.toHaveBeenCalled();
   });
 });

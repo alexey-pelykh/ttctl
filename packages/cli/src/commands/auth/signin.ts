@@ -2,12 +2,12 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import {
+  AuthTokenPersistError,
   ConfigError,
   OnePasswordError,
   SignInError,
-  resolveAuthTokenPath,
+  persistAuthToken,
   resolveCredentials,
-  saveAuthToken,
   signIn,
 } from "@ttctl/core";
 import type { ConfigErrorCode, SignInErrorCode } from "@ttctl/core";
@@ -34,7 +34,12 @@ export interface AuthSignInOptions {
  * strings — script consumers can branch on them without pattern-matching
  * prose messages.
  */
-export type SignInResultErrorCode = SignInErrorCode | ConfigErrorCode | "ONEPASSWORD_ERROR" | "SAVE_FAILED";
+export type SignInResultErrorCode =
+  | SignInErrorCode
+  | ConfigErrorCode
+  | "ONEPASSWORD_ERROR"
+  | "SAVE_FAILED"
+  | "NO_CREDENTIALS";
 
 /**
  * Terminal outcome of `ttctl auth signin`. `signed-in` carries the verified
@@ -103,6 +108,15 @@ function classifyError(err: unknown): SignInResult {
   if (err instanceof ConfigError) {
     return { status: "error", code: err.code, message: err.message };
   }
+  if (err instanceof AuthTokenPersistError) {
+    // Surface bearer in the rescue line per AC-4 — operator can save manually.
+    const rescue = err.bearerRescue !== undefined ? `\nBearer (rescue): ${err.bearerRescue}` : "";
+    return {
+      status: "error",
+      code: "SAVE_FAILED",
+      message: `${err.message}${rescue}`,
+    };
+  }
   const message = err instanceof Error ? err.message : String(err);
   return { status: "error", code: "UNKNOWN", message };
 }
@@ -110,11 +124,15 @@ function classifyError(err: unknown): SignInResult {
 /**
  * Run the `auth signin` command end-to-end:
  *   1. Discover and load `.ttctl.yaml` (`ConfigError` on missing/invalid).
- *   2. Resolve credentials — Form A reaches `op` CLI, Form B is literal
+ *   2. Refuse Form C (token-only, no credentials) per FR-3.3 — signin
+ *      requires `auth.credentials` to be configured.
+ *   3. Resolve credentials — Form A reaches `op` CLI, Form B is literal
  *      (`OnePasswordError` on Form A failures).
- *   3. Sign in via `core.signIn`, capturing the bearer token.
- *   4. Persist the token to disk at `0600`.
- *   5. Emit the result and exit with the corresponding code.
+ *   4. Sign in via `core.signIn`, capturing the bearer token.
+ *   5. Persist the token back to the SAME YAML config under `auth.token`
+ *      via `persistAuthToken` — atomic write, mode 0600, comment fidelity,
+ *      symlink + sync-root refusal.
+ *   6. Emit the result and exit with the corresponding code.
  *
  * Errors are routed to stderr; success goes to stdout. `process.exit` is the
  * terminal step for the same reason as `auth status` — Commander action
@@ -137,9 +155,23 @@ async function performSignIn(): Promise<SignInResult> {
     return classifyError(err);
   }
 
+  // Form C refusal (FR-3.3): signin requires credentials. A token-only
+  // config has no credentials to drive EmailPasswordSignIn.
+  const credentialsValue = configResult.config.auth.credentials;
+  if (credentialsValue === undefined) {
+    return {
+      status: "error",
+      code: "NO_CREDENTIALS",
+      message:
+        "ttctl auth signin requires `auth.credentials` to be configured. " +
+        'Add a 1Password reference (`auth.credentials: "op://..."`) or literal ' +
+        "`{ username, password }` to your config and try again.",
+    };
+  }
+
   let credentials: ReturnType<typeof resolveCredentials>;
   try {
-    credentials = resolveCredentials(configResult.config.auth);
+    credentials = resolveCredentials(credentialsValue);
   } catch (err) {
     return classifyError(err);
   }
@@ -151,19 +183,10 @@ async function performSignIn(): Promise<SignInResult> {
     return classifyError(err);
   }
 
-  const tokenPath = resolveAuthTokenPath({
-    config: configResult.config,
-    configPath: configResult.path,
-  });
   try {
-    await saveAuthToken(tokenPath, token);
+    await persistAuthToken(configResult.path, token);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      status: "error",
-      code: "SAVE_FAILED",
-      message: `Failed to persist auth token to ${tokenPath}: ${message}`,
-    };
+    return classifyError(err);
   }
 
   return { status: "signed-in", email: credentials.email };

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import type { OutputFormat } from "../../../lib/output.js";
+import { loadAuthTokenOrExit } from "../shared.js";
 
 /**
  * Action handler for `ttctl profile resume upload <file>`. Uploads the
@@ -16,25 +16,7 @@ import type { OutputFormat } from "../../../lib/output.js";
  *   - `TtctlError` subclasses route through `presentTtctlError`
  */
 export async function runProfileResumeUpload(file: string, format: OutputFormat): Promise<void> {
-  let tokenPath: string;
-  try {
-    const { config, path: configPath } = resolveConfigForCli();
-    tokenPath = resolveAuthTokenPath({ config, configPath });
-  } catch (err) {
-    if (err instanceof ConfigError) {
-      process.stderr.write(`resume upload failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
-  }
-
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "resume upload failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("resume upload");
 
   let result: profile.resume.UploadResumeResult;
   try {

@@ -18,22 +18,24 @@ import { setCliConfigPath } from "./lib/config-context.js";
  *
  * Global options:
  *
- *   `--config <path>` — explicit path to `.ttctl.yaml`, takes precedence
- *   over `TTCTL_CONFIG_FILE` and the XDG/home defaults. Validated at
- *   invocation time (before any sub-command's action runs) — a missing
- *   file surfaces as `ConfigError(code: NO_CREDS)` rather than failing
- *   later inside `loadConfigFile`. Honors `aws --profile` /
- *   `kubectl --kubeconfig` UX expectations.
+ *   `--config <path>` — explicit path to the YAML config, takes precedence
+ *   over `TTCTL_CONFIG_FILE` and the home dotfile. Validated at invocation
+ *   time (before any sub-command's action runs) — a missing file surfaces
+ *   as `ConfigError(code: NO_CREDS)` rather than failing later inside
+ *   `loadConfigFile`. Honors `aws --profile` / `kubectl --kubeconfig` UX
+ *   expectations.
  *
- *   Resolution precedence (highest → lowest):
+ *   Resolution precedence (highest → lowest, post-#107):
  *
  *     1. `--config <path>`         — this flag (per-invocation)
  *     2. `TTCTL_CONFIG_FILE` env   — process-scoped (CI, direnv)
- *     3. `$XDG_CONFIG_HOME/ttctl/config.yaml` — when set + file exists
- *     4. `~/.config/ttctl/config.yaml`         — POSIX home default
+ *     3. `~/.ttctl.yaml`           — POSIX home dotfile (only fallback)
  *
- *   The CWD `./.ttctl.yaml` is NOT auto-discovered; that was removed in
- *   #92 alongside the `TTCTL_CONFIG_FILE` env var rollout.
+ *   The CWD `./.ttctl.yaml` is NOT auto-discovered (closed in #92).
+ *   XDG paths (`$XDG_CONFIG_HOME/ttctl/config.yaml`,
+ *   `~/.config/ttctl/config.yaml`) are NOT consulted (closed in #107 — the
+ *   single-file model places the captured bearer in the same YAML, so
+ *   `~/.ttctl.yaml` is the canonical home location).
  */
 export function buildProgram(): Command {
   const program = new Command();
@@ -41,7 +43,7 @@ export function buildProgram(): Command {
     .name("ttctl")
     .description("Unofficial CLI for the Toptal Talent platform — personal-productivity tool")
     .version("0.0.0")
-    .addOption(new Option("--config <path>", "path to .ttctl.yaml (overrides TTCTL_CONFIG_FILE and XDG/home defaults)"))
+    .addOption(new Option("--config <path>", "path to YAML config (overrides TTCTL_CONFIG_FILE and ~/.ttctl.yaml)"))
     .hook("preAction", (thisCommand) => {
       // `thisCommand` is the root program where the hook is registered;
       // global options are read off it directly. The hook fires before

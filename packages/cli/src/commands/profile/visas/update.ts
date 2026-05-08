@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { profile } from "@ttctl/core";
 
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { emitVisaListResult } from "./list.js";
-import { handleConfigError, handleVisasError } from "./shared.js";
+import { handleVisasError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile visas update <id>`. Updates only
@@ -27,18 +26,7 @@ export async function runProfileVisasUpdate(
     );
     process.exit(1);
   }
-
-  const tokenPath = handleConfigError("visas update", () => {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  });
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "visas update failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("visas update");
 
   let visas: profile.visas.TravelVisa[];
   try {

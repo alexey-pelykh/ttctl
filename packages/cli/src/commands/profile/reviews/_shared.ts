@@ -4,38 +4,11 @@
 /**
  * Shared helpers for `ttctl profile reviews` leaves.
  *
- * Mirrors `cli/src/commands/profile/external/_shared.ts` — see that file
- * for the rationale on co-locating these helpers in the sub-tree rather
- * than promoting to `cli/src/lib/`.
+ * Re-exports `loadAuthTokenOrExit` from the parent `../shared.ts` (post-#107
+ * unification — see that file's comment for the in-memory token rationale).
  */
 
-import { ConfigError, loadAuthToken, resolveAuthTokenPath } from "@ttctl/core";
-
-import { resolveConfigForCli } from "../../../lib/config-context.js";
-
-export function resolveAuthTokenPathOrExit(commandLabel: string): string {
-  try {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  } catch (err) {
-    if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
-export async function loadAuthTokenOrExit(commandLabel: string, path: string): Promise<string> {
-  const token = await loadAuthToken(path);
-  if (token === null) {
-    process.stderr.write(
-      `${commandLabel} failed (UNAUTHENTICATED): No auth token found. Run \`ttctl auth signin\` to sign in.\n`,
-    );
-    process.exit(1);
-  }
-  return token;
-}
+export { loadAuthTokenOrExit } from "../shared.js";
 
 export function truncate(s: string, width: number): string {
   if (s.length <= width) return s;

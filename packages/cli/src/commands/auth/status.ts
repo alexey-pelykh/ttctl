@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, getAuthStatus, loadAuthToken, resolveAuthTokenPath } from "@ttctl/core";
+import { ConfigError, getAuthStatus } from "@ttctl/core";
 import type { AuthStatusResult } from "@ttctl/core";
 
 import { resolveConfigForCli } from "../../lib/config-context.js";
@@ -73,13 +73,13 @@ export function formatAuthStatusOutput(result: AuthStatusResult, output: AuthSta
 
 /**
  * Run the `auth status` command end-to-end:
- *   1. Load `.ttctl.yaml` to resolve the auth-token path (honors the
- *      optional `auth-token-path` field; falls back to platform defaults).
- *      A missing/malformed config collapses to `invalid/no-session` — the
- *      user-facing "Run `ttctl auth signin`" hint is still the right next
- *      step, and surfacing the raw `ConfigError` would be more confusing
- *      than helpful in the read-only status path.
- *   2. Load the on-disk auth token (`null` if file missing).
+ *   1. Resolve `.ttctl.yaml` (in-memory parsed via core). A missing/malformed
+ *      config collapses to `invalid/no-session` — the user-facing
+ *      "Run `ttctl auth signin`" hint is still the right next step, and
+ *      surfacing the raw `ConfigError` would be more confusing than helpful
+ *      in the read-only status path.
+ *   2. Read `config.auth.token` directly (no separate file load — the token
+ *      lives inline in the YAML config post-#107).
  *   3. Probe the gateway for session validity via `getAuthStatus(token)`.
  *      No token → invalid/no-session, short-circuited (no network call).
  *   4. Emit the result in the requested format.
@@ -91,10 +91,10 @@ export function formatAuthStatusOutput(result: AuthStatusResult, output: AuthSta
  * exit-code contract this command needs.
  */
 export async function runAuthStatus(options: AuthStatusOptions): Promise<void> {
-  let tokenPath: string;
+  let token: string | null;
   try {
-    const { config, path: configPath } = resolveConfigForCli();
-    tokenPath = resolveAuthTokenPath({ config, configPath });
+    const { config } = resolveConfigForCli();
+    token = config.auth.token ?? null;
   } catch (err) {
     if (err instanceof ConfigError) {
       const noSession: AuthStatusResult = { status: "invalid", reason: "no-session" };
@@ -104,7 +104,6 @@ export async function runAuthStatus(options: AuthStatusOptions): Promise<void> {
     }
     throw err;
   }
-  const token = await loadAuthToken(tokenPath);
   const result = await getAuthStatus(token);
   process.stdout.write(formatAuthStatusOutput(result, options.output) + "\n");
   process.exit(exitCodeForAuthStatus(result));

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { profile } from "@ttctl/core";
 
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handlePortfolioError } from "./add.js";
-import { handleConfigError } from "./shared.js";
+import { loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile portfolio highlight <id>`. Sets the
@@ -18,17 +17,7 @@ export async function runProfilePortfolioHighlight(
   options: { off?: boolean; output: OutputFormat },
 ): Promise<void> {
   const flag = !(options.off ?? false);
-  const tokenPath = handleConfigError("portfolio highlight", () => {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  });
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "portfolio highlight failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("portfolio highlight");
 
   let result: { id: string; highlight: boolean };
   try {

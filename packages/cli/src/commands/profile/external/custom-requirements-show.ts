@@ -6,7 +6,7 @@ import { TtctlError, profile } from "@ttctl/core";
 import { presentTtctlError } from "../../../errors.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { loadAuthTokenOrExit, resolveAuthTokenPathOrExit } from "./_shared.js";
+import { loadAuthTokenOrExit } from "./_shared.js";
 
 const COMMAND_LABEL = "profile external custom-requirements show";
 
@@ -19,8 +19,7 @@ const COMMAND_LABEL = "profile external custom-requirements show";
  * in `core/services/profile/external/index.ts` for the spec/API reconciliation.
  */
 export async function runProfileExternalCustomRequirementsShow(format: OutputFormat): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit(COMMAND_LABEL);
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL, tokenPath);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
 
   let result: profile.external.CustomRequirements;
   try {

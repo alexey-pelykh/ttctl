@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { unlink } from "node:fs/promises";
-
-import { ConfigError, resolveAuthTokenPath } from "@ttctl/core";
+import { AuthTokenPersistError, ConfigError, clearAuthToken } from "@ttctl/core";
 
 import { resolveConfigForCli } from "../../lib/config-context.js";
 
@@ -20,14 +18,17 @@ export interface AuthSignOutOptions {
 
 /**
  * Terminal outcome of `ttctl auth signout`. The `removed` flag distinguishes
- * the case where an auth token existed and was deleted from the idempotent
- * no-op (no token present). Both are success cases — signout MUST be
- * idempotent — but scripts may want to differentiate (e.g. to count active
- * sessions across machines).
+ * the case where an auth token existed and was removed from the YAML config
+ * from the idempotent no-op (no token field present). Both are success
+ * cases — signout MUST be idempotent — but scripts may want to differentiate
+ * (e.g. to count active sessions across machines).
  *
- * `error` carries a generic message; the only realistic non-ENOENT failure is
- * a permissions issue on the on-disk file, which the user must resolve out of
- * band.
+ * `path` is the YAML config file path that the `auth.token` field was
+ * removed from.
+ *
+ * `error` carries a generic message; the only realistic non-permission
+ * failure is a YAML parse error or a write-back contention (mtime drift),
+ * which the user must resolve out of band.
  */
 export type SignOutResult =
   | { status: "signed-out"; removed: boolean; path: string }
@@ -69,19 +70,15 @@ export function exitCodeForSignOutResult(result: SignOutResult): number {
 
 /**
  * Run the `auth signout` command end-to-end:
- *   1. Load `.ttctl.yaml` and resolve the auth-token path (honors the
- *      optional `auth-token-path` field; falls back to platform defaults).
- *   2. Delete the auth token via `unlink` (idempotent — ENOENT is silent).
- *   3. Report `removed: true` when the file was deleted, `false` when it
- *      was already absent.
+ *   1. Resolve `.ttctl.yaml` and read it (in-memory parsed via core).
+ *   2. If `auth.token` is present, remove the field via `clearAuthToken`
+ *      (yaml.parseDocument + deleteIn — preserves comments and credentials).
+ *   3. If `auth.token` was already absent, exit 0 with `removed: false`
+ *      (idempotent no-op; AC-6 requires this branch).
  *   4. Emit the result and exit. Always 0 in the success path.
  *
- * Loading config is required because the token path can be customized via
- * `auth-token-path` in `.ttctl.yaml`. A `ConfigError` (no config found, or
- * malformed) surfaces as an `error` result so the user-facing message is
- * actionable. Other unlink errors (EACCES, EBUSY, etc.) propagate as
- * `error` results with exit code 1 — the user must resolve the filesystem
- * condition out of band before trying again.
+ * `clearAuthToken` enforces the same security gates as `persistAuthToken`
+ * (symlink refusal, sync-root refusal, atomic write, mode 0600).
  */
 export async function runAuthSignOut(options: AuthSignOutOptions): Promise<void> {
   const result = await performSignOut();
@@ -92,10 +89,12 @@ export async function runAuthSignOut(options: AuthSignOutOptions): Promise<void>
 }
 
 async function performSignOut(): Promise<SignOutResult> {
-  let tokenPath: string;
+  let configPath: string;
+  let hasToken: boolean;
   try {
-    const { config, path: configPath } = resolveConfigForCli();
-    tokenPath = resolveAuthTokenPath({ config, configPath });
+    const { config, path } = resolveConfigForCli();
+    configPath = path;
+    hasToken = config.auth.token !== undefined;
   } catch (err) {
     if (err instanceof ConfigError) {
       return { status: "error", message: err.message };
@@ -104,35 +103,22 @@ async function performSignOut(): Promise<SignOutResult> {
     return { status: "error", message };
   }
 
-  // Token deletion revokes the identity-bearing credential. ENOENT is treated
-  // as a no-op (already-gone is the same as "deleted" from the user's
-  // perspective); other errors abort with `error`.
-  const outcome = await tryUnlink(tokenPath);
-  if (outcome.status === "error") return outcome;
+  if (!hasToken) {
+    // Idempotent no-op — token field already absent. Don't open the file
+    // for write at all; report success with removed: false so scripts can
+    // detect the no-op case.
+    return { status: "signed-out", removed: false, path: configPath };
+  }
 
-  return {
-    status: "signed-out",
-    removed: outcome.removed,
-    path: tokenPath,
-  };
-}
-
-type UnlinkOutcome = { status: "ok"; removed: boolean } | { status: "error"; message: string };
-
-/**
- * Unlink `path`. Returns `removed: true` if the file existed and was
- * deleted, `removed: false` if it was already absent (ENOENT), or an
- * error outcome for any other failure.
- */
-async function tryUnlink(path: string): Promise<UnlinkOutcome> {
   try {
-    await unlink(path);
-    return { status: "ok", removed: true };
+    await clearAuthToken(configPath);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { status: "ok", removed: false };
+    if (err instanceof ConfigError || err instanceof AuthTokenPersistError) {
+      return { status: "error", message: err.message };
     }
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", message };
   }
+
+  return { status: "signed-out", removed: true, path: configPath };
 }
