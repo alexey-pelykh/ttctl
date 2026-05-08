@@ -2,16 +2,15 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { existsSync, readFileSync } from "node:fs";
-import { rm, unlink } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 
-import { resolveConfig, resolveCredentials, saveAuthToken, signIn } from "@ttctl/core";
+import { clearAuthToken, persistAuthToken, resolveConfig, resolveCredentials, signIn } from "@ttctl/core";
 import { afterAll, beforeAll } from "vitest";
 
 import {
   findRepoRoot,
   resolveIsolatedSessionConfigPath,
   resolveIsolatedSessionDir,
-  resolveIsolatedSessionTokenPath,
   resolveSharedSessionFilePath,
   writeIsolatedSessionConfig,
 } from "./paths.js";
@@ -30,25 +29,21 @@ export interface FreshSessionContext {
    */
   email: string;
   /**
-   * Absolute path to the auth token file. For `getSharedSession()`, the
-   * shared `<sandbox>/auth.token` written by globalSetup. For
-   * `withFreshSession()`, the per-call isolated `<sandbox>/isolated-<id>/
-   * auth.token`. Test authors use this for existence / non-empty
-   * assertions; they should NEVER read the file's contents — the harness
-   * owns its lifecycle.
-   */
-  tokenPath: string;
-  /**
    * Absolute path to the relevant sandbox directory. For shared sessions,
    * `<repo-root>/.tmp/e2e/`. For isolated sessions,
    * `<repo-root>/.tmp/e2e/isolated-<id>/`.
    */
   sandboxDir: string;
   /**
-   * Absolute path to the sandbox `.ttctl.yaml` fixture. Pass this to
+   * Absolute path to the sandbox `.ttctl.yaml` fixture (Form C for shared,
+   * Form D after signin for isolated). Pass this to
    * `getCliClient({ configPath })` / `getMcpClient({ configPath })` so the
    * spawned subprocess receives `TTCTL_CONFIG_FILE=<this>` in its env and
    * resolves config to the (shared or isolated) sandbox.
+   *
+   * Post-#107: this is the SINGLE file each test variant operates on. The
+   * captured bearer lives in `auth.token` inside this YAML. There is NO
+   * separate `.token` file.
    */
   sandboxConfigPath: string;
   /**
@@ -159,29 +154,37 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     const id = nextIsolationId();
     isolationDir = resolveIsolatedSessionDir(repoRoot, id);
     const isolatedConfigPath = resolveIsolatedSessionConfigPath(repoRoot, id);
-    const isolatedTokenPath = resolveIsolatedSessionTokenPath(repoRoot, id);
 
     // Find the user's source config (the one OUTSIDE the sandbox) via
     // standard discovery, identical to globalSetup's path.
     const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
 
-    // Mirror it into the per-call isolated subdirectory. The fixture's
-    // `auth-token-path: ./auth.token` resolves against the file's
-    // directory → <sandbox>/isolated-<id>/auth.token. Spawned subprocesses
-    // get `TTCTL_CONFIG_FILE=<isolated config path>` injected via the CLI
-    // client, isolating their tokens from BOTH the user's working session
-    // AND the shared session that `getSharedSession()`-using tests consume.
+    if (sourceConfig.auth.credentials === undefined) {
+      throw new Error(
+        "withFreshSession: source config has no auth.credentials. " +
+          "Adversarial isolated sessions require credentials to drive a per-file signin.",
+      );
+    }
+
+    // Mirror the source credentials into the per-call isolated subdirectory
+    // (Form A or B; no token). Spawned subprocesses get
+    // `TTCTL_CONFIG_FILE=<isolated config path>` injected via the CLI
+    // client; their token writes (post-signin) land in the SAME isolated
+    // YAML file via persistAuthToken — keeping the corruption inside the
+    // per-file subtree.
     await writeIsolatedSessionConfig(repoRoot, id, sourceConfigPath);
 
     // Live signin — this is the ISOLATED signin (the second of the AC's
     // "exactly two signins per run", the first being globalSetup's).
-    const credentials = resolveCredentials(sourceConfig.auth);
+    const credentials = resolveCredentials(sourceConfig.auth.credentials);
     const { token } = await signIn(credentials);
-    await saveAuthToken(isolatedTokenPath, token);
+
+    // Persist the captured bearer into the isolated YAML config (Form D
+    // shape). The CLI subprocess will read it from there.
+    await persistAuthToken(isolatedConfigPath, token);
 
     context = {
       email: credentials.email,
-      tokenPath: isolatedTokenPath,
       sandboxDir: isolationDir,
       sandboxConfigPath: isolatedConfigPath,
       repoRoot,
@@ -196,16 +199,16 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
     // failing beforeAll, so this branch is the right place for the reset.
     handleCount = 0;
     if (context === null) return;
-    const { tokenPath } = context;
+    const { sandboxConfigPath } = context;
 
-    // Local "SignOut" of the isolated session — destroy its token. The
-    // mobile gateway has no terminal SignOut mutation; deleting the token
-    // is the canonical session-end action.
+    // Local "SignOut" of the isolated session — remove the auth.token
+    // field. The mobile gateway has no terminal SignOut mutation; clearing
+    // the token from the YAML is the canonical session-end action.
     try {
-      await unlink(tokenPath);
+      await clearAuthToken(sandboxConfigPath);
     } catch {
-      // ENOENT is fine (already gone); other errors swallowed because
-      // afterAll throws would mask the real test failure.
+      // Ignore: any failure here is teardown noise, would mask the real
+      // test failure.
     }
 
     // Cool-off — AC E3. Even though globalSetup also cools off at run
@@ -260,13 +263,14 @@ export function buildSessionRegistration(options: WithFreshSessionOptions = {}):
  *
  *   - `beforeAll`:
  *       1. (skip if `TTCTL_E2E !== "1"`)
- *       2. Allocate a fresh isolation id; write fixture to the
- *          per-call subdirectory
- *       3. Sign in via `core.signIn`; persist token to the isolated path
+ *       2. Allocate a fresh isolation id; write credentials-only fixture
+ *          to the per-call subdirectory
+ *       3. Sign in via `core.signIn`; persist token to the isolated YAML
+ *          via `persistAuthToken`
  *
  *   - `afterAll`:
  *       1. (skip if no session was established)
- *       2. Delete the isolated token
+ *       2. Clear the auth.token field from the isolated YAML
  *       3. Cool-off ≥5s (AC E3)
  *       4. Best-effort `rm -rf` the isolated subdirectory
  *
@@ -338,7 +342,7 @@ export function getSharedSession(opts: { repoRoot?: string } = {}): FreshSession
   if (!isValidSharedSessionMetadata(parsed)) {
     throw new Error(
       `getSharedSession: shared-session file at ${sessionFilePath} has unexpected shape. ` +
-        `Expected object with string fields { email, tokenPath, sandboxDir, sandboxConfigPath, repoRoot }.`,
+        `Expected object with string fields { email, sandboxDir, sandboxConfigPath, repoRoot }.`,
     );
   }
 
@@ -350,7 +354,6 @@ function isValidSharedSessionMetadata(value: unknown): value is FreshSessionCont
   const v = value as Record<string, unknown>;
   return (
     typeof v["email"] === "string" &&
-    typeof v["tokenPath"] === "string" &&
     typeof v["sandboxDir"] === "string" &&
     typeof v["sandboxConfigPath"] === "string" &&
     typeof v["repoRoot"] === "string"

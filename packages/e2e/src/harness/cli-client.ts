@@ -22,11 +22,11 @@ export interface CliClientOptions {
   /**
    * Absolute path to the sandbox `.ttctl.yaml` fixture. Injected into the
    * spawned CLI subprocess's env as `TTCTL_CONFIG_FILE`, which (per #92)
-   * the CLI's `resolveConfig` reads verbatim. The fixture's
-   * `auth-token-path: ./auth.token` resolves against the config file's
-   * directory → `<sandbox>/auth.token`, isolating the run from the user's
-   * everyday session at `~/.config/ttctl/config.yaml` (or
-   * `$XDG_CONFIG_HOME/ttctl/config.yaml`).
+   * the CLI's `resolveConfig` reads verbatim. Post-#107: the captured
+   * bearer lives inline in this same YAML file under `auth.token`, so the
+   * sandbox is a single-file artifact — no separate token file. The
+   * isolation guarantee against the user's everyday session at
+   * `~/.ttctl.yaml` remains intact.
    *
    * Optional in the type so harness-internal unit tests can construct a
    * client to exercise spawn mechanics without needing isolation. Production
@@ -108,13 +108,12 @@ export interface CliClient {
  * missing — running E2E against an unbuilt workspace would surface as
  * cryptic "Cannot find module" errors deep inside the spawn output.
  *
- * Isolation strategy (per #94): each `run()` injects
+ * Isolation strategy (per #94 + #107): each `run()` injects
  * `TTCTL_CONFIG_FILE=<options.configPath>` into the spawned CLI's env. The
  * CLI's `resolveConfig` (per #92) reads that path verbatim — no CWD
- * walking, no XDG/home fallback. The fixture `.ttctl.yaml` (written by
- * `writeSandboxConfig` in `paths.ts`) carries `auth-token-path:
- * ./auth.token`, which resolves against the config file's directory and
- * redirects token persistence to the sandbox.
+ * walking, no XDG/home fallback. Post-#107: the fixture YAML carries the
+ * captured bearer inline under `auth.token`; persistAuthToken / signout /
+ * status all operate on the same file. No separate token-path resolution.
  */
 export function getCliClient(options: CliClientOptions): CliClient {
   const repoRoot = options.repoRoot ?? findRepoRoot();

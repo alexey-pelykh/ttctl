@@ -34,7 +34,7 @@ describe("printPreflightBanner", () => {
     expect(text).toContain("E2E will sign in to Toptal");
     expect(text).toContain("Any concurrent browser session may be invalidated");
     expect(text).toContain(".tmp/e2e/");
-    expect(text).toContain("~/.ttctl/auth.token");
+    expect(text).toContain("~/.ttctl.yaml");
     // Multi-line — contains at least 5 newlines (banner is ~10 lines)
     expect(text.split("\n").length).toBeGreaterThanOrEqual(5);
   });

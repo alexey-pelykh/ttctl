@@ -151,9 +151,10 @@ describe("getSharedSession", () => {
   it("returns the parsed metadata when the session file exists and is well-formed", async () => {
     const sandboxDir = join(workDir, ".tmp", "e2e");
     await mkdir(sandboxDir, { recursive: true });
+    // Post-#107: tokenPath is no longer in the shared-session metadata —
+    // the captured bearer lives inline in `<sandbox>/.ttctl.yaml`.
     const meta = {
       email: "test@example.com",
-      tokenPath: join(sandboxDir, "auth.token"),
       sandboxDir,
       sandboxConfigPath: join(sandboxDir, ".ttctl.yaml"),
       repoRoot: workDir,
@@ -162,7 +163,6 @@ describe("getSharedSession", () => {
 
     const result = getSharedSession({ repoRoot: workDir });
     expect(result.email).toBe("test@example.com");
-    expect(result.tokenPath).toBe(meta.tokenPath);
     expect(result.sandboxDir).toBe(sandboxDir);
     expect(result.sandboxConfigPath).toBe(meta.sandboxConfigPath);
     expect(result.repoRoot).toBe(workDir);
@@ -180,20 +180,19 @@ describe("getSharedSession", () => {
     const sandboxDir = join(workDir, ".tmp", "e2e");
     await mkdir(sandboxDir, { recursive: true });
     // Missing `email`, `sandboxDir`, etc.
-    await writeFile(join(sandboxDir, ".session.json"), JSON.stringify({ tokenPath: "/x" }));
+    await writeFile(join(sandboxDir, ".session.json"), JSON.stringify({ sandboxConfigPath: "/x" }));
 
     expect(() => getSharedSession({ repoRoot: workDir })).toThrow(/unexpected shape/);
   });
 
-  it("throws when the session file has wrong-typed fields (e.g. tokenPath as number)", async () => {
+  it("throws when the session file has wrong-typed fields (e.g. sandboxDir as number)", async () => {
     const sandboxDir = join(workDir, ".tmp", "e2e");
     await mkdir(sandboxDir, { recursive: true });
     await writeFile(
       join(sandboxDir, ".session.json"),
       JSON.stringify({
         email: "x@y",
-        tokenPath: 42,
-        sandboxDir: "/a",
+        sandboxDir: 42,
         sandboxConfigPath: "/b",
         repoRoot: "/c",
       }),

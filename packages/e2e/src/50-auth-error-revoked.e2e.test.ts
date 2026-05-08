@@ -10,34 +10,36 @@
  * This file uses `withFreshSession()` (NOT `getSharedSession()`) so its
  * deliberate token corruption is ISOLATED to a per-file subdirectory under
  * `<sandbox>/isolated-<id>/`. Sibling `getSharedSession()`-using files
- * (`01-`, `99-`) read the SHARED token at `<sandbox>/auth.token` written
+ * (`01-`, `99-`) read the SHARED token at `<sandbox>/.ttctl.yaml` written
  * by `globalSetup`, which this file never touches. AC #2 of #105:
  * adversarial isolation preserved — corruption does not leak.
  *
  * Validates the CLI error-message format on a deliberately-revoked token:
  *
  *   1. `withFreshSession()` performs a real isolated signin in `beforeAll`,
- *      leaving a valid bearer token on disk in the per-file isolated
- *      subdirectory (`<sandbox>/isolated-<id>/auth.token`). This is the
- *      SECOND of the run's two live signins (the first being globalSetup's
- *      shared signin).
+ *      leaving a valid bearer token in the per-file isolated YAML config
+ *      (`<sandbox>/isolated-<id>/.ttctl.yaml` — Form D shape post-#107).
+ *      This is the SECOND of the run's two live signins (the first being
+ *      globalSetup's shared signin).
  *   2. The test deliberately corrupts that on-disk isolated token by
- *      overwriting it with a string the gateway will reject.
+ *      overwriting the YAML's `auth.token` field with a string the gateway
+ *      will reject. We use `yaml.parseDocument` + `setIn` to preserve the
+ *      surrounding `auth.credentials` field — same primitive the production
+ *      code uses for write-back.
  *   3. The test runs `ttctl profile show` (configured to read the isolated
- *      token via `TTCTL_CONFIG_FILE=<isolated config path>`). The mobile-
+ *      config via `TTCTL_CONFIG_FILE=<isolated config path>`). The mobile-
  *      gateway responds with `errors[0].extensions.code =
  *      'AUTHENTICATION_REQUIRED'` (gateway form) or HTTP 401 — both flow
  *      into `AuthRevokedError`.
  *   4. The CLI's `presentTtctlError` formatter emits the
  *      Error / Recovery / Code three-block layout to stderr; exit code 1.
  *
- * Skip-gate: `.skipIf(!e2eEnabled)` matches the suite-wide pattern. Without
- * `TTCTL_E2E=1`, the test reports SKIPPED; the harness's `withFreshSession`
- * setUp is a no-op (env-gated upstream), so no live signin happens either.
+ * Skip-gate: `.skipIf(!e2eEnabled)` matches the suite-wide pattern.
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
+import { parseDocument } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, withFreshSession } from "./harness/index.js";
@@ -58,16 +60,16 @@ describe("auth error: deliberately-revoked token (#77, isolated session)", () =>
   it.skipIf(!e2eEnabled)(
     "profile show on a corrupted token surfaces AuthRevokedError in the Error/Recovery/Code format",
     async () => {
-      const { tokenPath } = session.getContext();
+      const { sandboxConfigPath } = session.getContext();
 
-      // Replace the live-signed-in isolated token with a string the gateway
-      // will reject. The token format is plain text + trailing newline (per
-      // `saveAuthToken`), so a 32-char nonsense string keeps the same
-      // shape and exercises the actual rejection path. Crucially, this
-      // token is the ISOLATED one at `<sandbox>/isolated-<id>/auth.token`
-      // — the SHARED token at `<sandbox>/auth.token` (consumed by
-      // sibling `getSharedSession()`-using tests) is NOT touched.
-      writeFileSync(tokenPath, "deliberately-invalid-token-77777\n", { mode: 0o600 });
+      // Replace the live-signed-in isolated `auth.token` with a string the
+      // gateway will reject. yaml.parseDocument + setIn preserves the
+      // surrounding `auth.credentials` field — mirrors what the production
+      // `persistAuthToken` does. Mode preserved at 0o600.
+      const raw = readFileSync(sandboxConfigPath, "utf8");
+      const doc = parseDocument(raw, { strict: false });
+      doc.setIn(["auth", "token"], doc.createNode("deliberately-invalid-token-77777"));
+      writeFileSync(sandboxConfigPath, String(doc), { mode: 0o600 });
 
       const result = await cli.run(["profile", "show"]);
 

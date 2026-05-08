@@ -24,10 +24,16 @@
  * asserting, so a failing test diff never includes the full profile JSON.
  * Existence checks use `key in obj` so failure diffs collapse to
  * `Expected: true / Received: false` instead of dumping the host object.
+ *
+ * Post-#107: the captured bearer lives inline in the sandbox `.ttctl.yaml`
+ * under `auth.token` — we assert that field is present rather than
+ * checking a separate `.token` file.
  */
 
-import { existsSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
+import { ConfigLoadSchema } from "@ttctl/core";
+import { parse as parseYaml } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
@@ -45,16 +51,23 @@ describe("auth signin + profile (live Toptal, shared session)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "signin: globalSetup established a session — token exists, auth status reports the email",
+    "signin: globalSetup established a session — auth.token field is present in sandbox config; auth status reports the email",
     async () => {
-      const { tokenPath, email } = getSharedSession();
+      const { sandboxConfigPath, email } = getSharedSession();
 
-      // Isolated auth token exists and is non-empty (#21 spec: "isolated
-      // session-of-record present after signin"). The token is plain
-      // text + trailing newline; non-zero size is the observable proxy
-      // that core.signIn captured + saveAuthToken persisted something.
-      expect(existsSync(tokenPath)).toBe(true);
-      expect(statSync(tokenPath).size).toBeGreaterThan(0);
+      // Sandbox config exists, mode 0o600, and carries auth.token inline
+      // (post-#107 single-file model). Read + validate the file rather
+      // than checking a separate `.token` artifact (which doesn't exist).
+      const stat = statSync(sandboxConfigPath);
+      expect(stat.isFile()).toBe(true);
+      if (process.platform !== "win32") {
+        expect(stat.mode & 0o777).toBe(0o600);
+      }
+      const raw = readFileSync(sandboxConfigPath, "utf8");
+      const parsed: unknown = parseYaml(raw);
+      const validated = ConfigLoadSchema.parse(parsed);
+      expect(validated.auth.token).toBeDefined();
+      expect(validated.auth.token?.length ?? 0).toBeGreaterThan(0);
 
       // Session round-trips through the CLI: auth status exits 0 and the
       // table row mentions the email we signed in with.

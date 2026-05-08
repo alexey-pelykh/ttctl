@@ -12,18 +12,14 @@
  * function that vitest invokes after all tests finish.
  *
  * Audited `packages/core/src/transport.ts` 2026-05-07 — no module-level
- * mutable state that adversarial tests could corrupt across files. The
- * only module-level values (`IMPERSONATE_PROFILE`, `USER_AGENT`,
- * `COMMON_HEADERS`) are immutable consts; `stockTransport` /
- * `impersonatedTransport` / `impersonatedMultipartTransport` spread
- * `COMMON_HEADERS` into request-local objects rather than mutating the
- * source. No TLS-client identity cache, no cookie-jar handle, no agent
- * instance memoized at module scope.
+ * mutable state that adversarial tests could corrupt across files.
  *
  * Filesystem-mediated handoff: vitest's globalSetup runs in a separate
  * process from test workers (forks with `singleFork: true`). Variables
  * cannot be passed in-memory; the handoff is the JSON file at
- * `<sandbox>/.session.json`.
+ * `<sandbox>/.session.json` plus the YAML config at `<sandbox>/.ttctl.yaml`
+ * (the captured bearer lives inline in the YAML — post-#107 single-file
+ * model).
  *
  * Env gate: `TTCTL_E2E !== "1"` short-circuits to a no-op (allows the
  * `pnpm test:e2e` "skip silently in CI" mode to apply uniformly with the
@@ -35,15 +31,14 @@
  * acquire/release cycles into one.
  */
 
-import { writeFile, mkdir, unlink } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 
-import { resolveConfig, resolveCredentials, saveAuthToken, signIn } from "@ttctl/core";
+import { clearAuthToken, resolveConfig, resolveCredentials, signIn } from "@ttctl/core";
 
 import { printPreflightBanner } from "./banner.js";
 import { acquireLock, releaseLock } from "./lockfile.js";
 import {
   findRepoRoot,
-  resolveIsolatedAuthTokenPath,
   resolveLockfilePath,
   resolveSandboxConfigPath,
   resolveSandboxDir,
@@ -59,13 +54,14 @@ import {
 const COOL_OFF_MS = 5_000;
 
 /**
- * Shared-session metadata persisted to `<sandbox>/.session.json`. Mirrors
- * the public `FreshSessionContext` shape — `getSharedSession()` reads this
- * file and returns the same shape so the consumer-side type is unified.
+ * Shared-session metadata persisted to `<sandbox>/.session.json`.
+ *
+ * Post-#107: the bearer TOKEN itself is NOT in this file — it lives inline
+ * in `<sandbox>/.ttctl.yaml`. The metadata file carries paths and the
+ * email so test workers can read both without re-resolving them.
  */
 export interface SharedSessionMetadata {
   email: string;
-  tokenPath: string;
   sandboxDir: string;
   sandboxConfigPath: string;
   repoRoot: string;
@@ -86,41 +82,41 @@ export default async function setup(): Promise<() => Promise<void>> {
   const repoRoot = findRepoRoot();
   const sandboxDir = resolveSandboxDir(repoRoot);
   const sandboxConfigPath = resolveSandboxConfigPath(repoRoot);
-  const tokenPath = resolveIsolatedAuthTokenPath(repoRoot);
   const lockPath = resolveLockfilePath(repoRoot);
   const sessionFilePath = resolveSharedSessionFilePath(repoRoot);
 
   // The lockfile lives inside the sandbox dir — make sure that dir exists
-  // before acquireLock writes the .lock file. `writeSandboxConfig` also
-  // mkdir-p's the same dir, but lock acquisition must succeed BEFORE any
-  // other harness state is created.
+  // before acquireLock writes the .lock file.
   await mkdir(sandboxDir, { recursive: true });
   acquireLock(lockPath);
 
   try {
     // Find the user's source config (the one OUTSIDE the sandbox) via
-    // standard discovery: TTCTL_CONFIG_FILE → $XDG_CONFIG_HOME/ttctl/
-    // config.yaml → ~/.config/ttctl/config.yaml. The maintainer's legacy
-    // `<repo-root>/.ttctl.yaml` is honored only when `TTCTL_CONFIG_FILE`
-    // points at it.
-    const { config: sourceConfig, path: sourceConfigPath } = resolveConfig();
+    // standard discovery: TTCTL_CONFIG_FILE → ~/.ttctl.yaml. The
+    // maintainer's legacy `<repo-root>/.ttctl.yaml` is honored only when
+    // `TTCTL_CONFIG_FILE` points at it.
+    const { config: sourceConfig } = resolveConfig();
 
-    // Mirror it into the sandbox with `auth-token-path: ./auth.token`.
-    // Spawned CLI / MCP subprocesses get `TTCTL_CONFIG_FILE=<sandbox>/
-    // .ttctl.yaml` injected, so they read this fixture and write tokens
-    // to <sandbox>/auth.token, never touching the user's working session.
-    await writeSandboxConfig(repoRoot, sourceConfigPath);
+    if (sourceConfig.auth.credentials === undefined) {
+      throw new Error(
+        "globalSetup: source config has no auth.credentials. " +
+          "The E2E harness requires credentials in the source config to drive the live signin. " +
+          "A Form C (token-only) source config can't seed the harness.",
+      );
+    }
 
     // Sign in directly via core's signIn — the harness handles token
     // capture itself. Credentials come from the SOURCE config; secret
     // resolution (1Password CLI, literal) is identical to a non-E2E run.
-    const credentials = resolveCredentials(sourceConfig.auth);
+    const credentials = resolveCredentials(sourceConfig.auth.credentials);
     const { token } = await signIn(credentials);
-    await saveAuthToken(tokenPath, token);
+
+    // Write the SANDBOX config — Form C shape, token only. Source
+    // credentials never enter `.tmp/e2e/`.
+    await writeSandboxConfig(repoRoot, token);
 
     const sessionMeta: SharedSessionMetadata = {
       email: credentials.email,
-      tokenPath,
       sandboxDir,
       sandboxConfigPath,
       repoRoot,
@@ -130,21 +126,21 @@ export default async function setup(): Promise<() => Promise<void>> {
     await writeFile(sessionFilePath, JSON.stringify(sessionMeta) + "\n", { mode: 0o600 });
   } catch (err) {
     // Setup failed — release lock so subsequent runs aren't stuck behind
-    // a held lock from a never-completed setup. Mirror the original
-    // `withFreshSession` setUp behavior.
+    // a held lock from a never-completed setup.
     releaseLock(lockPath);
     throw err;
   }
 
   return async (): Promise<void> => {
-    // Defensive token unlink — the `99-auth-signout` test deletes the
-    // token as its assertion. If that test was skipped or failed before
-    // the deletion, this branch cleans up.
+    // Defensive token clear — the `99-auth-signout` test removes the
+    // token field as its assertion. If that test was skipped or failed
+    // before the deletion, this branch cleans up. clearAuthToken is
+    // idempotent (no-op when the field is already absent).
     try {
-      await unlink(tokenPath);
+      await clearAuthToken(sandboxConfigPath);
     } catch {
-      // ENOENT is fine (already gone); other errors swallowed because
-      // a teardown throw would mask the real test failure.
+      // Ignore: any failure here is teardown noise, would mask the real
+      // test failure.
     }
     try {
       await unlink(sessionFilePath);

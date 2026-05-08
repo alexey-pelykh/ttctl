@@ -11,10 +11,8 @@ import { parse as parseYaml } from "yaml";
 import {
   cliConfigPath,
   findRepoRoot,
-  resolveIsolatedAuthTokenPath,
   resolveIsolatedSessionConfigPath,
   resolveIsolatedSessionDir,
-  resolveIsolatedSessionTokenPath,
   resolveLockfilePath,
   resolveSandboxConfigPath,
   resolveSandboxDir,
@@ -64,10 +62,6 @@ describe("findRepoRoot", () => {
   });
 
   it("throws when no sentinel is found before filesystem root", () => {
-    // workDir itself has neither sentinel and is not in a repo with one
-    // upstream that we control. The walk will eventually hit `/` (or a
-    // drive root on Windows). On macOS/CI the workDir is under /var/...
-    // which has no .git or pnpm-workspace.yaml ancestors.
     expect(() => findRepoRoot(workDir)).toThrow(/walked from .* up to filesystem root/);
   });
 });
@@ -79,10 +73,6 @@ describe("path helpers", () => {
 
   it("resolveSandboxConfigPath joins .tmp/e2e/.ttctl.yaml under the given root", () => {
     expect(resolveSandboxConfigPath("/repo")).toBe(join("/repo", ".tmp", "e2e", ".ttctl.yaml"));
-  });
-
-  it("resolveIsolatedAuthTokenPath joins .tmp/e2e/auth.token under the given root", () => {
-    expect(resolveIsolatedAuthTokenPath("/repo")).toBe(join("/repo", ".tmp", "e2e", "auth.token"));
   });
 
   it("resolveLockfilePath joins .tmp/e2e/.lock under the given root", () => {
@@ -108,26 +98,18 @@ describe("path helpers", () => {
     );
   });
 
-  it("resolveIsolatedSessionTokenPath joins auth.token inside the isolated subdirectory", () => {
-    expect(resolveIsolatedSessionTokenPath("/repo", "1")).toBe(
-      join("/repo", ".tmp", "e2e", "isolated-1", "auth.token"),
-    );
-  });
-
   it("isolated children all live under their own isolated subdirectory (separation from shared sandbox)", () => {
     const root = "/r";
     const isolatedDir = resolveIsolatedSessionDir(root, "1");
     expect(resolveIsolatedSessionConfigPath(root, "1").startsWith(isolatedDir)).toBe(true);
-    expect(resolveIsolatedSessionTokenPath(root, "1").startsWith(isolatedDir)).toBe(true);
-    // Critically, isolated paths do NOT collide with the SHARED token/config
-    // — adversarial corruption is contained to its own subtree.
-    expect(resolveIsolatedSessionTokenPath(root, "1")).not.toBe(resolveIsolatedAuthTokenPath(root));
+    // Critically, isolated paths do NOT collide with the SHARED config —
+    // adversarial corruption is contained to its own subtree.
     expect(resolveIsolatedSessionConfigPath(root, "1")).not.toBe(resolveSandboxConfigPath(root));
   });
 
   it("isolated subdirectories with different ids do not collide", () => {
     expect(resolveIsolatedSessionDir("/r", "1")).not.toBe(resolveIsolatedSessionDir("/r", "2"));
-    expect(resolveIsolatedSessionTokenPath("/r", "1")).not.toBe(resolveIsolatedSessionTokenPath("/r", "2"));
+    expect(resolveIsolatedSessionConfigPath("/r", "1")).not.toBe(resolveIsolatedSessionConfigPath("/r", "2"));
   });
 
   it("sandbox children all live under resolveSandboxDir", () => {
@@ -135,128 +117,119 @@ describe("path helpers", () => {
     const sandbox = resolveSandboxDir(root);
     expect(resolveSandboxConfigPath(root).startsWith(sandbox)).toBe(true);
     expect(cliConfigPath(root).startsWith(sandbox)).toBe(true);
-    expect(resolveIsolatedAuthTokenPath(root).startsWith(sandbox)).toBe(true);
     expect(resolveLockfilePath(root).startsWith(sandbox)).toBe(true);
     expect(resolveSharedSessionFilePath(root).startsWith(sandbox)).toBe(true);
-    // Isolated subdirs ALSO live under the sandbox — same `rm -rf .tmp/e2e/`
-    // cleanup contract.
     expect(resolveIsolatedSessionDir(root, "1").startsWith(sandbox)).toBe(true);
   });
 });
 
-describe("writeSandboxConfig", () => {
-  it("creates the sandbox dir and writes a fixture .ttctl.yaml mirroring the source `auth` field", async () => {
-    const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
-
-    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
+describe("writeSandboxConfig (post-#107 single-file model)", () => {
+  it("creates the sandbox dir and writes a Form C (token-only) fixture .ttctl.yaml", async () => {
+    const fixturePath = await writeSandboxConfig(workDir, "user_test_token_xyz_123");
 
     expect(fixturePath).toBe(resolveSandboxConfigPath(workDir));
     const written = await readFile(fixturePath, "utf8");
     const parsed = parseYaml(written) as Record<string, unknown>;
-    expect(parsed["auth"]).toBe("op://Personal/ttctl");
-    expect(parsed["auth-token-path"]).toBe("./auth.token");
-  });
-
-  it("forces auth-token-path to ./auth.token even if the source config sets a different value", async () => {
-    // The harness must own auth-token-path exactly, regardless of what the
-    // user has configured — otherwise a user with `auth-token-path:
-    // /custom/loc/auth.token` would have E2E write into that custom
-    // location, breaking the isolation contract.
-    const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(
-      sourceConfigPath,
-      ['auth: "op://Personal/ttctl"', 'auth-token-path: "/custom/loc/auth.token"', ""].join("\n"),
-      "utf8",
-    );
-
-    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
-
-    const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
-    expect(parsed["auth-token-path"]).toBe("./auth.token");
-  });
-
-  it("mirrors the literal-credentials form (object auth)", async () => {
-    const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(
-      sourceConfigPath,
-      ["auth:", '  email: "user@example.com"', '  password: "hunter2"', ""].join("\n"),
-      "utf8",
-    );
-
-    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
-
-    const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
+    expect(parsed["auth"]).toEqual({ token: "user_test_token_xyz_123" });
+    // Sandbox MUST NOT carry credentials — only the captured bearer.
     const auth = parsed["auth"] as Record<string, unknown>;
-    expect(auth["email"]).toBe("user@example.com");
-    expect(auth["password"]).toBe("hunter2");
-    expect(parsed["auth-token-path"]).toBe("./auth.token");
+    expect("credentials" in auth).toBe(false);
+    // The legacy auth-token-path field is removed entirely post-#107.
+    expect("auth-token-path" in parsed).toBe(false);
   });
 
-  it("rejects a malformed source config (validation runs against ConfigSchema)", async () => {
-    const sourceConfigPath = join(workDir, "src.yaml");
-    // No `auth` field — ConfigSchema rejects this.
-    await writeFile(sourceConfigPath, "not-auth: nope\n", "utf8");
+  it("writes the sandbox config at mode 0o600 (POSIX)", async () => {
+    if (process.platform === "win32") return;
+    const fixturePath = await writeSandboxConfig(workDir, "user_xxx_yyy");
+    const { statSync } = await import("node:fs");
+    const mode = statSync(fixturePath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
 
-    await expect(writeSandboxConfig(workDir, sourceConfigPath)).rejects.toThrow();
+  it("re-applies mode 0o600 when the sandbox config file already exists at a looser mode", async () => {
+    // Regression: Node's writeFile({ mode }) only honors mode on file
+    // CREATION; existing files keep their old mode. A stale sandbox at
+    // 0o644 from a prior run must not silently survive.
+    if (process.platform === "win32") return;
+    const { statSync, chmodSync } = await import("node:fs");
+
+    // First write — creates the file at 0o600.
+    const fixturePath = await writeSandboxConfig(workDir, "user_aaa_bbb");
+    expect(statSync(fixturePath).mode & 0o777).toBe(0o600);
+
+    // Simulate stale-from-prior-run state: deliberately loosen to 0o644.
+    chmodSync(fixturePath, 0o644);
+    expect(statSync(fixturePath).mode & 0o777).toBe(0o644);
+
+    // Second write must restore 0o600.
+    await writeSandboxConfig(workDir, "user_ccc_ddd");
+    expect(statSync(fixturePath).mode & 0o777).toBe(0o600);
   });
 
   it("creates the sandbox directory if it does not already exist", async () => {
-    const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
     // workDir is empty — no .tmp, no .tmp/e2e.
-
-    const fixturePath = await writeSandboxConfig(workDir, sourceConfigPath);
+    const fixturePath = await writeSandboxConfig(workDir, "user_xxx_yyy");
 
     // Reading the fixture proves the dir was created (writeFile would
     // otherwise reject with ENOENT for the missing parent).
-    await expect(readFile(fixturePath, "utf8")).resolves.toContain("auth-token-path");
+    await expect(readFile(fixturePath, "utf8")).resolves.toContain("token");
   });
 });
 
-describe("writeIsolatedSessionConfig", () => {
-  it("writes a fixture .ttctl.yaml inside .tmp/e2e/isolated-<id>/, mirroring the source `auth` field", async () => {
+describe("writeIsolatedSessionConfig (post-#107)", () => {
+  it("writes a credentials-only fixture .ttctl.yaml inside .tmp/e2e/isolated-<id>/", async () => {
     const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+    await writeFile(sourceConfigPath, "auth:\n  credentials: op://Personal/ttctl\n", "utf8");
 
     const fixturePath = await writeIsolatedSessionConfig(workDir, "1", sourceConfigPath);
 
     expect(fixturePath).toBe(resolveIsolatedSessionConfigPath(workDir, "1"));
     const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
-    expect(parsed["auth"]).toBe("op://Personal/ttctl");
-    expect(parsed["auth-token-path"]).toBe("./auth.token");
+    const auth = parsed["auth"] as Record<string, unknown>;
+    expect(auth["credentials"]).toBe("op://Personal/ttctl");
+    // No token in the seed — the fresh-session test will sign in to acquire one.
+    expect("token" in auth).toBe(false);
   });
 
-  it("forces auth-token-path to ./auth.token even when source sets a different value (isolation contract)", async () => {
+  it("DROPS any token from the source config (clean Form A/B start)", async () => {
+    // Source is Form D (cred + token); isolated seed must drop the token
+    // so the fresh-session test starts clean.
     const sourceConfigPath = join(workDir, "src.yaml");
     await writeFile(
       sourceConfigPath,
-      ['auth: "op://Personal/ttctl"', 'auth-token-path: "/custom/loc/auth.token"', ""].join("\n"),
+      "auth:\n  credentials: op://Personal/ttctl\n  token: source_token_should_not_propagate\n",
       "utf8",
     );
 
     const fixturePath = await writeIsolatedSessionConfig(workDir, "1", sourceConfigPath);
 
     const parsed = parseYaml(await readFile(fixturePath, "utf8")) as Record<string, unknown>;
-    expect(parsed["auth-token-path"]).toBe("./auth.token");
+    const auth = parsed["auth"] as Record<string, unknown>;
+    expect("token" in auth).toBe(false);
+  });
+
+  it("REJECTS a Form C (token-only) source config — no credentials to seed the isolated signin", async () => {
+    const sourceConfigPath = join(workDir, "src.yaml");
+    await writeFile(sourceConfigPath, "auth:\n  token: source_token_only\n", "utf8");
+
+    await expect(writeIsolatedSessionConfig(workDir, "1", sourceConfigPath)).rejects.toThrow(/no auth\.credentials/);
   });
 
   it("creates the isolated subdirectory if it does not already exist", async () => {
     const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+    await writeFile(sourceConfigPath, "auth:\n  credentials: op://Personal/ttctl\n", "utf8");
 
     const fixturePath = await writeIsolatedSessionConfig(workDir, "42", sourceConfigPath);
 
-    // Reading proves the parent dir was created.
-    await expect(readFile(fixturePath, "utf8")).resolves.toContain("auth-token-path");
+    await expect(readFile(fixturePath, "utf8")).resolves.toContain("credentials");
     expect(fixturePath).toContain(join(".tmp", "e2e", "isolated-42"));
   });
 
   it("isolated config is at a different path than the shared sandbox config (separation invariant)", async () => {
     const sourceConfigPath = join(workDir, "src.yaml");
-    await writeFile(sourceConfigPath, 'auth: "op://Personal/ttctl"\n', "utf8");
+    await writeFile(sourceConfigPath, "auth:\n  credentials: op://Personal/ttctl\n", "utf8");
 
-    await writeSandboxConfig(workDir, sourceConfigPath);
+    await writeSandboxConfig(workDir, "user_shared_xxx");
     const isolatedPath = await writeIsolatedSessionConfig(workDir, "1", sourceConfigPath);
 
     expect(isolatedPath).not.toBe(resolveSandboxConfigPath(workDir));
