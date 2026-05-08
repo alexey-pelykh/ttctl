@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, resolveConfig } from "@ttctl/core";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
@@ -135,10 +135,10 @@ export function genericErrorResponse(toolName: string, err: unknown): ToolErrorR
  * Error/Recovery/Code rendering.
  */
 export async function loadTokenForTool(toolName: string): Promise<{ token: string } | ToolErrorResponse> {
-  let tokenPath: string;
+  let token: string | undefined;
   try {
-    const { config, path: configPath } = resolveConfig();
-    tokenPath = resolveAuthTokenPath({ config, configPath });
+    const { config } = resolveConfig();
+    token = config.auth.token;
   } catch (err) {
     if (err instanceof ConfigError) return configErrorResponse(toolName, err);
     if (err instanceof TtctlError) {
@@ -147,9 +147,8 @@ export async function loadTokenForTool(toolName: string): Promise<{ token: strin
     }
     throw err;
   }
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) return unauthenticatedResponse(toolName);
-  return { token };
+  if (token === undefined) return unauthenticatedResponse(toolName);
+  return Promise.resolve({ token });
 }
 
 /**

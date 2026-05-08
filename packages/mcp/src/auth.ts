@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, resolveConfig } from "@ttctl/core";
 
 import type { ToolErrorResponse } from "./errors.js";
 
@@ -15,18 +15,22 @@ import type { ToolErrorResponse } from "./errors.js";
  *
  * Centralizing this here means each tool callback writes a single
  * `if (!auth.ok) return auth.response;` line instead of duplicating the
- * token-load + config-error boilerplate per tool.
+ * config + token boilerplate per tool.
+ *
+ * Post-#107: the token lives inline in the YAML config under `auth.token`
+ * — no separate token file load. `resolveConfig()` does the YAML parse +
+ * schema validation; `config.auth.token` is read directly.
  */
 export type AuthResult = { ok: true; token: string } | { ok: false; response: ToolErrorResponse };
 
-export async function resolveToolAuth(): Promise<AuthResult> {
-  let tokenPath: string;
+export function resolveToolAuth(): Promise<AuthResult> {
+  let token: string | undefined;
   try {
-    const { config, path: configPath } = resolveConfig();
-    tokenPath = resolveAuthTokenPath({ config, configPath });
+    const { config } = resolveConfig();
+    token = config.auth.token;
   } catch (err) {
     if (err instanceof ConfigError) {
-      return {
+      return Promise.resolve({
         ok: false,
         response: {
           isError: true,
@@ -36,20 +40,19 @@ export async function resolveToolAuth(): Promise<AuthResult> {
               text: [
                 `Error: ${err.message}`,
                 "",
-                "Recovery: See README for the .ttctl.yaml setup instructions.",
+                "Recovery: See README for the YAML config setup instructions.",
                 "",
                 `(Code: ${err.code})`,
               ].join("\n"),
             },
           ],
         },
-      };
+      });
     }
     throw err;
   }
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    return {
+  if (token === undefined) {
+    return Promise.resolve({
       ok: false,
       response: {
         isError: true,
@@ -57,7 +60,7 @@ export async function resolveToolAuth(): Promise<AuthResult> {
           {
             type: "text",
             text: [
-              "Error: No auth token found.",
+              "Error: No auth token found in config.",
               "",
               "Recovery: Run `ttctl auth signin` to sign in before invoking ttctl tools.",
               "",
@@ -66,7 +69,7 @@ export async function resolveToolAuth(): Promise<AuthResult> {
           },
         ],
       },
-    };
+    });
   }
-  return { ok: true, token };
+  return Promise.resolve({ ok: true, token });
 }
