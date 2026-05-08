@@ -10,9 +10,10 @@ import { join } from "node:path";
 import { resolveToolAuth } from "../auth.js";
 
 /**
- * The MCP server has no CLI flags — `TTCTL_CONFIG_FILE` is the only knob a
- * deployment has to point it at a non-default config path (CI, agent-driven
- * setups, multi-config dev). These tests pin that integration.
+ * The MCP server has no CLI flags — `TTCTL_CONFIG_FILE` and the home
+ * dotfile (`~/.ttctl.yaml`) are the only knobs a deployment has to point
+ * it at a non-default config (CI, agent-driven setups, multi-config dev).
+ * These tests pin that integration.
  *
  * `resolveToolAuth` calls `resolveConfig()` parameterless, so the env-var
  * support comes from `discoverConfigPath` in `@ttctl/core`. The tests below
@@ -20,12 +21,11 @@ import { resolveToolAuth } from "../auth.js";
  * `discoverConfigPath`'s precedence chain (covered exhaustively in
  * `packages/core/src/__tests__/config.test.ts`).
  *
- * Isolation: each test uses a fresh tmp dir, sets `auth-token-path` to a
- * relative path so the token lands inside the tmp dir (not the user's real
- * `~/.ttctl/auth.token`), and saves/restores the relevant env vars so the
- * test order is irrelevant.
+ * Isolation: each test uses a fresh tmp dir, redirects HOME so
+ * `~/.ttctl.yaml` resolves into the fixture, and saves/restores the
+ * relevant env vars so the test order is irrelevant.
  */
-describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (#95)", () => {
+describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model)", () => {
   let tmpRoot: string;
   let savedEnv: { TTCTL_CONFIG_FILE?: string; XDG_CONFIG_HOME?: string; HOME?: string; USERPROFILE?: string };
 
@@ -41,10 +41,6 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (#95)", () => {
     };
     delete process.env["TTCTL_CONFIG_FILE"];
     delete process.env["XDG_CONFIG_HOME"];
-    // Redirect HOME so the home default (`~/.config/ttctl/config.yaml`) and
-    // the home-default token path (`~/.ttctl/auth.token`) cannot accidentally
-    // pick up the user's real files. The tests then explicitly opt into the
-    // env-var path via `TTCTL_CONFIG_FILE`.
     process.env["HOME"] = tmpRoot;
     process.env["USERPROFILE"] = tmpRoot;
   });
@@ -61,13 +57,12 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (#95)", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it("loads the token from a config file pointed to by TTCTL_CONFIG_FILE", async () => {
-    // Fixture: a config that pins the token alongside it (relative-path
-    // branch of `resolveAuthTokenPath`) so the test can pre-seed a known
-    // token without touching the user's home directory.
+  it("loads the in-memory token from a Form D config pointed to by TTCTL_CONFIG_FILE", async () => {
+    // Form D fixture: credentials + token live in the SAME YAML file post-#107.
     const configPath = join(tmpRoot, "from-env.yaml");
-    writeFileSync(configPath, "auth: op://Personal/ttctl\nauth-token-path: ./auth.token\n");
-    writeFileSync(join(tmpRoot, "auth.token"), "user_abc123_xyz789\n");
+    writeFileSync(configPath, "auth:\n  credentials: op://Personal/ttctl\n  token: user_abc123_xyz789\n", {
+      mode: 0o600,
+    });
     process.env["TTCTL_CONFIG_FILE"] = configPath;
 
     const result = await resolveToolAuth();
@@ -75,6 +70,19 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (#95)", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.token).toBe("user_abc123_xyz789");
+    }
+  });
+
+  it("loads the in-memory token from a Form C (token-only) config", async () => {
+    const configPath = join(tmpRoot, "token-only.yaml");
+    writeFileSync(configPath, "auth:\n  token: user_token_only_xyz\n", { mode: 0o600 });
+    process.env["TTCTL_CONFIG_FILE"] = configPath;
+
+    const result = await resolveToolAuth();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.token).toBe("user_token_only_xyz");
     }
   });
 
@@ -90,13 +98,9 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (#95)", () => {
     }
   });
 
-  it("returns UNAUTHENTICATED response when TTCTL_CONFIG_FILE is valid but the token file is missing", async () => {
-    // Config exists and parses, but no token has been persisted yet (the
-    // first-run case before `ttctl auth signin`). MCP must surface the
-    // UNAUTHENTICATED hint, not a generic config error.
+  it("returns UNAUTHENTICATED response when config is Form A (credentials only, no token)", async () => {
     const configPath = join(tmpRoot, "no-token.yaml");
-    writeFileSync(configPath, "auth: op://Personal/ttctl\nauth-token-path: ./auth.token\n");
-    // Deliberately no auth.token file alongside.
+    writeFileSync(configPath, "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
     process.env["TTCTL_CONFIG_FILE"] = configPath;
 
     const result = await resolveToolAuth();
@@ -108,30 +112,53 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (#95)", () => {
     }
   });
 
-  it("TTCTL_CONFIG_FILE wins over $XDG_CONFIG_HOME/ttctl/config.yaml", async () => {
+  it("TTCTL_CONFIG_FILE wins over ~/.ttctl.yaml", async () => {
     // Two valid configs with different token contents. The env-var-pointed
     // one should be the one that loads.
     const envConfig = join(tmpRoot, "from-env.yaml");
-    writeFileSync(envConfig, "auth: op://Personal/from-env\nauth-token-path: ./from-env.token\n");
-    writeFileSync(join(tmpRoot, "from-env.token"), "from-env-token\n");
+    writeFileSync(envConfig, "auth:\n  token: from-env-token-aaa\n", { mode: 0o600 });
 
-    const xdgDir = join(tmpRoot, "xdg");
-    const xdgTtctlDir = join(xdgDir, "ttctl");
-    mkdirSync(xdgTtctlDir, { recursive: true });
-    writeFileSync(
-      join(xdgTtctlDir, "config.yaml"),
-      "auth: op://Personal/from-xdg\nauth-token-path: ./from-xdg.token\n",
-    );
-    writeFileSync(join(xdgTtctlDir, "from-xdg.token"), "from-xdg-token\n");
+    const homeConfig = join(tmpRoot, ".ttctl.yaml");
+    writeFileSync(homeConfig, "auth:\n  token: from-home-token-bbb\n", { mode: 0o600 });
 
     process.env["TTCTL_CONFIG_FILE"] = envConfig;
-    process.env["XDG_CONFIG_HOME"] = xdgDir;
 
     const result = await resolveToolAuth();
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.token).toBe("from-env-token");
+      expect(result.token).toBe("from-env-token-aaa");
+    }
+  });
+
+  it("REGRESSION: $XDG_CONFIG_HOME/ttctl/config.yaml is NOT consulted post-#107", async () => {
+    // Seed an XDG location with a token; resolveToolAuth must IGNORE it.
+    const xdgDir = join(tmpRoot, "xdg");
+    const xdgTtctlDir = join(xdgDir, "ttctl");
+    mkdirSync(xdgTtctlDir, { recursive: true });
+    writeFileSync(join(xdgTtctlDir, "config.yaml"), "auth:\n  token: from-xdg-should-not-be-loaded\n", { mode: 0o600 });
+    process.env["XDG_CONFIG_HOME"] = xdgDir;
+    // No TTCTL_CONFIG_FILE, no ~/.ttctl.yaml — only the XDG-resident config
+    // exists. resolveToolAuth must fall through to NO_CREDS.
+
+    const result = await resolveToolAuth();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.isError).toBe(true);
+      expect(result.response.content[0]?.text).toContain("(Code: NO_CREDS)");
+    }
+  });
+
+  it("falls back to ~/.ttctl.yaml when TTCTL_CONFIG_FILE is unset", async () => {
+    const homeConfig = join(tmpRoot, ".ttctl.yaml");
+    writeFileSync(homeConfig, "auth:\n  token: from-home-fallback-zzz\n", { mode: 0o600 });
+
+    const result = await resolveToolAuth();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.token).toBe("from-home-fallback-zzz");
     }
   });
 });

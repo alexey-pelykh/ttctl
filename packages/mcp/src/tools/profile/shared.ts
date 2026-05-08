@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import {
-  ConfigError,
-  DateInputError,
-  TtctlError,
-  loadAuthToken,
-  profile,
-  resolveAuthTokenPath,
-  resolveConfig,
-} from "@ttctl/core";
+import { ConfigError, DateInputError, TtctlError, profile, resolveConfig } from "@ttctl/core";
 import { z } from "zod";
 
 import { ttctlErrorToToolResponse } from "../../errors.js";
@@ -97,10 +89,10 @@ export function presentToolError(commandLabel: string, err: unknown): ToolErrorR
 export type AuthResolution = { token: string } | { error: ToolErrorResponse };
 
 export async function resolveTokenForTool(commandLabel: string): Promise<AuthResolution> {
-  let tokenPath: string;
+  let token: string | undefined;
   try {
-    const { config, path: configPath } = resolveConfig();
-    tokenPath = resolveAuthTokenPath({ config, configPath });
+    const { config } = resolveConfig();
+    token = config.auth.token;
   } catch (err) {
     if (err instanceof ConfigError) {
       return {
@@ -112,8 +104,7 @@ export async function resolveTokenForTool(commandLabel: string): Promise<AuthRes
     }
     throw err;
   }
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
+  if (token === undefined) {
     return {
       error: {
         isError: true,
@@ -126,5 +117,5 @@ export async function resolveTokenForTool(commandLabel: string): Promise<AuthRes
       },
     };
   }
-  return { token };
+  return Promise.resolve({ token });
 }
