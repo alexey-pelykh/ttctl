@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import type { AuthValue } from "./config.js";
+import type { AuthCredentials } from "./config.js";
 import { resolveOnePasswordReference } from "./onepassword.js";
 import { stockTransport } from "./transport.js";
 import type { TransportResponse } from "./transport.js";
@@ -70,16 +70,23 @@ interface ViewerResponse {
 }
 
 /**
- * Collapse the polymorphic auth value into resolved credentials.
+ * Collapse the polymorphic credentials value into resolved credentials.
  *
- * Form A (string)  → `op://VAULT/ITEM` → resolved via `op` CLI
- * Form B (object)  → literal `{ email, password }`
+ * Form A (string) → `op://[account/]vault/item` → resolved via `op` CLI
+ * Form B (object) → literal `{ username, password }` (username is an email
+ *                   per Toptal's `EmailPasswordSignIn` mutation contract;
+ *                   the YAML field is named `username` to match 1Password's
+ *                   USERNAME purpose semantics)
+ *
+ * Returns the internal `Credentials` shape `{ email, password }` — that's
+ * the GraphQL parameter name for the mutation. The username/email
+ * synonymy is documented and load-bearing.
  */
-export function resolveCredentials(auth: AuthValue): Credentials {
+export function resolveCredentials(auth: AuthCredentials): Credentials {
   if (typeof auth === "string") {
     return resolveOnePasswordReference(auth);
   }
-  return { email: auth.email, password: auth.password };
+  return { email: auth.username, password: auth.password };
 }
 
 /**
