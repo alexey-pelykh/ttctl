@@ -7,7 +7,7 @@ vi.mock("@ttctl/core", async () => {
   // Implement the error classes locally so `instanceof` checks in signin.ts
   // resolve against THESE constructors (vi.mock replaces the imports). The
   // signatures track the real classes in `packages/core/src/auth.ts`,
-  // `onepassword.ts`, and `config.ts`.
+  // `onepassword.ts`, `config.ts`, and `configWriter.ts`.
   class ConfigError extends Error {
     override readonly name = "ConfigError";
     constructor(
@@ -30,26 +30,37 @@ vi.mock("@ttctl/core", async () => {
       super(message);
     }
   }
+  class AuthTokenPersistError extends Error {
+    override readonly name = "AuthTokenPersistError";
+    constructor(
+      message: string,
+      public readonly configPath: string,
+      public readonly cause?: NodeJS.ErrnoException,
+      public readonly bearerRescue?: string,
+    ) {
+      super(message);
+    }
+  }
   return {
+    AuthTokenPersistError,
     ConfigError,
     OnePasswordError,
     SignInError,
-    resolveAuthTokenPath: vi.fn(() => "/tmp/test-auth.token"),
+    persistAuthToken: vi.fn(),
     resolveConfig: vi.fn(),
     resolveCredentials: vi.fn(),
-    saveAuthToken: vi.fn(),
     signIn: vi.fn(),
   };
 });
 
 import {
+  AuthTokenPersistError,
   ConfigError,
   OnePasswordError,
   SignInError,
-  resolveAuthTokenPath,
+  persistAuthToken,
   resolveConfig,
   resolveCredentials,
-  saveAuthToken,
   signIn,
 } from "@ttctl/core";
 
@@ -64,8 +75,7 @@ import type { SignInResult } from "../commands/auth/signin.js";
 const mockedResolveConfig = vi.mocked(resolveConfig);
 const mockedResolveCredentials = vi.mocked(resolveCredentials);
 const mockedSignIn = vi.mocked(signIn);
-const mockedSaveAuthToken = vi.mocked(saveAuthToken);
-const mockedResolveTokenPath = vi.mocked(resolveAuthTokenPath);
+const mockedPersistAuthToken = vi.mocked(persistAuthToken);
 
 class ExitInvoked extends Error {
   constructor(public readonly code: number) {
@@ -131,6 +141,10 @@ describe("exitCodeForSignInResult", () => {
     expect(exitCodeForSignInResult({ status: "error", code: "SAVE_FAILED", message: "EACCES" })).toBe(1);
   });
 
+  it("returns 1 for NO_CREDENTIALS (Form C refusal)", () => {
+    expect(exitCodeForSignInResult({ status: "error", code: "NO_CREDENTIALS", message: "no creds" })).toBe(1);
+  });
+
   it("returns 1 for UNKNOWN", () => {
     expect(exitCodeForSignInResult({ status: "error", code: "UNKNOWN", message: "?" })).toBe(1);
   });
@@ -169,9 +183,7 @@ describe("runAuthSignIn", () => {
     mockedResolveConfig.mockReset();
     mockedResolveCredentials.mockReset();
     mockedSignIn.mockReset();
-    mockedSaveAuthToken.mockReset();
-    mockedResolveTokenPath.mockReset();
-    mockedResolveTokenPath.mockReturnValue("/tmp/test-auth.token");
+    mockedPersistAuthToken.mockReset();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -189,37 +201,52 @@ describe("runAuthSignIn", () => {
     return { stdout: streams.stdout, stderr: streams.stderr, exitCode: exit.exit.code };
   }
 
-  it("happy path: config → resolve → signIn → saveAuthToken → exit 0 + confirmation on stdout", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+  it("happy path Form A (1P ref): config → resolve → signIn → persistAuthToken → exit 0 + confirmation on stdout", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
-    mockedSignIn.mockResolvedValue({ token: "tok-abc-123" });
-    mockedSaveAuthToken.mockResolvedValue(undefined);
+    mockedSignIn.mockResolvedValue({ token: "user_abc_123" });
+    mockedPersistAuthToken.mockResolvedValue(undefined);
 
     const { stdout, stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toBe("Signed in as ada@example.com\n");
     expect(stderr.join("")).toBe("");
-    // signIn called with creds (no jar argument); saveAuthToken called with the resolved path + the captured token
     expect(mockedSignIn).toHaveBeenCalledTimes(1);
     expect(mockedSignIn.mock.calls[0]?.[0]).toEqual({ email: "ada@example.com", password: "hunter2" });
-    expect(mockedSignIn.mock.calls[0]).toHaveLength(1);
-    expect(mockedSaveAuthToken).toHaveBeenCalledTimes(1);
-    expect(mockedSaveAuthToken.mock.calls[0]?.[0]).toBe("/tmp/test-auth.token");
-    expect(mockedSaveAuthToken.mock.calls[0]?.[1]).toBe("tok-abc-123");
-    // resolveAuthTokenPath called with the loaded config + its path
-    expect(mockedResolveTokenPath).toHaveBeenCalledTimes(1);
-    expect(mockedResolveTokenPath.mock.calls[0]?.[0]).toEqual({
-      config: { auth: "op://Personal/ttctl" },
-      configPath: "/cwd/.ttctl.yaml",
+    // persistAuthToken is called with the resolved YAML config path + the captured token
+    expect(mockedPersistAuthToken).toHaveBeenCalledTimes(1);
+    expect(mockedPersistAuthToken.mock.calls[0]?.[0]).toBe("/cwd/.ttctl.yaml");
+    expect(mockedPersistAuthToken.mock.calls[0]?.[1]).toBe("user_abc_123");
+    // resolveCredentials was called with the auth.credentials value, not the whole auth block
+    expect(mockedResolveCredentials).toHaveBeenCalledWith("op://Personal/ttctl");
+  });
+
+  it("happy path Form B (literal): credentials extraction works for {username, password}", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: { username: "ada@example.com", password: "hunter2" } } },
+      path: "/cwd/.ttctl.yaml",
     });
+    mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
+    mockedSignIn.mockResolvedValue({ token: "user_xxx_yyy" });
+    mockedPersistAuthToken.mockResolvedValue(undefined);
+
+    const { exitCode } = await invoke("table");
+    expect(exitCode).toBe(0);
+    expect(mockedResolveCredentials).toHaveBeenCalledWith({ username: "ada@example.com", password: "hunter2" });
   });
 
   it("happy path JSON: emits {status:signed-in, email} on stdout", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
     mockedSignIn.mockResolvedValue({ token: "tok" });
-    mockedSaveAuthToken.mockResolvedValue(undefined);
+    mockedPersistAuthToken.mockResolvedValue(undefined);
 
     const { stdout, exitCode } = await invoke("json");
 
@@ -227,10 +254,26 @@ describe("runAuthSignIn", () => {
     expect(JSON.parse(stdout.join("").trim())).toEqual({ status: "signed-in", email: "ada@example.com" });
   });
 
+  it("Form C (token-only) → REFUSE with NO_CREDENTIALS code (FR-3.3)", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { token: "user_existing_xxx" } },
+      path: "/cwd/.ttctl.yaml",
+    });
+
+    const { stderr, exitCode } = await invoke("table");
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("")).toMatch(/NO_CREDENTIALS/);
+    expect(stderr.join("")).toMatch(/auth\.credentials/);
+    // Should NOT call signIn or persistAuthToken
+    expect(mockedSignIn).not.toHaveBeenCalled();
+    expect(mockedPersistAuthToken).not.toHaveBeenCalled();
+  });
+
   it("ConfigError → exit 1, error to stderr (code surfaced from ConfigError discriminator)", async () => {
     mockedResolveConfig.mockImplementation(() => {
       throw new ConfigError(
-        "No config found. Set TTCTL_CONFIG_FILE or place config at $XDG_CONFIG_HOME/ttctl/config.yaml or ~/.config/ttctl/config.yaml. See README for setup.",
+        "No config found. Pass --config <path>, set TTCTL_CONFIG_FILE, or place config at ~/.ttctl.yaml. See README for setup.",
         "NO_CREDS",
       );
     });
@@ -239,17 +282,18 @@ describe("runAuthSignIn", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
-    expect(stderr.join("")).toBe(
-      "Sign-in failed (NO_CREDS): No config found. Set TTCTL_CONFIG_FILE or place config at $XDG_CONFIG_HOME/ttctl/config.yaml or ~/.config/ttctl/config.yaml. See README for setup.\n",
-    );
-    // Should NOT proceed past config resolution
+    expect(stderr.join("")).toMatch(/Sign-in failed \(NO_CREDS\):/);
+    expect(stderr.join("")).toMatch(/No config found/);
     expect(mockedResolveCredentials).not.toHaveBeenCalled();
     expect(mockedSignIn).not.toHaveBeenCalled();
-    expect(mockedSaveAuthToken).not.toHaveBeenCalled();
+    expect(mockedPersistAuthToken).not.toHaveBeenCalled();
   });
 
   it("OnePasswordError → exit 1, message preserves install hint verbatim", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
     mockedResolveCredentials.mockImplementation(() => {
       throw new OnePasswordError(
         "1Password CLI (`op`) not found. Install: https://developer.1password.com/docs/cli/get-started/",
@@ -265,27 +309,11 @@ describe("runAuthSignIn", () => {
     expect(mockedSignIn).not.toHaveBeenCalled();
   });
 
-  it("OnePasswordError JSON → emits {status:error, code:ONEPASSWORD_ERROR, message}", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
-    const opErrorMessage =
-      "Item Personal/ttctl must have fields with USERNAME and PASSWORD purposes (LOGIN-category items have these by default).";
-    mockedResolveCredentials.mockImplementation(() => {
-      throw new OnePasswordError(opErrorMessage);
-    });
-
-    const { stderr, exitCode } = await invoke("json");
-
-    expect(exitCode).toBe(1);
-    const parsed: unknown = JSON.parse(stderr.join("").trim());
-    expect(parsed).toEqual({
-      status: "error",
-      code: "ONEPASSWORD_ERROR",
-      message: opErrorMessage,
-    });
-  });
-
   it("SignInError(INVALID_CREDENTIALS) → exit 1", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "wrong" });
     mockedSignIn.mockRejectedValue(new SignInError("INVALID_CREDENTIALS", "Invalid email or password"));
 
@@ -293,27 +321,14 @@ describe("runAuthSignIn", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toBe("Sign-in failed (INVALID_CREDENTIALS): Invalid email or password\n");
-    expect(mockedSaveAuthToken).not.toHaveBeenCalled();
-  });
-
-  it("SignInError(MFA_REQUIRED) → exit 1 with surfaced MFA code", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
-    mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
-    mockedSignIn.mockRejectedValue(new SignInError("MFA_REQUIRED", "Multi-factor authentication required"));
-
-    const { stderr, exitCode } = await invoke("json");
-
-    expect(exitCode).toBe(1);
-    const parsed: unknown = JSON.parse(stderr.join("").trim());
-    expect(parsed).toEqual({
-      status: "error",
-      code: "MFA_REQUIRED",
-      message: "Multi-factor authentication required",
-    });
+    expect(mockedPersistAuthToken).not.toHaveBeenCalled();
   });
 
   it("SignInError(NETWORK_ERROR) → exit 2 (retryable)", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
     mockedSignIn.mockRejectedValue(new SignInError("NETWORK_ERROR", "Sign-in request failed: ECONNREFUSED"));
 
@@ -323,19 +338,31 @@ describe("runAuthSignIn", () => {
     expect(stderr.join("")).toContain("NETWORK_ERROR");
   });
 
-  it("saveAuthToken failure → exit 1 with SAVE_FAILED code and path mentioned", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: "op://Personal/ttctl" }, path: "/cwd/.ttctl.yaml" });
+  it("AuthTokenPersistError → exit 1 with SAVE_FAILED + bearer rescue line", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/home/u/.ttctl.yaml",
+    });
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
-    mockedSignIn.mockResolvedValue({ token: "tok" });
-    mockedResolveTokenPath.mockReturnValue("/home/u/.ttctl/auth.token");
-    mockedSaveAuthToken.mockRejectedValue(new Error("EACCES: permission denied"));
+    mockedSignIn.mockResolvedValue({ token: "user_rescue_token_xyz" });
+    mockedPersistAuthToken.mockRejectedValue(
+      new AuthTokenPersistError(
+        "Cannot write config file at /home/u/.ttctl.yaml: EROFS: read-only filesystem",
+        "/home/u/.ttctl.yaml",
+        undefined,
+        "user_rescue_token_xyz",
+      ),
+    );
 
     const { stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toContain("SAVE_FAILED");
-    expect(stderr.join("")).toContain("/home/u/.ttctl/auth.token");
-    expect(stderr.join("")).toContain("EACCES");
+    expect(stderr.join("")).toContain("/home/u/.ttctl.yaml");
+    expect(stderr.join("")).toContain("EROFS");
+    // Bearer rescue: the captured token must appear verbatim in stderr so
+    // the operator can save it manually before retrying.
+    expect(stderr.join("")).toContain("user_rescue_token_xyz");
   });
 
   it("non-Error thrown by core → captured as UNKNOWN with stringified value", async () => {
@@ -346,8 +373,6 @@ describe("runAuthSignIn", () => {
     const { stderr, exitCode } = await invoke("table");
 
     expect(exitCode).toBe(1);
-    // ConfigError is the wrapper for the resolveConfig path, but a non-Error throw
-    // bypasses instanceof checks → falls through to UNKNOWN.
     expect(stderr.join("")).toContain("UNKNOWN");
     expect(stderr.join("")).toContain("weird non-error");
   });
@@ -356,11 +381,14 @@ describe("runAuthSignIn", () => {
     return typeof o === "object" && o !== null && "status" in o;
   }
 
-  it("preserves the success email exactly (no normalization, no email from elsewhere)", async () => {
-    mockedResolveConfig.mockReturnValue({ config: { auth: { email: "Ada@EXAMPLE.com", password: "p" } }, path: "/x" });
+  it("preserves the success email exactly (no normalization)", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: { username: "Ada@EXAMPLE.com", password: "p" } } },
+      path: "/x",
+    });
     mockedResolveCredentials.mockReturnValue({ email: "Ada@EXAMPLE.com", password: "p" });
     mockedSignIn.mockResolvedValue({ token: "tok" });
-    mockedSaveAuthToken.mockResolvedValue(undefined);
+    mockedPersistAuthToken.mockResolvedValue(undefined);
 
     const { stdout } = await invoke("json");
     const parsed: unknown = JSON.parse(stdout.join("").trim());

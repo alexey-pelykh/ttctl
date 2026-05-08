@@ -6,7 +6,7 @@ import { TtctlError, profile } from "@ttctl/core";
 import { presentTtctlError } from "../../../errors.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { loadAuthTokenOrExit, resolveAuthTokenPathOrExit } from "./_shared.js";
+import { loadAuthTokenOrExit } from "./_shared.js";
 
 const COMMAND_LABEL = "profile external advanced-wizard show";
 
@@ -18,8 +18,7 @@ const COMMAND_LABEL = "profile external advanced-wizard show";
  * `advancedProfileWizardStatus`, so a single query suffices.
  */
 export async function runProfileExternalAdvancedWizardShow(format: OutputFormat): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit(COMMAND_LABEL);
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL, tokenPath);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
 
   let result: profile.external.AdvancedProfileSnapshot;
   try {

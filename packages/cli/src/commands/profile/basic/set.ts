@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { resolveAuthTokenPathOrExit, truncate } from "./show.js";
+import { loadAuthTokenOrExit } from "../shared.js";
+import { truncate } from "./show.js";
 
 /**
  * Action handler for `ttctl profile basic update` (also reachable as the
@@ -71,14 +72,7 @@ export async function runProfileBasicUpdate(options: {
   if (bio !== undefined) changes.bio = bio;
   if (headline !== undefined) changes.headline = headline;
 
-  const tokenPath = resolveAuthTokenPathOrExit("profile update");
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "profile update failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("profile update");
 
   let result: profile.basic.UpdateProfileResult;
   try {

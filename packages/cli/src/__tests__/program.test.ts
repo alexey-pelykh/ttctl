@@ -8,28 +8,23 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Partial mock: re-export everything from real `@ttctl/core` (so the program
-// module's transitive imports — `ConfigError`, `loadAuthToken`, etc. across
-// every sub-command file — resolve correctly) and override only the entry
-// points the tests need to spy on.
+// module's transitive imports across every sub-command file resolve
+// correctly) and override only the entry points the tests need to spy on.
 vi.mock("@ttctl/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@ttctl/core")>();
   return {
     ...actual,
     resolveConfig: vi.fn(),
-    resolveAuthTokenPath: vi.fn(() => "/tmp/test-auth.token"),
-    loadAuthToken: vi.fn(async () => null),
     getAuthStatus: vi.fn(),
   };
 });
 
-import { resolveConfig, resolveAuthTokenPath, loadAuthToken, getAuthStatus } from "@ttctl/core";
+import { resolveConfig, getAuthStatus } from "@ttctl/core";
 
 import { getCliConfigPath, resetCliConfigPath } from "../lib/config-context.js";
 import { buildProgram } from "../program.js";
 
 const mockedResolveConfig = vi.mocked(resolveConfig);
-const mockedResolveAuthTokenPath = vi.mocked(resolveAuthTokenPath);
-const mockedLoadAuthToken = vi.mocked(loadAuthToken);
 const mockedGetAuthStatus = vi.mocked(getAuthStatus);
 
 class ExitInvoked extends Error {
@@ -86,20 +81,16 @@ describe("program --config flag", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "ttctl-test-"));
     fixturePath = join(tmpDir, "config.yaml");
-    writeFileSync(fixturePath, "auth: 'op://Personal/ttctl'\n");
+    writeFileSync(fixturePath, "auth:\n  credentials: 'op://Personal/ttctl'\n");
 
     // Reset module-scoped state between tests to keep them independent.
     resetCliConfigPath();
 
     mockedResolveConfig.mockReset();
     mockedResolveConfig.mockReturnValue({
-      config: { auth: "op://Personal/ttctl" },
+      config: { auth: { credentials: "op://Personal/ttctl" } },
       path: fixturePath,
     });
-    mockedResolveAuthTokenPath.mockReset();
-    mockedResolveAuthTokenPath.mockReturnValue("/tmp/test-auth.token");
-    mockedLoadAuthToken.mockReset();
-    mockedLoadAuthToken.mockResolvedValue(null);
     mockedGetAuthStatus.mockReset();
     mockedGetAuthStatus.mockResolvedValue({ status: "invalid", reason: "no-session" });
 
@@ -141,7 +132,7 @@ describe("program --config flag", () => {
     expect(mockedResolveConfig).toHaveBeenCalledWith({ path: fixturePath });
   });
 
-  it("no --config: resolveConfig is called WITHOUT a path arg (lets core fall back to TTCTL_CONFIG_FILE / XDG / home)", async () => {
+  it("no --config: resolveConfig is called WITHOUT a path arg (lets core fall back to TTCTL_CONFIG_FILE / ~/.ttctl.yaml)", async () => {
     const program = buildProgram();
     program.exitOverride();
     captureStdout();
@@ -153,8 +144,6 @@ describe("program --config flag", () => {
     }
     expect(getCliConfigPath()).toBeUndefined();
     expect(mockedResolveConfig).toHaveBeenCalledTimes(1);
-    // Called with no args — `resolveConfigForCli()` short-circuits to
-    // `resolveConfig()` rather than `resolveConfig({ path: undefined })`.
     expect(mockedResolveConfig).toHaveBeenCalledWith();
   });
 
@@ -169,8 +158,6 @@ describe("program --config flag", () => {
     } catch (err) {
       if (!(err instanceof ExitInvoked)) throw err;
     }
-    // CLI behaves as "no --config given"; core's discoverConfigPath
-    // honors TTCTL_CONFIG_FILE on its own.
     expect(getCliConfigPath()).toBeUndefined();
     expect(mockedResolveConfig).toHaveBeenCalledWith();
   });
@@ -188,8 +175,6 @@ describe("program --config flag", () => {
     }
     expect(getCliConfigPath()).toBe(fixturePath);
     expect(mockedResolveConfig).toHaveBeenCalledWith({ path: fixturePath });
-    // The env var would have been honored if we'd passed `{ path: undefined }`,
-    // but the explicit value wins by being passed verbatim to core.
     expect(mockedResolveConfig).not.toHaveBeenCalledWith();
   });
 
@@ -209,10 +194,7 @@ describe("program --config flag", () => {
     const stderrText = stderr.lines.join("");
     expect(stderrText).toContain("NO_CREDS");
     expect(stderrText).toContain(missingPath);
-    // Nothing downstream should fire — the action never reaches the resolver.
     expect(mockedResolveConfig).not.toHaveBeenCalled();
-    expect(mockedResolveAuthTokenPath).not.toHaveBeenCalled();
-    expect(mockedLoadAuthToken).not.toHaveBeenCalled();
     expect(mockedGetAuthStatus).not.toHaveBeenCalled();
   });
 });
@@ -227,7 +209,7 @@ describe("program help and metadata", () => {
     const helpText = program.helpInformation();
     expect(helpText).toContain("--config <path>");
     // The description should mention precedence vs. TTCTL_CONFIG_FILE
-    // and the XDG/home defaults so users see WHEN to reach for the flag.
+    // and the home default so users see WHEN to reach for the flag.
     expect(helpText).toContain("TTCTL_CONFIG_FILE");
   });
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import type { OutputFormat } from "../../../lib/output.js";
+import { loadAuthTokenOrExit } from "../shared.js";
 import { formatPhotoText, formatPhotoTable } from "./photo-show.js";
-import { resolveAuthTokenPathOrExit } from "./show.js";
 
 /**
  * Action handler for `ttctl profile basic photo upload <file>`. Reads the
@@ -27,14 +27,7 @@ import { resolveAuthTokenPathOrExit } from "./show.js";
  *     profile photo upload failed (VALIDATION_ERROR): Photo file not readable: ENOENT ...
  */
 export async function runProfileBasicPhotoUpload(filePath: string, format: OutputFormat): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit("profile show");
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "profile photo upload failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("profile photo upload");
 
   let result: profile.basic.PhotoUrl;
   try {

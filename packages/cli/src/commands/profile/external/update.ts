@@ -5,7 +5,7 @@ import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { loadAuthTokenOrExit, resolveAuthTokenPathOrExit, truncate } from "./_shared.js";
+import { loadAuthTokenOrExit, truncate } from "./_shared.js";
 
 const COMMAND_LABEL = "profile external update";
 
@@ -43,8 +43,7 @@ export async function runProfileExternalUpdate(options: {
     process.exit(1);
   }
 
-  const tokenPath = resolveAuthTokenPathOrExit(COMMAND_LABEL);
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL, tokenPath);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
 
   let result: profile.external.UpdateExternalProfilesResult;
   try {

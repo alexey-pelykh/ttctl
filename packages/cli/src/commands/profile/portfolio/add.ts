@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { handleConfigError } from "./shared.js";
+import { loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile portfolio add`. Creates a new
@@ -43,18 +42,7 @@ export async function runProfilePortfolioAdd(options: {
     process.exit(1);
   }
   const link = options.link ?? options.url;
-
-  const tokenPath = handleConfigError("portfolio add", () => {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  });
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "portfolio add failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("portfolio add");
 
   // Optional cover-image upload BEFORE create. The two calls are sequenced
   // because `createPortfolioItem` needs the server-issued cache name to

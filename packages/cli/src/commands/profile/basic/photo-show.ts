@@ -2,12 +2,12 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { TtctlError, loadAuthToken, profile } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { resolveAuthTokenPathOrExit } from "./show.js";
+import { loadAuthTokenOrExit } from "../shared.js";
 
 /**
  * Action handler for `ttctl profile basic photo show`. Loads the persisted
@@ -21,14 +21,7 @@ import { resolveAuthTokenPathOrExit } from "./show.js";
  * to render `Cf403Error` walkthroughs and `ProfileError` codes.
  */
 export async function runProfileBasicPhotoShow(format: OutputFormat): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit("profile show");
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "profile photo show failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("profile photo show");
 
   let photo: profile.basic.PhotoUrl;
   try {

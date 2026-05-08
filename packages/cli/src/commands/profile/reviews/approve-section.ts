@@ -6,7 +6,7 @@ import { TtctlError, profile } from "@ttctl/core";
 import { presentTtctlError } from "../../../errors.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { formatApproveResult } from "./approve-item.js";
-import { loadAuthTokenOrExit, resolveAuthTokenPathOrExit } from "./_shared.js";
+import { loadAuthTokenOrExit } from "./_shared.js";
 
 const COMMAND_LABEL = "profile reviews approve-section";
 
@@ -22,8 +22,7 @@ export async function runProfileReviewsApproveSection(options: {
   section: string;
   output: OutputFormat;
 }): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit(COMMAND_LABEL);
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL, tokenPath);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
 
   let result: profile.reviews.ApproveSectionReviewResult;
   try {

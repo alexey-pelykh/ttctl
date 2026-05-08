@@ -3,50 +3,21 @@
 
 import Table from "cli-table3";
 import { Command, Option } from "commander";
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
+import { loadAuthTokenOrExit } from "../shared.js";
 
 /**
- * Resolve the auth-token path or exit with `(${err.code}): ...` where
- * `err.code` is the `ConfigError` discriminator (`NO_CREDS` / `PARSE` /
- * `VALIDATION` / `PERMISSION`). Mirrors `profile/basic/show.ts`'s helper
- * of the same name — keeping it local here avoids cross-sub-domain
- * coupling between CLI directories. The returned `commandLabel` is
- * interpolated into the stderr prefix.
+ * Local alias for the parent `loadAuthTokenOrExit` helper to keep this
+ * file's existing call sites (`loadTokenOrExit(commandLabel)`) unchanged.
+ * Post-#107 the function reads the token from the in-memory parsed config
+ * (`config.auth.token`) — there's no longer a separate token file to
+ * resolve.
  */
-function resolveTokenPathOrExit(commandLabel: string): string {
-  try {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  } catch (err) {
-    if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
-/**
- * Load the persisted auth token or exit with `UNAUTHENTICATED`. Used by
- * every action handler in this sub-domain — the boilerplate is identical
- * across leaves so a single helper keeps each handler small.
- */
-async function loadTokenOrExit(commandLabel: string): Promise<string> {
-  const tokenPath = resolveTokenPathOrExit(commandLabel);
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      `${commandLabel} failed (UNAUTHENTICATED): No auth token found. Run \`ttctl auth signin\` to sign in.\n`,
-    );
-    process.exit(1);
-  }
-  return token;
-}
+const loadTokenOrExit = loadAuthTokenOrExit;
 
 /**
  * Resolve the user's profileId for queries that need it (`list`,

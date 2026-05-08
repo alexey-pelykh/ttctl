@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { profile } from "@ttctl/core";
 
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { emitVisaListResult } from "./list.js";
-import { handleConfigError, handleVisasError } from "./shared.js";
+import { handleVisasError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile visas add`. Both `--country` (id)
@@ -30,18 +29,7 @@ export async function runProfileVisasAdd(options: {
       "warning: --issued is reserved (server has no `issuedDate` field on TravelVisaInput today); flag ignored.\n",
     );
   }
-
-  const tokenPath = handleConfigError("visas add", () => {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  });
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "visas add failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("visas add");
 
   const input: profile.visas.TravelVisaInput = {
     countryId: options.country,

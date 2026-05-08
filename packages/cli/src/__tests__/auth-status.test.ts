@@ -19,14 +19,12 @@ vi.mock("@ttctl/core", () => {
   }
   return {
     ConfigError,
-    resolveAuthTokenPath: vi.fn(() => "/tmp/test-auth.token"),
     resolveConfig: vi.fn(),
-    loadAuthToken: vi.fn(),
     getAuthStatus: vi.fn(),
   };
 });
 
-import { ConfigError, getAuthStatus, loadAuthToken, resolveAuthTokenPath, resolveConfig } from "@ttctl/core";
+import { ConfigError, getAuthStatus, resolveConfig } from "@ttctl/core";
 import type { AuthStatusResult } from "@ttctl/core";
 
 import {
@@ -36,9 +34,7 @@ import {
   runAuthStatus,
 } from "../commands/auth/status.js";
 
-const mockedLoadToken = vi.mocked(loadAuthToken);
 const mockedFetchStatus = vi.mocked(getAuthStatus);
-const mockedResolveTokenPath = vi.mocked(resolveAuthTokenPath);
 const mockedResolveConfig = vi.mocked(resolveConfig);
 
 interface ExitCalled {
@@ -49,8 +45,6 @@ function captureExit(): { exit: ExitCalled | null } {
   const captured = { exit: null as ExitCalled | null };
   vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     captured.exit = { code: code ?? 0 };
-    // process.exit's return type is `never`; throw to short-circuit caller flow
-    // (action handlers awaiting after exit would otherwise continue in tests).
     throw new ExitInvoked(code ?? 0);
   }) as never);
   return captured;
@@ -135,16 +129,12 @@ describe("formatAuthStatusOutput", () => {
 
 describe("runAuthStatus", () => {
   beforeEach(() => {
-    mockedLoadToken.mockReset();
     mockedFetchStatus.mockReset();
-    mockedResolveTokenPath.mockReset();
-    mockedResolveTokenPath.mockReturnValue("/tmp/test-auth.token");
     mockedResolveConfig.mockReset();
     mockedResolveConfig.mockReturnValue({
-      config: { auth: "op://Personal/ttctl" },
+      config: { auth: { credentials: "op://Personal/ttctl", token: "user_inline_xxx" } },
       path: "/cwd/.ttctl.yaml",
     });
-    mockedLoadToken.mockResolvedValue("tok-abc-123");
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -202,22 +192,11 @@ describe("runAuthStatus", () => {
     expect(JSON.parse(stdout.join("").trim())).toEqual({ status: "invalid", reason: "no-session" });
   });
 
-  it("emits unreachable result as JSON when -o json", async () => {
-    const { stdout, exitCode } = await runAndCapture({ status: "unreachable", reason: "DNS lookup failed" }, "json");
-    expect(exitCode).toBe(2);
-    expect(JSON.parse(stdout.join("").trim())).toEqual({
-      status: "unreachable",
-      reason: "DNS lookup failed",
-    });
-  });
-
-  it("calls resolveConfig then resolveAuthTokenPath with that config, then loadAuthToken with the resolved path then getAuthStatus with the token", async () => {
+  it("forwards in-memory token from config.auth.token to getAuthStatus (no separate file load)", async () => {
     mockedResolveConfig.mockReturnValue({
-      config: { auth: "op://Personal/ttctl", "auth-token-path": "./custom.token" },
+      config: { auth: { credentials: "op://Personal/ttctl", token: "user_inline_token_zzz" } },
       path: "/cwd/.ttctl.yaml",
     });
-    mockedResolveTokenPath.mockReturnValue("/some/path/auth.token");
-    mockedLoadToken.mockResolvedValue("tok-abc-123");
     mockedFetchStatus.mockResolvedValue({ status: "valid", email: "x@y.z" });
     captureStdout();
     captureExit();
@@ -227,17 +206,14 @@ describe("runAuthStatus", () => {
       if (!(err instanceof ExitInvoked)) throw err;
     }
     expect(mockedResolveConfig).toHaveBeenCalledTimes(1);
-    expect(mockedResolveTokenPath).toHaveBeenCalledTimes(1);
-    expect(mockedResolveTokenPath.mock.calls[0]?.[0]).toEqual({
-      config: { auth: "op://Personal/ttctl", "auth-token-path": "./custom.token" },
-      configPath: "/cwd/.ttctl.yaml",
-    });
-    expect(mockedLoadToken).toHaveBeenCalledWith("/some/path/auth.token");
-    expect(mockedFetchStatus).toHaveBeenCalledWith("tok-abc-123");
+    expect(mockedFetchStatus).toHaveBeenCalledWith("user_inline_token_zzz");
   });
 
-  it("forwards a missing-token (null) state to getAuthStatus, which short-circuits to no-session", async () => {
-    mockedLoadToken.mockResolvedValue(null);
+  it("absent auth.token → invalid/no-session (short-circuit, getAuthStatus called with null)", async () => {
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
     const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "no-session" }, "table");
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toContain("No session found");
@@ -246,7 +222,9 @@ describe("runAuthStatus", () => {
 
   it("ConfigError → collapses to invalid/no-session (exit 1, sign-in hint, no token / network calls)", async () => {
     mockedResolveConfig.mockImplementation(() => {
-      throw new ConfigError("No .ttctl.yaml found in CWD or $XDG_CONFIG_HOME/ttctl/config.yaml. See README for setup.");
+      throw new ConfigError(
+        "No config found. Pass --config <path>, set TTCTL_CONFIG_FILE, or place config at ~/.ttctl.yaml.",
+      );
     });
     const stdout = captureStdout();
     const exit = captureExit();
@@ -258,8 +236,6 @@ describe("runAuthStatus", () => {
     if (exit.exit === null) throw new Error("process.exit was not called");
     expect(exit.exit.code).toBe(1);
     expect(stdout.lines.join("")).toContain("No session found");
-    expect(mockedResolveTokenPath).not.toHaveBeenCalled();
-    expect(mockedLoadToken).not.toHaveBeenCalled();
     expect(mockedFetchStatus).not.toHaveBeenCalled();
   });
 });

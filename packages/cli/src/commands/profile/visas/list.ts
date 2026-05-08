@@ -2,29 +2,18 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { profile } from "@ttctl/core";
 
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { handleConfigError, handleVisasError } from "./shared.js";
+import { handleVisasError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile visas list`. Reads the user's
  * travel-visa records and emits via the cross-CLI output helper from #71.
  */
 export async function runProfileVisasList(format: OutputFormat): Promise<void> {
-  const tokenPath = handleConfigError("visas list", () => {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  });
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "visas list failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("visas list");
 
   let visas: profile.visas.TravelVisa[];
   try {

@@ -4,70 +4,18 @@
 /**
  * Shared helpers for `ttctl profile external` leaves.
  *
- * Each leaf needs the same auth-token boilerplate (load `.ttctl.yaml`,
- * resolve the token path, read the persisted token, surface a uniform
- * `UNAUTHENTICATED` message when missing). Centralising it here keeps the
- * per-leaf files focused on their own argument parsing and output
- * formatting.
- *
- * Co-located in the sub-tree (rather than promoted to `cli/src/lib/`) to
- * avoid collisions with the sister Wave-3 PRs (#73 / #74 / #75) which add
- * their own sub-trees in parallel.
+ * Re-exports `loadAuthTokenOrExit` from the parent `../shared.ts` so the
+ * sub-tree leaves can keep their `from "./_shared.js"` import shape
+ * unchanged across the #107 refactor. (Pre-#107 each sub-tree had its own
+ * implementation; post-#107 the auth-token logic is centralised at
+ * profile/shared.ts to consume the in-memory `config.auth.token`.)
  */
 
-import { ConfigError, loadAuthToken, resolveAuthTokenPath } from "@ttctl/core";
-
-import { resolveConfigForCli } from "../../../lib/config-context.js";
-
-/**
- * Resolve the persisted auth-token path from the user's `.ttctl.yaml`.
- *
- * `commandLabel` is the user-visible prefix that the CLI prints when a
- * `ConfigError` surfaces (e.g. `profile external update failed (NO_CREDS): …`).
- * The parenthesized code is the `ConfigError.code` discriminator
- * (`NO_CREDS` / `PARSE` / `VALIDATION` / `PERMISSION`). Pass the full
- * sub-command path so the user can map the error to the exact command
- * they invoked.
- *
- * Exits the process on `ConfigError`. Anything else is rethrown so the
- * caller's normal error flow handles it.
- */
-export function resolveAuthTokenPathOrExit(commandLabel: string): string {
-  try {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  } catch (err) {
-    if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
-/**
- * Load the persisted auth token, exiting with a uniform `UNAUTHENTICATED`
- * message if no token is on disk. Wraps the `loadAuthToken(path) → null`
- * convention in a one-liner that every leaf would otherwise duplicate.
- *
- * The exit message phrasing matches `profile.basic`'s "no token found"
- * message so the user-facing remediation is uniform across leaves.
- */
-export async function loadAuthTokenOrExit(commandLabel: string, path: string): Promise<string> {
-  const token = await loadAuthToken(path);
-  if (token === null) {
-    process.stderr.write(
-      `${commandLabel} failed (UNAUTHENTICATED): No auth token found. Run \`ttctl auth signin\` to sign in.\n`,
-    );
-    process.exit(1);
-  }
-  return token;
-}
+export { loadAuthTokenOrExit } from "../shared.js";
 
 /**
  * Truncate `s` to `width` characters with an ellipsis. Mirrors the helper
- * exported by `profile/basic/show.ts`. Co-located here rather than promoted
- * to a shared lib for the same parallelism rationale as the auth helpers.
+ * exported by `profile/basic/show.ts`.
  */
 export function truncate(s: string, width: number): string {
   if (s.length <= width) return s;

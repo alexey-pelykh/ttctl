@@ -2,35 +2,13 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 import type { ProfileShowQuery } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { resolveConfigForCli } from "../../../lib/config-context.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
-
-/**
- * Resolve the auth-token path from the user's `.ttctl.yaml` (honors the
- * optional `auth-token-path` field; falls back to platform defaults). A
- * `ConfigError` is surfaced verbatim and routed to stderr — the underlying
- * message already contains the actionable hint ("See README for setup").
- *
- * Used by both `profile basic show` and `profile basic update` to keep the
- * config-loading boilerplate in one place.
- */
-function resolveAuthTokenPathOrExit(commandLabel: "profile show" | "profile update"): string {
-  try {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
-  } catch (err) {
-    if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
-  }
-}
+import { loadAuthTokenOrExit } from "../shared.js";
 
 /**
  * Action handler for `ttctl profile basic show` (also reachable as the
@@ -48,14 +26,7 @@ function resolveAuthTokenPathOrExit(commandLabel: "profile show" | "profile upda
  * uniform across "never signed in" and "signed in but expired".
  */
 export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
-  const tokenPath = resolveAuthTokenPathOrExit("profile show");
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
-    process.stderr.write(
-      "profile show failed (UNAUTHENTICATED): No auth token found. Run `ttctl auth signin` to sign in.\n",
-    );
-    process.exit(1);
-  }
+  const token = await loadAuthTokenOrExit("profile show");
 
   let payload: ProfileShowQuery;
   try {
@@ -227,7 +198,6 @@ function truncate(s: string, width: number): string {
   return `${s.slice(0, width - 1)}…`;
 }
 
-// Helper re-exports for the sibling `set.ts` to share the auth-token
-// resolution and ellipsis truncation without duplicating either. Internal
-// to this folder; not part of the package's public surface.
-export { resolveAuthTokenPathOrExit, truncate };
+// Helper re-export for sibling `set.ts` / `photo-show.ts` / `photo-upload.ts`.
+// Internal to this folder; not part of the package's public surface.
+export { truncate };

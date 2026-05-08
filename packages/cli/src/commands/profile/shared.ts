@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, loadAuthToken, profile, resolveAuthTokenPath } from "@ttctl/core";
+import { ConfigError, TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../errors.js";
 import { resolveConfigForCli } from "../../lib/config-context.js";
 
 /**
- * Resolve the auth-token path from the user's `.ttctl.yaml` (honors
- * `auth-token-path`; falls back to platform defaults). On `ConfigError`,
- * surfaces the discriminator code (`NO_CREDS` / `PARSE` / `VALIDATION` /
- * `PERMISSION`) and the message verbatim, then exits non-zero.
+ * Load the persisted auth token from the user's `.ttctl.yaml` (in-memory
+ * read of `config.auth.token` after `resolveConfigForCli`). Exits with a
+ * uniform `UNAUTHENTICATED` stderr message when no token is present —
+ * Form A / B configs that haven't been signed-in yet, or post-signout
+ * Form A / Form C configs where the token field was removed.
  *
- * Mirrors the helper on `basic/show.ts` — extracted here so the four
- * sub-domains landing in #74 don't each re-import the same five symbols.
+ * Single-arg signature post-#107 — the prior dual-arg form
+ * (`loadAuthTokenOrExit(label, tokenPath)`) is gone because the token
+ * no longer lives in a separate file. Callers that need the in-memory
+ * config object alongside the token can use `resolveConfigForCli()` directly.
  *
- * The `commandLabel` argument is the user-visible prefix used in the
- * error line (e.g. `"profile education add"`); pick the leaf-verb pair
- * that triggered the call.
+ * `commandLabel` is the user-visible prefix used in the error line (e.g.
+ * `"profile education add"`); pick the leaf-verb pair that triggered the
+ * call so the user maps the error back to their command.
+ *
+ * Async signature is preserved (returns `Promise<string>`) for source-
+ * compatibility with the pre-#107 callers — every leaf already `await`s
+ * this function, and downgrading to sync would mean ~50 callers also
+ * change shape. The actual work is synchronous after `loadAuthToken` was
+ * removed alongside the separate token file.
  */
-export function resolveAuthTokenPathOrExit(commandLabel: string): string {
+export async function loadAuthTokenOrExit(commandLabel: string): Promise<string> {
+  let config: ReturnType<typeof resolveConfigForCli>["config"];
   try {
-    const { config, path: configPath } = resolveConfigForCli();
-    return resolveAuthTokenPath({ config, configPath });
+    ({ config } = resolveConfigForCli());
   } catch (err) {
     if (err instanceof ConfigError) {
       process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
@@ -30,25 +39,14 @@ export function resolveAuthTokenPathOrExit(commandLabel: string): string {
     }
     throw err;
   }
-}
-
-/**
- * Load the persisted auth token, exiting non-zero with an `UNAUTHENTICATED`
- * stderr message when no token is on disk. The "run `ttctl auth signin`"
- * hint matches the post-`AuthRevokedError` rendering, so the user sees a
- * uniform recovery path whether they've never signed in or signed in but
- * expired.
- */
-export async function loadAuthTokenOrExit(commandLabel: string): Promise<string> {
-  const tokenPath = resolveAuthTokenPathOrExit(commandLabel);
-  const token = await loadAuthToken(tokenPath);
-  if (token === null) {
+  const token = config.auth.token;
+  if (token === undefined) {
     process.stderr.write(
-      `${commandLabel} failed (UNAUTHENTICATED): No auth token found. Run \`ttctl auth signin\` to sign in.\n`,
+      `${commandLabel} failed (UNAUTHENTICATED): No auth token found in config. Run \`ttctl auth signin\` to sign in.\n`,
     );
     process.exit(1);
   }
-  return token;
+  return Promise.resolve(token);
 }
 
 /**
