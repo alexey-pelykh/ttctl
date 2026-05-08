@@ -21,59 +21,132 @@ import { z } from "zod";
  *
  * Per-field references (`op://VAULT/ITEM/FIELD` or 4+ segments) are
  * deliberately NOT supported — TTCtl always reads `username` and `password`
- * from a single item. Schema rejects per-field URIs with a clear error.
+ * from a single LOGIN-category item. The regex rejects 4+ segments.
  */
-const OnePasswordItemRefSchema = z
+const OnePasswordReferenceSchema = z
   .string()
-  .regex(/^op:\/\/(?:[^/]+\/)?[^/]+\/[^/]+$/, "auth string must be op://[account/]vault/item (no /field suffix)");
+  .regex(/^op:\/\/(?:[^/]+\/)?[^/]+\/[^/]+$/, "auth.credentials must be op://[account/]vault/item (no /field suffix)");
 
 /**
  * Literal credentials in YAML — discouraged for daily use; the 1Password form
  * is recommended.
+ *
+ * Field name is `username` (matching 1Password's `USERNAME` purpose semantics
+ * and the issue's user-facing schema). The value must be a valid email since
+ * Toptal's `EmailPasswordSignIn` mutation only accepts emails.
  */
-const LiteralCredentialsSchema = z.object({
-  email: z.email(),
-  password: z.string().min(1),
-});
+const LiteralCredentialsSchema = z
+  .object({
+    username: z.email({ message: "auth.credentials.username must be a valid email address" }),
+    password: z.string().min(1, { message: "auth.credentials.password must be a non-empty string" }),
+  })
+  .strict();
 
 /**
- * Polymorphic auth schema:
- *   - string  → 1Password item reference
- *   - object  → literal email + password
+ * Polymorphic credentials value:
+ *   - string → 1Password item reference (Form A)
+ *   - object → literal { username, password } (Form B)
  *
- * Anything else (including per-field op:// refs) is rejected.
+ * The runtime `signIn()` flow collapses both into the internal `Credentials`
+ * shape `{ email, password }` (the GraphQL mutation parameter name is
+ * `email` — the YAML/op:// surface uses `username` to match 1Password's
+ * USERNAME purpose).
  */
-export const AuthSchema = z.union([OnePasswordItemRefSchema, LiteralCredentialsSchema]);
+export const AuthCredentialsSchema = z.union([OnePasswordReferenceSchema, LiteralCredentialsSchema]);
 
-export type AuthValue = z.infer<typeof AuthSchema>;
+export type AuthCredentials = z.infer<typeof AuthCredentialsSchema>;
+export type LiteralAuthCredentials = z.infer<typeof LiteralCredentialsSchema>;
 
 /**
- * Top-level `.ttctl.yaml` schema. Single-config; no profiles.
+ * `auth` block schema for runtime LOAD operations. Strict — rejects unknown
+ * fields and rejects an empty `auth: {}` (the user must author at least one
+ * of `credentials` or `token` for the runtime to be useful).
  *
- * Optional `auth-token-path` overrides the on-disk path of the persisted
- * session token (the value captured from `SignInPayload.token` and replayed
- * as `Authorization: Token token=<X>` on every GraphQL request). Resolution
- * (handled by `resolveAuthTokenPath` in `authToken.ts`):
+ * Four valid lifecycle states (Forms A-D from the design doc):
  *
- *   - Absolute path → used verbatim
- *   - Relative path → resolved relative to `dirname(configPath)` (the
- *     directory containing this `.ttctl.yaml` file)
- *   - Absent → platform default (`$XDG_DATA_HOME/ttctl/auth.token` if set,
- *     else `~/.ttctl/auth.token` on POSIX; `%APPDATA%/ttctl/auth.token` on
- *     Windows)
- *
- * The kebab-case key matches YAML conventions in this file. The E2E harness
- * relies on the relative-path branch to redirect the token into a sandbox
- * directory (`<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path:
- * ./auth.token`) so test runs never touch the user's working session at
- * `~/.ttctl/auth.token`.
+ *   - **Form A** — `credentials: "op://..."` (1Password reference). No token
+ *     yet — `auth signin` will write one.
+ *   - **Form B** — `credentials: { username, password }` (literal). No token
+ *     yet.
+ *   - **Form C** — `token: "..."` only (no credentials). The bearer is
+ *     supplied directly; `auth signin` is not applicable. Common in the E2E
+ *     sandbox and in deployments that bootstrap a token out-of-band.
+ *   - **Form D** — both `credentials` AND `token`. Post-signin state for
+ *     Form A or B configs; the captured bearer is persisted alongside the
+ *     credentials.
  */
-export const ConfigSchema = z.object({
-  auth: AuthSchema,
-  "auth-token-path": z.string().min(1).optional(),
-});
+const AuthBlockLoadSchema = z
+  .object({
+    credentials: AuthCredentialsSchema.optional(),
+    token: z.string().min(1, { message: "auth.token must be a non-empty string" }).optional(),
+  })
+  .strict()
+  .superRefine((auth, ctx) => {
+    if (auth.credentials === undefined && auth.token === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "auth must contain at least one of 'credentials' (op:// reference or { username, password } object) " +
+          "or 'token' (bearer string captured by `ttctl auth signin`)",
+        path: [],
+      });
+    }
+  });
 
-export type TtctlConfig = z.infer<typeof ConfigSchema>;
+export type AuthBlock = z.infer<typeof AuthBlockLoadSchema>;
+
+/**
+ * `auth` block schema for runtime WRITE operations. Permissive — both
+ * `credentials` and `token` are optional, AND empty `auth: {}` is accepted.
+ *
+ * Used by `persistAuthToken` and the signout flow during the brief window
+ * between mutation and disk-write. The strict load schema rejects empty
+ * `auth: {}` at the next file-load — see DQ-6 in the design doc.
+ */
+const AuthBlockWriteSchema = z
+  .object({
+    credentials: AuthCredentialsSchema.optional(),
+    token: z.string().min(1).optional(),
+  })
+  .strict();
+
+/**
+ * Top-level config schema (load form). Single config; no profiles.
+ *
+ * Compared to the prior shape:
+ *   - Removed top-level `auth` polymorphic value (string or `{email,password}`)
+ *     in favor of a structured `auth: { credentials?, token? }` block.
+ *   - Removed `auth-token-path` field — the captured bearer now lives inside
+ *     the same YAML file at `auth.token`. Project-scoped configs are routed
+ *     via direnv (see README § Configuration).
+ */
+export const ConfigLoadSchema = z
+  .object({
+    auth: AuthBlockLoadSchema,
+  })
+  .strict();
+
+/**
+ * Top-level config schema (write form). Permits empty `auth: {}` for the
+ * post-signout transient state when the source was Form C.
+ */
+export const ConfigWriteSchema = z
+  .object({
+    auth: AuthBlockWriteSchema,
+  })
+  .strict();
+
+/**
+ * Runtime-validated config object (load form). The shape clients read from
+ * disk after `loadConfigFile`.
+ */
+export type TtctlConfig = z.infer<typeof ConfigLoadSchema>;
+
+/**
+ * Permissive config shape used for write-back (`persistAuthToken`,
+ * `signOut`). Empty `auth: {}` is acceptable mid-lifecycle.
+ */
+export type TtctlConfigWritable = z.infer<typeof ConfigWriteSchema>;
 
 /**
  * Discriminator on `ConfigError` so consumers can switch on error class
@@ -83,11 +156,9 @@ export type TtctlConfig = z.infer<typeof ConfigSchema>;
  *                    chosen path doesn't exist on disk.
  *   - `PARSE`      — YAML parse error (malformed file).
  *   - `VALIDATION` — schema validation error (wrong shape, missing fields).
- *   - `PERMISSION` — file exists but is not accessible (EACCES / EPERM).
- *
- * The permission *warning* (group/world readable on POSIX) is non-fatal and
- * does NOT correspond to this code — `PERMISSION` only fires when a read
- * actually fails because the OS denied access.
+ *   - `PERMISSION` — file exists but is not accessible (EACCES / EPERM), OR
+ *                    file is at an unsafe location (sync-root, symlink) per
+ *                    the security gates in the resolution chain.
  */
 export type ConfigErrorCode = "NO_CREDS" | "PARSE" | "VALIDATION" | "PERMISSION";
 
@@ -103,40 +174,44 @@ export class ConfigError extends Error {
 }
 
 /**
- * Deterministic config-path resolution.
+ * Map a Zod issue path to a human-friendly field reference for surfacing
+ * validation failures. Walks the issue's path array to build a dotted-prose
+ * descriptor (e.g. `["auth", "credentials", "password"]` → `auth.credentials.password`).
  *
- * Precedence (highest → lowest):
- *
- *   1. Explicit `path` argument (passed by the caller — e.g., `--config`
- *      flag once #93 lands). Used verbatim, no existence check; if it's
- *      bogus, `loadConfigFile` surfaces the failure.
- *   2. `TTCTL_CONFIG_FILE` env var. Same verbatim treatment as `path`.
- *   3. `$XDG_CONFIG_HOME/ttctl/config.yaml`, when `XDG_CONFIG_HOME` is set
- *      AND the file exists on disk.
- *   4. `~/.config/ttctl/config.yaml` (POSIX home default), when the file
- *      exists on disk.
- *
- * Returns `null` when none of the above produce a path. Crucially: the CWD
- * `./.ttctl.yaml` is NOT consulted — that's the breaking change vs prior
- * versions. Callers that want CWD-style discovery must wire their CWD path
- * via the explicit argument or `TTCTL_CONFIG_FILE`.
+ * The empty-path case (refinement-level errors) returns `auth` as the
+ * operative scope so the message reads naturally.
  */
-export function discoverConfigPath(path?: string): string | null {
-  if (path !== undefined) return path;
-
-  const envPath = process.env["TTCTL_CONFIG_FILE"];
-  if (envPath !== undefined && envPath !== "") return envPath;
-
-  const xdg = process.env["XDG_CONFIG_HOME"];
-  if (xdg !== undefined && xdg !== "") {
-    const xdgPath = join(xdg, "ttctl", "config.yaml");
-    if (existsSync(xdgPath)) return xdgPath;
+function formatIssuePath(path: ReadonlyArray<PropertyKey>): string {
+  if (path.length === 0) return "auth";
+  const parts: string[] = [];
+  for (const segment of path) {
+    if (typeof segment === "number") {
+      parts[parts.length - 1] = `${parts[parts.length - 1] ?? ""}[${segment.toString()}]`;
+    } else if (typeof segment === "string") {
+      parts.push(segment);
+    } else {
+      // symbol key — zod permits this in object schemas but our config has
+      // no symbol-keyed fields. Render via .toString() so the message is
+      // still readable rather than dropping the segment.
+      parts.push(segment.toString());
+    }
   }
+  return parts.join(".");
+}
 
-  const homePath = join(homedir(), ".config", "ttctl", "config.yaml");
-  if (existsSync(homePath)) return homePath;
-
-  return null;
+/**
+ * Render a Zod safe-parse failure into a single-line `ConfigError` message
+ * that names the failing branch / field where possible. Defends against the
+ * naked `z.union` "Invalid input" UX.
+ */
+function formatLoadValidationError(err: z.ZodError, path: string): ConfigError {
+  const lines: string[] = [];
+  for (const issue of err.issues) {
+    const fieldPath = formatIssuePath(issue.path);
+    lines.push(`${fieldPath}: ${issue.message}`);
+  }
+  const summary = lines.length === 0 ? "Invalid config shape" : lines.join("; ");
+  return new ConfigError(`Config validation failed: ${summary}`, "VALIDATION", path);
 }
 
 /**
@@ -147,10 +222,14 @@ export function discoverConfigPath(path?: string): string | null {
  *     `TTCTL_CONFIG_FILE` value surfaces uniformly with the
  *     "no config found anywhere" branch in `resolveConfig`.
  *   - EACCES / EPERM → `ConfigError(code: PERMISSION)`.
- *   - Otherwise → emit a stderr warning when group/world bits are set
- *     (POSIX only, irrelevant on Windows where mode bits aren't meaningful).
- *     The file may carry a 1Password reference (low-risk on its own) or, in
- *     literal form, a plaintext password — `0o600` is the right posture.
+ *   - Mode-strictness gate (POSIX): refuse to LOAD when the file is
+ *     world-writable (`mode & 0o002 != 0` — covers 0666, 0777, etc.).
+ *     Closes a TOCTOU window on credential reads. Throws
+ *     `ConfigError(PERMISSION)` with the actual mode in the error message.
+ *   - Mode-warning (POSIX): emit a stderr warning when group/world bits
+ *     other than world-writable are set (e.g. 0644). Non-fatal; the file
+ *     may carry a 1Password reference (low-risk on its own) or, in literal
+ *     form, a plaintext password — `0o600` is the right posture.
  */
 export function loadConfigFile(path: string): TtctlConfig {
   const stat = (() => {
@@ -170,11 +249,21 @@ export function loadConfigFile(path: string): TtctlConfig {
 
   if (process.platform !== "win32") {
     const mode = stat.mode & 0o777;
+    if ((mode & 0o002) !== 0) {
+      const modeStr = mode.toString(8).padStart(3, "0");
+      throw new ConfigError(
+        `Refusing to load world-writable config file ${path} (mode 0${modeStr}). ` +
+          `The file may contain a captured bearer token; world-writable mode opens a TOCTOU window. ` +
+          `Run: chmod 600 ${path}`,
+        "PERMISSION",
+        path,
+      );
+    }
     if ((mode & 0o077) !== 0) {
       const modeStr = mode.toString(8).padStart(3, "0");
       process.stderr.write(
         `WARNING: config file ${path} is group/world readable (mode 0${modeStr}). ` +
-          `It may contain a 1Password reference or plaintext password. ` +
+          `It may contain a 1Password reference, plaintext password, or captured bearer. ` +
           `Run: chmod 600 ${path}\n`,
       );
     }
@@ -198,25 +287,55 @@ export function loadConfigFile(path: string): TtctlConfig {
     throw new ConfigError(`Invalid YAML: ${(err as Error).message}`, "PARSE", path);
   }
 
-  const result = ConfigSchema.safeParse(parsed);
+  const result = ConfigLoadSchema.safeParse(parsed);
   if (!result.success) {
-    throw new ConfigError(`Config validation failed: ${result.error.message}`, "VALIDATION", path);
+    throw formatLoadValidationError(result.error, path);
   }
   return result.data;
 }
 
 /**
  * Options for `resolveConfig`. Currently only `path`; kept as an options
- * object so future flags (e.g., `strict: true` once permission-warning
- * promotion is desired) don't require another signature break.
+ * object so future flags don't require another signature break.
  */
 export interface ResolveConfigOptions {
   /**
-   * Explicit config path. Wins over `TTCTL_CONFIG_FILE` and the XDG/home
-   * defaults. Used verbatim — no existence pre-check (`loadConfigFile`
-   * surfaces ENOENT as `code: 'NO_CREDS'`).
+   * Explicit config path. Wins over `TTCTL_CONFIG_FILE` and the home default.
+   * Used verbatim — no existence pre-check (`loadConfigFile` surfaces ENOENT
+   * as `code: 'NO_CREDS'`).
    */
   path?: string;
+}
+
+/**
+ * Deterministic config-path resolution.
+ *
+ * Precedence (highest → lowest):
+ *
+ *   1. Explicit `path` argument (passed by the caller — e.g., `--config`
+ *      flag from #93). Used verbatim, no existence check.
+ *   2. `TTCTL_CONFIG_FILE` env var. Same verbatim treatment as `path`.
+ *   3. `~/.ttctl.yaml` (POSIX home dotfile), when the file exists on disk.
+ *
+ * Returns `null` when none of the above produce a path. Callers that want
+ * project-scoped configs use `direnv` to set `TTCTL_CONFIG_FILE` per
+ * directory — the CWD `./.ttctl.yaml` is NOT consulted (closed since #92).
+ *
+ * NOTE: XDG paths (`$XDG_CONFIG_HOME/ttctl/config.yaml`,
+ * `~/.config/ttctl/config.yaml`) are NO LONGER consulted. The single-file
+ * model places the captured bearer in the same YAML; `~/.ttctl.yaml` is
+ * the canonical home location.
+ */
+export function discoverConfigPath(path?: string): string | null {
+  if (path !== undefined) return path;
+
+  const envPath = process.env["TTCTL_CONFIG_FILE"];
+  if (envPath !== undefined && envPath !== "") return envPath;
+
+  const homePath = join(homedir(), ".ttctl.yaml");
+  if (existsSync(homePath)) return homePath;
+
+  return null;
 }
 
 /**
@@ -224,9 +343,7 @@ export interface ResolveConfigOptions {
  *
  * When the resolution chain returns `null` AND a `./.ttctl.yaml` exists in
  * `process.cwd()`, surface a deprecation message pointing the user at the
- * new escape hatches (`TTCTL_CONFIG_FILE` here; `--config` flag in the
- * companion CLI issue). The CWD file is NEVER auto-loaded — that's the
- * point of the refactor.
+ * supported escape hatches. The CWD file is NEVER auto-loaded.
  */
 export function resolveConfig(options: ResolveConfigOptions = {}): { config: TtctlConfig; path: string } {
   const path = discoverConfigPath(options.path);
@@ -234,14 +351,14 @@ export function resolveConfig(options: ResolveConfigOptions = {}): { config: Ttc
     const legacyCwdPath = resolve(process.cwd(), ".ttctl.yaml");
     if (existsSync(legacyCwdPath)) {
       throw new ConfigError(
-        `No config found via TTCTL_CONFIG_FILE, $XDG_CONFIG_HOME/ttctl/config.yaml, or ~/.config/ttctl/config.yaml. ` +
-          `Note: a CWD .ttctl.yaml was found at ${legacyCwdPath} but is no longer auto-discovered. ` +
-          `Set TTCTL_CONFIG_FILE=${legacyCwdPath} to use it, or move it to ~/.config/ttctl/config.yaml.`,
+        `No config found via --config, TTCTL_CONFIG_FILE, or ~/.ttctl.yaml. ` +
+          `Note: a CWD .ttctl.yaml was found at ${legacyCwdPath} but is not auto-discovered. ` +
+          `Set TTCTL_CONFIG_FILE=${legacyCwdPath} (e.g. via direnv) or move it to ~/.ttctl.yaml.`,
         "NO_CREDS",
       );
     }
     throw new ConfigError(
-      "No config found. Set TTCTL_CONFIG_FILE or place config at $XDG_CONFIG_HOME/ttctl/config.yaml or ~/.config/ttctl/config.yaml. See README for setup.",
+      "No config found. Pass --config <path>, set TTCTL_CONFIG_FILE, or place config at ~/.ttctl.yaml. See README for setup.",
       "NO_CREDS",
     );
   }
