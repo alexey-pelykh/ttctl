@@ -61,81 +61,106 @@ npx ttctl --help
 # 1. Install
 npm install -g ttctl
 
-# 2. Create a config file at the default location
-mkdir -p ~/.config/ttctl
-cat > ~/.config/ttctl/config.yaml <<'EOF'
-auth: "op://Personal/ttctl"
+# 2. Create a config file at the default home location
+cat > ~/.ttctl.yaml <<'EOF'
+auth:
+  credentials: "op://Personal/ttctl"
 EOF
-chmod 600 ~/.config/ttctl/config.yaml
+chmod 600 ~/.ttctl.yaml
 
-# 3. Verify you can sign in
+# 3. Sign in (captures the bearer back into ~/.ttctl.yaml under auth.token)
+ttctl auth signin
+
+# 4. Verify
 ttctl auth status
 
-# 4. View your profile
+# 5. View your profile
 ttctl profile show
 ```
 
-> **First run** will sign in via `EmailPasswordSignIn`, capture the session bearer token into `~/.ttctl/auth.token` (mode `0600`; `$XDG_DATA_HOME/ttctl/auth.token` on POSIX or `%APPDATA%/ttctl/auth.token` on Windows when set), and replay it as `Authorization: Token token=<X>` on every subsequent GraphQL request. The `op` CLI will be invoked once per session to resolve your credentials.
+> **`ttctl auth signin`** runs the `EmailPasswordSignIn` GraphQL mutation, captures the session bearer, and writes it BACK into the same `~/.ttctl.yaml` file under `auth.token` (atomic write; comments preserved; mode `0600`). All subsequent commands replay it as `Authorization: Token token=<X>` on every GraphQL request. The `op` CLI is invoked only at signin time to resolve your credentials. There is **no separate token file** — your config and your live session live in one YAML.
 
 ## Configuration
 
 TTCtl uses a single config file — **no profiles**. The config-file path is resolved deterministically (highest precedence wins):
 
-1. `TTCTL_CONFIG_FILE` env var — absolute or relative path; used verbatim. Useful for CI, agent deployments, multi-config dev, and per-directory pinning via direnv.
-2. `$XDG_CONFIG_HOME/ttctl/config.yaml` — when `XDG_CONFIG_HOME` is set and the file exists.
-3. `~/.config/ttctl/config.yaml` — POSIX home default; when the file exists.
+1. `--config <path>` flag — explicit override (per-invocation).
+2. `TTCTL_CONFIG_FILE` env var — process-scoped (CI, direnv).
+3. `~/.ttctl.yaml` — POSIX home dotfile (only fallback).
 
-The current-working-directory `./.ttctl.yaml` is **not** auto-discovered. To use a project-local config, point `TTCTL_CONFIG_FILE` at it explicitly — direnv is the canonical pattern:
+XDG paths (`$XDG_CONFIG_HOME/ttctl/config.yaml`, `~/.config/ttctl/config.yaml`) and the current-working-directory `./.ttctl.yaml` are **not** auto-discovered. To use a project-local config, point `TTCTL_CONFIG_FILE` at it via direnv:
 
 ```sh
 # .envrc in your project root (requires `direnv` installed and `direnv allow` run)
 export TTCTL_CONFIG_FILE="$PWD/.ttctl.yaml"
 ```
 
-See [`docs/configuration.md`](docs/configuration.md) for the full reference, including migration guidance for users coming from versions that auto-discovered `./.ttctl.yaml`.
+### Sync-root exclusion
 
-### `auth` — Two valid forms
+TTCtl **refuses to persist** the captured bearer when the config file lives under a known cloud-sync prefix:
 
-The `auth` key is **polymorphic** on type:
+| Path prefix                   | Service            |
+| ----------------------------- | ------------------ |
+| `~/Library/Mobile Documents/` | macOS iCloud Drive |
+| `~/Dropbox/`                  | Dropbox            |
+| `~/iCloud Drive/`             | iCloud (alt name)  |
+| `~/OneDrive/`                 | OneDrive           |
+| `~/Google Drive/`             | Google Drive       |
+| `~/Box/`, `~/Box Sync/`       | Box                |
 
-#### Form A — string (1Password reference, RECOMMENDED)
+Persisting a bearer under any of these would silently replicate it off-host. If you need a project-local config, keep it OUTSIDE these directories and route via `TTCTL_CONFIG_FILE` (direnv recipe above). The sibling-name guard prevents false positives — `~/DropboxOther/` is fine.
+
+### `auth` — four valid lifecycle states
+
+The `auth` block is **structured** with optional `credentials` and `token` fields. Four valid shapes correspond to the lifecycle states:
+
+#### Form A — credentials via 1Password reference (RECOMMENDED, signin populates `auth.token`)
 
 ```yaml
 # Single 1Password account (or relying on `OP_ACCOUNT` env / op default)
-auth: "op://Personal/ttctl"
+auth:
+  credentials: "op://Personal/ttctl"
 
 # Multiple 1Password accounts — pin one explicitly
-auth: "op://my-account/Personal/ttctl"
+auth:
+  credentials: "op://my-account/Personal/ttctl"
 ```
 
 TTCtl parses `op://[ACCOUNT/]VAULT/ITEM` and runs `op item get ITEM --vault VAULT [--account ACCOUNT] --format json`, then resolves credentials by matching fields with `purpose: USERNAME` and `purpose: PASSWORD` — the canonical semantic identifiers 1Password sets automatically for **LOGIN-category** items (including browser-autosaved logins where the field labels are the HTML form input names like `user[email]`).
 
 The optional `ACCOUNT` segment is required only when you have multiple `op` accounts configured (`op account list`); single-account setups can omit it. ACCOUNT may be the account UUID, the shorthand set via `op account add`, or the sign-in email — TTCtl forwards the value verbatim to `op` for validation.
 
-#### Form B — object (literal, dev/testing only)
+#### Form B — literal credentials (dev/testing only)
 
 ```yaml
 auth:
-  email: "you@example.com"
-  password: "hunter2"
+  credentials:
+    username: "you@example.com" # value is your Toptal email; field name matches 1P USERNAME purpose
+    password: "hunter2"
 ```
 
 > Discouraged for daily use. Plaintext credentials in config files leak through backups, sync clients, and accidental commits. Form A is what you want.
 
-> **Per-field references (4+ segments, e.g. `auth: "op://Personal/ttctl/Section/username"`) are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
+> **Per-field references (4+ segments, e.g. `op://Personal/ttctl/Section/username`) are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
 
-### `auth-token-path` — optional token storage location
-
-By default, TTCtl persists the captured session token at `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on Windows). Override the location by setting `auth-token-path` in your config file:
+#### Form C — token only (out-of-band bootstrap)
 
 ```yaml
-auth: "op://Personal/ttctl"
-auth-token-path: "./auth.token"            # relative — resolved against the config file's dir
-# or:
-auth-token-path: "/var/run/ttctl.token"    # absolute — used verbatim
+auth:
+  token: "user_<24hex>_<20alnum>"
 ```
 
-Absolute paths are used as-is. Relative paths are resolved against the directory containing the config file — so `./auth.token` next to a config file at `/path/to/project/.ttctl.yaml` (pointed to via `TTCTL_CONFIG_FILE`) lands at `/path/to/project/auth.token`. The E2E test harness uses this branch to redirect tokens into a sandbox without touching the user's working session.
+The bearer is supplied directly. `ttctl auth signin` is not applicable (refused with `NO_CREDENTIALS`). Useful for the E2E sandbox and for deployments that bootstrap a token via a side-channel.
+
+#### Form D — credentials + token (post-signin Form A or B)
+
+```yaml
+auth:
+  credentials: "op://Personal/ttctl"
+  token: "user_<24hex>_<20alnum>"
+```
+
+The on-disk shape after a successful `ttctl auth signin` against a Form A or B config. Both fields coexist; signout removes the `token` field (returning to Form A or B) without touching `credentials`.
 
 ## MCP Integration
 
@@ -203,7 +228,7 @@ TTCtl uses two transports:
 - **Stock** ([`undici`](https://github.com/nodejs/undici)) for the mobile gateway endpoint
 - **TLS-impersonating** ([`node-wreq`](https://www.npmjs.com/package/node-wreq) with the `chrome_146` profile) for the Cloudflare-protected endpoints
 
-Authentication is **bearer-token based** (per ADR-005 in the private `ttctl/research` repo): TTCtl POSTs `EmailPasswordSignIn` in persisted-query mode (SHA-256 hash from a captured operations catalog), captures the returned session token, persists it at `~/.ttctl/auth.token` (or `$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on Windows), and replays it as `Authorization: Token token=<X>` on every subsequent GraphQL request. Cookies are NOT used; Chrome TLS impersonation alone passes Cloudflare on the protected surfaces.
+Authentication is **bearer-token based** (per ADR-005 in the private `ttctl/research` repo): TTCtl POSTs `EmailPasswordSignIn` in persisted-query mode (SHA-256 hash from a captured operations catalog), captures the returned session token, persists it back into the same `~/.ttctl.yaml` config under `auth.token` (atomic write, mode `0600`), and replays it as `Authorization: Token token=<X>` on every subsequent GraphQL request. Cookies are NOT used; Chrome TLS impersonation alone passes Cloudflare on the protected surfaces.
 
 The reverse-engineering artifacts (APK decoded, GraphQL operations catalog, schema synthesis, ADRs) live in a separate **private** repository (`ttctl/research`). They are not redistributable.
 

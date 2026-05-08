@@ -10,16 +10,17 @@ Because E2E runs against a real Toptal Talent profile, the harness is engineered
 
 ### Isolation guarantees
 
-- **Isolated auth token** — the harness writes a fixture `.ttctl.yaml` at `<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token` and spawns CLI / MCP subprocesses with `TTCTL_CONFIG_FILE=<repo-root>/.tmp/e2e/.ttctl.yaml` injected into their env. The CLI's `resolveConfig` reads that path verbatim; the fixture's relative `auth-token-path` resolves against the config file's directory → `<repo-root>/.tmp/e2e/auth.token`. Your everyday session at `~/.ttctl/auth.token` is untouched before, during, and after the run.
+- **Isolated single-file sandbox** (post-#107) — the harness writes ONE fixture at `<repo-root>/.tmp/e2e/.ttctl.yaml` carrying ONLY the captured bearer (Form C shape — token, no credentials). Source credentials NEVER enter `.tmp/e2e/`. Spawned CLI / MCP subprocesses get `TTCTL_CONFIG_FILE=<repo-root>/.tmp/e2e/.ttctl.yaml` injected into their env. The CLI's `resolveConfig` reads that path verbatim; signin / signout / status all operate against this single YAML. Your everyday session at `~/.ttctl.yaml` is untouched before, during, and after the run. Blast radius if the sandbox config leaks = one revocable bearer (24-72h surface), not the credential vault ref.
 - **Run-level lockfile** — `<repo-root>/.tmp/e2e/.lock` records the PID of the active harness invocation. Concurrent invocations on the same machine are refused with a clear error message naming the holding PID. Stale lockfiles (PID no longer alive) are auto-cleared with a warning. The lock is acquired ONCE per `pnpm test:e2e` invocation by `globalSetup` and held for the entire run.
 - **Two signins per run** — `globalSetup` performs ONE shared signin at run start; an adversarial test (`50-auth-error-revoked.e2e.test.ts`) performs ONE additional isolated signin via `withFreshSession()` so its token corruption never leaks into the shared session. Adding more `getSharedSession()`-using files does NOT add more signins. Signin count is bounded structurally, not per-file.
 - **Cool-off after signout** — both globalSetup's run-teardown AND `withFreshSession()`'s afterAll wait ≥5s, spacing successive runs to avoid Toptal's rate-limit / abuse heuristics.
 - **Pre-flight banner** — globalSetup prints a visible warning on stderr **before** any network call: "E2E will sign in to Toptal as the configured account. Any concurrent browser session may be invalidated."
 - **Failure output redaction** — assertion diffs and log helpers scrub `cookie`, `email`, `password`, `token` keys; profile-shaped objects collapse to `[redacted profile]`. Tests assert specific fields, not whole snapshots.
+- **Bearer-pattern CI guard** — `scripts/check-secret-leakage.js` (wired into `pnpm lint`) refuses to ship a build with any `user_<24hex>_<20alnum>` pattern outside `.tmp/`. Catches accidental fixture leaks where a bearer was written to a tracked file.
 
 ### What "SignOut" means here
 
-The Toptal mobile gateway has no terminal `SignOut` GraphQL mutation. The session is "ended" by destroying the local auth token — which is exactly what `ttctl auth signout` does. The harness's globalSetup teardown deletes `<repo-root>/.tmp/e2e/auth.token` defensively (after the load-bearing `99-auth-signout.e2e.test.ts` test has done so as its assertion); that is the harness's "SignOut".
+The Toptal mobile gateway has no terminal `SignOut` GraphQL mutation. The session is "ended" by removing the `auth.token` field from the config YAML — which is exactly what `ttctl auth signout` does (via `clearAuthToken`'s `yaml.parseDocument` + `deleteIn`). The harness's globalSetup teardown calls `clearAuthToken` on the sandbox config defensively (after the load-bearing `99-auth-signout.e2e.test.ts` test has done so as its assertion); that is the harness's "SignOut".
 
 ### What's NOT protected
 
@@ -64,7 +65,7 @@ The `99-auth-signout.e2e.test.ts` case MUST run last because it deletes the shar
 
 ### Prerequisites
 
-- A `.ttctl.yaml` resolvable via standard discovery (`TTCTL_CONFIG_FILE` env var → `$XDG_CONFIG_HOME/ttctl/config.yaml` → `~/.config/ttctl/config.yaml`) with valid Toptal credentials. Both `op://VAULT/ITEM` and `op://ACCOUNT/VAULT/ITEM` (3-segment) forms are supported by the resolver. Note: the legacy CWD `./.ttctl.yaml` is no longer auto-discovered (see core's `resolveConfig`); set `TTCTL_CONFIG_FILE=<path>` if you keep your config at a non-standard location.
+- A `.ttctl.yaml` resolvable via standard discovery (`TTCTL_CONFIG_FILE` env var → `~/.ttctl.yaml`) with valid Toptal credentials in `auth.credentials`. Both `op://VAULT/ITEM` and `op://ACCOUNT/VAULT/ITEM` (3-segment) forms are supported by the resolver. Note: post-#107 XDG paths and the legacy CWD `./.ttctl.yaml` are no longer auto-discovered; set `TTCTL_CONFIG_FILE=<path>` (typically via direnv) if you keep your config at a non-standard location.
 - 1Password CLI (`op`) installed and signed in if you use the `op://` form.
 - A built workspace — `pnpm build` before invoking E2E.
 - `TTCTL_E2E=1` set in the environment.
@@ -109,14 +110,15 @@ const session = withFreshSession();
 
 describe("my adversarial E2E case", () => {
   it.skipIf(process.env.TTCTL_E2E !== "1")("corrupts the token", async () => {
-    const { sandboxConfigPath, tokenPath } = session.getContext();
-    // Mutate `tokenPath` freely — it lives under <sandbox>/isolated-<id>/.
-    // The shared session at <sandbox>/auth.token is untouched.
+    const { sandboxConfigPath } = session.getContext();
+    // Mutate auth.token in `sandboxConfigPath` freely — the file lives
+    // under <sandbox>/isolated-<id>/ and the corruption is contained
+    // there. The shared session at <sandbox>/.ttctl.yaml is untouched.
   });
 });
 ```
 
-The session contexts (both shared and isolated) expose `tokenPath`, `sandboxDir`, `sandboxConfigPath`, `email`, and `repoRoot`. For shared sessions, paths point under `<sandbox>/`; for isolated sessions, under `<sandbox>/isolated-<id>/`.
+The session contexts (both shared and isolated) expose `sandboxDir`, `sandboxConfigPath`, `email`, and `repoRoot`. For shared sessions, paths point under `<sandbox>/`; for isolated sessions, under `<sandbox>/isolated-<id>/`. Post-#107 there is **no** `tokenPath` — the captured bearer lives inline in `sandboxConfigPath` under `auth.token`.
 
 ## CI behavior
 

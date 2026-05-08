@@ -103,35 +103,69 @@ ESLint enforces this via `@tony.ganchev/eslint-plugin-header`.
 
 ## Auth Model
 
-TTCtl uses a session bearer **token** (no cookies, no API keys). The user
-provides credentials in a YAML config file (path resolution covered in §
-Config File Resolution below) via two valid forms:
+TTCtl uses a session bearer **token** (no cookies, no API keys), stored
+inline in the same YAML config file as the credentials (single-file
+model — post-#107). The user provides credentials and (optionally) a
+captured token in one structured `auth` block:
 
 ```yaml
-# Form A — 1Password reference (recommended)
-auth: "op://Personal/ttctl"
-
-# Form A (with explicit account, for users with multiple `op` accounts)
-auth: "op://my-account/Personal/ttctl"
-
-# Form B — literal (dev/testing only, discouraged)
+# Form A — 1Password reference for credentials (recommended; signin populates auth.token)
 auth:
-  email: "you@example.com"
-  password: "hunter2"
+  credentials: "op://Personal/ttctl"
+
+# Form A with explicit account (for users with multiple `op` accounts)
+auth:
+  credentials: "op://my-account/Personal/ttctl"
+
+# Form B — literal credentials (dev/testing only, discouraged)
+auth:
+  credentials:
+    username: "you@example.com" # value is the Toptal email; field name matches 1P USERNAME purpose
+    password: "hunter2"
+
+# Form C — token only (no credentials; out-of-band bootstrap, E2E sandbox)
+auth:
+  token: "user_<24hex>_<20alnum>"
+
+# Form D — credentials + token (post-signin Form A or B)
+auth:
+  credentials: "op://Personal/ttctl"
+  token: "user_<24hex>_<20alnum>"
 ```
 
-The Zod schema in `packages/core/src/config.ts` is polymorphic on `auth`'s type
-(string vs object). The 1Password reference accepts both `op://VAULT/ITEM` and
+The Zod schema in `packages/core/src/config.ts` ships TWO schemas:
+`ConfigLoadSchema` (strict — rejects empty `auth: {}`, unknown fields,
+malformed credentials) used by `loadConfigFile`; and `ConfigWriteSchema`
+(permissive — permits empty mid-lifecycle) used by `persistAuthToken` /
+`clearAuthToken`. `superRefine` produces field-named error messages
+("auth.credentials.password: …") instead of zod's naked "Invalid input".
+
+The 1Password reference accepts both `op://VAULT/ITEM` and
 `op://ACCOUNT/VAULT/ITEM` (3-segment); the latter forwards `--account ACCOUNT`
 to `op item get`. Per-field references (`op://Personal/ttctl/Section/username`,
 4+ segments) are NOT supported — TTCtl always reads `username` and `password`
-from a single LOGIN-category item.
+fields from a single LOGIN-category item by `purpose: USERNAME` /
+`purpose: PASSWORD`.
 
-After sign-in via `EmailPasswordSignIn` (persisted-query mode), the captured
-session token is stored at `~/.ttctl/auth.token` (or
-`$XDG_DATA_HOME/ttctl/auth.token` on POSIX, `%APPDATA%/ttctl/auth.token` on
-Windows) at mode `0600`. Every subsequent GraphQL request authenticates by
-replaying it as `Authorization: Token token=<X>` — see
+### Lifecycle
+
+`ttctl auth signin` resolves the source credentials, calls
+`EmailPasswordSignIn` (persisted-query mode against the mobile gateway),
+captures the bearer token, and writes it BACK into the SAME YAML file
+under `auth.token` via `persistAuthToken` (`yaml.parseDocument` + `setIn`
+
+- atomic temp-rename + chmod 0o600). Comments, key order, and scalar
+  styles in the source YAML are preserved.
+
+`ttctl auth signout` removes the `auth.token` field via `clearAuthToken`
+(`deleteIn`). The field is REMOVED, not emptied to `""` — empty-string
+tokens are treated as data and the security architecture mandates
+absence-not-emptiness for revocation.
+
+`ttctl auth status` and all authenticated commands read
+`config.auth.token` directly from the parsed config — no separate file
+load. Every subsequent GraphQL request authenticates by replaying
+`Authorization: Token token=<X>`. See
 `research/docs/decisions/ADR-005-token-auth.md` for the canonical
 cross-surface auth-model decision and `research/notes/02-auth-and-clients.md`
 for the empirical evidence.
@@ -142,24 +176,32 @@ Cloudflare in the happy path on `talent-profile`; no `cf_clearance` cookie is
 required. (Scheduler has its own bearer chain — out of scope here, see
 `research/notes/12-scheduler-auth-chain.md`.)
 
-The on-disk path of the persisted token is configurable via the optional
-`auth-token-path` field in the config file. Absolute paths are used verbatim;
-relative paths are resolved against the directory containing the config file.
-When the field is absent, the platform default applies
-(`$XDG_DATA_HOME/ttctl/auth.token` if set on POSIX, else `~/.ttctl/auth.token`;
-`%APPDATA%/ttctl/auth.token` on Windows). The E2E harness uses the
-relative-path branch to redirect tokens into a sandbox
-(`<repo-root>/.tmp/e2e/.ttctl.yaml` with `auth-token-path: ./auth.token`)
-without touching the user's working session. There is no env-var override
-for `auth-token-path` itself — the env knob (`TTCTL_CONFIG_FILE`) governs
-_which_ config file to load, and `auth-token-path` is then read out of that
-file like any other field.
+### Security gates (enforced by core)
 
-```yaml
-# Complete example — auth + custom token path
-auth: "op://Personal/ttctl"
-auth-token-path: "./auth.token" # → <dir-of-config-file>/auth.token
-```
+- **File mode 0o600 on persist** — `persistAuthToken` writes the temp
+  file at 0o600 and chmods defensively before the rename.
+- **Refuse-load on world-writable** — `loadConfigFile` rejects configs
+  with mode bits `& 0o002 != 0` (covers 0666, 0777). Closes a TOCTOU
+  window on credential reads.
+- **Refuse-write on symlink** — `persistAuthToken` `lstat`s the target
+  and refuses `S_ISLNK`. Closes the swap-`~/.ttctl.yaml`-for-symlink
+  attack. Load-side reads via symlink are permitted (read-only path,
+  no TOCTOU on write).
+- **Refuse-write under sync-root** — `persistAuthToken` rejects paths
+  under `~/Library/Mobile Documents/`, `~/Dropbox/`, `~/iCloud Drive/`,
+  `~/OneDrive/`, `~/Google Drive/`, `~/Box/`, `~/Box Sync/` so the
+  captured bearer doesn't replicate off-host. Sibling-name guard
+  (`~/DropboxOther/` does NOT match `~/Dropbox/`).
+- **Mtime drift detection** — `persistAuthToken` re-stats the config
+  immediately before the rename and refuses if the mtime changed during
+  the write window (catches mid-session backup-restore or a concurrent
+  write). Cross-process locking (CLI + long-running MCP) is out of
+  scope for the current PR; an `flock` integration point is stubbed for
+  a follow-up.
+- **Bearer rescue on persist failure** — `AuthTokenPersistError`
+  surfaces the captured bearer verbatim in the message so the operator
+  can save it manually if the post-signin write fails (read-only FS,
+  full disk).
 
 There are NO profiles. TTCtl operates against the user's own Toptal Talent
 profile, period.
@@ -175,15 +217,22 @@ path per invocation, in this precedence (highest → lowest):
    `ConfigError(code: NO_CREDS)` if missing, before any sub-command runs.
 2. **`TTCTL_CONFIG_FILE` env var** — same verbatim treatment as the
    explicit arg. Useful for CI, multi-config setups, and direnv.
-3. **`$XDG_CONFIG_HOME/ttctl/config.yaml`** — when `XDG_CONFIG_HOME` is
-   set AND the file exists.
-4. **`~/.config/ttctl/config.yaml`** — POSIX home default; when the file
-   exists.
+3. **`~/.ttctl.yaml`** — POSIX home dotfile; only fallback.
 
-The CWD `./.ttctl.yaml` is NOT auto-discovered (breaking change vs prior
-versions). When the resolution chain finds nothing AND a CWD `.ttctl.yaml`
-exists, `resolveConfig` throws `ConfigError(code: "NO_CREDS")` with a
-deprecation note pointing at `TTCTL_CONFIG_FILE` or the `--config` flag.
+The CWD `./.ttctl.yaml` is NOT auto-discovered (closed in #92). XDG paths
+(`$XDG_CONFIG_HOME/ttctl/config.yaml`, `~/.config/ttctl/config.yaml`) are
+NOT consulted (closed in #107 — the single-file model places the captured
+bearer in the same YAML, so `~/.ttctl.yaml` is the canonical home location).
+
+When the resolution chain finds nothing AND a CWD `.ttctl.yaml` exists,
+`resolveConfig` throws `ConfigError(code: "NO_CREDS")` with a deprecation
+note pointing at `TTCTL_CONFIG_FILE` or the `--config` flag — the typical
+direnv recipe is:
+
+```sh
+# .envrc in your project root (requires `direnv` installed and `direnv allow` run)
+export TTCTL_CONFIG_FILE="$PWD/.ttctl.yaml"
+```
 
 `ConfigError` carries a `code` discriminator —
 `'NO_CREDS' | 'PARSE' | 'VALIDATION' | 'PERMISSION'` — so CLI/MCP error
@@ -191,11 +240,13 @@ handlers can branch on the code rather than string-match the message. The
 CLI surfaces it as the JSON wire-format `code` field; the MCP server
 includes it in the rendered tool-error text.
 
-`loadConfigFile` performs a pre-flight `fs.stat` and emits a stderr
-warning when the config file is group/world readable on POSIX
-(`mode & 0o077 != 0`). The recommended posture is `chmod 600
-<config-file>` because the file may carry a 1Password reference (low risk
-on its own) or, in literal form, a plaintext password.
+`loadConfigFile` emits a stderr warning when the config file is group-
+or other-readable on POSIX (`mode & 0o077 != 0` AND not world-writable).
+World-writable files (`mode & 0o002 != 0`) are REFUSED outright with
+`ConfigError(PERMISSION)`. The recommended posture is
+`chmod 600 ~/.ttctl.yaml` — the file may carry a 1Password reference
+(low risk on its own), a plaintext password (Form B), and/or a captured
+bearer token (Form C/D, after signin).
 
 ## TLS Impersonation
 
