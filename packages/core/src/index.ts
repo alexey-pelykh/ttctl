@@ -1,8 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-export { AuthSchema, ConfigSchema, ConfigError, discoverConfigPath, loadConfigFile, resolveConfig } from "./config.js";
-export type { AuthValue, ConfigErrorCode, ResolveConfigOptions, TtctlConfig } from "./config.js";
+export {
+  AuthCredentialsSchema,
+  ConfigError,
+  ConfigLoadSchema,
+  ConfigWriteSchema,
+  discoverConfigPath,
+  loadConfigFile,
+  resolveConfig,
+} from "./config.js";
+export type {
+  AuthBlock,
+  AuthCredentials,
+  ConfigErrorCode,
+  LiteralAuthCredentials,
+  ResolveConfigOptions,
+  TtctlConfig,
+  TtctlConfigWritable,
+} from "./config.js";
+
+export { AuthTokenPersistError, clearAuthToken, persistAuthToken } from "./configWriter.js";
 
 export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js";
 
@@ -10,9 +28,6 @@ export { getAuthStatus, resolveCredentials, signIn, SignInError } from "./auth.j
 export type { AuthInvalidReason, AuthStatusResult, SignInErrorCode } from "./auth.js";
 
 export { AuthRevokedError, TtctlError } from "./auth/errors.js";
-
-export { deleteAuthToken, loadAuthToken, resolveAuthTokenPath, saveAuthToken } from "./authToken.js";
-export type { ResolveAuthTokenPathOptions } from "./authToken.js";
 
 export {
   Cf403Error,

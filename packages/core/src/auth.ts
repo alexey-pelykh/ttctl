@@ -94,9 +94,10 @@ export function resolveCredentials(auth: AuthCredentials): Credentials {
  * persisted-query mode against the mobile gateway and capture the session
  * token from the response.
  *
- * Returns the captured token. The CLI persists it to disk via
- * `saveAuthToken` so subsequent invocations can authenticate via
- * `Authorization: Token token=<X>` without re-signing-in.
+ * Returns the captured token. The CLI persists it back to the same YAML
+ * config file (under `auth.token`) via `persistAuthToken` so subsequent
+ * invocations can authenticate via `Authorization: Token token=<X>`
+ * without re-signing-in.
  *
  * The next authenticated call (e.g. `auth status`) is the de-facto session
  * verifier — we do NOT issue a redundant Viewer probe inside `signIn` itself.
@@ -203,8 +204,8 @@ export type AuthInvalidReason =
  *
  * Pass `null` (or an empty string) when no token has been persisted yet;
  * the function short-circuits to `invalid/no-session` without touching the
- * network. CLI consumers should pass the result of `loadAuthToken(...)`
- * directly.
+ * network. CLI consumers pass `config.auth.token ?? null` from the
+ * already-loaded `TtctlConfig` (no separate token file to read).
  *
  * Never throws on auth or network failure; classifies into the three
  * `AuthStatusResult` shapes so CLI consumers can map cleanly to exit codes
