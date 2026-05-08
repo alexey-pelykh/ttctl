@@ -8,14 +8,14 @@
  * The harness is the contract between the package's E2E test cases (#21
  * and follow-ups) and the live Toptal Talent platform — it owns:
  *
- *   - Live-account safety (isolated jar, run-level lockfile, redaction).
+ *   - Live-account safety (single-file sandbox config, run-level lockfile,
+ *     redaction).
  *   - Session lifecycle (`withFreshSession`).
  *   - Programmatic invocation (`getCliClient`, `getMcpClient`).
  *
- * Internals (`lockfile`, `paths`, etc.) are not exported — keep the
- * surface area small. If a test author needs a path the harness uses,
- * route the request through this module rather than reaching into private
- * paths.
+ * Internals (`lockfile`, `paths`, etc.) are not exported beyond what the
+ * test files need. If a test author needs a path the harness uses, route
+ * the request through this module rather than reaching into private paths.
  */
 
 export { printPreflightBanner } from "./banner.js";
@@ -28,10 +28,8 @@ export type { McpClient, McpClientOptions } from "./mcp-client.js";
 export {
   cliConfigPath,
   findRepoRoot,
-  resolveIsolatedAuthTokenPath,
   resolveIsolatedSessionConfigPath,
   resolveIsolatedSessionDir,
-  resolveIsolatedSessionTokenPath,
   resolveLockfilePath,
   resolveSandboxConfigPath,
   resolveSandboxDir,
