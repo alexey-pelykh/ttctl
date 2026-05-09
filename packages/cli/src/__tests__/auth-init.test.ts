@@ -72,12 +72,7 @@ vi.mock("@clack/prompts", () => {
 
 import * as clack from "@clack/prompts";
 
-import {
-  exitCodeForInitResult,
-  formatInitOutput,
-  isStdinTty,
-  runAuthInit,
-} from "../commands/auth/init.js";
+import { exitCodeForInitResult, formatInitOutput, isStdinTty, runAuthInit } from "../commands/auth/init.js";
 import type { AuthInitResult, OpCliInterface } from "../commands/auth/init.js";
 
 interface ClackTestHandles {
@@ -134,9 +129,7 @@ describe("formatInitOutput", () => {
     );
   });
   it("passes through refusal/error messages verbatim", () => {
-    expect(
-      formatInitOutput({ status: "refused", reason: "non-tty", message: "tty required" }),
-    ).toBe("tty required");
+    expect(formatInitOutput({ status: "refused", reason: "non-tty", message: "tty required" })).toBe("tty required");
     expect(formatInitOutput({ status: "error", message: "boom" })).toBe("boom");
   });
 });
@@ -146,15 +139,9 @@ describe("exitCodeForInitResult", () => {
     expect(exitCodeForInitResult({ status: "written", path: "/x", form: "A" })).toBe(0);
   });
   it("returns 1 for refused", () => {
-    expect(
-      exitCodeForInitResult({ status: "refused", reason: "non-tty", message: "" }),
-    ).toBe(1);
-    expect(
-      exitCodeForInitResult({ status: "refused", reason: "exists", message: "" }),
-    ).toBe(1);
-    expect(
-      exitCodeForInitResult({ status: "refused", reason: "cancelled", message: "" }),
-    ).toBe(1);
+    expect(exitCodeForInitResult({ status: "refused", reason: "non-tty", message: "" })).toBe(1);
+    expect(exitCodeForInitResult({ status: "refused", reason: "exists", message: "" })).toBe(1);
+    expect(exitCodeForInitResult({ status: "refused", reason: "cancelled", message: "" })).toBe(1);
   });
   it("returns 1 for error", () => {
     expect(exitCodeForInitResult({ status: "error", message: "boom" })).toBe(1);
