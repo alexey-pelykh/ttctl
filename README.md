@@ -218,6 +218,41 @@ Add to `.cursor/mcp.json` in your project root:
 
 > **Trust model**: any process that can spawn `ttctl mcp` gets full access to your Toptal Talent profile through your saved auth token. Don't grant MCP access to untrusted AI agents. See [SECURITY.md](SECURITY.md).
 
+## Troubleshooting
+
+### Debug logs for `auth signin` / `auth signout`
+
+When the post-signin write-back to `~/.ttctl.yaml` does something unexpected — silent overwrite, mtime-drift refusal, lock contention, mysterious "Refusing to write" message — turn on the structured debug log to see exactly which invariant fired and what the file's state was at each step:
+
+```sh
+TTCTL_DEBUG_CONFIG=1 ttctl auth signin
+```
+
+Output is one JSON object per line on **stderr** (so `-o json` mode on stdout stays clean). The bearer token is **never** logged. Pipe through `jq` to inspect:
+
+```sh
+TTCTL_DEBUG_CONFIG=1 ttctl auth signin 2> debug.log
+jq -c '.' debug.log
+```
+
+Each record carries `ts` (ISO-8601), `op` (`persist` or `clear`), `path`, and `event`. Event-specific fields tell you what happened:
+
+| Event               | Meaning                                  | Useful fields                                         |
+| ------------------- | ---------------------------------------- | ----------------------------------------------------- |
+| `prewrite_checks`   | Symlink/sync-root gates passed           | `symlink_ok`, `syncroot_ok`, `perm_ok`                |
+| `lock_acquired`     | Got the cross-process write lock         | `wait_ms` (was there contention?)                     |
+| `stat_baseline`     | Captured pre-write file state            | `mtime_ms`, `mode_octal`                              |
+| `tempfile_written`  | Temp file flushed to disk                | `temp_path`, `size_bytes`                             |
+| `final_state`       | Mode applied to temp before rename       | `mode_applied`                                        |
+| `mtime_drift_check` | Concurrency re-check vs baseline         | `delta_ms`, `pass` (false ⇒ another writer raced you) |
+| `rename_completed`  | Atomic rename to canonical path          | —                                                     |
+| `lock_released`     | Lock released in `finally`               | `duration_ms` (total hold)                            |
+| `error`             | Something threw inside the locked region | `error_class`, `error_message`, `lock_held_at_error`  |
+
+If you ever see an `error` event without a following `lock_released`, that would be a leaked lock — file an issue. The error path always emits `lock_released` (the release lives in the `finally`, runs regardless of which invariant fired).
+
+When `TTCTL_DEBUG_CONFIG` is unset (or set to anything other than literal `1` — `0`, `true`, empty string all count as "off"), the logger is silent and pays zero per-call overhead.
+
 ## How TTCtl works under the hood
 
 The Toptal Talent platform exposes three GraphQL endpoints:
