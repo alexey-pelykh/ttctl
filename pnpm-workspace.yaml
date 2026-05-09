@@ -27,3 +27,5 @@ catalog:
   undici: "^8.2.0"
   "node-wreq": "^2.2.1"
   msw: "^2.10.5"
+  "proper-lockfile": "^4.1.2"
+  "@types/proper-lockfile": "^4.1.4"

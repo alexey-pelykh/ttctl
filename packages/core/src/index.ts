@@ -22,6 +22,9 @@ export type {
 
 export { AuthTokenPersistError, clearAuthToken, persistAuthToken } from "./configWriter.js";
 
+export { acquireConfigLock } from "./configLock.js";
+export type { ConfigLockHandle } from "./configLock.js";
+
 export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js";
 
 export { getAuthStatus, resolveCredentials, signIn, SignInError } from "./auth.js";

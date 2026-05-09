@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/proper-lockfile": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
@@ -52,6 +53,7 @@
   "dependencies": {
     "graphql": "catalog:",
     "node-wreq": "catalog:",
+    "proper-lockfile": "catalog:",
     "undici": "catalog:",
     "yaml": "catalog:",
     "zod": "catalog:"
