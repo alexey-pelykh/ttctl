@@ -214,8 +214,14 @@ describe("config resolution (3-step chain — post-#107)", () => {
     });
 
     it("schema validation failure → ConfigError(VALIDATION) with field-named message", () => {
-      // Wrong shape: `auth` as bare string (the pre-#107 form) is rejected.
-      const badPath = writeConfig(join(tmpRoot, "invalid.yaml"), "auth: not-a-valid-shape\n");
+      // Use a structurally invalid auth block (object with bad sub-shape) so this
+      // test continues to exercise the post-#107 superRefine path. Pre-#107
+      // auth-as-string now flows through the dedicated legacy-shape detector
+      // (covered separately in the "legacy pre-#107 shape detection" suite).
+      const badPath = writeConfig(
+        join(tmpRoot, "invalid.yaml"),
+        "auth:\n  credentials:\n    username: not-an-email\n    password: hunter2\n",
+      );
       try {
         resolveConfig({ path: badPath });
         expect.fail("expected ConfigError");
@@ -223,6 +229,7 @@ describe("config resolution (3-step chain — post-#107)", () => {
         expect(err).toBeInstanceOf(ConfigError);
         expect((err as ConfigError).code).toBe("VALIDATION");
         expect((err as ConfigError).path).toBe(badPath);
+        expect((err as ConfigError).message).toMatch(/auth\.credentials\.username/);
       }
     });
 
@@ -341,6 +348,176 @@ describe("config resolution (3-step chain — post-#107)", () => {
       // in persistAuthToken.
       const result = resolveConfig({ path: link });
       expect(result.config.auth.credentials).toBe("op://Personal/ttctl");
+    });
+  });
+
+  /**
+   * Pre-#107, the user-facing auth shape was a top-level string
+   * (`auth: "op://..."`). Post-#107, the structured `{ credentials, token }`
+   * block replaced it. A user upgrading without re-authoring would otherwise
+   * see opaque Zod "Invalid input" output; the legacy-shape detector
+   * intercepts pre-Zod and emits a copy-pasteable migration hint.
+   *
+   * Detection happens in `loadConfigFile` after `parseYaml` and before
+   * `ConfigLoadSchema.safeParse` — the strict load schema rejects auth-as-
+   * string at union discrimination, so superRefine never fires and the hint
+   * MUST land upstream of Zod.
+   */
+  describe("legacy pre-#107 shape detection (auth-as-string)", () => {
+    it('auth: "op://..." → ConfigError(VALIDATION) with literal offending shape, corrected shape, and CLAUDE.md reference', () => {
+      const badPath = writeConfig(join(tmpRoot, "legacy-form-a.yaml"), `auth: "op://Personal/ttctl"\n`);
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        expect(ce.path).toBe(badPath);
+
+        // Literal offending shape (mechanically copy-pasteable from message back into a YAML file).
+        expect(ce.message).toContain(`    auth: "op://Personal/ttctl"`);
+
+        // Corrected shape (also literally valid YAML).
+        expect(ce.message).toContain(`    auth:\n      credentials: "op://Personal/ttctl"`);
+
+        // Canonical doc reference.
+        expect(ce.message).toContain("CLAUDE.md § Auth Model");
+
+        // Names the legacy provenance so users know WHY they're seeing this.
+        expect(ce.message).toContain("legacy pre-#107 shape");
+      }
+    });
+
+    it("auth: <unquoted-string> → detected (YAML scalar without quotes is still a string)", () => {
+      // The unquoted form is what most users actually wrote pre-#107
+      // because the value didn't contain any YAML-significant characters.
+      const badPath = writeConfig(join(tmpRoot, "legacy-unquoted.yaml"), "auth: op://Personal/ttctl\n");
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        // Message wraps the value in quotes so the corrected shape is valid YAML.
+        expect(ce.message).toContain(`    auth: "op://Personal/ttctl"`);
+        expect(ce.message).toContain(`    auth:\n      credentials: "op://Personal/ttctl"`);
+      }
+    });
+
+    it('JSON wire-format: error has shape { code: "VALIDATION", message: <migration text> }', () => {
+      const badPath = writeConfig(join(tmpRoot, "legacy-json-wire.yaml"), `auth: "op://Personal/ttctl"\n`);
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        // The CLI/MCP error renderers serialize ConfigError as { code, message };
+        // the legacy hint is part of `message`, NOT a separate stderr emit.
+        const ce = err as ConfigError;
+        const wire: { code: string; message: string } = { code: ce.code, message: ce.message };
+        expect(wire.code).toBe("VALIDATION");
+        expect(wire.message).toContain("legacy pre-#107 shape");
+        expect(wire.message).toContain("CLAUDE.md § Auth Model");
+        // Round-trip via JSON.stringify/parse to lock the wire-format invariant.
+        const roundTripped = JSON.parse(JSON.stringify(wire)) as { code: string; message: string };
+        expect(roundTripped.code).toBe("VALIDATION");
+        expect(roundTripped.message).toContain(`    auth:\n      credentials: "op://Personal/ttctl"`);
+      }
+    });
+
+    it("non-detection: object-shaped auth with malformed sub-fields uses superRefine path (no migration hint)", () => {
+      // Object at `auth` is NOT the legacy shape. Falls through to Zod / superRefine.
+      const badPath = writeConfig(
+        join(tmpRoot, "object-malformed.yaml"),
+        "auth:\n  credentials:\n    username: ada@example.com\n    # password missing\n",
+      );
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        // Existing superRefine field-naming should fire.
+        expect(ce.message).toMatch(/auth\.credentials/);
+        // Migration hint MUST NOT appear for object-shaped auth.
+        expect(ce.message).not.toContain("legacy pre-#107 shape");
+        expect(ce.message).not.toContain("Migrate to the structured shape");
+      }
+    });
+
+    it("non-detection: empty auth: {} uses superRefine path (no migration hint)", () => {
+      const badPath = writeConfig(join(tmpRoot, "empty-auth.yaml"), "auth: {}\n");
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        expect(ce.message).toMatch(/at least one of/i);
+        expect(ce.message).not.toContain("legacy pre-#107 shape");
+      }
+    });
+
+    it("non-detection: number at auth (auth: 123) falls through to Zod (not auth-as-string)", () => {
+      const badPath = writeConfig(join(tmpRoot, "auth-number.yaml"), "auth: 123\n");
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        expect(ce.message).not.toContain("legacy pre-#107 shape");
+      }
+    });
+
+    it("non-detection: array at auth (auth: [a, b]) falls through to Zod (not auth-as-string)", () => {
+      const badPath = writeConfig(join(tmpRoot, "auth-array.yaml"), "auth:\n  - a\n  - b\n");
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        expect(ce.message).not.toContain("legacy pre-#107 shape");
+      }
+    });
+
+    it("non-detection: missing auth field entirely falls through to Zod", () => {
+      const badPath = writeConfig(join(tmpRoot, "no-auth.yaml"), "other: value\n");
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        expect(ce.message).not.toContain("legacy pre-#107 shape");
+      }
+    });
+
+    it("non-detection: empty YAML (parses to null) falls through to Zod", () => {
+      const badPath = writeConfig(join(tmpRoot, "empty.yaml"), "");
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+        expect(ce.message).not.toContain("legacy pre-#107 shape");
+      }
+    });
+
+    it("legacy-shape detection still uses VALIDATION code (preserves CLI/MCP exit-code contract from #107)", () => {
+      // REGRESSION pin: do NOT introduce a new code (e.g. LEGACY_SHAPE) — the
+      // CLI/MCP error renderers branch on `code` and `VALIDATION` is the
+      // contract for "wrong shape, the file exists and parsed".
+      const badPath = writeConfig(join(tmpRoot, "code-pin.yaml"), `auth: "op://Personal/ttctl"\n`);
+      try {
+        resolveConfig({ path: badPath });
+        expect.fail("expected ConfigError");
+      } catch (err) {
+        const ce = err as ConfigError;
+        expect(ce.code).toBe("VALIDATION");
+      }
     });
   });
 });
