@@ -25,7 +25,10 @@ const TOOL_NAME = "ttctl_profile_external_custom_requirements_show";
  * boolean trio. See the service module top-comment for the spec/API
  * reconciliation.
  */
-export function registerProfileExternalCustomRequirementsShowTool(server: McpServer, ctx: ToolRegistrationContext): void {
+export function registerProfileExternalCustomRequirementsShowTool(
+  server: McpServer,
+  ctx: ToolRegistrationContext,
+): void {
   server.registerTool(
     TOOL_NAME,
     {

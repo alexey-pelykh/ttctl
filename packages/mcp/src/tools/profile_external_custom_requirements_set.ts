@@ -25,7 +25,10 @@ const TOOL_NAME = "ttctl_profile_external_custom_requirements_set";
  * underlying mutation has no PATCH semantics — the service layer fetches
  * current state and merges before sending).
  */
-export function registerProfileExternalCustomRequirementsSetTool(server: McpServer, ctx: ToolRegistrationContext): void {
+export function registerProfileExternalCustomRequirementsSetTool(
+  server: McpServer,
+  ctx: ToolRegistrationContext,
+): void {
   server.registerTool(
     TOOL_NAME,
     {
