@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 
 import { ConfigError, ConfigWriteSchema } from "./config.js";
+import { acquireConfigLock } from "./configLock.js";
 
 /**
  * Failure surface for `persistAuthToken` and `clearAuthToken`. Carries the
@@ -157,10 +158,17 @@ interface YamlMutation {
  * Atomic YAML mutation primitive shared by `persistAuthToken` and
  * `clearAuthToken`. The flow:
  *
- *   1. Path safety gate (symlink + sync-root refusal). Throws ConfigError
- *      on failure — caller surfaces verbatim.
+ *   0. Path safety gate (symlink + sync-root refusal). Throws ConfigError
+ *      on failure — caller surfaces verbatim. Read-only; does not race.
+ *   1. Acquire advisory write-back lock via `acquireConfigLock` (sibling
+ *      `<path>.lock` directory, atomic `mkdir`-based, cross-platform).
+ *      Released in `finally` regardless of error path. Lock contention
+ *      timeout is ≤1s — never blocks indefinitely.
  *   2. Stat baseline — captures mtime so a concurrent overwrite can be
- *      detected before we commit our changes.
+ *      detected before we commit our changes. The lock prevents another
+ *      ttctl process from racing here, but the mtime check is preserved
+ *      as a second line: a lock-disregarding writer (e.g., manual editor
+ *      save) is still caught.
  *   3. Read raw YAML; apply mutation via `parseDocument` + `setIn` /
  *      `deleteIn` (surgical mutation preserves comments and key order).
  *   4. Validate the post-mutation shape against ConfigWriteSchema (catches
@@ -170,18 +178,40 @@ interface YamlMutation {
  *      then concurrency re-check (statSync mtime vs baseline) — refuse
  *      and unlink temp if mtime moved.
  *   6. Atomic rename → final path. Fsync parent dir for crash durability.
- *
- *   // TODO(#107-followup): cross-process write-back race (CLI + long-running MCP
- *   // server racing on the same config). Wire flock here once the
- *   // follow-up issue lands. Stub call site is below.
  */
 async function performYamlMutation(configPath: string, mutation: YamlMutation): Promise<void> {
   const absolute = await assertSafePath(configPath);
 
-  // TODO(#107-followup): acquire advisory lock on `absolute` here.
-  // const lockHandle = await flockExclusive(absolute);
-  // try { ... } finally { await flockRelease(lockHandle); }
+  // Acquire lock BEFORE the stat baseline so a concurrent writer can't
+  // race us between the stat and the rename. The lock target is a sibling
+  // `<absolute>.lock` directory (NOT a self-lock on the config file) —
+  // self-locking is broken under our atomic-rename pattern because rename
+  // swaps the inode, leaving any flock() on the old inode unenforced
+  // against the post-rename writer.
+  const lock = await acquireConfigLock(absolute);
+  try {
+    await runYamlMutationLocked(absolute, mutation);
+  } finally {
+    // Best-effort release. If the release itself fails, signal-exit (a
+    // proper-lockfile transitive dep) registers an exit-handler that
+    // auto-cleans the lock on process death. We log nothing here — a
+    // failed release is recoverable on the next run.
+    try {
+      await lock.release();
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
+/**
+ * Inner write/rename/fsync flow, run with the advisory lock already held.
+ * Split out from `performYamlMutation` so the lock-acquire/release `try`
+ * boundary is visually obvious (no tangled exception bookkeeping). Every
+ * error path inside this function unwinds through the outer `finally` →
+ * lock release.
+ */
+async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): Promise<void> {
   // Stat baseline — used to detect concurrent overwrites.
   let beforeMtime: number;
   try {
@@ -290,7 +320,9 @@ async function performYamlMutation(configPath: string, mutation: YamlMutation): 
     }
 
     // Concurrency re-check — refuse if the source moved underneath us
-    // (mid-session backup-restore or concurrent writer).
+    // (mid-session backup-restore or a lock-disregarding writer like a
+    // manual editor save). Lock-disregarding writers exist; mtime drift is
+    // the second line.
     const after = await stat(absolute);
     if (after.mtimeMs !== beforeMtime) {
       throw new AuthTokenPersistError(
@@ -355,11 +387,17 @@ async function performYamlMutation(configPath: string, mutation: YamlMutation): 
  * carries the bearer verbatim as a "rescue line" — the operator can copy
  * it into the config manually rather than redoing signin.
  *
- * NOTE on cross-process race: a long-running MCP server and a CLI signin
- * could race on the same config file. This function detects mtime drift
- * between the read and the write — if the file changed under us, we
- * refuse rather than overwrite. A `flock` integration point is stubbed
- * for the follow-up issue. Recovery is to re-run signin.
+ * Cross-process write-back is serialized by an advisory sibling lockfile
+ * (`<configPath>.lock`, atomic-mkdir-based via `proper-lockfile`). Two
+ * concurrent ttctl processes (e.g., CLI signin AND a long-running MCP
+ * tool call) cannot interleave their write-paths — one waits up to 1s and
+ * sees the other's committed file, then proceeds with its own
+ * read/parse/mutate/write cycle on the up-to-date contents. On contention
+ * timeout, throws `ConfigError(LOCKED)` — never blocks indefinitely.
+ *
+ * The mtime-drift check inside the locked region is the second line of
+ * defense for lock-disregarding writers (manual editor save during a
+ * persist window) — those still get caught and refused.
  */
 export async function persistAuthToken(configPath: string, token: string): Promise<void> {
   if (token === "") {

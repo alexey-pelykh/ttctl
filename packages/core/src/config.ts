@@ -159,8 +159,12 @@ export type TtctlConfigWritable = z.infer<typeof ConfigWriteSchema>;
  *   - `PERMISSION` — file exists but is not accessible (EACCES / EPERM), OR
  *                    file is at an unsafe location (sync-root, symlink) per
  *                    the security gates in the resolution chain.
+ *   - `LOCKED`     — advisory write-back lock could not be acquired within
+ *                    the contention budget (≤1s). Another ttctl process
+ *                    (CLI signin or long-running MCP tool call) holds the
+ *                    sibling lockfile. Retry the operation.
  */
-export type ConfigErrorCode = "NO_CREDS" | "PARSE" | "VALIDATION" | "PERMISSION";
+export type ConfigErrorCode = "NO_CREDS" | "PARSE" | "VALIDATION" | "PERMISSION" | "LOCKED";
 
 export class ConfigError extends Error {
   override readonly name = "ConfigError";

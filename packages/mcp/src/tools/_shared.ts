@@ -74,10 +74,12 @@ export function unauthenticatedResponse(toolName: string): ToolErrorResponse {
 }
 
 /**
- * Build a tool-error response for a config-resolution failure. The
- * `ConfigError.code` discriminator (`NO_CREDS` / `PARSE` / `VALIDATION` /
- * `PERMISSION`) is surfaced verbatim as the wire-format code so MCP
- * clients can branch on it without string-matching the prose message.
+ * Build a tool-error response for a config-resolution or write-back
+ * failure. The `ConfigError.code` discriminator (`NO_CREDS` / `PARSE` /
+ * `VALIDATION` / `PERMISSION` / `LOCKED`) is surfaced verbatim as the
+ * wire-format code so MCP clients can branch on it without string-matching
+ * the prose message. `LOCKED` indicates another ttctl process holds the
+ * config write-back lock — the MCP client should retry after a brief delay.
  */
 export function configErrorResponse(toolName: string, err: ConfigError): ToolErrorResponse {
   return {

@@ -227,9 +227,20 @@ required. (Scheduler has its own bearer chain — out of scope here, see
 - **Mtime drift detection** — `persistAuthToken` re-stats the config
   immediately before the rename and refuses if the mtime changed during
   the write window (catches mid-session backup-restore or a concurrent
-  write). Cross-process locking (CLI + long-running MCP) is out of
-  scope for the current PR; an `flock` integration point is stubbed for
-  a follow-up.
+  write). Mtime drift remains the second-line defense against
+  lock-disregarding writers (e.g. a manual editor save) even with the
+  cross-process lock in place.
+- **Cross-process write-back lock** — `persistAuthToken` and
+  `clearAuthToken` acquire an advisory exclusive lock on
+  `<configPath>.lock` (sibling directory, atomic-mkdir-based, via
+  `proper-lockfile`) before the read-stat baseline and release it after
+  the rename. Two concurrent ttctl processes (CLI signin + long-running
+  MCP tool call) cannot interleave their write paths — the second
+  waits up to 1s and then sees the first's committed file. On
+  contention timeout, throws `ConfigError(code: 'LOCKED')` rather than
+  blocking indefinitely. Cross-platform (Linux/macOS/Windows) — the
+  sibling-lockfile pattern works on any filesystem with atomic `mkdir`,
+  unlike `flock(2)` which would not survive the inode swap on rename.
 - **Bearer rescue on persist failure** — `AuthTokenPersistError`
   surfaces the captured bearer verbatim in the message so the operator
   can save it manually if the post-signin write fails (read-only FS,
@@ -267,10 +278,12 @@ export TTCTL_CONFIG_FILE="$PWD/.ttctl.yaml"
 ```
 
 `ConfigError` carries a `code` discriminator —
-`'NO_CREDS' | 'PARSE' | 'VALIDATION' | 'PERMISSION'` — so CLI/MCP error
-handlers can branch on the code rather than string-match the message. The
-CLI surfaces it as the JSON wire-format `code` field; the MCP server
-includes it in the rendered tool-error text.
+`'NO_CREDS' | 'PARSE' | 'VALIDATION' | 'PERMISSION' | 'LOCKED'` — so CLI/MCP
+error handlers can branch on the code rather than string-match the message.
+The CLI surfaces it as the JSON wire-format `code` field; the MCP server
+includes it in the rendered tool-error text. `LOCKED` fires when the
+write-back lock is held by another ttctl process longer than the ≤1s
+contention budget — the recommended UX response is "wait briefly and retry".
 
 `loadConfigFile` emits a stderr warning when the config file is group-
 or other-readable on POSIX (`mode & 0o077 != 0` AND not world-writable).
