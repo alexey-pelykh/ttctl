@@ -77,7 +77,7 @@ describe("auth init smoke (CI-style spawn — non-TTY + refuse-overwrite)", () =
     async () => {
       // Pre-seed the target with a recognizable fixture so we can later
       // assert byte-for-byte that auth init didn't touch it.
-      const fixture = "auth:\n  credentials: \"op://Pre-Existing/fixture\"\n";
+      const fixture = 'auth:\n  credentials: "op://Pre-Existing/fixture"\n';
       writeFileSync(configPath, fixture, { mode: 0o600 });
 
       const result = await cli.run(["auth", "init", "--config", configPath]);

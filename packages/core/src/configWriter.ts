@@ -469,11 +469,7 @@ export async function clearAuthToken(configPath: string): Promise<void> {
  * already exists; the recursive flag is for `--config <path>` cases that
  * specify a not-yet-existing project dir).
  */
-export async function writeNewConfig(
-  configPath: string,
-  content: string,
-  opts: { force: boolean },
-): Promise<void> {
+export async function writeNewConfig(configPath: string, content: string, opts: { force: boolean }): Promise<void> {
   const absolute = await assertSafePath(configPath);
 
   // Pre-existence gate. `lstat` (via assertSafePath) only refuses on
@@ -490,8 +486,7 @@ export async function writeNewConfig(
   }
   if (exists && !opts.force) {
     throw new ConfigError(
-      `Refusing to overwrite existing config at ${absolute}. ` +
-        `Use --force to replace, or edit the file manually.`,
+      `Refusing to overwrite existing config at ${absolute}. ` + `Use --force to replace, or edit the file manually.`,
       "PERMISSION",
       absolute,
     );

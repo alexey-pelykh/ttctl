@@ -106,14 +106,10 @@ function listOpVaults(): { id: string; name: string }[] {
  * failure (caller falls back to freeform).
  */
 function listOpItems(vault: string): { id: string; title: string }[] {
-  const raw = execFileSync(
-    "op",
-    ["item", "list", "--vault", vault, "--categories", "Login", "--format", "json"],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const raw = execFileSync("op", ["item", "list", "--vault", vault, "--categories", "Login", "--format", "json"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const parsedJson: unknown = JSON.parse(raw);
   return OpItemListSchema.parse(parsedJson);
 }
@@ -271,8 +267,7 @@ export async function runAuthInit(
   // the refusal here is purely UX.
   if (!force && existsSync(targetPath)) {
     const message =
-      `Refusing to overwrite existing config at ${targetPath}. ` +
-      `Use --force to replace, or edit the file manually.`;
+      `Refusing to overwrite existing config at ${targetPath}. ` + `Use --force to replace, or edit the file manually.`;
     return { status: "refused", reason: "exists", message };
   }
 
@@ -423,8 +418,7 @@ async function promptFreeformOpRef(): Promise<string | undefined> {
  */
 async function collectFormBLiteral(): Promise<{ username: string; password: string } | undefined> {
   const proceed = await p.confirm({
-    message:
-      "Plaintext credentials in config are discouraged. Prefer Form A (1Password) when possible. Continue?",
+    message: "Plaintext credentials in config are discouraged. Prefer Form A (1Password) when possible. Continue?",
     initialValue: false,
   });
   if (p.isCancel(proceed) || !proceed) return undefined;

@@ -169,11 +169,11 @@ Flow:
 4. **Form A (1Password)**: detects the `op` CLI via `op --version`. On
    present: vault picker (`op vault list --format json`, zod-validated)
    → LOGIN-category item picker (`op item list --vault <V> --categories
-   Login --format json`) → confirm. On absent OR JSON-shape failure: a
+Login --format json`) → confirm. On absent OR JSON-shape failure: a
    stderr-style warning then a freeform `op://[ACCOUNT/]VAULT/ITEM`
    prompt with the same regex as `OnePasswordReferenceSchema`.
 5. **Form B (literal)**: explicit `Plaintext credentials in config are
-   discouraged…` confirmation; default `N` aborts cleanly with no file
+discouraged…` confirmation; default `N` aborts cleanly with no file
    written. On `Y`: email-regex-validated username + masked password
    prompt.
 6. **Persist**: `writeNewConfig(targetPath, yaml, { force })` — applies
@@ -181,7 +181,7 @@ Flow:
    composed YAML against `ConfigLoadSchema` BEFORE writing, then atomic
    temp+rename+fsync(parent dir).
 7. **Confirmation**: stdout receives `Wrote config to <path> (form A:
-   1Password reference)` or `… (form B: literal credentials)`; exit 0.
+1Password reference)` or `… (form B: literal credentials)`; exit 0.
 
 Cancellation at any prompt (Ctrl-C / Esc) returns `refused/cancelled`,
 prints `Aborted (no file written).`, and exits non-zero.
