@@ -200,6 +200,47 @@ function formatIssuePath(path: ReadonlyArray<PropertyKey>): string {
 }
 
 /**
+ * Detect the legacy pre-#107 config shape (`auth` as a top-level string,
+ * e.g. `auth: "op://Personal/ttctl"`) and return a tailored migration error,
+ * or `null` if the parsed YAML does not match this shape.
+ *
+ * The post-#107 `ConfigLoadSchema` rejects `auth: <string>` at union
+ * discrimination, so `superRefine` never fires for this case — the dedicated
+ * migration message MUST land before Zod runs. Detection point is mechanical:
+ * after `parseYaml(raw)`, before `ConfigLoadSchema.safeParse(parsed)`.
+ *
+ * Other malformed shapes (typos, missing fields, wrong scalar types other
+ * than string at `auth`) continue to flow through `formatLoadValidationError`.
+ *
+ * The error code stays `VALIDATION` — preserves the CLI/MCP exit-code
+ * contract from #107. The migration text is part of `ConfigError.message`,
+ * not a separate stderr emit, so JSON wire-format consumers see one
+ * coherent `{ code, message }` payload.
+ */
+function detectLegacyShape(parsed: unknown, path: string): ConfigError | null {
+  if (parsed !== null && typeof parsed === "object" && "auth" in parsed && typeof parsed.auth === "string") {
+    const literal = parsed.auth;
+    return new ConfigError(
+      [
+        `Config file ${path} uses the legacy pre-#107 shape:`,
+        ``,
+        `    auth: "${literal}"`,
+        ``,
+        `Migrate to the structured shape:`,
+        ``,
+        `    auth:`,
+        `      credentials: "${literal}"`,
+        ``,
+        `See CLAUDE.md § Auth Model for the canonical migration recipe.`,
+      ].join("\n"),
+      "VALIDATION",
+      path,
+    );
+  }
+  return null;
+}
+
+/**
  * Render a Zod safe-parse failure into a single-line `ConfigError` message
  * that names the failing branch / field where possible. Defends against the
  * naked `z.union` "Invalid input" UX.
@@ -285,6 +326,11 @@ export function loadConfigFile(path: string): TtctlConfig {
     parsed = parseYaml(raw);
   } catch (err) {
     throw new ConfigError(`Invalid YAML: ${(err as Error).message}`, "PARSE", path);
+  }
+
+  const legacyError = detectLegacyShape(parsed, path);
+  if (legacyError !== null) {
+    throw legacyError;
   }
 
   const result = ConfigLoadSchema.safeParse(parsed);

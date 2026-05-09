@@ -147,6 +147,38 @@ to `op item get`. Per-field references (`op://Personal/ttctl/Section/username`,
 fields from a single LOGIN-category item by `purpose: USERNAME` /
 `purpose: PASSWORD`.
 
+### Migration from pre-#107 shape
+
+Pre-#107, `auth` was a top-level **string** (`auth: "op://..."` — the
+1Password reference lived directly at `auth`, with no surrounding block).
+Post-#107, `auth` is a **structured block** with `credentials` and `token`
+sub-fields (Forms A-D above).
+
+`loadConfigFile` detects the legacy shape **pre-Zod** (after `parseYaml`,
+before `ConfigLoadSchema.safeParse`) and throws `ConfigError(VALIDATION)`
+with a copy-pasteable migration hint that names the offending shape
+literally and the corrected shape literally:
+
+Legacy (pre-#107):
+
+```yaml
+auth: "op://Personal/ttctl"
+```
+
+Corrected (post-#107, Form A):
+
+```yaml
+auth:
+  credentials: "op://Personal/ttctl"
+```
+
+The error code stays `VALIDATION` (preserves the CLI/MCP exit-code
+contract from #107). The migration hint is part of `ConfigError.message`,
+not a separate stderr emit, so JSON wire-format consumers see one coherent
+`{ code, message }` payload. Other malformed shapes (typos, missing fields,
+wrong sub-field types) continue to flow through the field-named superRefine
+path — only the auth-as-string case triggers this dedicated message.
+
 ### Lifecycle
 
 `ttctl auth signin` resolves the source credentials, calls
