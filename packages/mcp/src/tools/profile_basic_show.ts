@@ -10,7 +10,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_basic_show";
@@ -25,7 +25,7 @@ const TOOL_NAME = "ttctl_profile_basic_show";
  * needed). MCP is the LLM-facing surface, so the description includes
  * three example user-intent phrases the model can match against.
  */
-export function registerProfileBasicShowTool(server: McpServer): void {
+export function registerProfileBasicShowTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -41,7 +41,7 @@ export function registerProfileBasicShowTool(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

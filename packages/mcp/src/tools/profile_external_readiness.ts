@@ -10,7 +10,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_readiness";
@@ -23,7 +23,7 @@ const TOOL_NAME = "ttctl_profile_external_readiness";
  * Used to know which sections still need work before the talent can
  * submit-for-review.
  */
-export function registerProfileExternalReadinessTool(server: McpServer): void {
+export function registerProfileExternalReadinessTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -39,7 +39,7 @@ export function registerProfileExternalReadinessTool(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

@@ -74,6 +74,14 @@ export interface McpClientOptions {
    * `env: { TTCTL_CONFIG_FILE: undefined }`).
    */
   env?: Record<string, string | undefined>;
+  /**
+   * Extra argv tokens appended after the `mcp` subcommand (#113). Used
+   * by tests that exercise the umbrella entry's CLI-flag parsing — the
+   * canonical example is `["--config", "<path>"]`, which the umbrella
+   * must thread into `runMcpStdio({configPath})` so the captured path
+   * comes from the flag, not the env. Empty by default.
+   */
+  mcpFlags?: readonly string[];
 }
 
 export interface McpClient {
@@ -137,7 +145,8 @@ export function getMcpClient(options: McpClientOptions): McpClient {
     }
   }
 
-  const child = spawn(process.execPath, [cliEntryPoint, "mcp"], {
+  const argv = [cliEntryPoint, "mcp", ...(options.mcpFlags ?? [])];
+  const child = spawn(process.execPath, argv, {
     cwd,
     env,
     stdio: ["pipe", "pipe", "pipe"],

@@ -5,7 +5,8 @@ import { profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { jsonSuccess, presentToolError, resolveTokenForTool, textSuccess } from "./shared.js";
+import type { ToolRegistrationContext } from "../_shared.js";
+import { jsonSuccess, presentToolError, textSuccess } from "./shared.js";
 
 /**
  * Register the five `profile.industries.*` MCP tools on `server`.
@@ -19,7 +20,7 @@ import { jsonSuccess, presentToolError, resolveTokenForTool, textSuccess } from 
  *     from add — the autocomplete leaf returns suggestions from the
  *     known-industry database; add does NOT consult the catalog)
  */
-export function registerIndustriesTools(server: McpServer): void {
+export function registerIndustriesTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_industries_add",
     {
@@ -33,7 +34,7 @@ export function registerIndustriesTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.industries.add");
+      const auth = await ctx.resolveTokenForTool("profile.industries.add");
       if ("error" in auth) return auth.error;
 
       const fields: profile.industries.IndustryProfileFields = { title: input.name };
@@ -62,7 +63,7 @@ export function registerIndustriesTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.industries.update");
+      const auth = await ctx.resolveTokenForTool("profile.industries.update");
       if ("error" in auth) return auth.error;
 
       const fields: profile.industries.IndustryProfileFields = {};
@@ -87,7 +88,7 @@ export function registerIndustriesTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("industry profile id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.industries.remove");
+      const auth = await ctx.resolveTokenForTool("profile.industries.remove");
       if ("error" in auth) return auth.error;
       try {
         const id = await profile.industries.remove(auth.token, input.id);
@@ -106,7 +107,7 @@ export function registerIndustriesTools(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await resolveTokenForTool("profile.industries.list");
+      const auth = await ctx.resolveTokenForTool("profile.industries.list");
       if ("error" in auth) return auth.error;
       try {
         const rows = await profile.industries.list(auth.token);
@@ -133,7 +134,7 @@ export function registerIndustriesTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.industries.autocomplete");
+      const auth = await ctx.resolveTokenForTool("profile.industries.autocomplete");
       if ("error" in auth) return auth.error;
       try {
         const opts: { limit: number; withoutIds?: string[] } = { limit: input.limit };

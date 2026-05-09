@@ -4,10 +4,10 @@
 import { profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { resolveToolAuth } from "../../auth.js";
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
 import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
+import type { ToolRegistrationContext } from "../_shared.js";
 
 /**
  * Register the two `ttctl_profile_resume_*` MCP tools.
@@ -15,7 +15,7 @@ import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js"
  * Tool names use the canonical sub-domain `resume` (NOT the CLI alias
  * `cv`) per project policy.
  */
-export function registerResumeTools(server: McpServer): void {
+export function registerResumeTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_resume_upload",
     {
@@ -25,7 +25,7 @@ export function registerResumeTools(server: McpServer): void {
       inputSchema: fileUploadInputSchema,
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       const decoded = decodeFileUploadInput(args);
       if ("isError" in decoded) return decoded;
@@ -47,7 +47,7 @@ export function registerResumeTools(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const result = await profile.resume.cancelUpload(auth.token);

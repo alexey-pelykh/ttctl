@@ -5,7 +5,8 @@ import { parseDateInput, profile, splitParagraphs } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { dateInput, jsonSuccess, presentToolError, resolveTokenForTool, textSuccess } from "./shared.js";
+import type { ToolRegistrationContext } from "../_shared.js";
+import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
 
 /**
  * Register the six `profile.employment.*` MCP tools on `server`.
@@ -19,7 +20,7 @@ import { dateInput, jsonSuccess, presentToolError, resolveTokenForTool, textSucc
  * for resolving free-text employer names to canonical Toptal IDs
  * before adding a new employment row.
  */
-export function registerEmploymentTools(server: McpServer): void {
+export function registerEmploymentTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_employment_add",
     {
@@ -40,7 +41,7 @@ export function registerEmploymentTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.employment.add");
+      const auth = await ctx.resolveTokenForTool("profile.employment.add");
       if ("error" in auth) return auth.error;
 
       const fields: profile.employment.EmploymentFields = {
@@ -90,7 +91,7 @@ export function registerEmploymentTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.employment.update");
+      const auth = await ctx.resolveTokenForTool("profile.employment.update");
       if ("error" in auth) return auth.error;
 
       const fields: profile.employment.EmploymentFields = {};
@@ -129,7 +130,7 @@ export function registerEmploymentTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("employment id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.employment.remove");
+      const auth = await ctx.resolveTokenForTool("profile.employment.remove");
       if ("error" in auth) return auth.error;
       try {
         const id = await profile.employment.remove(auth.token, input.id);
@@ -148,7 +149,7 @@ export function registerEmploymentTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("employment id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.employment.show");
+      const auth = await ctx.resolveTokenForTool("profile.employment.show");
       if ("error" in auth) return auth.error;
       try {
         const row = await profile.employment.show(auth.token, input.id);
@@ -170,7 +171,7 @@ export function registerEmploymentTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.employment.highlight");
+      const auth = await ctx.resolveTokenForTool("profile.employment.highlight");
       if ("error" in auth) return auth.error;
       try {
         const result = await profile.employment.highlight(auth.token, input.id, input.highlight);
@@ -193,7 +194,7 @@ export function registerEmploymentTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.employment.employer_autocomplete");
+      const auth = await ctx.resolveTokenForTool("profile.employment.employer_autocomplete");
       if ("error" in auth) return auth.error;
       try {
         const suggestions = await profile.employment.employerAutocomplete(auth.token, input.query, input.limit);

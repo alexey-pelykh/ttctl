@@ -5,10 +5,10 @@ import { profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { resolveToolAuth } from "../../auth.js";
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
 import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
+import type { ToolRegistrationContext } from "../_shared.js";
 
 /**
  * Register the seven `ttctl_profile_portfolio_*` MCP tools per the #75
@@ -19,7 +19,7 @@ import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js"
  * of fields, with file-upload tools accepting the dual `filePath` /
  * `content` (base64) input per the spec.
  */
-export function registerPortfolioTools(server: McpServer): void {
+export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_portfolio_list",
     {
@@ -28,7 +28,7 @@ export function registerPortfolioTools(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const items = await profile.portfolio.list(auth.token);
@@ -59,7 +59,7 @@ export function registerPortfolioTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const items = await profile.portfolio.add(auth.token, buildPortfolioInput(args));
@@ -90,7 +90,7 @@ export function registerPortfolioTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       const { id, ...rest } = args;
       const changes = buildPortfolioInput(rest);
@@ -113,7 +113,7 @@ export function registerPortfolioTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const items = await profile.portfolio.remove(auth.token, args.id);
@@ -136,7 +136,7 @@ export function registerPortfolioTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const items = await profile.portfolio.reorder(auth.token, args.id, args.position);
@@ -158,7 +158,7 @@ export function registerPortfolioTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const result = await profile.portfolio.highlight(auth.token, args.id, args.highlight);
@@ -178,7 +178,7 @@ export function registerPortfolioTools(server: McpServer): void {
       inputSchema: fileUploadInputSchema,
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       const decoded = decodeFileUploadInput(args);
       if ("isError" in decoded) return decoded;
@@ -200,7 +200,7 @@ export function registerPortfolioTools(server: McpServer): void {
       inputSchema: fileUploadInputSchema,
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       const decoded = decodeFileUploadInput(args);
       if ("isError" in decoded) return decoded;

@@ -5,7 +5,8 @@ import { parseDateInput, profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { dateInput, jsonSuccess, presentToolError, resolveTokenForTool, textSuccess } from "./shared.js";
+import type { ToolRegistrationContext } from "../_shared.js";
+import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
 
 /**
  * Register the five `profile.education.*` MCP tools on `server`. Mirrors
@@ -19,7 +20,7 @@ import { dateInput, jsonSuccess, presentToolError, resolveTokenForTool, textSucc
  *   - ttctl_profile_education_show
  *   - ttctl_profile_education_highlight
  */
-export function registerEducationTools(server: McpServer): void {
+export function registerEducationTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_education_add",
     {
@@ -37,7 +38,7 @@ export function registerEducationTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.education.add");
+      const auth = await ctx.resolveTokenForTool("profile.education.add");
       if ("error" in auth) return auth.error;
 
       const fields: profile.education.EducationFields = {
@@ -81,7 +82,7 @@ export function registerEducationTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.education.update");
+      const auth = await ctx.resolveTokenForTool("profile.education.update");
       if ("error" in auth) return auth.error;
 
       const fields: profile.education.EducationFields = {};
@@ -115,7 +116,7 @@ export function registerEducationTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("education id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.education.remove");
+      const auth = await ctx.resolveTokenForTool("profile.education.remove");
       if ("error" in auth) return auth.error;
       try {
         const id = await profile.education.remove(auth.token, input.id);
@@ -134,7 +135,7 @@ export function registerEducationTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("education id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.education.show");
+      const auth = await ctx.resolveTokenForTool("profile.education.show");
       if ("error" in auth) return auth.error;
       try {
         const row = await profile.education.show(auth.token, input.id);
@@ -156,7 +157,7 @@ export function registerEducationTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.education.highlight");
+      const auth = await ctx.resolveTokenForTool("profile.education.highlight");
       if ("error" in auth) return auth.error;
       try {
         const result = await profile.education.highlight(auth.token, input.id, input.highlight);

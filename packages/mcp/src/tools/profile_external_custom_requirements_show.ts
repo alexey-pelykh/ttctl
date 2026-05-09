@@ -10,7 +10,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_custom_requirements_show";
@@ -25,7 +25,7 @@ const TOOL_NAME = "ttctl_profile_external_custom_requirements_show";
  * boolean trio. See the service module top-comment for the spec/API
  * reconciliation.
  */
-export function registerProfileExternalCustomRequirementsShowTool(server: McpServer): void {
+export function registerProfileExternalCustomRequirementsShowTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -41,7 +41,7 @@ export function registerProfileExternalCustomRequirementsShowTool(server: McpSer
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

@@ -203,6 +203,48 @@ required. (Scheduler has its own bearer chain — out of scope here, see
   can save it manually if the post-signin write fails (read-only FS,
   full disk).
 
+### MCP session lifetime and config path
+
+The MCP server is a long-lived process — a single `ttctl mcp` invocation
+hosts every tool call for the duration of the connected client session
+(Claude Desktop / Claude Code / Cursor / Windsurf, typically minutes to
+hours). The CLI's per-invocation `resolveConfig()` model would not be
+safe here: a parent shell that re-exports `TTCTL_CONFIG_FILE` between
+two tool calls would split the session's READ and WRITE targets — the
+first call would land on `/A/.ttctl.yaml`, the next on `/B/.ttctl.yaml`,
+and a captured bearer would persist to a different file than the one
+read on the same session.
+
+**Path-capture-on-startup** (#113) closes this:
+
+- `buildServer({ configPath? })` in `packages/mcp/src/server.ts` calls
+  `resolveConfig({ path: configPath })` ONCE at server-construction
+  time. The resolved absolute path is captured into a closure and bound
+  into three per-tool auth resolvers (`createToolAuthResolver`,
+  `createTokenLoader`, `createTokenResolver`) before any tool callback
+  runs.
+- Per-tool callbacks invoke their resolver via the dependency-injection
+  context (`ToolRegistrationContext` in `packages/mcp/src/tools/_shared.ts`).
+  Each resolver re-reads the captured path on every call (so a sibling
+  `ttctl auth signin` that rotates the token is picked up on the next
+  tool invocation), but the path itself is immutable for the session
+  lifetime — env-var shifts after startup do NOT retarget reads or
+  writes.
+- The umbrella entry (`packages/ttctl/src/cli.ts`) parses
+  `--config <path>` from `argv` after the `mcp` subcommand position and
+  threads it into `runMcpStdio({ configPath })`. The flag wins over
+  `TTCTL_CONFIG_FILE`, mirroring the CLI surface's precedence
+  (`--config` → env → `~/.ttctl.yaml`).
+- **Fail-fast on `NO_CREDS`** — when no candidate config resolves at
+  startup, the `ConfigError(NO_CREDS)` propagates verbatim; the
+  umbrella's MCP branch renders `Error (NO_CREDS): …` to stderr and
+  exits non-zero. The server does NOT start in a half-initialized state
+  that would lazy-fail at first tool invocation.
+
+The CLI surface is unchanged in this regard — each CLI invocation is
+short-lived and continues to resolve config per-invocation via
+`resolveConfigForCli()`.
+
 There are NO profiles. TTCtl operates against the user's own Toptal Talent
 profile, period.
 

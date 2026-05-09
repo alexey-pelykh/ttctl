@@ -3,6 +3,7 @@
 
 import { ConfigError, TtctlError, resolveConfig } from "@ttctl/core";
 
+import type { AuthResult } from "../auth.js";
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
 
@@ -15,6 +16,13 @@ import type { ToolErrorResponse } from "../errors.js";
  * startup. The MCP server is a long-lived process; the user may re-run
  * `ttctl auth signin` while the server is up, and the next tool call should
  * pick up the new token without restarting the server.
+ *
+ * Post-#113: the per-call read targets the config path captured at
+ * `buildServer()` time, NOT a fresh per-invocation `resolveConfig()` call.
+ * Tools receive the bound `loadTokenForTool` closure via the registration
+ * context, not as a free import. Env-var shifts mid-session do not
+ * retarget reads or writes — the captured path is canonical for the
+ * session's lifetime.
  *
  * **Error contract**: domain failures (`ProfileError`, `SkillsError`) and
  * typed `TtctlError` subclasses both render as MCP `isError: true` tool
@@ -133,22 +141,30 @@ export function genericErrorResponse(toolName: string, err: unknown): ToolErrorR
  * Routes via `ttctlErrorToToolResponseOrNull` first so any `TtctlError`
  * thrown by the resolver chain (rare but possible) gets the uniform
  * Error/Recovery/Code rendering.
+ *
+ * The loader is a factory closure over the MCP session's canonical config
+ * path captured at startup (#113). Per-call reads always target that path;
+ * env-var shifts during the session do NOT retarget the read.
  */
-export async function loadTokenForTool(toolName: string): Promise<{ token: string } | ToolErrorResponse> {
-  let token: string | undefined;
-  try {
-    const { config } = resolveConfig();
-    token = config.auth.token;
-  } catch (err) {
-    if (err instanceof ConfigError) return configErrorResponse(toolName, err);
-    if (err instanceof TtctlError) {
-      const typed = ttctlErrorToToolResponseOrNull(err);
-      if (typed !== null) return typed;
+export type TokenLoader = (toolName: string) => Promise<{ token: string } | ToolErrorResponse>;
+
+export function createTokenLoader(configPath: string): TokenLoader {
+  return async function loadTokenForTool(toolName: string): Promise<{ token: string } | ToolErrorResponse> {
+    let token: string | undefined;
+    try {
+      const { config } = resolveConfig({ path: configPath });
+      token = config.auth.token;
+    } catch (err) {
+      if (err instanceof ConfigError) return configErrorResponse(toolName, err);
+      if (err instanceof TtctlError) {
+        const typed = ttctlErrorToToolResponseOrNull(err);
+        if (typed !== null) return typed;
+      }
+      throw err;
     }
-    throw err;
-  }
-  if (token === undefined) return unauthenticatedResponse(toolName);
-  return Promise.resolve({ token });
+    if (token === undefined) return unauthenticatedResponse(toolName);
+    return Promise.resolve({ token });
+  };
 }
 
 /**
@@ -158,4 +174,45 @@ export async function loadTokenForTool(toolName: string): Promise<{ token: strin
  */
 export function isToolErrorResponse(value: unknown): value is ToolErrorResponse {
   return typeof value === "object" && value !== null && "isError" in value && value.isError === true;
+}
+
+/**
+ * Resolver-shape used by `tools/profile/shared.ts` (`commandLabel`-flavored
+ * auth resolution returning `{token} | {error}`). Defined here so the
+ * `ToolRegistrationContext` can carry it without `_shared.ts` having to
+ * import from `tools/profile/`.
+ */
+export type TokenResolver = (commandLabel: string) => Promise<{ token: string } | { error: ToolErrorResponse }>;
+
+/**
+ * Dependency-injection context threaded through `registerAllTools` (#113).
+ *
+ * `buildServer({configPath})` calls `resolveConfig` ONCE at startup and
+ * uses the resulting absolute path to construct each resolver. The
+ * context is then handed to `registerAllTools`, which forwards it to each
+ * per-tool registrar so per-tool callbacks invoke `ctx.resolveToolAuth()`
+ * / `ctx.loadTokenForTool(toolName)` / `ctx.resolveTokenForTool(label)`
+ * instead of free-importing module-scoped functions that would re-resolve
+ * config (and re-read env) on each call.
+ *
+ * Three resolver shapes co-exist because the existing tool surface uses
+ * three different conventions:
+ *
+ * - `resolveToolAuth` — discriminated-union `AuthResult`
+ *   (`{ok: true, token} | {ok: false, response}`) consumed by
+ *   `tools/profile/portfolio|resume|visas.ts`.
+ * - `loadTokenForTool(toolName)` — toolName-aware error path that
+ *   includes the tool name in the rendered `Error: <toolName> failed
+ *   (...)` text. Used by every per-file `profile_*_*.ts` tool.
+ * - `resolveTokenForTool(commandLabel)` — `commandLabel`-prefixed errors
+ *   (`{token} | {error}` shape) used by sub-domain registrars in
+ *   `tools/profile/certifications|education|employment|industries.ts`.
+ *
+ * All three target the captured configPath; mid-session env shifts do
+ * NOT retarget reads or writes for any of the three.
+ */
+export interface ToolRegistrationContext {
+  resolveToolAuth: () => Promise<AuthResult>;
+  loadTokenForTool: TokenLoader;
+  resolveTokenForTool: TokenResolver;
 }

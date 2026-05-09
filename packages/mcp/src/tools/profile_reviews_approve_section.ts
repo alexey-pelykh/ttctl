@@ -11,7 +11,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_reviews_approve_section";
@@ -27,7 +27,7 @@ const TOOL_NAME = "ttctl_profile_reviews_approve_section";
  *
  * **Destructive**: approval is final per platform semantics.
  */
-export function registerProfileReviewsApproveSectionTool(server: McpServer): void {
+export function registerProfileReviewsApproveSectionTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -52,7 +52,7 @@ export function registerProfileReviewsApproveSectionTool(server: McpServer): voi
       },
     },
     async (input) => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {
