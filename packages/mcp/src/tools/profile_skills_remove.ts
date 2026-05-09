@@ -10,13 +10,13 @@ import {
   domainErrorResponse,
   genericErrorResponse,
   isToolErrorResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
   textResponse,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_skills_remove";
 
-export function registerProfileSkillsRemoveTool(server: McpServer): void {
+export function registerProfileSkillsRemoveTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -38,7 +38,7 @@ export function registerProfileSkillsRemoveTool(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

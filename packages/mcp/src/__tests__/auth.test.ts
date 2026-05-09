@@ -3,31 +3,36 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveToolAuth } from "../auth.js";
+import { createToolAuthResolver } from "../auth.js";
 
 /**
- * The MCP server has no CLI flags — `TTCTL_CONFIG_FILE` and the home
- * dotfile (`~/.ttctl.yaml`) are the only knobs a deployment has to point
- * it at a non-default config (CI, agent-driven setups, multi-config dev).
- * These tests pin that integration.
+ * `createToolAuthResolver(configPath)` is the factory closure introduced
+ * by #113. The MCP server captures the resolved config path ONCE at
+ * `buildServer()` time and binds it into a per-session resolver; per-tool
+ * invocations call the bound closure, which targets the captured path
+ * verbatim.
  *
- * `resolveToolAuth` calls `resolveConfig()` parameterless, so the env-var
- * support comes from `discoverConfigPath` in `@ttctl/core`. The tests below
- * verify the wiring end-to-end at the MCP layer rather than re-asserting
- * `discoverConfigPath`'s precedence chain (covered exhaustively in
- * `packages/core/src/__tests__/config.test.ts`).
+ * These tests pin the factory's contract:
+ *   - happy paths (Form D / C) return OK with the token from the bound
+ *     path,
+ *   - failure paths (missing file / Form A no-token) return the
+ *     structured `ToolErrorResponse`,
+ *   - mid-session `TTCTL_CONFIG_FILE` mutation does NOT retarget the read.
  *
- * Isolation: each test uses a fresh tmp dir, redirects HOME so
- * `~/.ttctl.yaml` resolves into the fixture, and saves/restores the
- * relevant env vars so the test order is irrelevant.
+ * Resolution-chain coverage (`TTCTL_CONFIG_FILE` wins over `~/.ttctl.yaml`,
+ * `$XDG_CONFIG_HOME` is not consulted, etc.) lives in
+ * `packages/core/src/__tests__/config.test.ts` — that's where the
+ * `resolveConfig` chain is exercised. Post-#113 the MCP layer no longer
+ * re-resolves per call, so duplicating those cases here would test core's
+ * behavior through an indirection rather than this layer's contract.
  */
-describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model)", () => {
+describe("createToolAuthResolver: factory closure binding (#113)", () => {
   let tmpRoot: string;
-  let savedEnv: { TTCTL_CONFIG_FILE?: string; XDG_CONFIG_HOME?: string; HOME?: string; USERPROFILE?: string };
+  let savedEnv: { TTCTL_CONFIG_FILE?: string };
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "ttctl-mcp-auth-test-"));
@@ -35,36 +40,24 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model
       ...(process.env["TTCTL_CONFIG_FILE"] !== undefined
         ? { TTCTL_CONFIG_FILE: process.env["TTCTL_CONFIG_FILE"] }
         : {}),
-      ...(process.env["XDG_CONFIG_HOME"] !== undefined ? { XDG_CONFIG_HOME: process.env["XDG_CONFIG_HOME"] } : {}),
-      ...(process.env["HOME"] !== undefined ? { HOME: process.env["HOME"] } : {}),
-      ...(process.env["USERPROFILE"] !== undefined ? { USERPROFILE: process.env["USERPROFILE"] } : {}),
     };
     delete process.env["TTCTL_CONFIG_FILE"];
-    delete process.env["XDG_CONFIG_HOME"];
-    process.env["HOME"] = tmpRoot;
-    process.env["USERPROFILE"] = tmpRoot;
   });
 
   afterEach(() => {
     if (savedEnv.TTCTL_CONFIG_FILE !== undefined) process.env["TTCTL_CONFIG_FILE"] = savedEnv.TTCTL_CONFIG_FILE;
     else delete process.env["TTCTL_CONFIG_FILE"];
-    if (savedEnv.XDG_CONFIG_HOME !== undefined) process.env["XDG_CONFIG_HOME"] = savedEnv.XDG_CONFIG_HOME;
-    else delete process.env["XDG_CONFIG_HOME"];
-    if (savedEnv.HOME !== undefined) process.env["HOME"] = savedEnv.HOME;
-    else delete process.env["HOME"];
-    if (savedEnv.USERPROFILE !== undefined) process.env["USERPROFILE"] = savedEnv.USERPROFILE;
-    else delete process.env["USERPROFILE"];
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it("loads the in-memory token from a Form D config pointed to by TTCTL_CONFIG_FILE", async () => {
-    // Form D fixture: credentials + token live in the SAME YAML file post-#107.
-    const configPath = join(tmpRoot, "from-env.yaml");
+  it("loads the in-memory token from a Form D config bound at factory creation", async () => {
+    // Form D fixture: credentials + token in one YAML file (post-#107).
+    const configPath = join(tmpRoot, "form-d.yaml");
     writeFileSync(configPath, "auth:\n  credentials: op://Personal/ttctl\n  token: user_abc123_xyz789\n", {
       mode: 0o600,
     });
-    process.env["TTCTL_CONFIG_FILE"] = configPath;
 
+    const resolveToolAuth = createToolAuthResolver(configPath);
     const result = await resolveToolAuth();
 
     expect(result.ok).toBe(true);
@@ -73,11 +66,11 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model
     }
   });
 
-  it("loads the in-memory token from a Form C (token-only) config", async () => {
+  it("loads the in-memory token from a Form C (token-only) config bound at factory creation", async () => {
     const configPath = join(tmpRoot, "token-only.yaml");
     writeFileSync(configPath, "auth:\n  token: user_token_only_xyz\n", { mode: 0o600 });
-    process.env["TTCTL_CONFIG_FILE"] = configPath;
 
+    const resolveToolAuth = createToolAuthResolver(configPath);
     const result = await resolveToolAuth();
 
     expect(result.ok).toBe(true);
@@ -86,9 +79,10 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model
     }
   });
 
-  it("returns NO_CREDS error response when TTCTL_CONFIG_FILE points to a non-existent file", async () => {
-    process.env["TTCTL_CONFIG_FILE"] = join(tmpRoot, "does-not-exist.yaml");
+  it("returns NO_CREDS error response when the bound path does not exist", async () => {
+    const missingPath = join(tmpRoot, "does-not-exist.yaml");
 
+    const resolveToolAuth = createToolAuthResolver(missingPath);
     const result = await resolveToolAuth();
 
     expect(result.ok).toBe(false);
@@ -98,11 +92,11 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model
     }
   });
 
-  it("returns UNAUTHENTICATED response when config is Form A (credentials only, no token)", async () => {
+  it("returns UNAUTHENTICATED response when bound path is Form A (credentials only, no token)", async () => {
     const configPath = join(tmpRoot, "no-token.yaml");
     writeFileSync(configPath, "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
-    process.env["TTCTL_CONFIG_FILE"] = configPath;
 
+    const resolveToolAuth = createToolAuthResolver(configPath);
     const result = await resolveToolAuth();
 
     expect(result.ok).toBe(false);
@@ -112,53 +106,26 @@ describe("resolveToolAuth: TTCTL_CONFIG_FILE wiring (post-#107 single-file model
     }
   });
 
-  it("TTCTL_CONFIG_FILE wins over ~/.ttctl.yaml", async () => {
-    // Two valid configs with different token contents. The env-var-pointed
-    // one should be the one that loads.
-    const envConfig = join(tmpRoot, "from-env.yaml");
-    writeFileSync(envConfig, "auth:\n  token: from-env-token-aaa\n", { mode: 0o600 });
+  it("MID-SESSION ENV SHIFT: bound path is honored even when TTCTL_CONFIG_FILE flips after factory creation", async () => {
+    // Path A — bound at factory creation. Path B — re-targeted via env mid-session.
+    // The factory closes over A; subsequent reads MUST land on A regardless.
+    const pathA = join(tmpRoot, "captured.yaml");
+    writeFileSync(pathA, "auth:\n  token: from-captured-path-A\n", { mode: 0o600 });
+    const pathB = join(tmpRoot, "post-shift.yaml");
+    writeFileSync(pathB, "auth:\n  token: from-shifted-path-B\n", { mode: 0o600 });
 
-    const homeConfig = join(tmpRoot, ".ttctl.yaml");
-    writeFileSync(homeConfig, "auth:\n  token: from-home-token-bbb\n", { mode: 0o600 });
-
-    process.env["TTCTL_CONFIG_FILE"] = envConfig;
-
-    const result = await resolveToolAuth();
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.token).toBe("from-env-token-aaa");
-    }
-  });
-
-  it("REGRESSION: $XDG_CONFIG_HOME/ttctl/config.yaml is NOT consulted post-#107", async () => {
-    // Seed an XDG location with a token; resolveToolAuth must IGNORE it.
-    const xdgDir = join(tmpRoot, "xdg");
-    const xdgTtctlDir = join(xdgDir, "ttctl");
-    mkdirSync(xdgTtctlDir, { recursive: true });
-    writeFileSync(join(xdgTtctlDir, "config.yaml"), "auth:\n  token: from-xdg-should-not-be-loaded\n", { mode: 0o600 });
-    process.env["XDG_CONFIG_HOME"] = xdgDir;
-    // No TTCTL_CONFIG_FILE, no ~/.ttctl.yaml — only the XDG-resident config
-    // exists. resolveToolAuth must fall through to NO_CREDS.
-
-    const result = await resolveToolAuth();
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.response.isError).toBe(true);
-      expect(result.response.content[0]?.text).toContain("(Code: NO_CREDS)");
-    }
-  });
-
-  it("falls back to ~/.ttctl.yaml when TTCTL_CONFIG_FILE is unset", async () => {
-    const homeConfig = join(tmpRoot, ".ttctl.yaml");
-    writeFileSync(homeConfig, "auth:\n  token: from-home-fallback-zzz\n", { mode: 0o600 });
+    // Establish env state at factory creation pointing AT pathA, build the
+    // factory, then SHIFT the env to pathB. The factory captured A — the
+    // read must still come from A.
+    process.env["TTCTL_CONFIG_FILE"] = pathA;
+    const resolveToolAuth = createToolAuthResolver(pathA);
+    process.env["TTCTL_CONFIG_FILE"] = pathB;
 
     const result = await resolveToolAuth();
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.token).toBe("from-home-fallback-zzz");
+      expect(result.token).toBe("from-captured-path-A");
     }
   });
 });

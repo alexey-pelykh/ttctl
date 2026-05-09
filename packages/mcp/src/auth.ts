@@ -20,16 +20,53 @@ import type { ToolErrorResponse } from "./errors.js";
  * Post-#107: the token lives inline in the YAML config under `auth.token`
  * — no separate token file load. `resolveConfig()` does the YAML parse +
  * schema validation; `config.auth.token` is read directly.
+ *
+ * Post-#113: the resolver is a factory closure over the config path
+ * captured at MCP server startup. Reads target the captured path, NOT a
+ * fresh per-invocation `resolveConfig()` call. This guarantees read/write
+ * symmetry across the MCP session lifetime — env-var shifts after startup
+ * do not retarget either side.
  */
 export type AuthResult = { ok: true; token: string } | { ok: false; response: ToolErrorResponse };
 
-export function resolveToolAuth(): Promise<AuthResult> {
-  let token: string | undefined;
-  try {
-    const { config } = resolveConfig();
-    token = config.auth.token;
-  } catch (err) {
-    if (err instanceof ConfigError) {
+/**
+ * Build a tool-auth resolver bound to the MCP session's canonical config
+ * path. The factory is invoked ONCE at `buildServer()` time with the path
+ * captured by the startup-time `resolveConfig()`; each per-tool invocation
+ * calls the returned closure, which re-reads the file (to pick up token
+ * rotations from a sibling `ttctl auth signin`) but ALWAYS targets the
+ * captured path.
+ */
+export function createToolAuthResolver(configPath: string): () => Promise<AuthResult> {
+  return function resolveToolAuth(): Promise<AuthResult> {
+    let token: string | undefined;
+    try {
+      const { config } = resolveConfig({ path: configPath });
+      token = config.auth.token;
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        return Promise.resolve({
+          ok: false,
+          response: {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: [
+                  `Error: ${err.message}`,
+                  "",
+                  "Recovery: See README for the YAML config setup instructions.",
+                  "",
+                  `(Code: ${err.code})`,
+                ].join("\n"),
+              },
+            ],
+          },
+        });
+      }
+      throw err;
+    }
+    if (token === undefined) {
       return Promise.resolve({
         ok: false,
         response: {
@@ -38,38 +75,17 @@ export function resolveToolAuth(): Promise<AuthResult> {
             {
               type: "text",
               text: [
-                `Error: ${err.message}`,
+                "Error: No auth token found in config.",
                 "",
-                "Recovery: See README for the YAML config setup instructions.",
+                "Recovery: Run `ttctl auth signin` to sign in before invoking ttctl tools.",
                 "",
-                `(Code: ${err.code})`,
+                "(Code: UNAUTHENTICATED)",
               ].join("\n"),
             },
           ],
         },
       });
     }
-    throw err;
-  }
-  if (token === undefined) {
-    return Promise.resolve({
-      ok: false,
-      response: {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: [
-              "Error: No auth token found in config.",
-              "",
-              "Recovery: Run `ttctl auth signin` to sign in before invoking ttctl tools.",
-              "",
-              "(Code: UNAUTHENTICATED)",
-            ].join("\n"),
-          },
-        ],
-      },
-    });
-  }
-  return Promise.resolve({ ok: true, token });
+    return Promise.resolve({ ok: true, token });
+  };
 }

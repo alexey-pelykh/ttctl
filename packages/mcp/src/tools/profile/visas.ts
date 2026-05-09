@@ -5,9 +5,9 @@ import { profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { resolveToolAuth } from "../../auth.js";
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
+import type { ToolRegistrationContext } from "../_shared.js";
 
 /**
  * Register the four `ttctl_profile_visas_*` MCP tools.
@@ -15,7 +15,7 @@ import type { ToolErrorResponse } from "../../errors.js";
  * Tool names use the canonical sub-domain `visas` (no CLI alias). Each
  * tool maps 1:1 to a CLI leaf.
  */
-export function registerVisasTools(server: McpServer): void {
+export function registerVisasTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_visas_list",
     {
@@ -24,7 +24,7 @@ export function registerVisasTools(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const visas = await profile.visas.list(auth.token);
@@ -48,7 +48,7 @@ export function registerVisasTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const input: profile.visas.TravelVisaInput = {
@@ -77,7 +77,7 @@ export function registerVisasTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       const changes: profile.visas.TravelVisaInput = {};
       if (args.countryId !== undefined) changes.countryId = args.countryId;
@@ -102,7 +102,7 @@ export function registerVisasTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const auth = await resolveToolAuth();
+      const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
         const visas = await profile.visas.remove(auth.token, args.id);

@@ -10,7 +10,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_skills_list";
@@ -21,7 +21,7 @@ const TOOL_NAME = "ttctl_profile_skills_list";
  * connection-count summary. Resolves the user's `profileId` internally
  * via `profile.basic.show()` — no input required from the caller.
  */
-export function registerProfileSkillsListTool(server: McpServer): void {
+export function registerProfileSkillsListTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -36,7 +36,7 @@ export function registerProfileSkillsListTool(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

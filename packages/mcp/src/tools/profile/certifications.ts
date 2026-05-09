@@ -5,7 +5,8 @@ import { parseDateInput, profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { dateInput, jsonSuccess, presentToolError, resolveTokenForTool, textSuccess } from "./shared.js";
+import type { ToolRegistrationContext } from "../_shared.js";
+import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
 
 /**
  * Register the five `profile.certifications.*` MCP tools on `server`.
@@ -14,7 +15,7 @@ import { dateInput, jsonSuccess, presentToolError, resolveTokenForTool, textSucc
  * alias `certs` (per #72) is CLI-only and never appears in the MCP
  * catalog.
  */
-export function registerCertificationsTools(server: McpServer): void {
+export function registerCertificationsTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     "ttctl_profile_certifications_add",
     {
@@ -31,7 +32,7 @@ export function registerCertificationsTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.certifications.add");
+      const auth = await ctx.resolveTokenForTool("profile.certifications.add");
       if ("error" in auth) return auth.error;
 
       const fields: profile.certifications.CertificationFields = {
@@ -81,7 +82,7 @@ export function registerCertificationsTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.certifications.update");
+      const auth = await ctx.resolveTokenForTool("profile.certifications.update");
       if ("error" in auth) return auth.error;
 
       const fields: profile.certifications.CertificationFields = {};
@@ -122,7 +123,7 @@ export function registerCertificationsTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("certification id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.certifications.remove");
+      const auth = await ctx.resolveTokenForTool("profile.certifications.remove");
       if ("error" in auth) return auth.error;
       try {
         const id = await profile.certifications.remove(auth.token, input.id);
@@ -141,7 +142,7 @@ export function registerCertificationsTools(server: McpServer): void {
       inputSchema: { id: z.string().min(1).describe("certification id") },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.certifications.show");
+      const auth = await ctx.resolveTokenForTool("profile.certifications.show");
       if ("error" in auth) return auth.error;
       try {
         const row = await profile.certifications.show(auth.token, input.id);
@@ -163,7 +164,7 @@ export function registerCertificationsTools(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await resolveTokenForTool("profile.certifications.highlight");
+      const auth = await ctx.resolveTokenForTool("profile.certifications.highlight");
       if ("error" in auth) return auth.error;
       try {
         const result = await profile.certifications.highlight(auth.token, input.id, input.highlight);

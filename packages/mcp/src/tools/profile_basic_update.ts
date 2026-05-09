@@ -11,7 +11,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_basic_update";
@@ -27,7 +27,7 @@ const TOOL_NAME = "ttctl_profile_basic_update";
  * optional; at least one must be supplied (the core layer validates
  * this and raises a `VALIDATION_ERROR` if both are omitted).
  */
-export function registerProfileBasicUpdateTool(server: McpServer): void {
+export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -56,7 +56,7 @@ export function registerProfileBasicUpdateTool(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       const changes: profile.basic.ProfileUpdate = {};

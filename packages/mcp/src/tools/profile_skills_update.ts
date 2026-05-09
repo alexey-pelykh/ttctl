@@ -11,14 +11,14 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_skills_update";
 
 const RATING_VALUES = ["COMPETENT", "STRONG", "EXPERT", "NOVICE"] as const;
 
-export function registerProfileSkillsUpdateTool(server: McpServer): void {
+export function registerProfileSkillsUpdateTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -53,7 +53,7 @@ export function registerProfileSkillsUpdateTool(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       const fields: profile.skills.SkillUpdate = {};

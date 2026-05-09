@@ -10,7 +10,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_advanced_wizard_show";
@@ -25,7 +25,7 @@ const TOOL_NAME = "ttctl_profile_external_advanced_wizard_show";
  * the rich shape here would create a partial duplication that drifts as
  * the visas sub-domain evolves.
  */
-export function registerProfileExternalAdvancedWizardShowTool(server: McpServer): void {
+export function registerProfileExternalAdvancedWizardShowTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -41,7 +41,7 @@ export function registerProfileExternalAdvancedWizardShowTool(server: McpServer)
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

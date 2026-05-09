@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { buildProgram, TtctlError, presentTtctlError } from "@ttctl/cli";
+import { ConfigError, TtctlError, buildProgram, presentTtctlError } from "@ttctl/cli";
 import { runMcpStdio } from "@ttctl/mcp";
 
 /**
@@ -11,15 +11,52 @@ import { runMcpStdio } from "@ttctl/mcp";
  *
  * The MCP branch is kept first so its early dispatch doesn't conflict with
  * commander's argv parsing.
+ *
+ * MCP `--config <path>` (#113): the umbrella parses the flag from argv
+ * after the `mcp` subcommand position and threads it into
+ * `runMcpStdio({ configPath })`. The path is captured ONCE inside
+ * `buildServer`; subsequent tool invocations read/write the same path
+ * regardless of mid-session env-var changes. Startup-time
+ * `resolveConfig(NO_CREDS)` propagates as a non-zero exit so the MCP
+ * client sees a clean failure rather than a half-initialized server.
  */
 async function main(): Promise<void> {
   if (process.argv[2] === "mcp") {
-    await runMcpStdio();
+    const configPath = parseConfigFlag(process.argv.slice(3));
+    try {
+      await runMcpStdio(configPath !== undefined ? { configPath } : {});
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        process.stderr.write(`Error (${err.code}): ${err.message}\n`);
+        process.exit(1);
+      }
+      throw err;
+    }
     return;
   }
 
   const program = buildProgram();
   await program.parseAsync(process.argv);
+}
+
+/**
+ * Parse `--config <path>` (and `--config=<path>`) from a flat argv slice.
+ * Returns the first match or `undefined`. Unknown flags are ignored —
+ * the MCP server has no other entry-flags today, but this keeps the
+ * function tolerant for future additions (SSE port, transport selector,
+ * …) layered on top by sister tools.
+ */
+function parseConfigFlag(args: readonly string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--config") {
+      return args[i + 1];
+    }
+    if (arg !== undefined && arg.startsWith("--config=")) {
+      return arg.slice("--config=".length);
+    }
+  }
+  return undefined;
 }
 
 main().catch((err: unknown) => {

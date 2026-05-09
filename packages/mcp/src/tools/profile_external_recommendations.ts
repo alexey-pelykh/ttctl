@@ -10,7 +10,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_recommendations";
@@ -26,7 +26,7 @@ const TOOL_NAME = "ttctl_profile_external_recommendations";
  * lists are intentionally trimmed at the GraphQL level — drilling in
  * requires fetching the underlying domain directly.
  */
-export function registerProfileExternalRecommendationsTool(server: McpServer): void {
+export function registerProfileExternalRecommendationsTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -42,7 +42,7 @@ export function registerProfileExternalRecommendationsTool(server: McpServer): v
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

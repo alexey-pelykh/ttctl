@@ -11,7 +11,7 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_reviews_approve_item";
@@ -29,7 +29,7 @@ const TOOL_NAME = "ttctl_profile_reviews_approve_item";
  * **Destructive**: approval is final per platform semantics. No `--dry-run`
  * gate at v0; that lands separately (see issue #52).
  */
-export function registerProfileReviewsApproveItemTool(server: McpServer): void {
+export function registerProfileReviewsApproveItemTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -58,7 +58,7 @@ export function registerProfileReviewsApproveItemTool(server: McpServer): void {
       },
     },
     async (input) => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {

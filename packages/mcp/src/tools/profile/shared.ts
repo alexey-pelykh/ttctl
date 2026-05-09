@@ -85,37 +85,45 @@ export function presentToolError(commandLabel: string, err: unknown): ToolErrorR
  * `ConfigError`, returns the rendered tool-error response; on success,
  * returns `{ token }`. The two-shape return lets the caller branch with
  * `if ("error" in r) return r.error` instead of carrying try/catch.
+ *
+ * Post-#113: the resolver is a factory closure over the config path
+ * captured at MCP server startup. Per-call reads always target that path;
+ * env-var shifts during the session do NOT retarget the read.
  */
 export type AuthResolution = { token: string } | { error: ToolErrorResponse };
 
-export async function resolveTokenForTool(commandLabel: string): Promise<AuthResolution> {
-  let token: string | undefined;
-  try {
-    const { config } = resolveConfig();
-    token = config.auth.token;
-  } catch (err) {
-    if (err instanceof ConfigError) {
+export type CommandLabelTokenResolver = (commandLabel: string) => Promise<AuthResolution>;
+
+export function createTokenResolver(configPath: string): CommandLabelTokenResolver {
+  return async function resolveTokenForTool(commandLabel: string): Promise<AuthResolution> {
+    let token: string | undefined;
+    try {
+      const { config } = resolveConfig({ path: configPath });
+      token = config.auth.token;
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        return {
+          error: {
+            isError: true,
+            content: [{ type: "text", text: `${commandLabel} failed (${err.code}): ${err.message}` }],
+          },
+        };
+      }
+      throw err;
+    }
+    if (token === undefined) {
       return {
         error: {
           isError: true,
-          content: [{ type: "text", text: `${commandLabel} failed (${err.code}): ${err.message}` }],
+          content: [
+            {
+              type: "text",
+              text: `${commandLabel} failed (UNAUTHENTICATED): No auth token found. Run \`ttctl auth signin\` to sign in.`,
+            },
+          ],
         },
       };
     }
-    throw err;
-  }
-  if (token === undefined) {
-    return {
-      error: {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `${commandLabel} failed (UNAUTHENTICATED): No auth token found. Run \`ttctl auth signin\` to sign in.`,
-          },
-        ],
-      },
-    };
-  }
-  return Promise.resolve({ token });
+    return Promise.resolve({ token });
+  };
 }

@@ -10,12 +10,12 @@ import {
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
-  loadTokenForTool,
+  type ToolRegistrationContext,
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_basic_photo_show";
 
-export function registerProfileBasicPhotoShowTool(server: McpServer): void {
+export function registerProfileBasicPhotoShowTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
     TOOL_NAME,
     {
@@ -31,7 +31,7 @@ export function registerProfileBasicPhotoShowTool(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const auth = await loadTokenForTool(TOOL_NAME);
+      const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
       try {
