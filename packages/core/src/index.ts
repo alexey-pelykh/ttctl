@@ -20,7 +20,7 @@ export type {
   TtctlConfigWritable,
 } from "./config.js";
 
-export { AuthTokenPersistError, clearAuthToken, persistAuthToken } from "./configWriter.js";
+export { AuthTokenPersistError, clearAuthToken, persistAuthToken, writeNewConfig } from "./configWriter.js";
 
 export { acquireConfigLock } from "./configLock.js";
 export type { ConfigLockHandle } from "./configLock.js";

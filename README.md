@@ -61,12 +61,11 @@ npx ttctl --help
 # 1. Install
 npm install -g ttctl
 
-# 2. Create a config file at the default home location
-cat > ~/.ttctl.yaml <<'EOF'
-auth:
-  credentials: "op://Personal/ttctl"
-EOF
-chmod 600 ~/.ttctl.yaml
+# 2. Bootstrap a config interactively (recommended)
+#    Walks you through Form A (1Password reference; vault + item picker
+#    when the `op` CLI is installed) or Form B (literal credentials,
+#    explicit warning). Output: ~/.ttctl.yaml at mode 0600.
+ttctl auth init
 
 # 3. Sign in (captures the bearer back into ~/.ttctl.yaml under auth.token)
 ttctl auth signin
@@ -78,7 +77,11 @@ ttctl auth status
 ttctl profile show
 ```
 
+> **`ttctl auth init`** scaffolds a fresh `~/.ttctl.yaml` interactively. Choose Form A (1Password reference, recommended) or Form B (literal credentials, discouraged — guarded by an explicit warning). On Form A with the `op` CLI installed, a vault picker and a LOGIN-category item picker run. Without `op` or on JSON-shape failure, the prompt falls back to a freeform `op://VAULT/ITEM` reference. The output file is written atomically at mode `0600` and refuses to overwrite an existing file unless `--force` is passed. The command is interactive only — pipe stdin or a non-TTY context exits non-zero with a clear message.
+
 > **`ttctl auth signin`** runs the `EmailPasswordSignIn` GraphQL mutation, captures the session bearer, and writes it BACK into the same `~/.ttctl.yaml` file under `auth.token` (atomic write; comments preserved; mode `0600`). All subsequent commands replay it as `Authorization: Token token=<X>` on every GraphQL request. The `op` CLI is invoked only at signin time to resolve your credentials. There is **no separate token file** — your config and your live session live in one YAML.
+
+> **Hand-authoring** the config also works (drop a YAML file at `~/.ttctl.yaml`, `chmod 600`); see the [Configuration](#configuration) section below for the four valid `auth` shapes. `ttctl auth init` is the recommended starting point.
 
 ## Configuration
 

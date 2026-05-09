@@ -147,6 +147,56 @@ to `op item get`. Per-field references (`op://Personal/ttctl/Section/username`,
 fields from a single LOGIN-category item by `purpose: USERNAME` /
 `purpose: PASSWORD`.
 
+### Bootstrap: `ttctl auth init`
+
+`ttctl auth init` is the recommended first command for a fresh install. It
+scaffolds a Form A or Form B `~/.ttctl.yaml` interactively via
+`@clack/prompts` (already pinned in the catalog) and writes the file
+atomically at mode `0o600` via `writeNewConfig` in
+`packages/core/src/configWriter.ts` (sibling primitive to `performYamlMutation`
+— same temp+rename+fsync+chmod dance, no pre-existing file required).
+
+Flow:
+
+1. **Non-TTY refusal**: `process.stdin.isTTY === false` exits non-zero
+   BEFORE any prompt. CI/piped contexts get a clear message; the prompt
+   library is never reached.
+2. **Existence gate**: target file already exists AND `--force` not
+   passed → `ConfigError(PERMISSION)`. The CLI surfaces the path and the
+   `--force` hint verbatim.
+3. **Form selector**: `1Password reference (recommended)` or
+   `Literal username/password (discouraged)`.
+4. **Form A (1Password)**: detects the `op` CLI via `op --version`. On
+   present: vault picker (`op vault list --format json`, zod-validated)
+   → LOGIN-category item picker (`op item list --vault <V> --categories
+   Login --format json`) → confirm. On absent OR JSON-shape failure: a
+   stderr-style warning then a freeform `op://[ACCOUNT/]VAULT/ITEM`
+   prompt with the same regex as `OnePasswordReferenceSchema`.
+5. **Form B (literal)**: explicit `Plaintext credentials in config are
+   discouraged…` confirmation; default `N` aborts cleanly with no file
+   written. On `Y`: email-regex-validated username + masked password
+   prompt.
+6. **Persist**: `writeNewConfig(targetPath, yaml, { force })` — applies
+   `assertSafePath` (sync-root + symlink refusal), validates the
+   composed YAML against `ConfigLoadSchema` BEFORE writing, then atomic
+   temp+rename+fsync(parent dir).
+7. **Confirmation**: stdout receives `Wrote config to <path> (form A:
+   1Password reference)` or `… (form B: literal credentials)`; exit 0.
+
+Cancellation at any prompt (Ctrl-C / Esc) returns `refused/cancelled`,
+prints `Aborted (no file written).`, and exits non-zero.
+
+Flags:
+
+- `--config <path>` — output path (default: `~/.ttctl.yaml`). Parent
+  directories created with `mkdir -p` semantics.
+- `--force` — overwrite existing file. Without it, the existence gate
+  refuses and exits non-zero.
+
+The command intentionally never captures a bearer token — output is
+always Form A or Form B shape (no `auth.token` field). Run
+`ttctl auth signin` afterward to capture the bearer.
+
 ### Migration from pre-#107 shape
 
 Pre-#107, `auth` was a top-level **string** (`auth: "op://..."` — the

@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { parseDocument } from "yaml";
 
-import { ConfigError, ConfigWriteSchema } from "./config.js";
+import { ConfigError, ConfigLoadSchema, ConfigWriteSchema } from "./config.js";
 import { acquireConfigLock } from "./configLock.js";
 
 /**
@@ -433,4 +433,152 @@ export async function clearAuthToken(configPath: string): Promise<void> {
       doc.deleteIn(["auth", "token"]);
     },
   });
+}
+
+/**
+ * Write a freshly-authored config file to `configPath`.
+ *
+ * Sibling primitive to `performYamlMutation` for the bootstrap case
+ * (`ttctl auth init`): no pre-existing file is read or mutated — the YAML
+ * content is supplied verbatim by the caller from interactive prompts. The
+ * same atomic / safety invariants apply:
+ *
+ *   - Path safety gate (`assertSafePath`) — refuses sync-roots and
+ *     pre-existing symlinks at `configPath`. A non-existent path is
+ *     accepted (the whole point of init).
+ *   - Pre-existence gate — refuses unless `opts.force` is true. The
+ *     refusal is `ConfigError(PERMISSION)` so CLI/MCP error renderers
+ *     route it through the same exit-code + message contract as the
+ *     other write-path failures.
+ *   - Schema validation — the supplied content is parsed and validated
+ *     against `ConfigLoadSchema` BEFORE we touch disk. The strict load
+ *     schema catches malformed YAML composed by an interactive flow
+ *     (e.g. quoting bug) before we lock it in place.
+ *   - Atomic write — temp at `0o600`, fsync, defensive chmod, rename,
+ *     fsync(parent dir). Same dance as `persistAuthToken`'s temp path so
+ *     a crashed init never leaves a partial config.
+ *
+ * On `force` overwrite: the existing file is replaced atomically; the
+ * mtime-drift guard from `performYamlMutation` does NOT apply here because
+ * the bootstrap operation explicitly asks for replacement. Symlink and
+ * sync-root refusals still fire.
+ *
+ * Parent directories are created with `mkdir -p` semantics (the bootstrap
+ * is allowed to create its own `~/.ttctl.yaml` even if that means creating
+ * a fresh home — though in practice the parent is always `homedir()` which
+ * already exists; the recursive flag is for `--config <path>` cases that
+ * specify a not-yet-existing project dir).
+ */
+export async function writeNewConfig(
+  configPath: string,
+  content: string,
+  opts: { force: boolean },
+): Promise<void> {
+  const absolute = await assertSafePath(configPath);
+
+  // Pre-existence gate. `lstat` (via assertSafePath) only refuses on
+  // SYMLINK; a regular-file existence is permitted by the safety check
+  // and must be gated separately by `force` here.
+  let exists = false;
+  try {
+    await stat(absolute);
+    exists = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new ConfigError(`Cannot stat config file: ${(err as Error).message}`, "PERMISSION", absolute);
+    }
+  }
+  if (exists && !opts.force) {
+    throw new ConfigError(
+      `Refusing to overwrite existing config at ${absolute}. ` +
+        `Use --force to replace, or edit the file manually.`,
+      "PERMISSION",
+      absolute,
+    );
+  }
+
+  // Validate the supplied YAML against the strict load schema BEFORE
+  // writing. Catches malformed shapes early so we never persist a config
+  // that the next `ttctl` invocation will reject at load time.
+  let parsedContent: unknown;
+  try {
+    const doc = parseDocument(content, { strict: false });
+    if (doc.errors.length > 0) {
+      throw new ConfigError(
+        `Cannot parse generated config content: ${doc.errors[0]?.message ?? "unknown YAML error"}`,
+        "VALIDATION",
+        absolute,
+      );
+    }
+    parsedContent = doc.toJS();
+  } catch (err) {
+    if (err instanceof ConfigError) throw err;
+    throw new ConfigError(`Cannot parse generated config content: ${(err as Error).message}`, "VALIDATION", absolute);
+  }
+  const validation = ConfigLoadSchema.safeParse(parsedContent);
+  if (!validation.success) {
+    const summary = validation.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    throw new ConfigError(
+      `Generated config failed validation: ${summary}. Refusing to write malformed config to ${absolute}.`,
+      "VALIDATION",
+      absolute,
+    );
+  }
+
+  await mkdir(dirname(absolute), { recursive: true });
+
+  const tmpPath = `${absolute}.tmp`;
+  let fh: Awaited<ReturnType<typeof open>>;
+  try {
+    fh = await open(tmpPath, "w", 0o600);
+  } catch (err) {
+    throw new ConfigError(`Cannot open temp file ${tmpPath}: ${(err as Error).message}`, "PERMISSION", absolute);
+  }
+  try {
+    try {
+      await fh.writeFile(content, "utf8");
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+
+    if (process.platform !== "win32") {
+      try {
+        await chmod(tmpPath, 0o600);
+      } catch {
+        // FUSE filesystems may refuse POSIX perm changes — same posture
+        // as performYamlMutation. Rename below still produces a file
+        // with the umask-filtered open() mode.
+      }
+    }
+
+    await rename(tmpPath, absolute);
+  } catch (err) {
+    try {
+      await unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    if (err instanceof ConfigError) throw err;
+    throw new ConfigError(
+      `Failed to write config file at ${absolute}: ${(err as Error).message}`,
+      "PERMISSION",
+      absolute,
+    );
+  }
+
+  // Fsync the parent directory — same power-loss durability gate as
+  // performYamlMutation. POSIX-only; NTFS journaling covers it on Windows.
+  if (process.platform !== "win32") {
+    try {
+      const dirHandle = await open(dirname(absolute), "r");
+      try {
+        await dirHandle.sync();
+      } finally {
+        await dirHandle.close();
+      }
+    } catch {
+      /* FUSE / network FS refusal — non-blocking */
+    }
+  }
 }

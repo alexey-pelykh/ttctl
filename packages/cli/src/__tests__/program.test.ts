@@ -197,6 +197,44 @@ describe("program --config flag", () => {
     expect(mockedResolveConfig).not.toHaveBeenCalled();
     expect(mockedGetAuthStatus).not.toHaveBeenCalled();
   });
+
+  it("auth init: existence-gate does NOT fire for missing path (init is bootstrap; --config is OUTPUT)", async () => {
+    // Per #114: `auth init`'s `--config <path>` is the OUTPUT destination,
+    // not an input config — the file may or may not exist (existence is
+    // governed by `auth init --force`). The global pre-flight gate must
+    // NOT fire: if it did, `auth init` would be impossible to use against
+    // a path that doesn't yet exist (i.e., its primary use case).
+    //
+    // Set stdin to non-TTY so init's first gate refuses cleanly without
+    // hitting any prompt; the relevant assertion is that the GLOBAL
+    // existence error did NOT fire (no NO_CREDS in stderr) and that
+    // `setCliConfigPath` was cleared rather than set to the OUTPUT path
+    // (auth init's handler reads its own `options.config`, not the
+    // global context).
+    const missingPath = join(tmpDir, "init-target.yaml");
+    const originalIsTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    try {
+      const program = buildProgram();
+      program.exitOverride();
+      const stderr = captureStderr();
+      captureStdout();
+      captureExit();
+      try {
+        await program.parseAsync(["--config", missingPath, "auth", "init"], { from: "user" });
+      } catch (err) {
+        if (!(err instanceof ExitInvoked)) throw err;
+      }
+      // Crucially: no NO_CREDS error fired (the global existence check
+      // was suppressed). The init command itself handles non-TTY refusal.
+      expect(stderr.lines.join("")).not.toContain("NO_CREDS");
+      // setCliConfigPath was cleared for auth init (the OUTPUT path is
+      // not propagated as the read-side resolver target).
+      expect(getCliConfigPath()).toBeUndefined();
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalIsTty });
+    }
+  });
 });
 
 describe("program help and metadata", () => {
