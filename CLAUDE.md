@@ -246,6 +246,60 @@ required. (Scheduler has its own bearer chain — out of scope here, see
   can save it manually if the post-signin write fails (read-only FS,
   full disk).
 
+### Debug logging on persist/clear
+
+`persistAuthToken` and `clearAuthToken` emit structured debug records
+(one JSON object per line) on **stderr** when the env var
+`TTCTL_DEBUG_CONFIG=1` is set. Any other value (including empty string,
+`0`, `true`, or unset) keeps the logger silent — the env-gate is read
+ONCE at module load so the disabled path is constant-folded by V8 (no
+per-call overhead, no record construction).
+
+Stream choice is stderr deliberately so `-o json` mode on the CLI stays
+uncontaminated. The log shape is a discriminated union:
+
+| Event               | Per-event fields                                     | Emit point                                        |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| `prewrite_checks`   | `symlink_ok`, `syncroot_ok`, `perm_ok`               | After `assertSafePath` (gates passed)             |
+| `lock_acquired`     | `wait_ms` (monotonic)                                | After `acquireConfigLock` resolves                |
+| `stat_baseline`     | `mtime_ms`, `mode_octal`                             | After first `stat()`                              |
+| `tempfile_written`  | `temp_path`, `size_bytes`                            | After `fh.sync()` + `fh.close()`                  |
+| `final_state`       | `mode_applied` (octal string)                        | After defensive `chmod`                           |
+| `mtime_drift_check` | `delta_ms`, `pass`                                   | After post-write `stat()`                         |
+| `rename_completed`  | (none)                                               | After `rename()`                                  |
+| `lock_released`     | `duration_ms` (monotonic via `performance.now()`)    | In `finally` after `release()`                    |
+| `error`             | `error_class`, `error_message`, `lock_held_at_error` | In `catch` for any throw inside the locked region |
+
+Every record carries the common base fields `ts` (ISO-8601), `op`
+(`"persist"` or `"clear"`), `path` (absolute config path), and `event`
+(the discriminator). The bearer token is **never** in any allowlisted
+shape — bearer-absence is enforced at the type level by the discriminated
+union, AND verified at runtime by
+`packages/core/src/__tests__/persistAuthToken-debug.test.ts` substring
+asserts across happy + error paths (R-7 mitigation per the design risk
+register).
+
+Error path always includes a trailing `lock_released` event — the lock
+release is in a `finally` regardless of which invariant fired (read-fail,
+parse-fail, validate-fail, mtime-drift, write-fail, rename-fail).
+Asserting "`lock_released` present" is the proof of "no leaked lock" in
+tests.
+
+Inspect a trace with `jq`:
+
+```sh
+TTCTL_DEBUG_CONFIG=1 ttctl auth signin 2> >(tee debug.log >&2)
+jq -c 'select(.op == "persist") | {event, mtime_ms, mode_octal, delta_ms, pass}' debug.log
+```
+
+The empty-token caller-bug check fires synchronously BEFORE
+`performYamlMutation` runs, so `persistAuthToken("", path)` emits zero
+records. Same for `assertSafePath` failures (symlink-refused,
+sync-root-refused) — those throw `ConfigError(PERMISSION)` before the
+lock is acquired, so no lock-related events fire. Both cases are
+intentional: the debug taxonomy starts at the lock and tracks the
+critical write window.
+
 ### MCP session lifetime and config path
 
 The MCP server is a long-lived process — a single `ttctl mcp` invocation

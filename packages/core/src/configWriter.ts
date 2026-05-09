@@ -4,11 +4,106 @@
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 
 import { parseDocument } from "yaml";
 
 import { ConfigError, ConfigWriteSchema } from "./config.js";
 import { acquireConfigLock } from "./configLock.js";
+
+/**
+ * Module-load capture of `TTCTL_DEBUG_CONFIG=1`. Read ONCE so each emit
+ * site collapses to a constant-folded `if (DEBUG_ENABLED)` branch in V8 —
+ * the env-unset path pays zero runtime overhead (NFR-DEBUG-3 "Wish: 0µs").
+ *
+ * Tests that exercise both env-set and env-unset paths re-import the
+ * module via dynamic `import()` after mutating `process.env`. See
+ * `__tests__/persistAuthToken-debug.test.ts`.
+ */
+const DEBUG_ENABLED = process.env["TTCTL_DEBUG_CONFIG"] === "1";
+
+/**
+ * Discriminator naming the operation that produced the record. Lets a
+ * single grep (`jq 'select(.op == "clear")'`) separate signin/signout
+ * traces in the field.
+ */
+type DebugOp = "persist" | "clear";
+
+interface DebugRecordBase {
+  /** ISO-8601 wall-clock timestamp; redundant with file mtime but useful for cross-process correlation. */
+  ts: string;
+  /** "persist" (set-token) or "clear" (delete-token). */
+  op: DebugOp;
+  /** Absolute config-file path (post-`assertSafePath`); never the bearer. */
+  path: string;
+}
+
+/**
+ * Discriminated union of structured debug records emitted by the
+ * persist/clear write-path. Every variant is explicitly typed; the bearer
+ * token field is NEVER in any allowlisted shape — bearer-absence is
+ * enforced at the type level by the union itself, AND verified at runtime
+ * by `__tests__/persistAuthToken-debug.test.ts`'s substring-absence
+ * assertion across both happy and error paths (R-7 mitigation).
+ *
+ * Field provenance per design.md §5.6:
+ *   - `lock_acquired` after `acquireConfigLock` resolves
+ *   - `stat_baseline` after first `stat()`
+ *   - `prewrite_checks` after `assertSafePath`
+ *   - `tempfile_written` after `fh.sync()` + `fh.close()`
+ *   - `final_state` after defensive chmod
+ *   - `mtime_drift_check` after post-write `stat()`
+ *   - `rename_completed` after `rename()`
+ *   - `lock_released` in `finally` after `release()`
+ *   - `error` in catch when any throw occurs while the lock is held
+ */
+type DebugRecord =
+  | (DebugRecordBase & {
+      event: "prewrite_checks";
+      symlink_ok: boolean;
+      syncroot_ok: boolean;
+      perm_ok: boolean;
+    })
+  | (DebugRecordBase & { event: "lock_acquired"; wait_ms: number })
+  | (DebugRecordBase & {
+      event: "stat_baseline";
+      mtime_ms: number;
+      mode_octal: string;
+    })
+  | (DebugRecordBase & {
+      event: "tempfile_written";
+      temp_path: string;
+      size_bytes: number;
+    })
+  | (DebugRecordBase & { event: "final_state"; mode_applied: string })
+  | (DebugRecordBase & {
+      event: "mtime_drift_check";
+      delta_ms: number;
+      pass: boolean;
+    })
+  | (DebugRecordBase & { event: "rename_completed" })
+  | (DebugRecordBase & { event: "lock_released"; duration_ms: number })
+  | (DebugRecordBase & {
+      event: "error";
+      error_class: string;
+      error_message: string;
+      lock_held_at_error: boolean;
+    });
+
+/**
+ * Emit one structured debug record (one JSON object per line) to stderr
+ * when `TTCTL_DEBUG_CONFIG=1`. Lazy record construction via the
+ * `makeRecord` thunk keeps the env-unset path zero-allocation: V8
+ * eliminates the dead branch on subsequent JIT passes and the closure
+ * body never runs.
+ *
+ * Output stream is stderr so JSON wire-format on stdout (`-o json`) stays
+ * uncontaminated.
+ */
+function emitDebug(makeRecord: () => DebugRecord): void {
+  if (!DEBUG_ENABLED) return;
+  process.stderr.write(JSON.stringify(makeRecord()) + "\n");
+}
 
 /**
  * Failure surface for `persistAuthToken` and `clearAuthToken`. Carries the
@@ -180,7 +275,24 @@ interface YamlMutation {
  *   6. Atomic rename → final path. Fsync parent dir for crash durability.
  */
 async function performYamlMutation(configPath: string, mutation: YamlMutation): Promise<void> {
+  const op: DebugOp = mutation.kind === "set-token" ? "persist" : "clear";
   const absolute = await assertSafePath(configPath);
+
+  // `prewrite_checks` reflects the gates assertSafePath enforces (symlink
+  // refusal, sync-root refusal). World-writable refusal lives in
+  // `loadConfigFile` (read-time, not write-time); `perm_ok` here is `true`
+  // by construction since persist always runs against a config the caller
+  // just loaded successfully. The field is preserved for symmetry with the
+  // design table even though its value is constant in this code path.
+  emitDebug(() => ({
+    ts: new Date().toISOString(),
+    op,
+    path: absolute,
+    event: "prewrite_checks",
+    symlink_ok: true,
+    syncroot_ok: true,
+    perm_ok: true,
+  }));
 
   // Acquire lock BEFORE the stat baseline so a concurrent writer can't
   // race us between the stat and the rename. The lock target is a sibling
@@ -188,9 +300,35 @@ async function performYamlMutation(configPath: string, mutation: YamlMutation): 
   // self-locking is broken under our atomic-rename pattern because rename
   // swaps the inode, leaving any flock() on the old inode unenforced
   // against the post-rename writer.
+  const lockStart = performance.now();
   const lock = await acquireConfigLock(absolute);
+  const lockAcquiredAt = performance.now();
+  emitDebug(() => ({
+    ts: new Date().toISOString(),
+    op,
+    path: absolute,
+    event: "lock_acquired",
+    wait_ms: lockAcquiredAt - lockStart,
+  }));
+
   try {
-    await runYamlMutationLocked(absolute, mutation);
+    await runYamlMutationLocked(absolute, mutation, op);
+  } catch (err) {
+    // Emit BEFORE the finally so the error event lands in the trace
+    // before the corresponding lock_released. error_message is the throw
+    // message verbatim — bearer-rescue lives in
+    // `AuthTokenPersistError.bearerRescue` (separate field) and is NOT
+    // included in `.message`, so this is bearer-safe by construction.
+    emitDebug(() => ({
+      ts: new Date().toISOString(),
+      op,
+      path: absolute,
+      event: "error",
+      error_class: (err as Error).name || "Error",
+      error_message: (err as Error).message,
+      lock_held_at_error: true,
+    }));
+    throw err;
   } finally {
     // Best-effort release. If the release itself fails, signal-exit (a
     // proper-lockfile transitive dep) registers an exit-handler that
@@ -201,6 +339,13 @@ async function performYamlMutation(configPath: string, mutation: YamlMutation): 
     } catch {
       /* ignore */
     }
+    emitDebug(() => ({
+      ts: new Date().toISOString(),
+      op,
+      path: absolute,
+      event: "lock_released",
+      duration_ms: performance.now() - lockAcquiredAt,
+    }));
   }
 }
 
@@ -211,12 +356,14 @@ async function performYamlMutation(configPath: string, mutation: YamlMutation): 
  * error path inside this function unwinds through the outer `finally` →
  * lock release.
  */
-async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): Promise<void> {
+async function runYamlMutationLocked(absolute: string, mutation: YamlMutation, op: DebugOp): Promise<void> {
   // Stat baseline — used to detect concurrent overwrites.
   let beforeMtime: number;
+  let beforeMode: number;
   try {
     const beforeStat = await stat(absolute);
     beforeMtime = beforeStat.mtimeMs;
+    beforeMode = beforeStat.mode & 0o777;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       throw new AuthTokenPersistError(
@@ -239,6 +386,15 @@ async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): 
       mutation.rescueBearer,
     );
   }
+
+  emitDebug(() => ({
+    ts: new Date().toISOString(),
+    op,
+    path: absolute,
+    event: "stat_baseline",
+    mtime_ms: beforeMtime,
+    mode_octal: beforeMode.toString(8).padStart(3, "0"),
+  }));
 
   let raw: string;
   try {
@@ -301,6 +457,8 @@ async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): 
       mutation.rescueBearer,
     );
   }
+  const updatedSize = Buffer.byteLength(updated, "utf8");
+
   try {
     try {
       await fh.writeFile(updated, "utf8");
@@ -309,7 +467,17 @@ async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): 
       await fh.close();
     }
 
+    emitDebug(() => ({
+      ts: new Date().toISOString(),
+      op,
+      path: absolute,
+      event: "tempfile_written",
+      temp_path: tmpPath,
+      size_bytes: updatedSize,
+    }));
+
     // Defensive re-chmod in case umask filtered the open() mode.
+    let modeApplied = "0600";
     if (process.platform !== "win32") {
       try {
         await chmod(tmpPath, 0o600);
@@ -317,14 +485,42 @@ async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): 
         // Some FUSE filesystems refuse POSIX perm changes. The rename
         // below still produces a valid file. Don't block here.
       }
+      // Read back the actual mode so the trace surfaces filesystem reality
+      // (e.g., FUSE-clamped 0644) rather than the intent.
+      try {
+        const tmpStat = await stat(tmpPath);
+        modeApplied = (tmpStat.mode & 0o777).toString(8).padStart(3, "0");
+      } catch {
+        modeApplied = "stat_failed";
+      }
+    } else {
+      modeApplied = "n/a";
     }
+
+    emitDebug(() => ({
+      ts: new Date().toISOString(),
+      op,
+      path: absolute,
+      event: "final_state",
+      mode_applied: modeApplied,
+    }));
 
     // Concurrency re-check — refuse if the source moved underneath us
     // (mid-session backup-restore or a lock-disregarding writer like a
     // manual editor save). Lock-disregarding writers exist; mtime drift is
     // the second line.
     const after = await stat(absolute);
-    if (after.mtimeMs !== beforeMtime) {
+    const mtimeDelta = after.mtimeMs - beforeMtime;
+    const driftPass = after.mtimeMs === beforeMtime;
+    emitDebug(() => ({
+      ts: new Date().toISOString(),
+      op,
+      path: absolute,
+      event: "mtime_drift_check",
+      delta_ms: mtimeDelta,
+      pass: driftPass,
+    }));
+    if (!driftPass) {
       throw new AuthTokenPersistError(
         `Config file at ${absolute} was modified concurrently (mtime drift detected). ` +
           `Refusing to overwrite. Re-run the command after verifying the file's current ` +
@@ -336,6 +532,12 @@ async function runYamlMutationLocked(absolute: string, mutation: YamlMutation): 
     }
 
     await rename(tmpPath, absolute);
+    emitDebug(() => ({
+      ts: new Date().toISOString(),
+      op,
+      path: absolute,
+      event: "rename_completed",
+    }));
   } catch (err) {
     // Best-effort cleanup of the temp file if anything failed after open().
     try {
