@@ -136,7 +136,7 @@ describe("configLock — cross-process race serialization", () => {
     expect(existsSync(`${configPath}.lock`)).toBe(false);
   }, 30_000);
 
-  it("staged race (P2 starts ~50ms after P1) — same outcome: both succeed, file well-formed", async () => {
+  it("staged race (P2 starts ~50ms after P1) — both succeed, exactly one token persisted", async () => {
     const configPath = join(tmpRoot, ".ttctl.yaml");
     writeFileSync(configPath, "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
 
@@ -144,18 +144,24 @@ describe("configLock — cross-process race serialization", () => {
     const T2 = "user_staged_second_bbb_yyyyyyyyyyyy";
 
     // Stage the second worker so it observes contention deterministically:
-    // P1 starts immediately, P2 starts after 50ms — by then P1 holds the
-    // lock and P2 will retry.
+    // P1 starts immediately, P2 starts after 50ms. The staging biases the
+    // OS scheduler to put P1 first, but does NOT guarantee a winner — on
+    // slower hosts (Windows CI, loaded macOS) P1's persist may take long
+    // enough that P2 acquires the lock and writes last. The lock invariant
+    // is "no interleaving / no corruption", not "P2 wins". Same relaxed
+    // assertion as the sibling concurrent test above.
     const [r1, r2] = await Promise.all([runWorker(configPath, T1, 0), runWorker(configPath, T2, 50)]);
 
     expect(r1.exitCode, `worker 1 stderr: ${r1.stderr}`).toBe(0);
     expect(r2.exitCode, `worker 2 stderr: ${r2.stderr}`).toBe(0);
 
     const final = readFileSync(configPath, "utf8");
-    // P2 won: it ran AFTER P1 released the lock, so its write is the
-    // last-writer-wins outcome. P1's token must NOT appear.
-    expect(final).toMatch(new RegExp(`token:\\s*${T2}`));
-    expect(final).not.toContain(T1);
+    expect(final).toMatch(/auth:/);
+    expect(final).toMatch(/credentials:\s*op:\/\/Personal\/ttctl/);
+
+    const hasT1 = final.includes(T1);
+    const hasT2 = final.includes(T2);
+    expect(hasT1 !== hasT2).toBe(true);
 
     expect(existsSync(`${configPath}.lock`)).toBe(false);
   }, 30_000);
