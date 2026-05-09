@@ -4,6 +4,8 @@
 import { Option } from "commander";
 import type { Command } from "commander";
 
+import { exitCodeForInitResult, formatInitOutput, runAuthInit } from "./init.js";
+import type { AuthInitOptions } from "./init.js";
 import { runAuthSignIn } from "./signin.js";
 import type { AuthSignInOptions } from "./signin.js";
 import { runAuthSignOut } from "./signout.js";
@@ -14,14 +16,34 @@ import type { AuthStatusOptions } from "./status.js";
 /**
  * Register the `auth` command tree on the parent program.
  *
- * The auth subcommand surface is a noun-verb tree: `auth status`, `auth
- * signin`, `auth signout`. Sub-commands all share the same `-o, --output`
- * option (`table` default, `json` for scripting). The parent `auth` command
- * itself prints help when invoked without a sub-command (commander default),
- * which is the desired UX.
+ * The auth subcommand surface is a noun-verb tree: `auth init`, `auth
+ * status`, `auth signin`, `auth signout`. The status / signin / signout
+ * trio share the same `-o, --output` option (`table` default, `json` for
+ * scripting); `auth init` is purely interactive and produces a side-effect
+ * (file on disk), so its surface is a confirmation line (no `-o` flag).
+ *
+ * The parent `auth` command itself prints help when invoked without a
+ * sub-command (commander default), which is the desired UX.
  */
 export function registerAuthCommand(parent: Command): void {
   const auth = parent.command("auth").description("Manage authentication and session state");
+
+  auth
+    .command("init")
+    .description("Scaffold a fresh ~/.ttctl.yaml interactively (recommended first command)")
+    .addOption(new Option("--config <path>", "output path (default: ~/.ttctl.yaml)"))
+    .addOption(new Option("--force", "overwrite existing config (default: refuse)"))
+    .action(async (options: AuthInitOptions) => {
+      const result = await runAuthInit(options);
+      // Output is already routed via clack's intro/outro/cancel for the
+      // interactive surface. The terminal exit-code contract still needs
+      // to fire — and for non-TTY refusal (where clack never ran) we
+      // also need to write the message ourselves.
+      if (result.status === "refused" && result.reason === "non-tty") {
+        process.stderr.write(formatInitOutput(result) + "\n");
+      }
+      process.exit(exitCodeForInitResult(result));
+    });
 
   auth
     .command("status")
