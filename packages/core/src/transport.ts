@@ -169,6 +169,110 @@ export interface TransportResponse {
 }
 
 /**
+ * Token redaction marker used by {@link buildDryRunPreview} when an
+ * `authToken` is present on the source request. Exposed as a constant so
+ * tests assert on the exact wire shape and so future code never reaches
+ * for the bearer literal by mistake.
+ */
+export const DRY_RUN_REDACTED_AUTHORIZATION = "Token token=<redacted>" as const;
+
+/**
+ * Structured "would-have-sent" preview returned by mutation entry points
+ * when invoked with `dryRun: true` (issue #52). Mirrors the shape an
+ * actual {@link stockTransport} or {@link impersonatedTransport} call
+ * would build internally, with the bearer token replaced by
+ * {@link DRY_RUN_REDACTED_AUTHORIZATION} so the preview can be safely
+ * emitted to stdout / piped to `jq` without leaking session credentials.
+ *
+ * The variable shape, operation name, and surface match the request that
+ * WOULD have been sent had `dryRun` been false — including any
+ * placeholder fields (e.g. `profileId`) that would have been resolved via
+ * a sibling read call at execution time. Mutation entry points
+ * substitute placeholder strings rather than firing the read side, so
+ * the dry-run path has zero network I/O — every transport (read or
+ * write) stays uncalled. See `set()` in `services/profile/basic/index.ts`
+ * for the canonical pattern.
+ *
+ * Wire shape (`{ operation, variables, transport, surface, headers }`)
+ * is locked under the v0.4 envelope contract (#128) — see
+ * {@link DryRunEnvelope} on the CLI side.
+ */
+export interface DryRunPreview {
+  /**
+   * Logical surface that would have been called. Drives the transport
+   * choice (stock vs impersonated) and is surfaced verbatim in the wire
+   * payload for downstream tooling.
+   */
+  surface: ToptalSurface;
+  /**
+   * Transport classification — `"stock"` for the mobile gateway,
+   * `"impersonated"` for Cloudflare-protected surfaces. Derived from
+   * {@link SURFACES_REQUIRING_IMPERSONATION} so the preview always
+   * reflects the actual transport that would have been used.
+   */
+  transport: "stock" | "impersonated";
+  /**
+   * Concrete URL for the surface — read off {@link SURFACE_ENDPOINTS}.
+   * Useful for piping into curl-style replay tooling (post-AC future
+   * work; tracked in #52 § Out of Scope).
+   */
+  endpoint: string;
+  /** GraphQL operation name (e.g. `"UPDATE_BASIC_INFO"`). */
+  operationName: string;
+  /**
+   * GraphQL variables payload that would have been sent. Mutation entry
+   * points substitute placeholder strings for fields that would be
+   * resolved via sibling read calls at execution time — callers reading
+   * the preview should NOT treat placeholder values as real ids.
+   */
+  variables: Record<string, unknown>;
+  /**
+   * Headers as they would be sent on the wire, with the `authorization`
+   * value replaced by {@link DRY_RUN_REDACTED_AUTHORIZATION} when an
+   * `authToken` was set on the source request. All other headers
+   * (accept, accept-language, content-type, origin, referer, etc.)
+   * surface verbatim — they carry no session-bound material.
+   */
+  headers: Record<string, string>;
+}
+
+/**
+ * Build a {@link DryRunPreview} from a {@link TransportRequest} without
+ * invoking any transport. Pure — no I/O, no allocations beyond the
+ * returned object.
+ *
+ * The headers projection mirrors what {@link stockTransport} and
+ * {@link impersonatedTransport} would have set (`COMMON_HEADERS` plus
+ * `authorization` when `authToken` is present), with the bearer value
+ * redacted to {@link DRY_RUN_REDACTED_AUTHORIZATION}. The transport
+ * classification is derived from
+ * {@link SURFACES_REQUIRING_IMPERSONATION} so changes to that set
+ * propagate automatically.
+ *
+ * Mutation entry points call this AFTER they've populated their
+ * `body.variables` with placeholder substitutions for any fields that
+ * would have been resolved at execution time (e.g. `profileId`) —
+ * keeping the read-side transport call out of the dry-run path entirely.
+ * See `set()` in `services/profile/basic/index.ts` for the pattern.
+ */
+export function buildDryRunPreview(req: TransportRequest): DryRunPreview {
+  const surface = req.surface;
+  const transport: "stock" | "impersonated" = SURFACES_REQUIRING_IMPERSONATION.has(surface) ? "impersonated" : "stock";
+  const headers: Record<string, string> = { ...COMMON_HEADERS };
+  if (req.authToken !== undefined) {
+    headers["authorization"] = DRY_RUN_REDACTED_AUTHORIZATION;
+  }
+  return {
+    surface,
+    transport,
+    endpoint: SURFACE_ENDPOINTS[surface],
+    operationName: req.body.operationName,
+    variables: req.body.variables ?? {},
+    headers,
+  };
+}
+
+/**
  * Choose transport per surface. The mobile gateway accepts stock TLS;
  * `talent-profile` and `scheduler` require Chrome TLS-fingerprint impersonation
  * to clear Cloudflare's bot-management.

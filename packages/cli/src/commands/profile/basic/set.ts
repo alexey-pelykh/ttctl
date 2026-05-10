@@ -4,7 +4,8 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { emitErrorAndExit, emitUpdateSuccess } from "../../../lib/envelopes.js";
+import { getCliDryRun } from "../../../lib/dry-run.js";
+import { emitDryRunSuccess, emitErrorAndExit, emitUpdateSuccess } from "../../../lib/envelopes.js";
 import type { EnvelopeError } from "../../../lib/envelopes.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import type { OutputFormat } from "../../../lib/output.js";
@@ -89,14 +90,33 @@ export async function runProfileBasicUpdate(options: {
 
   const token = await loadAuthTokenOrExit("profile update", options.output);
 
-  let result: profile.basic.UpdateProfileResult;
+  // Route through the core's `dryRun` option (issue #52) when the
+  // global `--dry-run` flag is set. The captured value is `false` for
+  // normal apply-path invocations — `set()` returns `kind: "applied"`
+  // and the existing `emitUpdateSuccess` path runs. With `dryRun: true`,
+  // `set()` short-circuits BEFORE any transport call (read or write)
+  // and returns `kind: "preview"` carrying a structured
+  // `DryRunPreview` — emit it as a `dryRun: true` envelope and exit 0.
+  const dryRun = getCliDryRun();
+
+  let outcome: profile.basic.SetOutcome;
   try {
-    result = await profile.basic.set(token, changes);
+    outcome = await profile.basic.set(token, changes, { dryRun });
   } catch (err) {
     handleProfileUpdateError(err, options.output);
     return;
   }
 
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "profile.basic.update",
+      format: options.output,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const { result } = outcome;
   emitUpdateSuccess({
     operation: "profile.basic.update",
     format: options.output,

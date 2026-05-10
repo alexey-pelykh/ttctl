@@ -22,6 +22,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
 import { resolveConfig, getAuthStatus } from "@ttctl/core";
 
 import { getCliConfigPath, resetCliConfigPath } from "../lib/config-context.js";
+import { DRY_RUN_NO_OP_STDERR_NOTE, getCliDryRun, isMutationCommand, resetCliDryRun } from "../lib/dry-run.js";
 import { buildProgram } from "../program.js";
 
 const mockedResolveConfig = vi.mocked(resolveConfig);
@@ -429,6 +430,160 @@ describe("program output-format shortcuts (#126)", () => {
       expect(stderr.lines.join("")).not.toContain("Conflicting output flags");
     } finally {
       Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalIsTty });
+    }
+  });
+});
+
+/**
+ * Tests for the global `--dry-run` flag (issue #52). The flag is a
+ * boolean Option captured into the module-scoped holder via
+ * `setCliDryRun` in the preAction hook; mutation handlers read it
+ * through `getCliDryRun()` to route through the core's `dryRun`
+ * option, while non-mutation leaves get a one-line stderr no-op note.
+ *
+ * Three layers of verification:
+ *   1. Help-surface: the flag is registered AND visible in `--help`.
+ *   2. State capture: `getCliDryRun()` returns the right value after
+ *      preAction fires.
+ *   3. Routing: mutation leaves do NOT emit the no-op note;
+ *      non-mutation leaves DO.
+ */
+describe("program --dry-run flag (#52)", () => {
+  beforeEach(() => {
+    resetCliConfigPath();
+    resetCliDryRun();
+    mockedResolveConfig.mockReset();
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
+    mockedGetAuthStatus.mockReset();
+    mockedGetAuthStatus.mockResolvedValue({ status: "valid", email: "u@e.com" });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetCliConfigPath();
+    resetCliDryRun();
+  });
+
+  it("registers --dry-run as a global option visible in help text (AC: visible in `ttctl --help`)", () => {
+    const program = buildProgram();
+    const helpText = program.helpInformation();
+    expect(helpText).toContain("--dry-run");
+    // The description should mention the no-op semantic for read commands
+    // so the user knows the flag is mutation-targeted.
+    expect(helpText).toContain("preview");
+  });
+
+  it("the --dry-run option is on the root program (visible to every sub-command via optsWithGlobals)", () => {
+    const program = buildProgram();
+    const dryRunOpt = program.options.find((o) => o.long === "--dry-run");
+    expect(dryRunOpt).toBeDefined();
+    // Boolean flag — no argument descriptor in the spec.
+    expect(dryRunOpt?.flags).not.toContain("<");
+  });
+
+  it("--dry-run captures `true` into the module-scoped holder (preAction hook)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["--dry-run", "auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    expect(getCliDryRun()).toBe(true);
+  });
+
+  it("default (no --dry-run) keeps captured value `false` (apply-path default)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureExit();
+    try {
+      await program.parseAsync(["auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    expect(getCliDryRun()).toBe(false);
+  });
+
+  it("--dry-run on a read command (`auth status`) emits the no-op stderr note BEFORE the action runs", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["--dry-run", "auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    // Stderr carries the verbatim AC-mandated note.
+    expect(stderr.lines.join("")).toContain(DRY_RUN_NO_OP_STDERR_NOTE);
+    // The read command STILL ran (proceeds normally per AC) — stdout
+    // carries the auth-status pretty rendering.
+    expect(stdout.lines.join("")).toContain("Signed in as u@e.com");
+  });
+
+  it("--dry-run on a mutation leaf (`profile basic update`) does NOT emit the no-op note", () => {
+    // We don't fully execute the mutation here (would require deeper
+    // mocking of profile.basic.set); instead we verify the leaf is
+    // tagged via markMutation, which is what the preAction hook checks.
+    // Direct verification that `isMutationCommand(actionCommand)` is
+    // true for the leaf — closing the routing-decision loop.
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    expect(profile).toBeDefined();
+    const basic = profile?.commands.find((c) => c.name() === "basic");
+    expect(basic).toBeDefined();
+    const update = basic?.commands.find((c) => c.name() === "update");
+    expect(update).toBeDefined();
+    if (update !== undefined) {
+      expect(isMutationCommand(update)).toBe(true);
+    }
+  });
+
+  it("--dry-run on the top-level alias (`profile update`) is also marked as a mutation", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    expect(profile).toBeDefined();
+    const aliasUpdate = profile?.commands.find((c) => c.name() === "update");
+    expect(aliasUpdate).toBeDefined();
+    if (aliasUpdate !== undefined) {
+      expect(isMutationCommand(aliasUpdate)).toBe(true);
+    }
+  });
+
+  it("read leaves are NOT marked as mutation (regression guard)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const basic = profile?.commands.find((c) => c.name() === "basic");
+    const show = basic?.commands.find((c) => c.name() === "show");
+    expect(show).toBeDefined();
+    if (show !== undefined) {
+      expect(isMutationCommand(show)).toBe(false);
+    }
+    // Top-level `profile show` alias likewise stays a read.
+    const aliasShow = profile?.commands.find((c) => c.name() === "show");
+    expect(aliasShow).toBeDefined();
+    if (aliasShow !== undefined) {
+      expect(isMutationCommand(aliasShow)).toBe(false);
+    }
+  });
+
+  it("auth sub-commands are NOT marked as mutations (config-only writes are out of scope for #52)", () => {
+    const program = buildProgram();
+    const auth = program.commands.find((c) => c.name() === "auth");
+    expect(auth).toBeDefined();
+    for (const sub of auth?.commands ?? []) {
+      // signin / signout / status / init — none of them target the
+      // Toptal API mutation surface, so none is marked. The no-op
+      // note will fire if `--dry-run` is ever passed alongside them.
+      expect(isMutationCommand(sub)).toBe(false);
     }
   });
 });

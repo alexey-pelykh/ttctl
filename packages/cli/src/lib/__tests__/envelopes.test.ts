@@ -4,21 +4,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse as yamlParse } from "yaml";
 
+import type { DryRunPreview } from "@ttctl/core";
+
 import {
   ENVELOPE_VERSION,
   PRETTY_SUCCESS_PREFIX,
   buildAddEnvelope,
+  buildDryRunEnvelope,
   buildErrorEnvelope,
   buildRemoveEnvelope,
   buildUpdateEnvelope,
   defaultPrettyErrorSummary,
   emitAddSuccess,
+  emitDryRunSuccess,
   emitErrorAndExit,
   emitRemoveSuccess,
   emitUpdateSuccess,
   formatAddJson,
   formatAddPretty,
   formatAddYaml,
+  formatDryRunJson,
+  formatDryRunPretty,
+  formatDryRunYaml,
   formatErrorJson,
   formatErrorPretty,
   formatErrorYaml,
@@ -594,5 +601,211 @@ describe("emitErrorAndExit", () => {
         exitCode: 2,
       }),
     );
+  });
+});
+
+// =======================================================================
+// dry-run envelope (issue #52)
+// =======================================================================
+
+const DRY_RUN_PREVIEW_FIXTURE: DryRunPreview = {
+  surface: "talent-profile",
+  transport: "impersonated",
+  endpoint: "https://www.toptal.com/api/talent_profile/graphql",
+  operationName: "UPDATE_BASIC_INFO",
+  variables: {
+    input: {
+      profileId: "<resolved at send-time from session token>",
+      profile: { about: "preview bio", quote: "preview tagline" },
+    },
+  },
+  headers: {
+    accept: "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    authorization: "Token token=<redacted>",
+    "content-type": "application/json",
+    origin: "https://talent.toptal.com",
+    referer: "https://talent.toptal.com/",
+    "sec-fetch-site": "same-site",
+    "user-agent": "Mozilla/5.0",
+    "x-toptal-analytics-origin": "mobile",
+  },
+};
+
+describe("buildDryRunEnvelope", () => {
+  it("produces the discriminated wire shape `{ ok, version, operation, dryRun: true, preview }`", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    expect(env.ok).toBe(true);
+    expect(env.version).toBe(ENVELOPE_VERSION);
+    expect(env.operation).toBe("profile.basic.update");
+    expect(env.dryRun).toBe(true);
+    expect(env.preview).toEqual(DRY_RUN_PREVIEW_FIXTURE);
+  });
+
+  it("omits `notice` when not provided (exactOptionalPropertyTypes contract)", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    expect(env).not.toHaveProperty("notice");
+  });
+
+  it("includes `notice` when provided", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+      notice: "preview note",
+    });
+    expect(env.notice).toBe("preview note");
+  });
+});
+
+describe("formatDryRunJson", () => {
+  it("emits a single-line JSON payload (no trailing whitespace)", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunJson(env);
+    expect(out).not.toContain("\n");
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(parsed["ok"]).toBe(true);
+    expect(parsed["dryRun"]).toBe(true);
+    expect((parsed["preview"] as DryRunPreview).operationName).toBe("UPDATE_BASIC_INFO");
+  });
+
+  it("redacted authorization is preserved verbatim through JSON serialization", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunJson(env);
+    expect(out).toContain('"authorization":"Token token=<redacted>"');
+    // Adversarial: the literal real-token shape must NEVER appear in the
+    // serialized payload — guards against accidental leaks if a future
+    // refactor forgets to apply redaction.
+    expect(out).not.toMatch(/Token token=tok-/);
+  });
+});
+
+describe("formatDryRunYaml", () => {
+  it("emits block-style YAML matching the discriminated shape", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunYaml(env);
+    const parsed = yamlParse(out) as Record<string, unknown>;
+    expect(parsed["ok"]).toBe(true);
+    expect(parsed["dryRun"]).toBe(true);
+    expect((parsed["preview"] as DryRunPreview).surface).toBe("talent-profile");
+  });
+});
+
+describe("formatDryRunPretty", () => {
+  it("starts with the success marker and a header line naming the operation", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunPretty(env);
+    expect(out.startsWith(`${PRETTY_SUCCESS_PREFIX} Dry run:`)).toBe(true);
+    expect(out).toContain("UPDATE_BASIC_INFO");
+    expect(out).toContain("(no changes sent)");
+  });
+
+  it("includes surface + transport classification on a single line", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunPretty(env);
+    expect(out).toContain("surface:    talent-profile (impersonated)");
+  });
+
+  it("includes the endpoint URL", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunPretty(env);
+    expect(out).toContain("endpoint:   https://www.toptal.com/api/talent_profile/graphql");
+  });
+
+  it("renders variables as pretty-printed JSON (multi-line, indented)", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunPretty(env);
+    expect(out).toContain("variables:");
+    expect(out).toContain('"about": "preview bio"');
+    expect(out).toContain('"quote": "preview tagline"');
+  });
+
+  it("renders headers one-per-line (alphabetised) with redacted authorization", () => {
+    const env = buildDryRunEnvelope({
+      operation: "profile.basic.update",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = formatDryRunPretty(env);
+    expect(out).toContain("authorization: Token token=<redacted>");
+    expect(out).toContain("content-type: application/json");
+    // Adversarial: bearer literal never appears in pretty output.
+    expect(out).not.toMatch(/Token token=tok-/);
+  });
+});
+
+describe("emitDryRunSuccess", () => {
+  it("writes single-line JSON to stdout when format=json (with trailing newline)", () => {
+    const stdout = captureStdout();
+    emitDryRunSuccess({
+      operation: "profile.basic.update",
+      format: "json",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = stdout.lines.join("");
+    expect(out.endsWith("\n")).toBe(true);
+    const parsed = JSON.parse(out.trimEnd()) as Record<string, unknown>;
+    expect(parsed["dryRun"]).toBe(true);
+    expect(parsed["operation"]).toBe("profile.basic.update");
+  });
+
+  it("writes block-style YAML when format=yaml", () => {
+    const stdout = captureStdout();
+    emitDryRunSuccess({
+      operation: "profile.basic.update",
+      format: "yaml",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = stdout.lines.join("");
+    expect(out).toContain("ok: true");
+    expect(out).toContain("dryRun: true");
+  });
+
+  it("writes the multi-line pretty block when format=pretty", () => {
+    const stdout = captureStdout();
+    emitDryRunSuccess({
+      operation: "profile.basic.update",
+      format: "pretty",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    const out = stdout.lines.join("");
+    expect(out).toContain(`${PRETTY_SUCCESS_PREFIX} Dry run:`);
+    expect(out).toContain("surface:    talent-profile (impersonated)");
+  });
+
+  it("does NOT call process.exit (emit-then-return; caller decides exit code)", () => {
+    captureStdout();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    emitDryRunSuccess({
+      operation: "profile.basic.update",
+      format: "json",
+      preview: DRY_RUN_PREVIEW_FIXTURE,
+    });
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });

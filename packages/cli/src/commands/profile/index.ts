@@ -3,6 +3,7 @@
 
 import { Command, Option } from "commander";
 
+import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { buildProfileBasicCommand } from "./basic/index.js";
@@ -51,20 +52,27 @@ export function buildProfileCommand(): Command {
       await runProfileBasicShow(options.output);
     });
 
-  profile
-    .command("update")
-    .description("Update editable fields on the signed-in user's profile (alias for `profile basic update`)")
-    .option("--bio <text>", 'long-form bio (inline text, "-" for stdin, or "@path" to read from file)')
-    .option("--headline <text>", 'short tagline (inline text, "-" for stdin, or "@path" to read from file)')
-    .option("--edit", "open $EDITOR to compose the bio interactively (cannot be combined with --bio)")
-    .addOption(
-      new Option("-o, --output <format>", "output format")
-        .choices(OUTPUT_FORMATS)
-        .default("pretty" satisfies OutputFormat),
-    )
-    .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: OutputFormat }) => {
-      await runProfileBasicUpdate(options);
-    });
+  // Marked as a mutation (issue #52) so the global `--dry-run` flag
+  // routes through to `profile.basic.set()`'s `dryRun` option instead
+  // of firing the read-no-op stderr note. The canonical
+  // `profile basic update` leaf is also marked below for the same
+  // reason.
+  markMutation(
+    profile
+      .command("update")
+      .description("Update editable fields on the signed-in user's profile (alias for `profile basic update`)")
+      .option("--bio <text>", 'long-form bio (inline text, "-" for stdin, or "@path" to read from file)')
+      .option("--headline <text>", 'short tagline (inline text, "-" for stdin, or "@path" to read from file)')
+      .option("--edit", "open $EDITOR to compose the bio interactively (cannot be combined with --bio)")
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: OutputFormat }) => {
+        await runProfileBasicUpdate(options);
+      }),
+  );
 
   // Canonical sub-domain tree. All 11 sub-domains carry full operations:
   // `basic` and `skills` (#73), `industries`, `education`, `certifications`,

@@ -11,6 +11,7 @@ import { ConfigError } from "@ttctl/core";
 import { registerAuthCommand } from "./commands/auth/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
+import { DRY_RUN_NO_OP_STDERR_NOTE, isMutationCommand, setCliDryRun } from "./lib/dry-run.js";
 import type { OutputFormat } from "./lib/output.js";
 
 /**
@@ -44,6 +45,20 @@ import type { OutputFormat } from "./lib/output.js";
  *   enforced in the preAction hook: any two of `{--output, -o, --json,
  *   --yaml}` present together raise a parse-time error before the
  *   sub-command's action runs.
+ *
+ *   `--dry-run` (issue #52) — preview a mutation without sending it.
+ *   Captured into the module-scoped `cliDryRun` holder via
+ *   `setCliDryRun` in the preAction hook so mutation handlers can read
+ *   it through `getCliDryRun()`. Leaf commands tagged via
+ *   `markMutation()` (in their `build*Command` factories) route the
+ *   value through to the core layer's `dryRun` option; non-mutation
+ *   leaves get a one-line stderr no-op note from the preAction hook
+ *   (`DRY_RUN_NO_OP_STDERR_NOTE`) and proceed normally.
+ *
+ *   MCP tool integration is conditional on issue #10 having landed —
+ *   when MCP tools that wrap mutations ship, they accept the same
+ *   `dryRun?: boolean` input parameter and route through the same core
+ *   `dryRun` option. Until then, no MCP-side wiring is required.
  */
 export function buildProgram(): Command {
   const program = new Command();
@@ -54,13 +69,16 @@ export function buildProgram(): Command {
     .addOption(new Option("--config <path>", "path to YAML config (overrides TTCTL_CONFIG_FILE and ~/.ttctl.yaml)"))
     .addOption(new Option("--json", "shortcut for --output=json (mutually exclusive with --output, -o, --yaml)"))
     .addOption(new Option("--yaml", "shortcut for --output=yaml (mutually exclusive with --output, -o, --json)"))
+    .addOption(
+      new Option("--dry-run", "preview a mutation request without sending it (no-op for read commands)").default(false),
+    )
     .hook("preAction", (thisCommand, actionCommand) => {
       // `thisCommand` is the root program where the hook is registered;
       // global options are read off it directly. The hook fires before
       // every sub-command's action, so the path is captured exactly once
       // per invocation. `actionCommand` is the deepest command being
       // executed (e.g., the `init` leaf under `auth init`).
-      const opts = thisCommand.opts<{ config?: string; json?: boolean; yaml?: boolean }>();
+      const opts = thisCommand.opts<{ config?: string; json?: boolean; yaml?: boolean; dryRun?: boolean }>();
       const configPath = opts.config;
 
       // Mutual exclusion across format flags (post-#126). The user-visible
@@ -133,6 +151,31 @@ export function buildProgram(): Command {
       // the output path was supplied (it would be the wrong target
       // anyway: init is creating, not reading).
       setCliConfigPath(isAuthInit ? undefined : configPath);
+
+      // Capture the global `--dry-run` flag (issue #52). Commander's
+      // `Option.default(false)` means `opts.dryRun` is `false` when the
+      // flag is omitted, `true` when present — no need to coerce
+      // `undefined`. Mutation handlers read the captured value through
+      // `getCliDryRun()` and route through the core's `dryRun` option.
+      const dryRun = opts.dryRun === true;
+      setCliDryRun(dryRun);
+
+      // No-op note for non-mutation leaves: when `--dry-run` is set on a
+      // leaf that has NOT been tagged via `markMutation()` (today: every
+      // command except the basic-update leaf and its top-level alias),
+      // emit the AC-mandated stderr note and proceed normally. The
+      // exact text is locked by the AC for issue #52 — see
+      // `DRY_RUN_NO_OP_STDERR_NOTE` for the constant.
+      //
+      // The note is informational, not blocking — the action handler
+      // runs immediately after this hook returns. Read commands and
+      // unsupported mutations both fall into this branch today; future
+      // mutation-bearing PRs (timesheet submit per #13, additional
+      // profile sub-domain updates per #74-76) MUST call
+      // `markMutation()` on their leaves to opt out of the note.
+      if (dryRun && !isMutationCommand(actionCommand)) {
+        process.stderr.write(DRY_RUN_NO_OP_STDERR_NOTE);
+      }
     });
 
   registerAuthCommand(program);
