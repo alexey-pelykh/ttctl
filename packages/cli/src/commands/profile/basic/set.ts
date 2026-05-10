@@ -4,8 +4,9 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { emitErrorAndExit, emitUpdateSuccess } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
-import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "../shared.js";
 import { truncate } from "./show.js";
@@ -56,86 +57,112 @@ export async function runProfileBasicUpdate(options: {
     headline = await resolveFreeText(options.headline, { flagName: "headline" });
   } catch (err) {
     if (err instanceof FreeTextError) {
-      process.stderr.write(`profile update failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.basic.update",
+        format: options.output,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `profile update failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }
 
   if (bio === undefined && headline === undefined) {
-    process.stderr.write(
-      'profile update requires at least one of --bio, --headline, or --edit.\nExample: ttctl profile update --headline "Senior backend engineer"\n',
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.basic.update",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "profile update requires at least one of --bio, --headline, or --edit.",
+          hint: 'ttctl profile update --headline "Senior backend engineer"',
+        },
+      ],
+      prettySummary:
+        'profile update requires at least one of --bio, --headline, or --edit.\nExample: ttctl profile update --headline "Senior backend engineer"',
+    });
   }
 
   const changes: profile.basic.ProfileUpdate = {};
   if (bio !== undefined) changes.bio = bio;
   if (headline !== undefined) changes.headline = headline;
 
-  const token = await loadAuthTokenOrExit("profile update");
+  const token = await loadAuthTokenOrExit("profile update", options.output);
 
   let result: profile.basic.UpdateProfileResult;
   try {
     result = await profile.basic.set(token, changes);
   } catch (err) {
-    handleProfileUpdateError(err);
+    handleProfileUpdateError(err, options.output);
     return;
   }
 
-  const output = formatUpdateResult(result, options.output);
-  process.stdout.write(`${output}\n`);
+  emitUpdateSuccess({
+    operation: "profile.basic.update",
+    format: options.output,
+    updated: result,
+    prettySummary: "Profile updated.",
+    prettyEntity: formatUpdatePrettyEntity,
+    notice: result.notice ?? undefined,
+  });
 }
 
 /**
- * Map `profile.basic.set()` errors to actionable stderr messages and a
- * non-zero exit. Mirrors `handleProfileShowError` from `show.ts` — kept
- * separate so the user-visible "profile update failed (CODE)" prefix is
- * accurate (vs. a "profile show failed" prefix that would be misleading).
- *
- * `TtctlError` subclasses (`Cf403Error`, `Cf403PersistentError`,
- * `AuthRevokedError`, `SchedulerBearerExpired`) render in the uniform
- * `Error: ... / Recovery: ... / (Code: ...)` format defined in #77.
- * Domain `ProfileError` codes keep the existing "(CODE): message" rendering;
- * anything else gets a generic prefix.
+ * Route `profile.basic.set()` errors through the envelope ABI (#128).
+ * Mirrors `handleProfileShowError` from `show.ts` — kept separate so
+ * the user-visible "profile update failed (CODE)" prefix is accurate
+ * (vs. a "profile show failed" prefix that would be misleading).
  */
-function handleProfileUpdateError(err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+function handleProfileUpdateError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: "profile.basic.update",
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.basic.ProfileError) {
-    process.stderr.write(`profile update failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.basic.update",
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `profile update failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`profile update failed: ${message}\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation: "profile.basic.update",
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `profile update failed: ${message}`,
+  });
 }
 
 /**
- * Format the typed update result for the chosen output mode. Pure
- * function — no I/O — so directly unit-testable. The `pretty` branch
- * reads as a confirmation: "Profile updated" + the newly-stored values
- * for any field the server returned. JSON returns the raw structured
- * payload single-line; YAML emits the same shape as block-style YAML.
+ * Pretty entity preview for the basic-update envelope. Kept separate
+ * from the JSON / YAML wire shape: the wire payload is the full
+ * `UpdateProfileResult`; this helper only renders the human-readable
+ * subset (bio + headline). The notice (when present) flows through
+ * the envelope's `notice` field, NOT this body — `emitUpdateSuccess`
+ * appends it as a trailing indented line in pretty mode.
+ *
+ * Lines are truncated at 80 columns (one trailing `…` ellipsis when
+ * the source exceeds the limit) so the terminal output stays in a
+ * single line per field even for verbose bios.
+ *
+ * Pure — directly unit-testable.
  */
-export function formatUpdateResult(result: profile.basic.UpdateProfileResult, format: OutputFormat): string {
-  if (format === "json") {
-    return JSON.stringify(result, null, 2);
-  }
-  if (format === "yaml") {
-    return formatYaml(result);
-  }
-
-  // pretty — show-shape command, curated confirmation + echoed values
-  const { profile: updatedProfile, notice } = result;
-  const lines: string[] = ["Profile updated."];
+export function formatUpdatePrettyEntity(result: profile.basic.UpdateProfileResult): string {
+  const { profile: updatedProfile } = result;
+  const lines: string[] = [];
   if (updatedProfile.about !== null) {
-    lines.push(truncate(`  bio: ${updatedProfile.about}`, 80));
+    lines.push(truncate(`bio: ${updatedProfile.about}`, 80));
   }
   if (updatedProfile.quote !== null) {
-    lines.push(truncate(`  headline: ${updatedProfile.quote}`, 80));
-  }
-  if (notice !== null) {
-    lines.push(truncate(`  ${notice}`, 80));
+    lines.push(truncate(`headline: ${updatedProfile.quote}`, 80));
   }
   return lines.join("\n");
 }

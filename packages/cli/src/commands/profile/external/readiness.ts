@@ -4,11 +4,14 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "./_shared.js";
 
 const COMMAND_LABEL = "profile external readiness";
+const OPERATION = "profile.external.readiness";
 
 /**
  * Action handler for `ttctl profile external readiness`.
@@ -18,13 +21,13 @@ const COMMAND_LABEL = "profile external readiness";
  * need work before they can click "Submit profile for review".
  */
 export async function runProfileExternalReadiness(format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL, format);
 
   let result: profile.external.ProfileReadiness;
   try {
     result = await profile.external.readiness(token);
   } catch (err) {
-    handleError(err);
+    handleError(err, format);
     return;
   }
 
@@ -34,15 +37,32 @@ export async function runProfileExternalReadiness(format: OutputFormat): Promise
   });
 }
 
-function handleError(err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+function handleError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: OPERATION,
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.external.ProfileError) {
-    process.stderr.write(`${COMMAND_LABEL} failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: OPERATION,
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `${COMMAND_LABEL} failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`${COMMAND_LABEL} failed: ${message}\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation: OPERATION,
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `${COMMAND_LABEL} failed: ${message}`,
+  });
 }
 
 function renderReadinessBoolean(value: boolean | null): string {

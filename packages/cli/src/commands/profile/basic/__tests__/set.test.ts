@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { profile } from "@ttctl/core";
+import type { profile } from "@ttctl/core";
 import { describe, expect, it } from "vitest";
 
-import { formatUpdateResult } from "../set.js";
+import { formatUpdatePrettyEntity } from "../set.js";
+
+/**
+ * Pure-formatter unit tests for `profile basic update`. Post-#128 the
+ * action handler emits the v0.4 envelope via `emitUpdateSuccess` rather
+ * than a pure `formatUpdateResult` helper — the wire-shape assertions
+ * for the envelope itself live in `lib/__tests__/envelopes.test.ts`.
+ * The pretty body kept here (`formatUpdatePrettyEntity`) is the
+ * indented-bio / indented-headline subset that goes under the
+ * `✓ Updated: …` header line.
+ */
 
 const UPDATED: profile.basic.UpdateProfileResult = {
   profile: {
@@ -15,14 +25,9 @@ const UPDATED: profile.basic.UpdateProfileResult = {
   notice: null,
 };
 
-describe("formatUpdateResult (pretty)", () => {
-  it("leads with a `Profile updated.` confirmation line", () => {
-    const out = formatUpdateResult(UPDATED, "pretty");
-    expect(out.split("\n")[0]).toBe("Profile updated.");
-  });
-
+describe("formatUpdatePrettyEntity", () => {
   it("echoes back the new bio and headline using the user-facing flag names", () => {
-    const out = formatUpdateResult(UPDATED, "pretty");
+    const out = formatUpdatePrettyEntity(UPDATED);
     expect(out).toContain("bio: a brand new bio");
     expect(out).toContain("headline: shorter, sharper, smarter");
   });
@@ -32,7 +37,7 @@ describe("formatUpdateResult (pretty)", () => {
       profile: { id: "p1", about: "only bio", quote: null },
       notice: null,
     };
-    const out = formatUpdateResult(partial, "pretty");
+    const out = formatUpdatePrettyEntity(partial);
     expect(out).toContain("bio: only bio");
     expect(out).not.toContain("headline:");
   });
@@ -43,7 +48,7 @@ describe("formatUpdateResult (pretty)", () => {
       profile: { id: "p1", about: longBio, quote: null },
       notice: null,
     };
-    const out = formatUpdateResult(wide, "pretty");
+    const out = formatUpdatePrettyEntity(wide);
     for (const line of out.split("\n")) {
       expect(line.length).toBeLessThanOrEqual(80);
     }
@@ -51,39 +56,9 @@ describe("formatUpdateResult (pretty)", () => {
     expect(bioLine?.endsWith("…")).toBe(true);
   });
 
-  it("includes the server-returned notice on its own indented line when present", () => {
-    const withNotice: profile.basic.UpdateProfileResult = {
-      profile: { id: "p1", about: "x", quote: null },
-      notice: "Profile review may be required for some changes",
-    };
-    const out = formatUpdateResult(withNotice, "pretty");
-    expect(out).toContain("Profile review may be required");
-  });
-});
-
-describe("formatUpdateResult (json)", () => {
-  it("returns the raw typed payload as pretty-printed JSON", () => {
-    const out = formatUpdateResult(UPDATED, "json");
-    const parsed: unknown = JSON.parse(out);
-    expect(parsed).toEqual(UPDATED);
-  });
-
-  it("does not apply human-readable formatting to the json branch", () => {
-    const out = formatUpdateResult(UPDATED, "json");
+  it("does not include a leading confirmation line — that's the envelope's `✓ Updated:` header's job", () => {
+    const out = formatUpdatePrettyEntity(UPDATED);
     expect(out).not.toContain("Profile updated.");
-  });
-});
-
-describe("formatUpdateResult (yaml)", () => {
-  it("returns block-style YAML carrying the typed payload (post-#126 yaml branch)", () => {
-    const out = formatUpdateResult(UPDATED, "yaml");
-    expect(out).toContain("about: a brand new bio");
-    expect(out).toContain("quote: shorter, sharper, smarter");
-    expect(out).toContain("notice: null");
-  });
-
-  it("does not apply pretty/confirmation framing to the yaml branch", () => {
-    const out = formatUpdateResult(UPDATED, "yaml");
-    expect(out).not.toContain("Profile updated.");
+    expect(out).not.toContain("✓");
   });
 });

@@ -6,6 +6,8 @@ import { TtctlError, profile } from "@ttctl/core";
 import type { ProfileShowQuery } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import { renderMultiParagraph, unsetOr } from "../../../lib/format-helpers.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
@@ -62,13 +64,13 @@ export interface BasicShowPayload {
  * uniform across "never signed in" and "signed in but expired".
  */
 export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile show");
+  const token = await loadAuthTokenOrExit("profile show", format);
 
   let profilePayload: ProfileShowQuery;
   try {
     profilePayload = await profile.basic.show(token);
   } catch (err) {
-    handleProfileShowError(err);
+    handleProfileShowError(err, format);
     return;
   }
 
@@ -82,7 +84,7 @@ export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
     // talent-profile surface specifically is rejecting; either way, the
     // user needs to act on it.
     if (err instanceof TtctlError) {
-      handleProfileShowError(err);
+      handleProfileShowError(err, format);
       return;
     }
     // Anything else (NETWORK_ERROR, GRAPHQL_ERROR on the talent-profile
@@ -114,15 +116,32 @@ export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
  * keep the existing "(CODE): message" rendering. Anything else gets a
  * generic prefix.
  */
-function handleProfileShowError(err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+function handleProfileShowError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: "profile.basic.show",
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.basic.ProfileError) {
-    process.stderr.write(`profile show failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.basic.show",
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `profile show failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`profile show failed: ${message}\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation: "profile.basic.show",
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `profile show failed: ${message}`,
+  });
 }
 
 type ViewerRole = NonNullable<ProfileShowQuery["viewer"]>["viewerRole"];

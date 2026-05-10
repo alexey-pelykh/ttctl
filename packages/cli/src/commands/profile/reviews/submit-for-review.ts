@@ -4,7 +4,8 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { formatYaml } from "../../../lib/output.js";
+import { emitErrorAndExit, emitUpdateSuccess } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "./_shared.js";
 
@@ -14,44 +15,57 @@ const COMMAND_LABEL = "profile reviews submit-for-review";
  * Action handler for `ttctl profile reviews submit-for-review`.
  *
  * Re-submits the talent's profile for platform-side re-review (used after
- * profile edits that need re-verification). The underlying mutation's input
- * shape is INFERRED — UNVERIFIED (see the service module top-comment).
+ * profile edits that need re-verification). Emits the v0.4 update
+ * envelope (#128) — re-submission is conceptually a state transition,
+ * mapped to `update`.
+ *
+ * The underlying mutation's input shape is INFERRED — UNVERIFIED (see
+ * the service module top-comment).
  */
 export async function runProfileReviewsSubmitForReview(options: { output: OutputFormat }): Promise<void> {
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL, options.output);
 
   let result: profile.reviews.SubmitForReviewResult;
   try {
     result = await profile.reviews.submitForReview(token);
   } catch (err) {
-    handleError(err);
+    handleError(err, options.output);
     return;
   }
 
-  process.stdout.write(`${formatSubmitResult(result, options.output)}\n`);
+  emitUpdateSuccess({
+    operation: "profile.reviews.submit-for-review",
+    format: options.output,
+    updated: result,
+    prettySummary: "Profile submitted for review.",
+    notice: result.notice ?? undefined,
+  });
 }
 
-function handleError(err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+function handleError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: "profile.reviews.submit-for-review",
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.reviews.ProfileError) {
-    process.stderr.write(`${COMMAND_LABEL} failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.reviews.submit-for-review",
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `${COMMAND_LABEL} failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`${COMMAND_LABEL} failed: ${message}\n`);
-  process.exit(1);
-}
-
-/** Pure formatter — directly unit-testable. */
-export function formatSubmitResult(result: profile.reviews.SubmitForReviewResult, format: OutputFormat): string {
-  if (format === "json") {
-    return JSON.stringify(result, null, 2);
-  }
-  if (format === "yaml") {
-    return formatYaml(result);
-  }
-  // pretty — show-shape command, curated confirmation
-  const lines: string[] = ["Profile submitted for review."];
-  if (result.notice !== null) lines.push(`  ${result.notice}`);
-  return lines.join("\n");
+  emitErrorAndExit({
+    operation: "profile.reviews.submit-for-review",
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `${COMMAND_LABEL} failed: ${message}`,
+  });
 }

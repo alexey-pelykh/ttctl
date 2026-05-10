@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
+import type { OutputFormat } from "../../../lib/output.js";
+
 /**
  * Shared helpers for `ttctl profile external` leaves.
  *
@@ -27,7 +30,11 @@ export function truncate(s: string, width: number): string {
  *
  * Commander's `--flag <value>` parses as a string; we convert
  * `"true"`/`"false"` (and a couple of common shorthand forms) to booleans
- * and exit with a CLI-shape error on unrecognised input.
+ * and exit through the v0.4 envelope ABI on unrecognised input. The
+ * `operation` argument is the command's canonical operation slug
+ * (`profile.external.custom-requirements.set`) so envelope consumers can
+ * branch on it; `format` controls whether the failure surfaces as a
+ * pretty stderr line or as a JSON/YAML error envelope on stdout.
  *
  * Why explicit string parsing instead of a `--flag` / `--no-flag` boolean?
  * The custom-requirements set has THREE booleans, and Commander's no-flag
@@ -35,10 +42,26 @@ export function truncate(s: string, width: number): string {
  * `--background-check true|false` reads the same regardless of the value
  * and matches the wire-shape (which is also `Boolean!`).
  */
-export function parseBooleanFlag(commandLabel: string, flagName: string, value: string): boolean {
+export function parseBooleanFlag(
+  commandLabel: string,
+  operation: string,
+  flagName: string,
+  value: string,
+  format: OutputFormat,
+): boolean {
   const normalised = value.trim().toLowerCase();
   if (normalised === "true" || normalised === "1" || normalised === "yes") return true;
   if (normalised === "false" || normalised === "0" || normalised === "no") return false;
-  process.stderr.write(`${commandLabel} failed (VALIDATION_ERROR): --${flagName} expects true|false (got: ${value})\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation,
+    format,
+    errors: [
+      {
+        code: "VALIDATION_ERROR",
+        field: flagName,
+        message: `--${flagName} expects true|false (got: ${value})`,
+      },
+    ],
+    prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --${flagName} expects true|false (got: ${value})`,
+  });
 }

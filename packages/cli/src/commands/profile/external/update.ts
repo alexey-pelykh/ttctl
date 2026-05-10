@@ -4,11 +4,13 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
-import { formatYaml } from "../../../lib/output.js";
+import { emitErrorAndExit, emitUpdateSuccess } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, truncate } from "./_shared.js";
 
 const COMMAND_LABEL = "profile external update";
+const OPERATION = "profile.external.update";
 
 /**
  * Action handler for `ttctl profile external update`.
@@ -37,60 +39,87 @@ export async function runProfileExternalUpdate(options: {
   if (options.dribbble !== undefined) changes.dribbble = options.dribbble;
 
   if (Object.keys(changes).length === 0) {
-    process.stderr.write(
-      `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --twitter, --behance, --dribbble.\n` +
-        `Example: ttctl profile external update --linkedin https://linkedin.com/in/your-handle\n`,
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: OPERATION,
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --twitter, --behance, --dribbble.`,
+          hint: "ttctl profile external update --linkedin https://linkedin.com/in/your-handle",
+        },
+      ],
+      prettySummary:
+        `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --twitter, --behance, --dribbble.\n` +
+        "Example: ttctl profile external update --linkedin https://linkedin.com/in/your-handle",
+    });
   }
 
-  const token = await loadAuthTokenOrExit(COMMAND_LABEL);
+  const token = await loadAuthTokenOrExit(COMMAND_LABEL, options.output);
 
   let result: profile.external.UpdateExternalProfilesResult;
   try {
     result = await profile.external.update(token, changes);
   } catch (err) {
-    handleError(err);
+    handleError(err, options.output);
     return;
   }
 
-  process.stdout.write(`${formatUpdateResult(result, options.output)}\n`);
+  emitUpdateSuccess({
+    operation: OPERATION,
+    format: options.output,
+    updated: result,
+    prettySummary: "External profiles updated.",
+    prettyEntity: formatUpdatePrettyEntity,
+    notice: result.notice ?? undefined,
+  });
 }
 
-function handleError(err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+function handleError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: OPERATION,
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.external.ProfileError) {
-    process.stderr.write(`${COMMAND_LABEL} failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: OPERATION,
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `${COMMAND_LABEL} failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`${COMMAND_LABEL} failed: ${message}\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation: OPERATION,
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `${COMMAND_LABEL} failed: ${message}`,
+  });
 }
 
 /**
- * Format the typed update result for the chosen output mode. Pure
- * function — no I/O — directly unit-testable.
+ * Pretty entity preview for the external-update envelope. Renders the
+ * non-null URL trio (linkedin / github / website / twitter / behance /
+ * dribbble), each truncated at 80 columns. The notice (when present)
+ * flows through the envelope's `notice` field, NOT this body —
+ * `emitUpdateSuccess` appends it as a trailing indented line in pretty
+ * mode.
+ *
+ * Pure — directly unit-testable.
  */
-export function formatUpdateResult(
-  result: profile.external.UpdateExternalProfilesResult,
-  format: OutputFormat,
-): string {
-  if (format === "json") {
-    return JSON.stringify(result, null, 2);
-  }
-  if (format === "yaml") {
-    return formatYaml(result);
-  }
-
-  // pretty — show-shape command, curated confirmation + echoed values
-  const { profile: updated, notice } = result;
-  const lines: string[] = ["External profiles updated."];
-  if (updated.linkedin !== null) lines.push(truncate(`  linkedin: ${updated.linkedin}`, 80));
-  if (updated.github !== null) lines.push(truncate(`  github: ${updated.github}`, 80));
-  if (updated.website !== null) lines.push(truncate(`  website: ${updated.website}`, 80));
-  if (updated.behance !== null) lines.push(truncate(`  behance: ${updated.behance}`, 80));
-  if (updated.dribbble !== null) lines.push(truncate(`  dribbble: ${updated.dribbble}`, 80));
-  if (notice !== null) lines.push(truncate(`  ${notice}`, 80));
+export function formatUpdatePrettyEntity(result: profile.external.UpdateExternalProfilesResult): string {
+  const { profile: updated } = result;
+  const lines: string[] = [];
+  if (updated.linkedin !== null) lines.push(truncate(`linkedin: ${updated.linkedin}`, 80));
+  if (updated.github !== null) lines.push(truncate(`github: ${updated.github}`, 80));
+  if (updated.website !== null) lines.push(truncate(`website: ${updated.website}`, 80));
+  if (updated.behance !== null) lines.push(truncate(`behance: ${updated.behance}`, 80));
+  if (updated.dribbble !== null) lines.push(truncate(`dribbble: ${updated.dribbble}`, 80));
   return lines.join("\n");
 }

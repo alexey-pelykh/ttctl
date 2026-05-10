@@ -4,6 +4,7 @@
 import { DateInputError, parseDateInput, profile } from "@ttctl/core";
 import { Command, Option } from "commander";
 
+import { emitAddSuccess, emitErrorAndExit, emitRemoveSuccess, emitUpdateSuccess } from "../../../lib/envelopes.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, presentSubDomainError } from "../shared.js";
@@ -70,8 +71,13 @@ export function buildProfileEducationCommand(): Command {
     .command("remove")
     .description("Remove an education entry by id")
     .argument("<id>", "education id")
-    .action(async (id: string) => {
-      await runRemove(id);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runRemove(id, options.output);
     });
 
   education
@@ -92,8 +98,13 @@ export function buildProfileEducationCommand(): Command {
     .description("Toggle highlight on an education entry")
     .argument("<id>", "education id")
     .option("--off", "un-highlight (default is to highlight)", false)
-    .action(async (id: string, options: { off: boolean }) => {
-      await runHighlight(id, !options.off);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { off: boolean; output: OutputFormat }) => {
+      await runHighlight(id, !options.off, options.output);
     });
 
   return education;
@@ -127,17 +138,23 @@ async function runAdd(options: AddOptions): Promise<void> {
     institution: options.institution,
     degree: options.degree,
   };
-  applyDateFlags(fields, options, "profile education add");
+  applyDateFlags(fields, options, "profile education add", options.output);
   applyOptionalStrings(fields, options);
 
-  const token = await loadAuthTokenOrExit("profile education add");
+  const token = await loadAuthTokenOrExit("profile education add", options.output);
   let result: profile.education.Education;
   try {
     result = await profile.education.add(token, fields);
   } catch (err) {
-    presentSubDomainError("profile education add", err);
+    presentSubDomainError("profile education add", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatEducationText, table: formatEducationTable });
+  emitAddSuccess({
+    operation: "profile.education.add",
+    format: options.output,
+    created: result,
+    prettySummary: `${result.degree} — ${result.institution} (id ${result.id})`,
+    prettyEntity: formatEducationText,
+  });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -149,81 +166,115 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   if (options.title !== undefined) fields.title = options.title;
   if (options.highlight !== undefined) {
     if (options.highlight !== "true" && options.highlight !== "false") {
-      process.stderr.write(
-        `profile education update failed (VALIDATION_ERROR): --highlight expects "true" or "false"\n`,
-      );
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.education.update",
+        format: options.output,
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            field: "highlight",
+            message: '--highlight expects "true" or "false"',
+          },
+        ],
+        prettySummary: 'profile education update failed (VALIDATION_ERROR): --highlight expects "true" or "false"',
+      });
     }
     fields.highlight = options.highlight === "true";
   }
-  applyDateFlags(fields, options, "profile education update");
+  applyDateFlags(fields, options, "profile education update", options.output);
 
   if (Object.keys(fields).length === 0) {
-    process.stderr.write(`profile education update failed (VALIDATION_ERROR): at least one field flag is required\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.education.update",
+      format: options.output,
+      errors: [{ code: "VALIDATION_ERROR", message: "at least one field flag is required" }],
+      prettySummary: "profile education update failed (VALIDATION_ERROR): at least one field flag is required",
+    });
   }
 
-  const token = await loadAuthTokenOrExit("profile education update");
+  const token = await loadAuthTokenOrExit("profile education update", options.output);
   let result: profile.education.Education;
   try {
     result = await profile.education.update(token, id, fields);
   } catch (err) {
-    presentSubDomainError("profile education update", err);
+    presentSubDomainError("profile education update", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatEducationText, table: formatEducationTable });
+  emitUpdateSuccess({
+    operation: "profile.education.update",
+    format: options.output,
+    updated: result,
+    prettySummary: `${result.degree} — ${result.institution} (id ${result.id})`,
+    prettyEntity: formatEducationText,
+  });
 }
 
-async function runRemove(id: string): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile education remove");
+async function runRemove(id: string, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile education remove", format);
   let removedId: string;
   try {
     removedId = await profile.education.remove(token, id);
   } catch (err) {
-    presentSubDomainError("profile education remove", err);
+    presentSubDomainError("profile education remove", err, format);
   }
-  process.stdout.write(`Education ${removedId} removed.\n`);
+  emitRemoveSuccess({
+    operation: "profile.education.remove",
+    format,
+    id: removedId,
+  });
 }
 
 async function runShow(id: string, format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile education show");
+  const token = await loadAuthTokenOrExit("profile education show", format);
   let result: profile.education.Education;
   try {
     result = await profile.education.show(token, id);
   } catch (err) {
-    presentSubDomainError("profile education show", err);
+    presentSubDomainError("profile education show", err, format);
   }
   emitResult(result, format, { pretty: formatEducationText, table: formatEducationTable });
 }
 
-async function runHighlight(id: string, value: boolean): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile education highlight");
+async function runHighlight(id: string, value: boolean, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile education highlight", format);
   let result: { id: string; highlight: boolean };
   try {
     result = await profile.education.highlight(token, id, value);
   } catch (err) {
-    presentSubDomainError("profile education highlight", err);
+    presentSubDomainError("profile education highlight", err, format);
   }
-  process.stdout.write(`Education ${result.id} highlight set to ${result.highlight.toString()}.\n`);
+  emitUpdateSuccess({
+    operation: "profile.education.highlight",
+    format,
+    updated: result,
+    prettySummary: `${result.id} highlight set to ${result.highlight.toString()}`,
+    prettyEntity: (entity: { id: string; highlight: boolean }) => `highlight: ${entity.highlight.toString()}`,
+  });
 }
 
 /**
  * Map `--from` / `--to` flag strings to `yearFrom` / `yearTo` Ints (year
  * only, dropping any provided month/day per Education's GraphQL field
  * shape). The date helper validates ISO-8601 and year-only formats and
- * surfaces malformed input as `DateInputError`.
+ * surfaces malformed input as `DateInputError` — routed through the
+ * envelope ABI (#128).
  */
 function applyDateFlags(
   fields: profile.education.EducationFields,
   options: { from?: string; to?: string },
   commandLabel: string,
+  format: OutputFormat,
 ): void {
   try {
     if (options.from !== undefined) fields.yearFrom = parseDateInput(options.from, "from").year;
     if (options.to !== undefined) fields.yearTo = parseDateInput(options.to, "to").year;
   } catch (err) {
     if (err instanceof DateInputError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: commandLabel.replace(/ /g, "."),
+        format,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }

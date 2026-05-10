@@ -4,6 +4,13 @@
 import { profile } from "@ttctl/core";
 import { Command, Option } from "commander";
 
+import {
+  emitAddSuccess,
+  emitErrorAndExit,
+  emitRemoveSuccess,
+  emitUpdateSuccess,
+  wrapListEnvelope,
+} from "../../../lib/envelopes.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, parseLimitOrExit, presentSubDomainError } from "../shared.js";
@@ -66,8 +73,13 @@ export function buildProfileIndustriesCommand(): Command {
     .command("remove")
     .description("Remove an industry-profile entry by id")
     .argument("<id>", "industry profile id")
-    .action(async (id: string) => {
-      await runRemove(id);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runRemove(id, options.output);
     });
 
   industries
@@ -117,14 +129,20 @@ async function runAdd(name: string, options: AddOptions): Promise<void> {
   if (options.connection !== undefined) fields.domainArea = options.connection;
   if (options.about !== undefined) fields.about = options.about;
 
-  const token = await loadAuthTokenOrExit("profile industries add");
+  const token = await loadAuthTokenOrExit("profile industries add", options.output);
   let result: profile.industries.IndustryProfile;
   try {
     result = await profile.industries.add(token, fields);
   } catch (err) {
-    presentSubDomainError("profile industries add", err);
+    presentSubDomainError("profile industries add", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatIndustryText, table: formatIndustryTable });
+  emitAddSuccess({
+    operation: "profile.industries.add",
+    format: options.output,
+    created: result,
+    prettySummary: `${result.title} (id ${result.id})`,
+    prettyEntity: formatIndustryText,
+  });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -134,58 +152,72 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   if (options.about !== undefined) fields.about = options.about;
 
   if (Object.keys(fields).length === 0) {
-    process.stderr.write(`profile industries update failed (VALIDATION_ERROR): at least one field flag is required\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.industries.update",
+      format: options.output,
+      errors: [{ code: "VALIDATION_ERROR", message: "at least one field flag is required" }],
+      prettySummary: "profile industries update failed (VALIDATION_ERROR): at least one field flag is required",
+    });
   }
 
-  const token = await loadAuthTokenOrExit("profile industries update");
+  const token = await loadAuthTokenOrExit("profile industries update", options.output);
   let result: profile.industries.IndustryProfile;
   try {
     result = await profile.industries.update(token, id, fields);
   } catch (err) {
-    presentSubDomainError("profile industries update", err);
+    presentSubDomainError("profile industries update", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatIndustryText, table: formatIndustryTable });
+  emitUpdateSuccess({
+    operation: "profile.industries.update",
+    format: options.output,
+    updated: result,
+    prettySummary: `${result.title} (id ${result.id})`,
+    prettyEntity: formatIndustryText,
+  });
 }
 
-async function runRemove(id: string): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile industries remove");
+async function runRemove(id: string, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile industries remove", format);
   let removedId: string;
   try {
     removedId = await profile.industries.remove(token, id);
   } catch (err) {
-    presentSubDomainError("profile industries remove", err);
+    presentSubDomainError("profile industries remove", err, format);
   }
-  process.stdout.write(`Industry ${removedId} removed.\n`);
+  emitRemoveSuccess({
+    operation: "profile.industries.remove",
+    format,
+    id: removedId,
+  });
 }
 
 async function runList(format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile industries list");
+  const token = await loadAuthTokenOrExit("profile industries list", format);
   let result: profile.industries.IndustryProfile[];
   try {
     result = await profile.industries.list(token);
   } catch (err) {
-    presentSubDomainError("profile industries list", err);
+    presentSubDomainError("profile industries list", err, format);
   }
-  emitResult(result, format, {
-    pretty: formatIndustryListText,
-    table: formatIndustryListTable,
+  emitResult(wrapListEnvelope(result), format, {
+    pretty: (data) => formatIndustryListText(data.items),
+    table: (data) => formatIndustryListTable(data.items),
     empty: { command: "profile.industries.list" },
   });
 }
 
 async function runAutocomplete(query: string, options: { limit: string; output: OutputFormat }): Promise<void> {
-  const limit = parseLimitOrExit(options.limit, "profile industries autocomplete");
-  const token = await loadAuthTokenOrExit("profile industries autocomplete");
+  const limit = parseLimitOrExit(options.limit, "profile industries autocomplete", options.output);
+  const token = await loadAuthTokenOrExit("profile industries autocomplete", options.output);
   let suggestions: profile.industries.IndustryCatalogEntry[];
   try {
     suggestions = await profile.industries.autocomplete(token, query, { limit });
   } catch (err) {
-    presentSubDomainError("profile industries autocomplete", err);
+    presentSubDomainError("profile industries autocomplete", err, options.output);
   }
-  emitResult(suggestions, options.output, {
-    pretty: formatCatalogText,
-    table: formatCatalogTable,
+  emitResult(wrapListEnvelope(suggestions), options.output, {
+    pretty: (data) => formatCatalogText(data.items),
+    table: (data) => formatCatalogTable(data.items),
   });
 }
 

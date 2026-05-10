@@ -4,6 +4,7 @@
 import { DateInputError, parseDateInput, profile } from "@ttctl/core";
 import { Command, Option } from "commander";
 
+import { emitAddSuccess, emitErrorAndExit, emitRemoveSuccess, emitUpdateSuccess } from "../../../lib/envelopes.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, presentSubDomainError } from "../shared.js";
@@ -74,8 +75,13 @@ export function buildProfileCertificationsCommand(): Command {
     .command("remove")
     .description("Remove a certification entry by id")
     .argument("<id>", "certification id")
-    .action(async (id: string) => {
-      await runRemove(id);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runRemove(id, options.output);
     });
 
   certs
@@ -96,8 +102,13 @@ export function buildProfileCertificationsCommand(): Command {
     .description("Toggle highlight on a certification entry")
     .argument("<id>", "certification id")
     .option("--off", "un-highlight (default is to highlight)", false)
-    .action(async (id: string, options: { off: boolean }) => {
-      await runHighlight(id, !options.off);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { off: boolean; output: OutputFormat }) => {
+      await runHighlight(id, !options.off, options.output);
     });
 
   return certs;
@@ -129,18 +140,24 @@ async function runAdd(options: AddOptions): Promise<void> {
     certificate: options.name,
     institution: options.issuer,
   };
-  applyDateFlags(fields, options, "profile certifications add");
+  applyDateFlags(fields, options, "profile certifications add", options.output);
   if (options.link !== undefined) fields.link = options.link;
   if (options.number !== undefined) fields.number = options.number;
 
-  const token = await loadAuthTokenOrExit("profile certifications add");
+  const token = await loadAuthTokenOrExit("profile certifications add", options.output);
   let result: profile.certifications.Certification;
   try {
     result = await profile.certifications.add(token, fields);
   } catch (err) {
-    presentSubDomainError("profile certifications add", err);
+    presentSubDomainError("profile certifications add", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatCertificationText, table: formatCertificationTable });
+  emitAddSuccess({
+    operation: "profile.certifications.add",
+    format: options.output,
+    created: result,
+    prettySummary: `${result.certificate} — ${result.institution} (id ${result.id})`,
+    prettyEntity: formatCertificationText,
+  });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -151,63 +168,89 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   if (options.number !== undefined) fields.number = options.number;
   if (options.highlight !== undefined) {
     if (options.highlight !== "true" && options.highlight !== "false") {
-      process.stderr.write(
-        `profile certifications update failed (VALIDATION_ERROR): --highlight expects "true" or "false"\n`,
-      );
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.certifications.update",
+        format: options.output,
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            field: "highlight",
+            message: '--highlight expects "true" or "false"',
+          },
+        ],
+        prettySummary: 'profile certifications update failed (VALIDATION_ERROR): --highlight expects "true" or "false"',
+      });
     }
     fields.highlight = options.highlight === "true";
   }
-  applyDateFlags(fields, options, "profile certifications update");
+  applyDateFlags(fields, options, "profile certifications update", options.output);
 
   if (Object.keys(fields).length === 0) {
-    process.stderr.write(
-      `profile certifications update failed (VALIDATION_ERROR): at least one field flag is required\n`,
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.certifications.update",
+      format: options.output,
+      errors: [{ code: "VALIDATION_ERROR", message: "at least one field flag is required" }],
+      prettySummary: "profile certifications update failed (VALIDATION_ERROR): at least one field flag is required",
+    });
   }
 
-  const token = await loadAuthTokenOrExit("profile certifications update");
+  const token = await loadAuthTokenOrExit("profile certifications update", options.output);
   let result: profile.certifications.Certification;
   try {
     result = await profile.certifications.update(token, id, fields);
   } catch (err) {
-    presentSubDomainError("profile certifications update", err);
+    presentSubDomainError("profile certifications update", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatCertificationText, table: formatCertificationTable });
+  emitUpdateSuccess({
+    operation: "profile.certifications.update",
+    format: options.output,
+    updated: result,
+    prettySummary: `${result.certificate} — ${result.institution} (id ${result.id})`,
+    prettyEntity: formatCertificationText,
+  });
 }
 
-async function runRemove(id: string): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile certifications remove");
+async function runRemove(id: string, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile certifications remove", format);
   let removedId: string;
   try {
     removedId = await profile.certifications.remove(token, id);
   } catch (err) {
-    presentSubDomainError("profile certifications remove", err);
+    presentSubDomainError("profile certifications remove", err, format);
   }
-  process.stdout.write(`Certification ${removedId} removed.\n`);
+  emitRemoveSuccess({
+    operation: "profile.certifications.remove",
+    format,
+    id: removedId,
+  });
 }
 
 async function runShow(id: string, format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile certifications show");
+  const token = await loadAuthTokenOrExit("profile certifications show", format);
   let result: profile.certifications.Certification;
   try {
     result = await profile.certifications.show(token, id);
   } catch (err) {
-    presentSubDomainError("profile certifications show", err);
+    presentSubDomainError("profile certifications show", err, format);
   }
   emitResult(result, format, { pretty: formatCertificationText, table: formatCertificationTable });
 }
 
-async function runHighlight(id: string, value: boolean): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile certifications highlight");
+async function runHighlight(id: string, value: boolean, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile certifications highlight", format);
   let result: { id: string; highlight: boolean };
   try {
     result = await profile.certifications.highlight(token, id, value);
   } catch (err) {
-    presentSubDomainError("profile certifications highlight", err);
+    presentSubDomainError("profile certifications highlight", err, format);
   }
-  process.stdout.write(`Certification ${result.id} highlight set to ${result.highlight.toString()}.\n`);
+  emitUpdateSuccess({
+    operation: "profile.certifications.highlight",
+    format,
+    updated: result,
+    prettySummary: `${result.id} highlight set to ${result.highlight.toString()}`,
+    prettyEntity: (entity: { id: string; highlight: boolean }) => `highlight: ${entity.highlight.toString()}`,
+  });
 }
 
 /**
@@ -215,11 +258,14 @@ async function runHighlight(id: string, value: boolean): Promise<void> {
  * `validFromYear` / `validToMonth` / `validToYear` Ints. Year-only inputs
  * default month to `1` per the issue's "January 1st" rule. ISO-8601
  * inputs preserve the parsed month and ignore the day component.
+ *
+ * Routes errors through the envelope ABI (#128).
  */
 function applyDateFlags(
   fields: profile.certifications.CertificationFields,
   options: { issued?: string; expires?: string },
   commandLabel: string,
+  format: OutputFormat,
 ): void {
   try {
     if (options.issued !== undefined) {
@@ -234,8 +280,12 @@ function applyDateFlags(
     }
   } catch (err) {
     if (err instanceof DateInputError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: commandLabel.replace(/ /g, "."),
+        format,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }

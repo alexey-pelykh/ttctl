@@ -4,6 +4,7 @@
 import Table from "cli-table3";
 import { profile } from "@ttctl/core";
 
+import { wrapListEnvelope } from "../../../lib/envelopes.js";
 import { renderMultiParagraph, unsetOr } from "../../../lib/format-helpers.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
@@ -13,43 +14,47 @@ import { loadAuthTokenOrExit } from "./shared.js";
 /**
  * Action handler for `ttctl profile portfolio list`. Reads the user's
  * portfolio collection and emits it via the cross-CLI output helper
- * (`packages/cli/src/lib/output.ts` from #71). The pretty branch emits a
- * curated multi-line summary surfacing every editable field;
- * json/yaml stringify the typed array.
+ * (`packages/cli/src/lib/output.ts` from #71), wrapped in the v0.4
+ * list envelope (`{version, items, pageInfo?}` from #128) for
+ * json/yaml.
  *
- * Per #129, only the `pretty` slot is registered with `emitResult`.
- * `formatResult`'s shape dispatcher prefers the `table` slot for
- * list-shape data when present; omitting the slot routes the user-
- * visible `--output=pretty` to {@link formatPortfolioPretty} — the
- * curated multi-line layout that surfaces `description`,
- * `accomplishment`, `coverImage`, and `clientOrCompanyName` (the
- * audit-confirmed dropped fields from #124). The audit's Override
- * Registry Decisions endorse routing portfolio list to multi-line
- * because `description`/`accomplishment` are paragraph-length and
- * the row-based table layout collapses them. {@link formatPortfolioTable}
- * stays exported for direct test use and future dispatcher wiring.
+ * Per #129, the `pretty` slot is registered with `emitResult` and
+ * unwraps the envelope's `items` field for the curated multi-line
+ * layout that surfaces `description`, `accomplishment`, `coverImage`,
+ * and `clientOrCompanyName` (the audit-confirmed dropped fields from
+ * #124). The `table` slot is also wired (also unwrapping `items`) —
+ * `formatResult`'s shape dispatcher prefers `table` for list-shape
+ * data when present, but the audit's Override Registry Decisions
+ * endorse routing portfolio list to multi-line because
+ * `description`/`accomplishment` are paragraph-length and the
+ * row-based table layout collapses them. {@link formatPortfolioTable}
+ * stays exported for direct test use and future override-dispatch
+ * wiring.
  *
  * Empty case is handled by the shared empty-state wrapper (#122) via
- * `empty: { command: "profile.portfolio.list" }` — the wrapper short-
- * circuits BEFORE per-format dispatch and emits `"No portfolio items
- * found. Add one with: ttctl profile portfolio add"` for `pretty`,
- * `[]` for `json`. The formatters keep a defensive empty-list branch
- * for direct callers (tests, future programmatic use) that bypass the
+ * `empty: { command: "profile.portfolio.list" }`. The wrapper detects
+ * both `[]` and `{items: []}` shapes (per #122's `isEmptyCollection`),
+ * so the post-#128 envelope wrapping continues to short-circuit
+ * BEFORE per-format dispatch — emitting `"No portfolio items found.
+ * Add one with: ttctl profile portfolio add"` for `pretty`, `[]` for
+ * `json`. The formatters keep a defensive empty-list branch for
+ * direct callers (tests, future programmatic use) that bypass the
  * action handler.
  */
 export async function runProfilePortfolioList(format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("portfolio list");
+  const token = await loadAuthTokenOrExit("portfolio list", format);
 
   let items: profile.portfolio.PortfolioItem[];
   try {
     items = await profile.portfolio.list(token);
   } catch (err) {
-    handlePortfolioError("portfolio list", err);
+    handlePortfolioError("portfolio list", err, format);
     return;
   }
 
-  emitResult(items, format, {
-    pretty: formatPortfolioPretty,
+  emitResult(wrapListEnvelope(items), format, {
+    pretty: (data) => formatPortfolioPretty(data.items),
+    table: (data) => formatPortfolioTable(data.items),
     empty: { command: "profile.portfolio.list" },
   });
 }

@@ -3,15 +3,17 @@
 
 import { profile } from "@ttctl/core";
 
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { emitListResult, handlePortfolioError } from "./add.js";
+import { emitMutationResult, handlePortfolioError } from "./add.js";
 import { loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile portfolio update <id>`. Updates only
  * the fields supplied; if no field flags are provided, the command exits
- * with a `VALIDATION_ERROR` rather than issuing an empty mutation.
+ * with a `VALIDATION_ERROR` (#128 envelope) rather than issuing an empty
+ * mutation.
  */
 export async function runProfilePortfolioUpdate(
   id: string,
@@ -34,15 +36,23 @@ export async function runProfilePortfolioUpdate(
     });
   } catch (err) {
     if (err instanceof FreeTextError) {
-      process.stderr.write(`portfolio update failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.portfolio.update",
+        format: options.output,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `portfolio update failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }
 
   if (options.url !== undefined && options.link !== undefined && options.url !== options.link) {
-    process.stderr.write("portfolio update failed (VALIDATION_ERROR): --url and --link cannot disagree.\n");
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.portfolio.update",
+      format: options.output,
+      errors: [{ code: "VALIDATION_ERROR", message: "--url and --link cannot disagree." }],
+      prettySummary: "portfolio update failed (VALIDATION_ERROR): --url and --link cannot disagree.",
+    });
   }
   const link = options.link ?? options.url;
 
@@ -54,20 +64,29 @@ export async function runProfilePortfolioUpdate(
   if (options.accomplishment !== undefined) changes.accomplishment = options.accomplishment;
 
   if (Object.keys(changes).length === 0) {
-    process.stderr.write(
-      "portfolio update failed (VALIDATION_ERROR): supply at least one field flag (--title, --description, --link, --client, --accomplishment, or --edit).\n",
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.portfolio.update",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message:
+            "supply at least one field flag (--title, --description, --link, --client, --accomplishment, or --edit).",
+        },
+      ],
+      prettySummary:
+        "portfolio update failed (VALIDATION_ERROR): supply at least one field flag (--title, --description, --link, --client, --accomplishment, or --edit).",
+    });
   }
-  const token = await loadAuthTokenOrExit("portfolio update");
+  const token = await loadAuthTokenOrExit("portfolio update", options.output);
 
   let items: profile.portfolio.PortfolioItem[];
   try {
     items = await profile.portfolio.update(token, id, changes);
   } catch (err) {
-    handlePortfolioError("portfolio update", err);
+    handlePortfolioError("portfolio update", err, options.output);
     return;
   }
 
-  emitListResult(items, options.output, `Portfolio item ${id} updated.`);
+  emitMutationResult(items, options.output, "update", { prettyHeader: `Portfolio item ${id} updated.` });
 }

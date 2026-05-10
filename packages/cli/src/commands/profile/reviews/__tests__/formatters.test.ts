@@ -3,15 +3,17 @@
 
 import { describe, expect, it } from "vitest";
 
-import { formatApproveResult } from "../approve-item.js";
+import { formatApproveEntity } from "../approve-item.js";
 import { formatReviewsTable, formatReviewsText } from "../list.js";
-import { formatSubmitResult } from "../submit-for-review.js";
 
 /**
- * Pure-formatter unit tests for the reviews leaves. Mirrors the
- * external/__tests__/formatters.test.ts layout — see that file's header
- * for the rationale on testing formatters directly rather than action
- * handlers.
+ * Pure-formatter unit tests for the reviews leaves. Post-#128 the
+ * approve-item / approve-section / submit-for-review handlers emit
+ * envelopes via the side-effecting `emitUpdateSuccess` rather than a
+ * pure `formatXxxResult` helper — the wire-shape assertions for the
+ * envelope itself live in `lib/__tests__/envelopes.test.ts`. The pure
+ * helpers preserved on the action handlers (`formatApproveEntity`,
+ * `formatReviewsText/Table`) keep their direct unit coverage here.
  */
 
 describe("formatReviewsText / Table", () => {
@@ -63,56 +65,23 @@ describe("formatReviewsText / Table", () => {
   });
 });
 
-describe("formatApproveResult", () => {
-  const SAMPLE = {
-    sectionReviews: [
-      {
-        id: "sr1",
-        section: "EDUCATION",
-        requestedAt: null,
-        items: [{ id: "sri-other", itemId: "edu-other", requestedAt: null }],
-      },
-    ],
-    notice: "Approved.",
-  };
-
-  it("pretty: renders confirmation + remaining-pending count", () => {
-    const out = formatApproveResult(SAMPLE, "pretty");
-    expect(out).toContain("Item approved.");
-    expect(out).toContain("pending-reviews remaining: 1");
-    expect(out).toContain("Approved.");
+describe("formatApproveEntity (#128 envelope pretty body)", () => {
+  it("renders the remaining-pending count from sectionReviews length", () => {
+    const result = {
+      sectionReviews: [
+        {
+          id: "sr1",
+          section: "EDUCATION",
+          requestedAt: null,
+          items: [{ id: "sri-other", itemId: "edu-other", requestedAt: null }],
+        },
+      ],
+      notice: null,
+    };
+    expect(formatApproveEntity(result)).toBe("pending-reviews remaining: 1");
   });
 
-  it("json: renders the full result object", () => {
-    const out = formatApproveResult(SAMPLE, "json");
-    expect(JSON.parse(out)).toEqual(SAMPLE);
-  });
-
-  it("yaml: renders the full result object as block-style YAML", () => {
-    const out = formatApproveResult(SAMPLE, "yaml");
-    expect(out).toContain("notice: Approved.");
-    expect(out).toContain("sectionReviews:");
-  });
-});
-
-describe("formatSubmitResult", () => {
-  it("pretty: renders confirmation + notice", () => {
-    const out = formatSubmitResult({ notice: "Profile submitted for review." }, "pretty");
-    expect(out).toContain("Profile submitted for review.");
-  });
-
-  it("pretty: renders confirmation when no notice is provided", () => {
-    const out = formatSubmitResult({ notice: null }, "pretty");
-    expect(out).toBe("Profile submitted for review.");
-  });
-
-  it("json: renders the full result", () => {
-    const out = formatSubmitResult({ notice: "ok" }, "json");
-    expect(JSON.parse(out)).toEqual({ notice: "ok" });
-  });
-
-  it("yaml: renders the full result as block-style YAML", () => {
-    const out = formatSubmitResult({ notice: "ok" }, "yaml");
-    expect(out).toBe("notice: ok");
+  it("renders zero when no pending reviews remain", () => {
+    expect(formatApproveEntity({ sectionReviews: [], notice: null })).toBe("pending-reviews remaining: 0");
   });
 });
