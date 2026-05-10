@@ -26,6 +26,19 @@ const TOOL_NAME = "ttctl_profile_basic_update";
  * string verbatim. The `bio` and `headline` parameters are both
  * optional; at least one must be supplied (the core layer validates
  * this and raises a `VALIDATION_ERROR` if both are omitted).
+ *
+ * Dry-run path (issue #10 closes #52 spec item 5 — "MCP tool integration
+ * when #10 lands"): when `dryRun: true` is supplied, the tool routes
+ * through `profile.basic.set(token, changes, { dryRun: true })` which
+ * returns a `SetOutcomePreview` carrying a `DryRunPreview` of the
+ * `UPDATE_BASIC_INFO` request that WOULD have been sent — no transport
+ * (read or write) is invoked. The tool result JSON is the
+ * discriminated `SetOutcome` shape verbatim — `{ kind: "preview",
+ * preview: { surface, transport, endpoint, operationName, variables,
+ * headers } }` for dry-run, `{ kind: "applied", result: {...} }` for
+ * the apply path. MCP callers branch on `kind`. Bearer token redaction
+ * in `headers.authorization` is honored by `buildDryRunPreview` in
+ * core; the MCP tool is a thin pass-through.
  */
 export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -34,11 +47,13 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
       title: "Update profile basic info",
       description: [
         "Update the signed-in user's profile bio and/or headline. At least one must be supplied.",
+        "Pass `dryRun: true` to preview the request without firing the mutation.",
         "",
         "Example user prompts that should map to this tool:",
         '  - "Update my bio to: Senior backend engineer specialising in Go and PostgreSQL."',
         "  - \"Change my Toptal headline to 'CTO at AcmeCo'.\"",
         '  - "Set my profile bio and headline."',
+        '  - "Show me what would be sent if I changed my bio to X."',
       ].join("\n"),
       inputSchema: {
         bio: z
@@ -53,6 +68,12 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
           .describe(
             "Short tagline shown above the user's photo (single line). Maps to GraphQL `Profile.quote`. Optional.",
           ),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            "When true, return a structured `DryRunPreview` of the GraphQL request that WOULD have been sent without invoking any transport (read or write). The bearer token is redacted in the preview headers. The result envelope shape is the discriminated `SetOutcome` — `{ kind: \"preview\", preview: ... }` for dry-run, `{ kind: \"applied\", result: ... }` for the apply path. Default: false.",
+          ),
       },
     },
     async (input) => {
@@ -64,8 +85,8 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
       if (input.headline !== undefined) changes.headline = input.headline;
 
       try {
-        const result = await profile.basic.set(auth.token, changes);
-        return jsonResponse(result);
+        const outcome = await profile.basic.set(auth.token, changes, { dryRun: input.dryRun ?? false });
+        return jsonResponse(outcome);
       } catch (err) {
         const typed = ttctlErrorToToolResponseOrNull(err);
         if (typed !== null) return typed;
