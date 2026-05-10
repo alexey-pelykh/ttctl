@@ -72,7 +72,7 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
           .boolean()
           .optional()
           .describe(
-            "When true, return a structured `DryRunPreview` of the GraphQL request that WOULD have been sent without invoking any transport (read or write). The bearer token is redacted in the preview headers. The result envelope shape is the discriminated `SetOutcome` — `{ kind: \"preview\", preview: ... }` for dry-run, `{ kind: \"applied\", result: ... }` for the apply path. Default: false.",
+            'When true, return a structured `DryRunPreview` of the GraphQL request that WOULD have been sent without invoking any transport (read or write). The bearer token is redacted in the preview headers. The result envelope shape is the discriminated `SetOutcome` — `{ kind: "preview", preview: ... }` for dry-run, `{ kind: "applied", result: ... }` for the apply path. Default: false.',
           ),
       },
     },
