@@ -249,7 +249,7 @@ describe("formatYaml — direct helper", () => {
     tags: ["analytical-engine", "first-programmer"],
   };
 
-  it("renders a multi-paragraph string field as a `|` literal block scalar (AC: bio: | literal block + paragraph break preserved, NOT bio: \"...\\n\\n...\")", () => {
+  it('renders a multi-paragraph string field as a `|` literal block scalar (AC: bio: | literal block + paragraph break preserved, NOT bio: "...\\n\\n...")', () => {
     const out = formatYaml(PROFILE);
     // Literal block scalar opens with `|` on the value's first line, with
     // each subsequent line indented under the key.
