@@ -51,6 +51,39 @@ Allowed choices are pretty, json, yaml.` line.
     registry from #124 stays in place for D5 to wire into the `pretty`
     dispatcher's multi-line strategy lookup.
 
+- **Read-side GraphQL query coverage for the `basic` sub-domain (#127)**.
+  Closes the audit-confirmed query-root-cause gap from #124 — the
+  mobile-gateway `Profile` type does not expose the user-edited
+  narrative fields (`about`, `quote`, `languages`), so the existing
+  `profile.basic.show()` call against `mobile-gateway` cannot surface
+  them no matter how the formatter is rewritten. Adds a new
+  `profile.basic.getBasicInfo(token)` core function that issues a
+  `GET_BASIC_INFO` query against `talent_profile/graphql` (Cloudflare-
+  protected, via `impersonatedTransport` + Chrome TLS impersonation,
+  same surface as `set` and `photoShow`) and returns a typed
+  `BasicInfo` projection with `bio` (→ `Profile.about`), `headline` (→
+  `Profile.quote`), and `languages` (`{ id, name }[]`). The function
+  is independent of `show()` so internal callers that only need the
+  `profileId` (e.g. `set`, `photoShow`, sibling sub-domains'
+  `resolveProfileId` helpers) keep using the cheap mobile-gateway-only
+  `show()` path; only the CLI / MCP `basic show` surface (post-#129
+  formatter rewrite) pays the cost of the second talent-profile
+  call. Selection set is a deliberate subset of the bundle-extracted
+  `GET_BASIC_INFO` operation — `legalName`, `placeIdentity`,
+  `country`, `citizenship`, `softwareSkills`, the social URLs, and
+  `ProfileRecommendations` are out of scope (audit-confirmed not in
+  the user-set-and-dropped defect class; social URLs already covered
+  by `external`). Audit-confirmed empirical follow-ups: `tags` /
+  `media` are NOT on the wire `PortfolioItem` (verified — neither
+  the gateway nor talent_profile schemas declare them); the
+  `SectionReview` / `SectionReviewItem` fragments expose only
+  structural fields (`id`, `items`, `requestedAt`, `section`,
+  `itemId`) — no reviewer-comment / rejection-reason long-form
+  fields exist on the wire. Both findings recorded for the #129
+  formatter rewrite (which now knows not to expect those fields).
+  Formatter consumption of the new `bio` / `headline` / `languages`
+  data is tracked separately as #129 (Wave 2 sibling).
+
 ### Removed
 
 - **`--output=text` and `--output=table` user-visible names (#126)**.

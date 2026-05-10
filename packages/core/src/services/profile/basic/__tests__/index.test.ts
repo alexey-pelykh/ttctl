@@ -16,7 +16,7 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { ProfileError, set, show } from "../index.js";
+import { ProfileError, getBasicInfo, set, show } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
@@ -699,5 +699,287 @@ describe("set", () => {
       code: "UNKNOWN",
       message: expect.stringMatching(/no `data\.updateBasicInfo`/),
     });
+  });
+});
+
+// =======================================================================
+// getBasicInfo: read-side companion to show() for talent_profile-only fields
+// =======================================================================
+//
+// `getBasicInfo` follows the two-surface pattern of `photoShow` /
+// `set` — it calls `show()` first against mobile-gateway (stockTransport)
+// to resolve the profileId, then issues a `GET_BASIC_INFO` query against
+// talent-profile (impersonatedTransport). Tests below mirror the chain
+// expectations from the `set` block above and add the read-side response
+// shape coverage that #127 introduces (bio/headline/languages mapping,
+// node-array null-tolerance, USER_ERROR on missing profile).
+// =======================================================================
+
+const BASIC_INFO_OK = {
+  data: {
+    profile: {
+      id: "p1",
+      about: "Hi, I'm Ada — software engineer interested in analytical engines.",
+      quote: "Build for clarity.",
+      languages: {
+        nodes: [
+          { id: "lang-en", name: "English" },
+          { id: "lang-fr", name: "French" },
+        ],
+      },
+    },
+  },
+};
+
+describe("getBasicInfo", () => {
+  beforeEach(() => {
+    mockedStock.mockReset();
+    mockedImpersonated.mockReset();
+  });
+
+  it("calls show() (mobile-gateway/stock) first to resolve profileId, then GET_BASIC_INFO (talent-profile/impersonated)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_OK });
+
+    await getBasicInfo(TOKEN);
+
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+    const showCall = mockedStock.mock.calls[0]?.[0] as TransportRequest;
+    const infoCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(showCall.surface).toBe("mobile-gateway");
+    expect(showCall.body.operationName).toBe("ProfileShow");
+    expect(infoCall.surface).toBe("talent-profile");
+    expect(infoCall.body.operationName).toBe("GET_BASIC_INFO");
+    expect(infoCall.body.query).toContain("query GET_BASIC_INFO");
+    expect(infoCall.body.query).toContain("about");
+    expect(infoCall.body.query).toContain("quote");
+    expect(infoCall.body.query).toContain("languages");
+  });
+
+  it("forwards the auth token on both the read-side show() call and the GET_BASIC_INFO call", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_OK });
+
+    await getBasicInfo(TOKEN);
+
+    const showCall = mockedStock.mock.calls[0]?.[0] as TransportRequest;
+    const infoCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(showCall.authToken).toBe(TOKEN);
+    expect(infoCall.authToken).toBe(TOKEN);
+  });
+
+  it("passes the resolved profileId from show() into the GET_BASIC_INFO variables", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_OK });
+
+    await getBasicInfo(TOKEN);
+
+    const infoCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(infoCall.body.variables).toEqual({ profileId: "p1" });
+  });
+
+  it("returns the typed BasicInfo projection on a populated 200 response", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_OK });
+
+    const result = await getBasicInfo(TOKEN);
+
+    expect(result.profileId).toBe("p1");
+    expect(result.bio).toBe("Hi, I'm Ada — software engineer interested in analytical engines.");
+    expect(result.headline).toBe("Build for clarity.");
+    expect(result.languages).toEqual([
+      { id: "lang-en", name: "English" },
+      { id: "lang-fr", name: "French" },
+    ]);
+  });
+
+  it("normalizes missing about/quote to null (user hasn't set the field)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            about: null,
+            quote: null,
+            languages: { nodes: [] },
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.bio).toBeNull();
+    expect(result.headline).toBeNull();
+    expect(result.languages).toEqual([]);
+  });
+
+  it("returns an empty languages array when the server omits the languages.nodes field entirely", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            about: "bio",
+            quote: "headline",
+            // languages omitted — server may not include the key at all.
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.languages).toEqual([]);
+  });
+
+  it("filters out malformed language nodes (null entries, missing id, missing name)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            about: "bio",
+            quote: "headline",
+            languages: {
+              nodes: [
+                null,
+                { id: "lang-en", name: "English" },
+                { id: "", name: "Empty id" },
+                { id: "lang-fr" }, // missing name
+                { id: "lang-de", name: "German" },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.languages).toEqual([
+      { id: "lang-en", name: "English" },
+      { id: "lang-de", name: "German" },
+    ]);
+  });
+
+  it("falls back to the show()-resolved profileId when the talent-profile response omits it", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            // id omitted — fallback path
+            about: "bio",
+            quote: "headline",
+            languages: { nodes: [] },
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.profileId).toBe("p1");
+  });
+
+  it("propagates Cf403Error from the talent-profile call (Cloudflare-protected surface)", async () => {
+    replyStock({ body: PROFILE_OK });
+    mockedImpersonated.mockRejectedValueOnce(
+      new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
+    );
+
+    await expect(getBasicInfo(TOKEN)).rejects.toBeInstanceOf(Cf403Error);
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws AuthRevokedError on HTTP 401 from the talent-profile call", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("throws AuthRevokedError on errors[0].extensions.code='UNAUTHENTICATED' (talent-profile form)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      status: 200,
+      body: {
+        errors: [{ message: "Session expired", extensions: { code: "UNAUTHENTICATED" } }],
+      },
+    });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("throws ProfileError GRAPHQL_ERROR on a non-auth-revoked errors array", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        errors: [{ message: "Field 'about' not defined", extensions: { code: "VALIDATION" } }],
+      },
+    });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "GRAPHQL_ERROR",
+      message: expect.stringContaining("not defined"),
+    });
+  });
+
+  it("throws ProfileError USER_ERROR when the server returns data.profile === null (id didn't resolve)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: { data: { profile: null } } });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "USER_ERROR",
+      message: expect.stringContaining('"p1"'),
+    });
+  });
+
+  it("throws ProfileError UNKNOWN when the response has no `data` field", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: { data: null } });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "UNKNOWN",
+      message: expect.stringContaining("no `data`"),
+    });
+  });
+
+  it("throws ProfileError UNKNOWN on unexpected non-2xx status (e.g., 500)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ status: 500, body: "<html>internal server error</html>" });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "UNKNOWN",
+      message: expect.stringContaining("500"),
+    });
+  });
+
+  it("wraps generic transport throws as ProfileError NETWORK_ERROR", async () => {
+    replyStock({ body: PROFILE_OK });
+    mockedImpersonated.mockRejectedValueOnce(new Error("ECONNRESET"));
+
+    await expect(getBasicInfo(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "NETWORK_ERROR",
+      message: expect.stringContaining("ECONNRESET"),
+    });
+  });
+
+  it("propagates show() errors verbatim (read-side prerequisite failure)", async () => {
+    // No viewer bound: show() raises NO_VIEWER, getBasicInfo never reaches the second call.
+    replyStock({ body: { data: { viewer: null } } });
+
+    await expect(getBasicInfo(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "NO_VIEWER",
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 });

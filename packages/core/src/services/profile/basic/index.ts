@@ -340,6 +340,212 @@ export async function show(token: string): Promise<ProfileShowQuery> {
   return body.data;
 }
 
+// =======================================================================
+// getBasicInfo: read-side companion to show() for talent_profile-only fields
+// =======================================================================
+//
+// `show()` (above) talks to `mobile-gateway` and returns the rich role +
+// viewer shape, but the mobile-gateway `Profile` type does NOT expose the
+// user-edited narrative fields — `about` (bio), `quote` (headline),
+// `languages`, etc. Those live on the `talent_profile/graphql` surface
+// only (the same surface `set()` writes to). #127 (Wave 2 of the
+// output-format reframe epic, #121) closes the read-side gap by adding a
+// dedicated `getBasicInfo()` call that fetches the talent_profile-side
+// fields, mirroring the established two-surface pattern of `photoShow`
+// (also routed through talent_profile because mobile-gateway's `Profile`
+// only carries a flat `photo.large` URL).
+//
+// The function is independent of `show()` — internal callers that only
+// need `profileId` (e.g. `set`, `photoShow`, the sibling sub-domains'
+// `resolveProfileId` helpers) keep using the cheap mobile-gateway-only
+// `show()` path; only the CLI / MCP `basic show` surface (post-#129
+// formatter rewrite) pays the cost of the second talent-profile call.
+//
+// The selection set is a deliberate subset of the canonical
+// `GET_BASIC_INFO` operation (research/graphql/talent_profile/operations/
+// GET_BASIC_INFO.graphql) — `about`, `quote`, and `languages.nodes`. The
+// canonical operation also surfaces `legalName`, `placeIdentity`,
+// `country`, `citizenship`, `softwareSkills`, the social URLs, and a
+// `ProfileRecommendations` fragment; those are out of scope for #127's
+// audit-confirmed defects (LOW severity per the audit report —
+// `summary`/`memberSince` aren't in either schema; the social URLs are
+// already covered by the `external` sub-domain). Future expansions can
+// extend this selection in additive PRs without breaking the contract.
+// =======================================================================
+
+/**
+ * One language entry on `Profile.languages.nodes` — identifier + display
+ * name. The talent_profile schema types `languages` as `Unknown` (the
+ * synthesized SDL marks anything the generator couldn't resolve), so the
+ * runtime contract is the source of truth: nodes are objects with
+ * non-empty string `id` and `name`. Empty / null entries are filtered
+ * out by {@link getBasicInfo} before the caller sees them.
+ */
+export interface ProfileLanguage {
+  id: string;
+  name: string;
+}
+
+/**
+ * Read-side projection of the `talent_profile`-only profile fields that
+ * complement {@link show}. Returned by {@link getBasicInfo}.
+ *
+ * Naming: `bio` and `headline` are the user-facing CLI flag names exposed
+ * by `set()`'s {@link ProfileUpdate}, mapped to the GraphQL
+ * `Profile.about` / `Profile.quote` fields. We surface them as `bio` /
+ * `headline` here so the read and write surfaces use the same vocabulary
+ * — callers don't need to know the wire-side names to render the value
+ * the user typed.
+ *
+ * `null` indicates the user hasn't set the field (or the server didn't
+ * return it). `languages` is an array — empty when none are set, never
+ * `null` (the empty-collection convention agreed in the #124 audit's
+ * null-rendering recommendation).
+ */
+export interface BasicInfo {
+  /** Echoes the talent_profile-side `Profile.id` (matches `show()`'s `viewerRole.profileId`). */
+  profileId: string;
+  /** The long-form bio (`Profile.about`). `null` when unset. */
+  bio: string | null;
+  /** The short tagline (`Profile.quote`). `null` when unset. */
+  headline: string | null;
+  /** User-declared languages. Empty array when none. */
+  languages: ProfileLanguage[];
+}
+
+/**
+ * Full-document `GET_BASIC_INFO` query string. Trimmed subset of the
+ * canonical bundle-extracted operation
+ * (`research/graphql/talent_profile/operations/GET_BASIC_INFO.graphql`):
+ * we ask only for the read-display-relevant fields surfaced by
+ * {@link BasicInfo} — `about`, `quote`, `languages.nodes` — and skip
+ * the `ProfileRecommendations`, `softwareSkills`, social URL, and
+ * top-level `countries` / `languages` catalog fields that the canonical
+ * operation also fetches (out of scope for the read-display surface; the
+ * social URLs are owned by the `external` sub-domain, the catalog
+ * payloads are autocomplete-tier).
+ *
+ * Operation name `GET_BASIC_INFO` (SCREAMING_CASE) matches the bundle-
+ * extracted document so the server's literal `operationName` allowlist
+ * matches our request — same rationale as `UPDATE_BASIC_INFO` below.
+ */
+const GET_BASIC_INFO_QUERY = `query GET_BASIC_INFO($profileId: ID!) {
+  profile(id: $profileId) {
+    id
+    about
+    quote
+    languages {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+}`;
+
+interface GetBasicInfoData {
+  profile?: {
+    id?: string | null;
+    about?: string | null;
+    quote?: string | null;
+    languages?: { nodes?: ({ id?: string | null; name?: string | null } | null)[] | null } | null;
+  } | null;
+}
+
+interface GetBasicInfoResponse {
+  data?: GetBasicInfoData | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Fetch the read-side `talent_profile`-only basic-info fields that
+ * complement {@link show} — `bio` (→ `Profile.about`), `headline` (→
+ * `Profile.quote`), and `languages`.
+ *
+ * Routed against `https://www.toptal.com/api/talent_profile/graphql` via
+ * {@link impersonatedTransport} (Cloudflare-protected; Chrome TLS
+ * fingerprint required). Internally calls {@link show} first to obtain
+ * the `profileId` required by the `profile(id: ID!)` field — same
+ * pattern as {@link photoShow}.
+ *
+ * Returns a typed {@link BasicInfo} projection — `null` for fields the
+ * user hasn't set, an empty array for `languages` when none.
+ *
+ * Errors:
+ * - `Cf403Error` propagates from the talent-profile transport.
+ * - `AuthRevokedError` on token expiry (HTTP 401, or any GraphQL
+ *   `extensions.code` matching `isAuthRevokedExtensionCode`).
+ * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
+ * - `ProfileError` with code `USER_ERROR` when the profile id doesn't
+ *   resolve (server returns `data.profile === null`).
+ * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors
+ *   (other than auth-revoked).
+ * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
+ * - `ProfileError` with code `UNKNOWN` on unexpected non-2xx statuses or
+ *   missing `data` field.
+ */
+export async function getBasicInfo(token: string): Promise<BasicInfo> {
+  const profileResp = await show(token);
+  const profileId = profileResp.viewer?.viewerRole.profileId;
+  if (profileId === undefined) {
+    throw new ProfileError(
+      "NO_VIEWER",
+      "Cannot fetch basic info: viewer or profile id missing from the session response.",
+    );
+  }
+
+  let res: TransportResponse;
+  try {
+    res = await impersonatedTransport({
+      surface: "talent-profile",
+      authToken: token,
+      body: { operationName: "GET_BASIC_INFO", query: GET_BASIC_INFO_QUERY, variables: { profileId } },
+    });
+  } catch (err) {
+    if (err instanceof TtctlError) throw err;
+    throw new ProfileError("NETWORK_ERROR", `Basic info request failed: ${(err as Error).message}`, { cause: err });
+  }
+
+  if (res.status === 401) {
+    throw new AuthRevokedError("Session is invalid or expired.");
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new ProfileError("UNKNOWN", `Basic info request returned HTTP ${res.status.toString()}`);
+  }
+
+  const body = res.body as GetBasicInfoResponse | null;
+  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
+    const first = body.errors[0];
+    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
+      throw new AuthRevokedError("Session is invalid or expired.");
+    }
+    throw new ProfileError("GRAPHQL_ERROR", `Basic info query failed: ${first?.message ?? "GraphQL error"}`);
+  }
+  if (!body?.data) {
+    throw new ProfileError("UNKNOWN", "Basic info response had no `data` field");
+  }
+  if (!body.data.profile) {
+    throw new ProfileError("USER_ERROR", `No profile found with id "${profileId}".`);
+  }
+
+  const p = body.data.profile;
+  const rawNodes = p.languages?.nodes ?? [];
+  const languages: ProfileLanguage[] = [];
+  for (const node of rawNodes) {
+    if (node === null || typeof node !== "object") continue;
+    if (typeof node.id !== "string" || node.id.length === 0) continue;
+    if (typeof node.name !== "string") continue;
+    languages.push({ id: node.id, name: node.name });
+  }
+
+  return {
+    profileId: typeof p.id === "string" && p.id.length > 0 ? p.id : profileId,
+    bio: typeof p.about === "string" ? p.about : null,
+    headline: typeof p.quote === "string" ? p.quote : null,
+    languages,
+  };
+}
+
 /**
  * Full-document `UPDATE_BASIC_INFO` mutation string.
  *
