@@ -2,8 +2,9 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parse as yamlParse } from "yaml";
 
-import { OUTPUT_FORMATS, TEXT_FALLBACK_HINT, emitResult, formatResult } from "../output.js";
+import { OUTPUT_FORMATS, TEXT_FALLBACK_HINT, emitResult, formatResult, formatYaml } from "../output.js";
 import type { OutputFormat } from "../output.js";
 
 interface Sample {
@@ -33,14 +34,14 @@ function captureStderr(): { lines: string[] } {
 }
 
 describe("OUTPUT_FORMATS", () => {
-  it("enumerates the three valid formats in declared order", () => {
-    expect(OUTPUT_FORMATS).toEqual(["text", "json", "table"]);
+  it("enumerates the four valid formats in declared order (AC: --output={text,json,table,yaml})", () => {
+    expect(OUTPUT_FORMATS).toEqual(["text", "json", "table", "yaml"]);
   });
 
   it("element types are assignable to OutputFormat", () => {
     // Compile-time check: OUTPUT_FORMATS is `readonly OutputFormat[]`.
     const sample: OutputFormat = OUTPUT_FORMATS[0] ?? "text";
-    expect(["text", "json", "table"]).toContain(sample);
+    expect(["text", "json", "table", "yaml"]).toContain(sample);
   });
 });
 
@@ -228,6 +229,124 @@ describe("formatResult — empty-state wrapper (#122)", () => {
   });
 });
 
+describe("formatYaml — direct helper", () => {
+  // The four AC-listed scenarios for `formatYaml`. The shared profile
+  // shape exercises multi-paragraph strings, ISO-8601 dates, numerics,
+  // and nested lists — covering every helper-level guarantee in one
+  // representative shape.
+  interface ProfileSample {
+    name: string;
+    bio: string;
+    rate_eur: number;
+    updated_at: string;
+    tags: string[];
+  }
+  const PROFILE: ProfileSample = {
+    name: "Ada Lovelace",
+    bio: "First paragraph: a sentence about programming.\n\nSecond paragraph: another sentence about analytical engines.",
+    rate_eur: 4500,
+    updated_at: "2026-05-10T05:45:00Z",
+    tags: ["analytical-engine", "first-programmer"],
+  };
+
+  it("renders a multi-paragraph string field as a `|` literal block scalar (AC: bio: | literal block + paragraph break preserved, NOT bio: \"...\\n\\n...\")", () => {
+    const out = formatYaml(PROFILE);
+    // Literal block scalar opens with `|` on the value's first line, with
+    // each subsequent line indented under the key.
+    expect(out).toContain("bio: |");
+    // The paragraph break (blank line between paragraphs) survives as an
+    // actual blank line in the rendered scalar — NOT escaped as `\n\n`.
+    expect(out).toContain("First paragraph: a sentence about programming.");
+    expect(out).toContain("Second paragraph: another sentence about analytical engines.");
+    // Negative assertion: the multi-paragraph value must NOT have been
+    // serialized as a double-quoted scalar with escape sequences.
+    expect(out).not.toContain('bio: "');
+    expect(out).not.toContain("\\n\\n");
+  });
+
+  it("roundtrips: yaml.parse(formatYaml(profile)) yields a structure equivalent to the input (AC: roundtrip)", () => {
+    const rendered = formatYaml(PROFILE);
+    const parsed: unknown = yamlParse(rendered);
+    expect(parsed).toEqual(PROFILE);
+  });
+
+  it("renders an ISO-8601 string field as a quoted (or plain) ISO string — never as `!!timestamp`/unquoted-with-tag (AC: date-as-quoted-ISO)", () => {
+    const out = formatYaml(PROFILE);
+    // The ISO 8601 string must surface verbatim. The yaml lib may emit
+    // it quoted (single or double) or plain — what matters is the value
+    // is preserved AND no `!!timestamp` tag prefix is applied.
+    expect(out).toContain("2026-05-10T05:45:00Z");
+    expect(out).not.toContain("!!timestamp");
+    expect(out).not.toContain("!!date");
+    // Roundtrip discipline: the parsed value MUST be the exact ISO
+    // string, not a `Date` object created by date-tag auto-parse.
+    const parsed = yamlParse(out) as ProfileSample;
+    expect(parsed.updated_at).toBe("2026-05-10T05:45:00Z");
+    expect(typeof parsed.updated_at).toBe("string");
+  });
+
+  it("renders a list of strings as block style (`- item`), never flow style (`[item]`) (AC: list-block-style)", () => {
+    const out = formatYaml(PROFILE);
+    // Block-style list markers for each entry.
+    expect(out).toContain("- analytical-engine");
+    expect(out).toContain("- first-programmer");
+    // Negative assertion: no flow-style list anywhere in the output.
+    expect(out).not.toMatch(/tags:\s*\[/);
+  });
+
+  it("renders numeric fields as their natural YAML scalar type (numbers, not strings)", () => {
+    const out = formatYaml(PROFILE);
+    // The number 4500 must surface unquoted; string '4500' would surface
+    // quoted or with a leading space (`rate_eur: "4500"` / `rate_eur: '4500'`).
+    expect(out).toMatch(/rate_eur: 4500\b/);
+    // Roundtrip discipline: parsed value is `number`, not `string`.
+    const parsed = yamlParse(out) as ProfileSample;
+    expect(parsed.rate_eur).toBe(4500);
+    expect(typeof parsed.rate_eur).toBe("number");
+  });
+
+  it("emits no flow-style maps (`{key: value}`) anywhere in the output", () => {
+    // Use a nested-object shape to exercise the no-flow-map invariant.
+    const nested = { outer: { inner: { leaf: 1 } } };
+    const out = formatYaml(nested);
+    expect(out).not.toMatch(/\{/);
+    expect(out).not.toMatch(/\}/);
+  });
+
+  it("returns a string with no trailing newline (consistent with JSON.stringify) so emitResult adds exactly one", () => {
+    // The yaml lib's stringify always appends a trailing newline; the
+    // helper strips it so the formatter contract matches `JSON.stringify`'s.
+    const out = formatYaml(SAMPLE);
+    expect(out.endsWith("\n")).toBe(false);
+  });
+});
+
+describe("formatResult — yaml branch", () => {
+  it("uses `formatYaml` for the yaml format (AC: --output=yaml accepts yaml)", () => {
+    const result = formatResult(SAMPLE, "yaml");
+    expect(result.output).toBe(formatYaml(SAMPLE));
+    // Verify the actual content surfaces in the expected block-style shape.
+    expect(result.output).toContain("name: Ada");
+    expect(result.output).toContain("count: 3");
+    expect(result.output).toMatch(/tags:\n {2}- a\n {2}- b/);
+  });
+
+  it("ignores the text/table formatters when format is yaml", () => {
+    const result = formatResult(SAMPLE, "yaml", {
+      text: () => "TEXT_OUTPUT",
+      table: () => "TABLE_OUTPUT",
+    });
+    expect(result.output).toBe(formatYaml(SAMPLE));
+    expect(result.output).not.toContain("TEXT_OUTPUT");
+    expect(result.output).not.toContain("TABLE_OUTPUT");
+  });
+
+  it("does not surface a warning for the yaml branch", () => {
+    const result = formatResult(SAMPLE, "yaml");
+    expect("warning" in result).toBe(false);
+  });
+});
+
 describe("emitResult", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -300,6 +419,20 @@ describe("emitResult", () => {
     const stderr = captureStderr();
     emitResult([] as Sample[], "table", { empty: { command: "profile.industries.list" } });
     expect(stdout.lines.join("")).toBe("No industries found. Add one with: ttctl profile industries add <name>\n");
+    expect(stderr.lines.join("")).toBe("");
+  });
+
+  it("writes the YAML rendering plus exactly one trailing newline to stdout (AC: trailing newline at end of output)", () => {
+    const stdout = captureStdout();
+    const stderr = captureStderr();
+    emitResult(SAMPLE, "yaml");
+    const written = stdout.lines.join("");
+    expect(written).toBe(`${formatYaml(SAMPLE)}\n`);
+    // Exactly one trailing newline (not two — formatYaml strips the
+    // yaml lib's own trailing `\n` so this contract holds).
+    expect(written.endsWith("\n")).toBe(true);
+    expect(written.endsWith("\n\n")).toBe(false);
+    // No stderr noise on the yaml branch.
     expect(stderr.lines.join("")).toBe("");
   });
 });

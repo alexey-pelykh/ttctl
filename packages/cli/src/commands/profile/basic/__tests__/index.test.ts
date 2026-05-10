@@ -37,12 +37,12 @@ describe("buildProfileCommand (top-level shortcuts)", () => {
     expect(outputOption?.short).toBe("-o");
   });
 
-  it("limits --output choices to text|json|table and defaults to text on the show shortcut", () => {
+  it("limits --output choices to text|json|table|yaml and defaults to text on the show shortcut", () => {
     const cmd = buildProfileCommand();
     const show = findSubcommand(cmd, "show");
     const outputOption = show?.options.find((o) => o.long === "--output");
 
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table"]);
+    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
     expect(outputOption?.defaultValue).toBe("text");
   });
 
@@ -50,7 +50,8 @@ describe("buildProfileCommand (top-level shortcuts)", () => {
     const cmd = buildProfileCommand();
     cmd.exitOverride();
     expect(() => {
-      cmd.parse(["show", "-o", "yaml"], { from: "user" });
+      // `xml` is not in the OUTPUT_FORMATS enum (yaml is, after #123).
+      cmd.parse(["show", "-o", "xml"], { from: "user" });
     }).toThrow();
   });
 
@@ -72,7 +73,7 @@ describe("buildProfileCommand (top-level shortcuts)", () => {
     expect(bioOption).toBeDefined();
     expect(headlineOption).toBeDefined();
     expect(outputOption).toBeDefined();
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table"]);
+    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
   });
 
   it("parses --bio and --headline values from argv into the action options on the update shortcut", () => {
@@ -120,7 +121,7 @@ describe("buildProfileCommand (canonical `basic` sub-tree)", () => {
     const outputOption = basicShow?.options.find((o) => o.long === "--output");
 
     expect(outputOption).toBeDefined();
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table"]);
+    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
     expect(outputOption?.defaultValue).toBe("text");
   });
 
@@ -136,7 +137,7 @@ describe("buildProfileCommand (canonical `basic` sub-tree)", () => {
     expect(bioOption).toBeDefined();
     expect(headlineOption).toBeDefined();
     expect(outputOption).toBeDefined();
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table"]);
+    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
   });
 });
 

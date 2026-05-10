@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import { stringify as yamlStringify } from "yaml";
+
 import { emptyStateProse, isEmptyCollection } from "./empty-state-cta.js";
 
 /**
@@ -11,19 +13,29 @@ import { emptyStateProse, isEmptyCollection } from "./empty-state-cta.js";
  * - `json`: stable single-line JSON, suitable for piping to `jq` or `yq`
  * - `table`: rendered table (consumers typically use cli-table3) that
  *   respects terminal width
+ * - `yaml`: block-style YAML rendered via `yaml.stringify` with
+ *   `customTags: []` (no `!!timestamp` auto-parse on roundtrip),
+ *   `aliasDuplicateObjects: false` (no `&anchor`/`*alias` noise on
+ *   duplicate references), and `lineWidth: 0` (no line wrapping —
+ *   preserves field-level semantic boundaries; the terminal wraps if
+ *   needed). Multi-paragraph string fields surface as `|` literal block
+ *   scalars; lists as block style (`- item`, not `[item]`). The data
+ *   layer is responsible for shaping `Date` values to ISO 8601 strings
+ *   BEFORE invoking the helper — explicit conversion is safer than
+ *   relying on the YAML lib's date handling.
  *
  * The JSON shape commitment is "may break across 0.x" pre-1.0 and
  * "stable across majors per semver" at 1.0+; the helper enforces
  * single-line JSON to keep that contract observable to downstream tools.
  */
-export type OutputFormat = "text" | "json" | "table";
+export type OutputFormat = "text" | "json" | "table" | "yaml";
 
 /**
  * All valid `OutputFormat` values, intended for `commander`'s
  * `Option#choices()`. Frozen at the type level via `readonly` so callers
  * cannot mutate the shared array.
  */
-export const OUTPUT_FORMATS: readonly OutputFormat[] = ["text", "json", "table"];
+export const OUTPUT_FORMATS: readonly OutputFormat[] = ["text", "json", "table", "yaml"];
 
 /**
  * Caller-supplied formatters per format. Each returns the exact string
@@ -62,6 +74,61 @@ export interface OutputFormatters<T> {
 export const TEXT_FALLBACK_HINT = "note: no text formatter provided; falling back to pretty-printed JSON.";
 
 /**
+ * Configuration object passed to `yaml.stringify` for the `yaml` output
+ * format. Module-private; `const`-declared so callers cannot rebind
+ * (the yaml lib's options type is mutable, so we cannot deep-freeze
+ * without a type cast — module isolation is sufficient).
+ *
+ * - `customTags: []` — disable the lib's optional tags (`!!timestamp`,
+ *   `!!binary`, etc.) so dates/datetimes encoded as ISO 8601 strings by
+ *   the data layer surface verbatim instead of being re-emitted with
+ *   tag prefixes (which would break roundtrip parsers configured to
+ *   reject custom tags).
+ * - `aliasDuplicateObjects: false` — emit duplicate object references
+ *   inline rather than as `&anchor`/`*alias` pairs, keeping output
+ *   readable for non-YAML-savvy consumers.
+ * - `lineWidth: 0` — disable line wrapping. Field-level semantic
+ *   boundaries stay intact; the terminal wraps for display if needed.
+ */
+const YAML_STRINGIFY_OPTIONS = {
+  customTags: [],
+  aliasDuplicateObjects: false,
+  lineWidth: 0,
+};
+
+/**
+ * Render `data` as block-style YAML.
+ *
+ * Behavior:
+ *
+ * - Multi-paragraph strings surface as `|` literal block scalars (the
+ *   YAML lib's default for strings containing newlines), preserving
+ *   paragraph breaks visually rather than escaping them as `\n`.
+ * - Strings already shaped as ISO 8601 by the data layer (e.g.,
+ *   `"2026-05-10T05:45:00Z"`) render quoted, NOT auto-converted to a
+ *   `!!timestamp` tag — `customTags: []` ensures stability of the
+ *   roundtrip contract.
+ * - Numeric fields render as their natural YAML scalar type (numbers,
+ *   not strings).
+ * - Lists and maps render in block style (`- item`, `key: value`),
+ *   never flow style (`[item]`, `{key: value}`).
+ *
+ * The yaml lib's `stringify` always appends a trailing newline; this
+ * helper strips it so the formatter contract matches `JSON.stringify`'s
+ * (no trailing newline). `emitResult` then appends exactly one trailing
+ * newline when writing to stdout.
+ *
+ * The helper does NOT validate `data` for YAML-safe shapes (cycles,
+ * `BigInt`, `Date` objects, `undefined`, etc.); callers shape data into
+ * YAML-friendly form before invoking. In particular: convert `Date` to
+ * ISO 8601 strings at the data layer.
+ */
+export function formatYaml(data: unknown): string {
+  const out = yamlStringify(data, YAML_STRINGIFY_OPTIONS);
+  return out.endsWith("\n") ? out.slice(0, -1) : out;
+}
+
+/**
  * Result of resolving a `(data, format, options)` triple to a string for
  * stdout. The optional `warning` field is present only when the helper
  * fell through to a default branch worth surfacing on stderr (currently:
@@ -80,6 +147,8 @@ export type FormatResult = { output: string } | { output: string; warning: strin
  * Behavior summary:
  *
  * - `json` → `JSON.stringify(data)` (single-line; no extra whitespace)
+ * - `yaml` → `formatYaml(data)` (block-style YAML; no formatter slot —
+ *   the helper is the single source of truth for `yaml` rendering)
  * - `text` with `options.text` → `options.text(data)`
  * - `text` without `options.text` → `JSON.stringify(data, null, 2)` plus
  *   a `warning` describing the fallthrough
@@ -87,9 +156,10 @@ export type FormatResult = { output: string } | { output: string; warning: strin
  * - `table` without `options.table` → falls through to the `text` branch
  *   above (the warning surfaces if `options.text` is also absent)
  *
- * The helper does NOT validate `data` for JSON-safe shapes (cycles,
- * `undefined`, `Date`, `BigInt`, etc.); callers are responsible for
- * shaping data into JSON-friendly form before passing it.
+ * The helper does NOT validate `data` for JSON/YAML-safe shapes
+ * (cycles, `undefined`, `Date`, `BigInt`, etc.); callers are
+ * responsible for shaping data into a serialization-friendly form
+ * before passing it.
  *
  * The `format` parameter defaults to `"text"` so the spec's "default
  * format is text" behavior holds even when commander defaults aren't
@@ -113,6 +183,9 @@ export function formatResult<T>(
   }
   if (format === "json") {
     return { output: JSON.stringify(data) };
+  }
+  if (format === "yaml") {
+    return { output: formatYaml(data) };
   }
   if (format === "table" && options.table !== undefined) {
     return { output: options.table(data) };
