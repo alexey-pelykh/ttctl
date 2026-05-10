@@ -29,7 +29,7 @@ export async function runProfileVisasAdd(options: {
       "warning: --issued is reserved (server has no `issuedDate` field on TravelVisaInput today); flag ignored.\n",
     );
   }
-  const token = await loadAuthTokenOrExit("visas add");
+  const token = await loadAuthTokenOrExit("visas add", options.output);
 
   const input: profile.visas.TravelVisaInput = {
     countryId: options.country,
@@ -41,9 +41,9 @@ export async function runProfileVisasAdd(options: {
   try {
     visas = await profile.visas.add(token, input);
   } catch (err) {
-    handleVisasError("visas add", err);
+    handleVisasError("visas add", err, options.output);
     return;
   }
 
-  emitVisaListResult(visas, options.output, "Travel visa added.");
+  emitVisaListResult(visas, options.output, "add", { prettyHeader: "Travel visa added." });
 }

@@ -4,24 +4,25 @@
 import { profile } from "@ttctl/core";
 
 import type { OutputFormat } from "../../../lib/output.js";
-import { emitListResult, handlePortfolioError } from "./add.js";
+import { emitMutationResult, handlePortfolioError } from "./add.js";
 import { loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile portfolio remove <id>` (alias `rm`).
- * Removes the portfolio item by id. Returns the post-removal list to
- * give the user immediate visual confirmation.
+ * Removes the portfolio item by id; emits the v0.4 envelope (#128) with
+ * `removed: {id}` and renders the post-removal list under the success
+ * line in pretty mode.
  */
 export async function runProfilePortfolioRemove(id: string, format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("portfolio remove");
+  const token = await loadAuthTokenOrExit("portfolio remove", format);
 
   let items: profile.portfolio.PortfolioItem[];
   try {
     items = await profile.portfolio.remove(token, id);
   } catch (err) {
-    handlePortfolioError("portfolio remove", err);
+    handlePortfolioError("portfolio remove", err, format);
     return;
   }
 
-  emitListResult(items, format, `Portfolio item ${id} removed.`);
+  emitMutationResult(items, format, "remove", { id, prettyHeader: id });
 }

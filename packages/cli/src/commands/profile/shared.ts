@@ -5,6 +5,19 @@ import { ConfigError, TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../errors.js";
 import { resolveConfigForCli } from "../../lib/config-context.js";
+import { emitErrorAndExit } from "../../lib/envelopes.js";
+import type { EnvelopeError } from "../../lib/envelopes.js";
+import type { OutputFormat } from "../../lib/output.js";
+
+/**
+ * Translate the user-visible command label (`profile skills add`) into
+ * the canonical envelope `operation` value (`profile.skills.add`) used
+ * as a stable machine-readable discriminator across all envelopes for
+ * the affected verb.
+ */
+function operationFor(commandLabel: string): string {
+  return commandLabel.replace(/ /g, ".");
+}
 
 /**
  * Load the persisted auth token from the user's `.ttctl.yaml` (in-memory
@@ -28,23 +41,35 @@ import { resolveConfigForCli } from "../../lib/config-context.js";
  * change shape. The actual work is synchronous after `loadAuthToken` was
  * removed alongside the separate token file.
  */
-export async function loadAuthTokenOrExit(commandLabel: string): Promise<string> {
+export async function loadAuthTokenOrExit(commandLabel: string, format: OutputFormat = "pretty"): Promise<string> {
   let config: ReturnType<typeof resolveConfigForCli>["config"];
   try {
     ({ config } = resolveConfigForCli());
   } catch (err) {
     if (err instanceof ConfigError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: operationFor(commandLabel),
+        format,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }
   const token = config.auth.token;
   if (token === undefined) {
-    process.stderr.write(
-      `${commandLabel} failed (UNAUTHENTICATED): No auth token found in config. Run \`ttctl auth signin\` to sign in.\n`,
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [
+        {
+          code: "UNAUTHENTICATED",
+          message: "No auth token found in config. Run `ttctl auth signin` to sign in.",
+          hint: "ttctl auth signin",
+        },
+      ],
+      prettySummary: `${commandLabel} failed (UNAUTHENTICATED): No auth token found in config. Run \`ttctl auth signin\` to sign in.`,
+    });
   }
   return Promise.resolve(token);
 }
@@ -56,37 +81,66 @@ export async function loadAuthTokenOrExit(commandLabel: string): Promise<string>
  * subclasses through verbatim — the rendering is therefore identical
  * across sub-domains.
  *
+ * Post-#128 the function routes through the envelope ABI: `json`/`yaml`
+ * land on STDOUT; `pretty` lands on STDERR with a one-line summary plus
+ * the multi-line block. `TtctlError` subclasses keep their dedicated
+ * 3-block pretty rendering (Recovery, Code) on `pretty` for backward
+ * UX continuity with #77; on `json`/`yaml` they flow through the
+ * envelope so machine consumers see the stable wire shape.
+ *
  * `commandLabel` is the user-facing leaf-verb pair (e.g.
  * `"profile education add"`). Returns `never` (always exits).
  */
-export function presentSubDomainError(commandLabel: string, err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+export function presentSubDomainError(commandLabel: string, err: unknown, format: OutputFormat = "pretty"): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.basic.ProfileError) {
-    process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`${commandLabel} failed: ${message}\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation: operationFor(commandLabel),
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `${commandLabel} failed: ${message}`,
+  });
 }
 
 /**
  * Parse the `--limit` flag for autocomplete-style sub-commands. Rejects
- * non-integers and values outside `1..50` with a `VALIDATION_ERROR`
- * stderr line and exits non-zero. The 1..50 ceiling matches the
- * back-end's autocomplete semantics — wider catalogs are paginated by
- * the upstream API, not by the CLI.
+ * non-integers and values outside `1..50` via the envelope ABI (#128).
  *
  * `commandLabel` is the user-facing leaf-verb pair (e.g.
  * `"profile industries autocomplete"`). Returns the parsed integer.
  */
-export function parseLimitOrExit(raw: string, commandLabel: string): number {
+export function parseLimitOrExit(raw: string, commandLabel: string, format: OutputFormat = "pretty"): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1 || n > 50) {
-    process.stderr.write(
-      `${commandLabel} failed (VALIDATION_ERROR): --limit must be an integer between 1 and 50; got "${raw}"\n`,
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          field: "limit",
+          message: `--limit must be an integer between 1 and 50; got "${raw}"`,
+        },
+      ],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --limit must be an integer between 1 and 50; got "${raw}"`,
+    });
   }
   return n;
 }

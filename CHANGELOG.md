@@ -77,6 +77,72 @@ basicInfo }`) consumed by the formatter / JSON / YAML branches.
 
 ### Changed
 
+- **Envelope ABI lock — v0.4 wire contract for write/error/list output
+  (#128)**. Locks the public-API contract for machine-readable output
+  via discriminated-union envelopes carrying an explicit `version: "1.0"`
+  field. Wave 3 of the output-format reframe epic (#121); composes on
+  top of the #126 `--output={pretty,json,yaml}` flag reframe. The new
+  wire shapes are emitted by every CLI verb that writes (`add` / `update` /
+  `remove`) or fails, and by every `list` verb's top-level wrapper:
+  - **Write-success envelope**:
+    `{ok: true, version: "1.0", operation: "profile.X.add|update|remove", created|updated|removed: <entity>, notice?, changes?: [...]}`
+    — `created` / `updated` / `removed` is the verb-discriminated entity
+    slot; `notice` carries the server-side advisory (e.g. visibility
+    suppressed); `changes` is reserved for future per-field diffs (the
+    field is optional in v0.4 and the CLI does NOT populate it pending
+    a deep-comparison helper out of scope for this wave).
+  - **Error envelope**: `{ok: false, version: "1.0", operation,
+errors: [{code, field?, message, hint?, documentationUrl?}]}` —
+    always a plural `errors[]` array (single-error responses are still
+    a one-element list, future-proofing for multi-error validation
+    surfaces). Wraps every `TtctlError`, every domain `*Error` subclass
+    (`ProfileError`, `ResumeError`, etc.), every CLI input-validation
+    failure (`VALIDATION_ERROR`), and every uncaught path
+    (`INTERNAL_ERROR`).
+  - **List shape envelope**: top-level list payload changes from a raw
+    array `[...]` to `{version: "1.0", items: [...], pageInfo?}` —
+    applied to every `list` verb (`profile skills list`,
+    `profile education list`, `profile employment list`,
+    `profile portfolio list`, `profile certifications list`,
+    `profile visas list`, `profile reviews list`). The `version` field
+    is the same `"1.0"` literal as the success / error envelopes (so
+    consumers can branch on a single discriminator across all envelope
+    shapes). The `pageInfo` slot is reserved for future cursor
+    pagination (#TBD) and is omitted for now. The `#122` empty-state
+    detector (`isEmptyCollection`) continues to recognise both the
+    raw `[]` shape (legacy) and the `{items: []}` shape (post-#128).
+  - **Pretty rendering**: write-success now emits a single
+    `✓ Added: <summary>` / `✓ Updated: <summary>` / `✓ Removed: <summary>`
+    header line, optionally followed by a 2-space-indented entity
+    preview body (`bio: …`, `linkedin: …`, etc.) and one final indented
+    `notice` line when the server returned one. Pretty errors keep the
+    pre-existing `Error: …` 3-block layout from #77 for the
+    user-facing surface (no UX regression) and route domain-error
+    messages through the same envelope-shaped JSON/YAML on the wire.
+  - **Routing rules**: `json` / `yaml` modes write the full envelope to
+    **stdout** for both success AND error paths (so JSON consumers can
+    `jq` over an error in the same pipe shape they use for success).
+    `pretty` mode writes success to stdout, errors to **stderr** with
+    a one-line summary printed first, and the indented detail block
+    after. All error paths exit non-zero (`exitCode: 1` for domain /
+    validation failures; `exitCode: 2` for `CF_403_*` Cloudflare
+    walkthrough errors, preserving the #77 contract).
+  - **`@ttctl/cli` envelope helpers**: new `lib/envelopes.ts` module
+    (`emitAddSuccess`, `emitUpdateSuccess`, `emitRemoveSuccess`,
+    `emitErrorAndExit`, `wrapListEnvelope`, plus the corresponding
+    `buildXxxEnvelope` and `formatXxxJson/Yaml/Pretty` pure builders).
+    Every action handler in `packages/cli/src/commands/profile/**` is
+    wired through these helpers — ad-hoc `process.stdout.write` /
+    `process.stderr.write` / `process.exit` paths for verb output are
+    eliminated.
+  - **Polymorphic mutation results (visas, portfolio)**: the underlying
+    core APIs return `T[]` not a single entity; v0.4 emits
+    `created`/`updated`/`removed: <list>` for these sub-domains as a
+    pragmatic shape (machine consumers can read the list directly,
+    pretty mode renders the verb header + count). Strict per-domain
+    narrowing to a single entity slot is deferred — tracked as
+    follow-up work for v0.5.
+
 - **Output flag reframe: `--output={pretty,json,yaml}` (#126)**. The
   cross-CLI `--output` enum collapses to three user-visible names —
   `pretty`, `json`, `yaml`. The pre-#126 `text` and `table` names are

@@ -4,21 +4,26 @@
 import { describe, expect, it } from "vitest";
 
 import { formatAdvancedWizardTable, formatAdvancedWizardText } from "../advanced-wizard-show.js";
-import { formatSetResult } from "../custom-requirements-set.js";
+import { formatSetPrettyEntity } from "../custom-requirements-set.js";
 import { formatCustomRequirementsTable, formatCustomRequirementsText } from "../custom-requirements-show.js";
 import { formatReadinessTable, formatReadinessText } from "../readiness.js";
 import { formatRecommendationsTable, formatRecommendationsText } from "../recommendations.js";
-import { formatUpdateResult } from "../update.js";
+import { formatUpdatePrettyEntity } from "../update.js";
 
 /**
- * These tests cover the pure formatters in each external-leaf file. The
- * action handlers themselves do I/O (config load, transport, stdout/stderr)
- * and are covered indirectly through the core service tests; the formatters
- * are pure functions and warrant direct unit coverage so output stability
- * (text shape, json keys, table tab-separated layout) is regression-tested.
+ * Pure-formatter unit tests for each external-leaf file. Post-#128 the
+ * `update` and `custom-requirements set` action handlers emit envelopes
+ * via the side-effecting `emitUpdateSuccess` rather than a pure
+ * `formatXxxResult` helper — the wire-shape assertions for the envelope
+ * itself live in `lib/__tests__/envelopes.test.ts`. The pure
+ * `formatXxxPrettyEntity` helpers preserved on the action handlers keep
+ * their direct unit coverage here. The remaining show-shape leaves
+ * (`custom-requirements-show`, `readiness`, `recommendations`,
+ * `advanced-wizard-show`) are read-only and continue to use direct
+ * `formatXxxText/Table` formatters.
  */
 
-describe("formatUpdateResult (external update)", () => {
+describe("formatUpdatePrettyEntity (external update)", () => {
   const sample = {
     profile: {
       id: "p1",
@@ -32,26 +37,24 @@ describe("formatUpdateResult (external update)", () => {
     notice: "Saved.",
   };
 
-  it("renders pretty mode with confirmation + non-null fields", () => {
-    const out = formatUpdateResult(sample, "pretty");
-    expect(out).toContain("External profiles updated.");
+  it("renders the non-null URL set, omits the null ones", () => {
+    const out = formatUpdatePrettyEntity(sample);
     expect(out).toContain("linkedin: https://linkedin.com/in/ada");
     expect(out).toContain("github: https://github.com/ada");
     expect(out).not.toContain("website:");
-    expect(out).toContain("Saved.");
+    expect(out).not.toContain("behance:");
+    expect(out).not.toContain("dribbble:");
   });
 
-  it("renders json mode as pretty-printed JSON of the result object", () => {
-    const out = formatUpdateResult(sample, "json");
-    expect(JSON.parse(out)).toEqual(sample);
+  it("does not include the leading confirmation line — that's the envelope header's job", () => {
+    const out = formatUpdatePrettyEntity(sample);
+    expect(out).not.toContain("External profiles updated.");
+    expect(out).not.toContain("✓");
   });
 
-  it("renders yaml mode as block-style YAML with the typed payload", () => {
-    const out = formatUpdateResult(sample, "yaml");
-    expect(out).toContain("notice: Saved.");
-    expect(out).toContain("linkedin: https://linkedin.com/in/ada");
-    expect(out).toContain("github: https://github.com/ada");
-    expect(out).toContain("website: null");
+  it("does not include the notice — that flows through the envelope's notice slot", () => {
+    const out = formatUpdatePrettyEntity(sample);
+    expect(out).not.toContain("Saved.");
   });
 });
 
@@ -78,7 +81,7 @@ describe("formatCustomRequirementsText / Table", () => {
   });
 });
 
-describe("formatSetResult (custom requirements set)", () => {
+describe("formatSetPrettyEntity (custom requirements set)", () => {
   const sample = {
     profile: {
       id: "p1",
@@ -92,17 +95,17 @@ describe("formatSetResult (custom requirements set)", () => {
     notice: null,
   };
 
-  it("renders pretty mode with the post-update boolean trio", () => {
-    const out = formatSetResult(sample, "pretty");
-    expect(out).toContain("Custom requirements updated.");
+  it("renders the post-update boolean trio", () => {
+    const out = formatSetPrettyEntity(sample);
     expect(out).toContain("background-check:    yes");
     expect(out).toContain("drug-test:           no");
     expect(out).toContain("time-tracking-tools: no");
   });
 
-  it("renders json mode as the full result object", () => {
-    const out = formatSetResult(sample, "json");
-    expect(JSON.parse(out)).toEqual(sample);
+  it("does not include the leading confirmation line — that's the envelope header's job", () => {
+    const out = formatSetPrettyEntity(sample);
+    expect(out).not.toContain("Custom requirements updated.");
+    expect(out).not.toContain("✓");
   });
 });
 

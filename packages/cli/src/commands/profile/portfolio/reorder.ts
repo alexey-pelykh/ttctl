@@ -3,8 +3,9 @@
 
 import { profile } from "@ttctl/core";
 
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
 import type { OutputFormat } from "../../../lib/output.js";
-import { emitListResult, handlePortfolioError } from "./add.js";
+import { emitMutationResult, handlePortfolioError } from "./add.js";
 import { loadAuthTokenOrExit } from "./shared.js";
 
 /**
@@ -23,27 +24,50 @@ export async function runProfilePortfolioReorder(
   const modes = [options.before !== undefined, options.after !== undefined, options.to !== undefined];
   const modeCount = modes.filter(Boolean).length;
   if (modeCount === 0) {
-    process.stderr.write(
-      "portfolio reorder failed (VALIDATION_ERROR): supply exactly one of --before <id>, --after <id>, or --to <position>.\n",
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.portfolio.reorder",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "supply exactly one of --before <id>, --after <id>, or --to <position>.",
+        },
+      ],
+      prettySummary:
+        "portfolio reorder failed (VALIDATION_ERROR): supply exactly one of --before <id>, --after <id>, or --to <position>.",
+    });
   }
   if (modeCount > 1) {
-    process.stderr.write(
-      "portfolio reorder failed (VALIDATION_ERROR): --before, --after, and --to are mutually exclusive.\n",
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.portfolio.reorder",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "--before, --after, and --to are mutually exclusive.",
+        },
+      ],
+      prettySummary: "portfolio reorder failed (VALIDATION_ERROR): --before, --after, and --to are mutually exclusive.",
+    });
   }
-  const token = await loadAuthTokenOrExit("portfolio reorder");
+  const token = await loadAuthTokenOrExit("portfolio reorder", options.output);
 
   let position: number;
   if (options.to !== undefined) {
     const parsed = Number.parseInt(options.to, 10);
     if (!Number.isInteger(parsed) || parsed < 0) {
-      process.stderr.write(
-        "portfolio reorder failed (VALIDATION_ERROR): --to must be a non-negative integer position.\n",
-      );
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.portfolio.reorder",
+        format: options.output,
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            field: "to",
+            message: "--to must be a non-negative integer position.",
+          },
+        ],
+        prettySummary: "portfolio reorder failed (VALIDATION_ERROR): --to must be a non-negative integer position.",
+      });
     }
     position = parsed;
   } else {
@@ -54,26 +78,42 @@ export async function runProfilePortfolioReorder(
     try {
       current = await profile.portfolio.list(token);
     } catch (err) {
-      handlePortfolioError("portfolio reorder", err);
+      handlePortfolioError("portfolio reorder", err, options.output);
       return;
     }
     if (options.before !== undefined) {
       const result = profile.portfolio.positionBefore(current, options.before);
       if (result === null) {
-        process.stderr.write(
-          `portfolio reorder failed (VALIDATION_ERROR): --before id '${options.before}' is not in the portfolio.\n`,
-        );
-        process.exit(1);
+        emitErrorAndExit({
+          operation: "profile.portfolio.reorder",
+          format: options.output,
+          errors: [
+            {
+              code: "VALIDATION_ERROR",
+              field: "before",
+              message: `--before id '${options.before}' is not in the portfolio.`,
+            },
+          ],
+          prettySummary: `portfolio reorder failed (VALIDATION_ERROR): --before id '${options.before}' is not in the portfolio.`,
+        });
       }
       position = result;
     } else {
       const after = options.after as string;
       const result = profile.portfolio.positionAfter(current, after);
       if (result === null) {
-        process.stderr.write(
-          `portfolio reorder failed (VALIDATION_ERROR): --after id '${after}' is not in the portfolio.\n`,
-        );
-        process.exit(1);
+        emitErrorAndExit({
+          operation: "profile.portfolio.reorder",
+          format: options.output,
+          errors: [
+            {
+              code: "VALIDATION_ERROR",
+              field: "after",
+              message: `--after id '${after}' is not in the portfolio.`,
+            },
+          ],
+          prettySummary: `portfolio reorder failed (VALIDATION_ERROR): --after id '${after}' is not in the portfolio.`,
+        });
       }
       position = result;
     }
@@ -83,9 +123,11 @@ export async function runProfilePortfolioReorder(
   try {
     items = await profile.portfolio.reorder(token, id, position);
   } catch (err) {
-    handlePortfolioError("portfolio reorder", err);
+    handlePortfolioError("portfolio reorder", err, options.output);
     return;
   }
 
-  emitListResult(items, options.output, `Portfolio item ${id} moved to position ${position.toString()}.`);
+  emitMutationResult(items, options.output, "update", {
+    prettyHeader: `Portfolio item ${id} moved to position ${position.toString()}.`,
+  });
 }

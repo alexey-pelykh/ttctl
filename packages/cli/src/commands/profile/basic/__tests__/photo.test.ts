@@ -5,7 +5,17 @@ import { describe, expect, it } from "vitest";
 import type { profile } from "@ttctl/core";
 
 import { formatPhotoTable, formatPhotoText } from "../photo-show.js";
-import { formatUploadResult } from "../photo-upload.js";
+
+/**
+ * Pure-formatter unit tests for the `basic photo` leaves. Post-#128 the
+ * `photo upload` handler emits envelopes via the side-effecting
+ * `emitUpdateSuccess` rather than a pure `formatUploadResult` helper —
+ * the wire-shape assertions for the envelope itself live in
+ * `lib/__tests__/envelopes.test.ts`. The pure helpers preserved on
+ * `photo-show.ts` (`formatPhotoText` / `formatPhotoTable`) keep their
+ * direct unit coverage here; the upload pretty body re-uses
+ * `formatPhotoText` so the same coverage applies transitively.
+ */
 
 const PHOTO_OK: profile.basic.PhotoUrl = {
   default: "https://cdn.toptal.com/avatar/p1/default.jpg",
@@ -67,32 +77,5 @@ describe("formatPhotoTable", () => {
     const out = formatPhotoTable(PHOTO_EMPTY, 100);
     expect(out).toContain("(unset)");
     expect(out).toContain("false");
-  });
-});
-
-// -----------------------------------------------------------------------
-// formatUploadResult
-// -----------------------------------------------------------------------
-
-describe("formatUploadResult (text)", () => {
-  it('leads with "Photo updated." and includes the formatted detail block', () => {
-    const out = formatUploadResult(PHOTO_OK, "text");
-    expect(out.startsWith("Photo updated.\n")).toBe(true);
-    expect(out).toContain(`default:  ${PHOTO_OK.default}`);
-  });
-});
-
-describe("formatUploadResult (json)", () => {
-  it("returns the raw payload as pretty-printed JSON", () => {
-    const out = formatUploadResult(PHOTO_OK, "json");
-    expect(JSON.parse(out)).toEqual(PHOTO_OK);
-  });
-});
-
-describe("formatUploadResult (table)", () => {
-  it("renders the same table as `formatPhotoTable`", () => {
-    const out = formatUploadResult(PHOTO_OK, "table");
-    expect(out).toContain("default");
-    expect(out).toContain(PHOTO_OK.default ?? "");
   });
 });

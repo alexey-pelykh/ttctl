@@ -5,6 +5,8 @@ import Table from "cli-table3";
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "../shared.js";
@@ -21,13 +23,13 @@ import { loadAuthTokenOrExit } from "../shared.js";
  * to render `Cf403Error` walkthroughs and `ProfileError` codes.
  */
 export async function runProfileBasicPhotoShow(format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile photo show");
+  const token = await loadAuthTokenOrExit("profile photo show", format);
 
   let photo: profile.basic.PhotoUrl;
   try {
     photo = await profile.basic.photoShow(token);
   } catch (err) {
-    handlePhotoShowError(err);
+    handlePhotoShowError(err, format);
     return;
   }
 
@@ -37,15 +39,32 @@ export async function runProfileBasicPhotoShow(format: OutputFormat): Promise<vo
   });
 }
 
-function handlePhotoShowError(err: unknown): never {
-  if (err instanceof TtctlError) presentTtctlError(err);
+function handlePhotoShowError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: "profile.basic.photo.show",
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
   if (err instanceof profile.basic.ProfileError) {
-    process.stderr.write(`profile photo show failed (${err.code}): ${err.message}\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.basic.photo.show",
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `profile photo show failed (${err.code}): ${err.message}`,
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`profile photo show failed: ${message}\n`);
-  process.exit(1);
+  emitErrorAndExit({
+    operation: "profile.basic.photo.show",
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `profile photo show failed: ${message}`,
+  });
 }
 
 /**

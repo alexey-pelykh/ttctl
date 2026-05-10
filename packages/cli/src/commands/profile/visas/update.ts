@@ -3,13 +3,15 @@
 
 import { profile } from "@ttctl/core";
 
+import { emitErrorAndExit } from "../../../lib/envelopes.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { emitVisaListResult } from "./list.js";
 import { handleVisasError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile visas update <id>`. Updates only
- * the fields supplied; rejects an empty update with `VALIDATION_ERROR`.
+ * the fields supplied; rejects an empty update with `VALIDATION_ERROR`
+ * via the envelope ABI (#128).
  */
 export async function runProfileVisasUpdate(
   id: string,
@@ -21,20 +23,28 @@ export async function runProfileVisasUpdate(
   if (options.expires !== undefined) changes.expiryDate = options.expires;
 
   if (Object.keys(changes).length === 0) {
-    process.stderr.write(
-      "visas update failed (VALIDATION_ERROR): supply at least one field flag (--country, --type, or --expires).\n",
-    );
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.visas.update",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "supply at least one field flag (--country, --type, or --expires).",
+        },
+      ],
+      prettySummary:
+        "visas update failed (VALIDATION_ERROR): supply at least one field flag (--country, --type, or --expires).",
+    });
   }
-  const token = await loadAuthTokenOrExit("visas update");
+  const token = await loadAuthTokenOrExit("visas update", options.output);
 
   let visas: profile.visas.TravelVisa[];
   try {
     visas = await profile.visas.update(token, id, changes);
   } catch (err) {
-    handleVisasError("visas update", err);
+    handleVisasError("visas update", err, options.output);
     return;
   }
 
-  emitVisaListResult(visas, options.output, `Travel visa ${id} updated.`);
+  emitVisaListResult(visas, options.output, "update", { prettyHeader: `Travel visa ${id} updated.` });
 }

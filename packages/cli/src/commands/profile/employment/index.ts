@@ -4,6 +4,13 @@
 import { DateInputError, parseDateInput, profile, splitParagraphs } from "@ttctl/core";
 import { Command, Option } from "commander";
 
+import {
+  emitAddSuccess,
+  emitErrorAndExit,
+  emitRemoveSuccess,
+  emitUpdateSuccess,
+  wrapListEnvelope,
+} from "../../../lib/envelopes.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
@@ -84,8 +91,13 @@ export function buildProfileEmploymentCommand(): Command {
     .command("remove")
     .description("Remove an employment entry by id")
     .argument("<id>", "employment id")
-    .action(async (id: string) => {
-      await runRemove(id);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runRemove(id, options.output);
     });
 
   employment
@@ -106,8 +118,13 @@ export function buildProfileEmploymentCommand(): Command {
     .description("Toggle highlight on an employment entry")
     .argument("<id>", "employment id")
     .option("--off", "un-highlight (default is to highlight)", false)
-    .action(async (id: string, options: { off: boolean }) => {
-      await runHighlight(id, !options.off);
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { off: boolean; output: OutputFormat }) => {
+      await runHighlight(id, !options.off, options.output);
     });
 
   employment
@@ -159,17 +176,23 @@ async function runAdd(options: AddOptions): Promise<void> {
     fields.companyWebsite = options.website;
     fields.noWebsite = false;
   }
-  applyDateFlags(fields, options, "profile employment add");
+  applyDateFlags(fields, options, "profile employment add", options.output);
   if (options.current) fields.endDate = null;
 
-  const token = await loadAuthTokenOrExit("profile employment add");
+  const token = await loadAuthTokenOrExit("profile employment add", options.output);
   let result: profile.employment.Employment;
   try {
     result = await profile.employment.add(token, fields);
   } catch (err) {
-    presentSubDomainError("profile employment add", err);
+    presentSubDomainError("profile employment add", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatEmploymentText, table: formatEmploymentTable });
+  emitAddSuccess({
+    operation: "profile.employment.add",
+    format: options.output,
+    created: result,
+    prettySummary: `${result.position} — ${result.company} (id ${result.id})`,
+    prettyEntity: formatEmploymentText,
+  });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -182,14 +205,22 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   }
   if (options.highlight !== undefined) {
     if (options.highlight !== "true" && options.highlight !== "false") {
-      process.stderr.write(
-        `profile employment update failed (VALIDATION_ERROR): --highlight expects "true" or "false"\n`,
-      );
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.employment.update",
+        format: options.output,
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            field: "highlight",
+            message: '--highlight expects "true" or "false"',
+          },
+        ],
+        prettySummary: 'profile employment update failed (VALIDATION_ERROR): --highlight expects "true" or "false"',
+      });
     }
     fields.highlight = options.highlight === "true";
   }
-  applyDateFlags(fields, options, "profile employment update");
+  applyDateFlags(fields, options, "profile employment update", options.output);
   if (options.current) fields.endDate = null;
 
   // Resolve --description / --edit through the four-mode free-text helper
@@ -203,8 +234,12 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
     });
   } catch (err) {
     if (err instanceof FreeTextError) {
-      process.stderr.write(`profile employment update failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: "profile.employment.update",
+        format: options.output,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `profile employment update failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }
@@ -216,65 +251,85 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   }
 
   if (Object.keys(fields).length === 0) {
-    process.stderr.write(`profile employment update failed (VALIDATION_ERROR): at least one field flag is required\n`);
-    process.exit(1);
+    emitErrorAndExit({
+      operation: "profile.employment.update",
+      format: options.output,
+      errors: [{ code: "VALIDATION_ERROR", message: "at least one field flag is required" }],
+      prettySummary: "profile employment update failed (VALIDATION_ERROR): at least one field flag is required",
+    });
   }
 
-  const token = await loadAuthTokenOrExit("profile employment update");
+  const token = await loadAuthTokenOrExit("profile employment update", options.output);
   let result: profile.employment.Employment;
   try {
     result = await profile.employment.update(token, id, fields);
   } catch (err) {
-    presentSubDomainError("profile employment update", err);
+    presentSubDomainError("profile employment update", err, options.output);
   }
-  emitResult(result, options.output, { pretty: formatEmploymentText, table: formatEmploymentTable });
+  emitUpdateSuccess({
+    operation: "profile.employment.update",
+    format: options.output,
+    updated: result,
+    prettySummary: `${result.position} — ${result.company} (id ${result.id})`,
+    prettyEntity: formatEmploymentText,
+  });
 }
 
-async function runRemove(id: string): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile employment remove");
+async function runRemove(id: string, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile employment remove", format);
   let removedId: string;
   try {
     removedId = await profile.employment.remove(token, id);
   } catch (err) {
-    presentSubDomainError("profile employment remove", err);
+    presentSubDomainError("profile employment remove", err, format);
   }
-  process.stdout.write(`Employment ${removedId} removed.\n`);
+  emitRemoveSuccess({
+    operation: "profile.employment.remove",
+    format,
+    id: removedId,
+  });
 }
 
 async function runShow(id: string, format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile employment show");
+  const token = await loadAuthTokenOrExit("profile employment show", format);
   let result: profile.employment.Employment;
   try {
     result = await profile.employment.show(token, id);
   } catch (err) {
-    presentSubDomainError("profile employment show", err);
+    presentSubDomainError("profile employment show", err, format);
   }
   emitResult(result, format, { pretty: formatEmploymentText, table: formatEmploymentTable });
 }
 
-async function runHighlight(id: string, value: boolean): Promise<void> {
-  const token = await loadAuthTokenOrExit("profile employment highlight");
+async function runHighlight(id: string, value: boolean, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile employment highlight", format);
   let result: { id: string; highlight: boolean };
   try {
     result = await profile.employment.highlight(token, id, value);
   } catch (err) {
-    presentSubDomainError("profile employment highlight", err);
+    presentSubDomainError("profile employment highlight", err, format);
   }
-  process.stdout.write(`Employment ${result.id} highlight set to ${result.highlight.toString()}.\n`);
+  emitUpdateSuccess({
+    operation: "profile.employment.highlight",
+    format,
+    updated: result,
+    prettySummary: `${result.id} highlight set to ${result.highlight.toString()}`,
+    prettyEntity: (entity: { id: string; highlight: boolean }) => `highlight: ${entity.highlight.toString()}`,
+  });
 }
 
 async function runEmployerAutocomplete(query: string, options: { limit: string; output: OutputFormat }): Promise<void> {
-  const limit = parseLimitOrExit(options.limit, "profile employment employer-autocomplete");
-  const token = await loadAuthTokenOrExit("profile employment employer-autocomplete");
+  const limit = parseLimitOrExit(options.limit, "profile employment employer-autocomplete", options.output);
+  const token = await loadAuthTokenOrExit("profile employment employer-autocomplete", options.output);
   let suggestions: profile.employment.EmployerSuggestion[];
   try {
     suggestions = await profile.employment.employerAutocomplete(token, query, limit);
   } catch (err) {
-    presentSubDomainError("profile employment employer-autocomplete", err);
+    presentSubDomainError("profile employment employer-autocomplete", err, options.output);
   }
-  emitResult(suggestions, options.output, {
-    pretty: formatEmployersText,
-    table: formatEmployersTable,
+  emitResult(wrapListEnvelope(suggestions), options.output, {
+    pretty: (data) => formatEmployersText(data.items),
+    table: (data) => formatEmployersTable(data.items),
   });
 }
 
@@ -282,14 +337,19 @@ function applyDateFlags(
   fields: profile.employment.EmploymentFields,
   options: { from?: string; to?: string },
   commandLabel: string,
+  format: OutputFormat,
 ): void {
   try {
     if (options.from !== undefined) fields.startDate = parseDateInput(options.from, "from").year;
     if (options.to !== undefined) fields.endDate = parseDateInput(options.to, "to").year;
   } catch (err) {
     if (err instanceof DateInputError) {
-      process.stderr.write(`${commandLabel} failed (${err.code}): ${err.message}\n`);
-      process.exit(1);
+      emitErrorAndExit({
+        operation: commandLabel.replace(/ /g, "."),
+        format,
+        errors: [{ code: err.code, message: err.message }],
+        prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
+      });
     }
     throw err;
   }

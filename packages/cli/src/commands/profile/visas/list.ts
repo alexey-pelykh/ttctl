@@ -4,28 +4,30 @@
 import Table from "cli-table3";
 import { profile } from "@ttctl/core";
 
-import { emitResult, formatYaml } from "../../../lib/output.js";
+import { emitAddSuccess, emitRemoveSuccess, emitUpdateSuccess, wrapListEnvelope } from "../../../lib/envelopes.js";
+import { emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handleVisasError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl profile visas list`. Reads the user's
- * travel-visa records and emits via the cross-CLI output helper from #71.
+ * travel-visa records and emits via the cross-CLI output helper from #71,
+ * wrapped in the `{items, pageInfo?}` list envelope (#128) for json/yaml.
  */
 export async function runProfileVisasList(format: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("visas list");
+  const token = await loadAuthTokenOrExit("visas list", format);
 
   let visas: profile.visas.TravelVisa[];
   try {
     visas = await profile.visas.list(token);
   } catch (err) {
-    handleVisasError("visas list", err);
+    handleVisasError("visas list", err, format);
     return;
   }
 
-  emitResult(visas, format, {
-    pretty: formatVisasText,
-    table: formatVisasTable,
+  emitResult(wrapListEnvelope(visas), format, {
+    pretty: (data) => formatVisasText(data.items),
+    table: (data) => formatVisasTable(data.items),
     empty: { command: "profile.visas.list" },
   });
 }
@@ -61,20 +63,68 @@ export function formatVisasTable(
   return table.toString();
 }
 
-/** Emit the post-mutation visa list with a success header. */
+/**
+ * Emit the post-mutation visa list, wrapped in the v0.4 envelope ABI
+ * (#128). The visas core API returns the FULL post-mutation list rather
+ * than the single mutated entity, so the envelope's `created` /
+ * `updated` field carries the list (`TravelVisa[]`) rather than a
+ * single `TravelVisa`. The pretty rendering keeps the existing
+ * "success header + table" UX so users continue to see the post-state
+ * at a glance.
+ *
+ * `verb` selects which envelope shape to emit:
+ *
+ * - `add` → `emitAddSuccess` with `created: TravelVisa[]`
+ * - `update` → `emitUpdateSuccess` with `updated: TravelVisa[]`
+ * - `remove` → `emitRemoveSuccess` with `removed: {id}` (the removed
+ *   id is supplied by the caller; the post-state list is passed
+ *   through `notice` for human pretty rendering, NOT for json/yaml —
+ *   `removed` is a strict `{id}` shape per the AC)
+ *
+ * `id` is required for the `remove` verb; for `add`/`update` it may be
+ * omitted (or supplied for inclusion in the pretty header).
+ */
 export function emitVisaListResult(
   visas: profile.visas.TravelVisa[],
   format: OutputFormat,
-  successMessage: string,
+  verb: "add" | "update" | "remove",
+  options: { id?: string; prettyHeader: string } = { prettyHeader: "" },
 ): void {
-  if (format === "json") {
-    process.stdout.write(`${JSON.stringify(visas)}\n`);
+  if (verb === "remove") {
+    const id = options.id;
+    if (id === undefined) {
+      throw new Error("emitVisaListResult: `id` is required for the `remove` verb");
+    }
+    emitRemoveSuccess({
+      operation: "profile.visas.remove",
+      format,
+      id,
+      prettySummary: options.prettyHeader,
+    });
+    if (format === "pretty" && visas.length > 0) {
+      process.stdout.write(`${formatVisasTable(visas)}\n`);
+    }
     return;
   }
-  if (format === "yaml") {
-    process.stdout.write(`${successMessage}\n${formatYaml(visas)}\n`);
+  if (verb === "add") {
+    emitAddSuccess({
+      operation: "profile.visas.add",
+      format,
+      created: visas,
+      prettySummary: options.prettyHeader,
+      prettyEntity: () => formatVisasTable(visas),
+    });
     return;
   }
-  // pretty — list-shape verb, default to table layout per the #126 shape dispatch
-  process.stdout.write(`${successMessage}\n${formatVisasTable(visas)}\n`);
+  emitUpdateSuccess({
+    operation: "profile.visas.update",
+    format,
+    updated: visas,
+    prettySummary: options.prettyHeader,
+    prettyEntity: () => formatVisasTable(visas),
+  });
 }
+
+// Re-export the success-emitter helpers so call sites within visas/* can
+// reach them via the same module they import `emitVisaListResult` from.
+export { emitAddSuccess, emitRemoveSuccess, emitUpdateSuccess, wrapListEnvelope };
