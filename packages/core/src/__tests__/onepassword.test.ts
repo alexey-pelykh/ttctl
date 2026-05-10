@@ -29,7 +29,7 @@ function captureError(fn: () => unknown): Error {
     fn();
   } catch (err) {
     if (err instanceof Error) return err;
-    throw new Error(`Expected an Error, got: ${String(err)}`);
+    throw new Error(`Expected an Error, got: ${String(err)}`, { cause: err });
   }
   throw new Error("Expected fn to throw, but it returned normally");
 }

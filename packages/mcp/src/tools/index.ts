@@ -4,6 +4,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { ToolRegistrationContext } from "./_shared.js";
+import { registerApplicationsTools } from "./applications.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerEducationTools } from "./profile/education.js";
 import { registerEmploymentTools } from "./profile/employment.js";
@@ -96,4 +97,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileReviewsApproveItemTool(server, ctx);
   registerProfileReviewsApproveSectionTool(server, ctx);
   registerProfileReviewsSubmitForReviewTool(server, ctx);
+
+  // applications — 3 leaves (#15). Read-only access to the user's
+  // Toptal Talent Activity view (TalentJobActivityItem rows). Per
+  // project non-goals, no apply / withdraw / edit tools are exposed.
+  registerApplicationsTools(server, ctx);
 }

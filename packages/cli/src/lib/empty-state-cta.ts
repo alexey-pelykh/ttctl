@@ -67,6 +67,13 @@ export const EMPTY_STATE_CTAS: Readonly<Record<string, EmptyStateCta>> = Object.
   "profile.reviews.list": {
     entityPlural: "pending section reviews",
   },
+  // Activity items (#15) are server-driven — applications, availability
+  // requests, interviews, and engagements all materialize when the
+  // recruiter / client side acts. Empty case is a happy state for new
+  // users; no `addHint` (no `apply` verb in TTCtl per project non-goals).
+  "applications.list": {
+    entityPlural: "activity items",
+  },
 });
 
 /**

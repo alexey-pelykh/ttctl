@@ -327,6 +327,7 @@ export function getSharedSession(opts: { repoRoot?: string } = {}): FreshSession
   } catch (err) {
     throw new Error(
       `getSharedSession: failed to read shared-session file at ${sessionFilePath}: ${(err as Error).message}`,
+      { cause: err },
     );
   }
 
@@ -336,6 +337,7 @@ export function getSharedSession(opts: { repoRoot?: string } = {}): FreshSession
   } catch (err) {
     throw new Error(
       `getSharedSession: shared-session file at ${sessionFilePath} is malformed JSON: ${(err as Error).message}`,
+      { cause: err },
     );
   }
 
