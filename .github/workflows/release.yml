@@ -69,6 +69,9 @@ jobs:
             exit 1
           fi
           pnpm -r exec npm version "$VERSION" --no-git-tag-version --allow-same-version
+          # MCP registry manifest: stamp both top-level .version (server) and .packages[0].version (npm package)
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
+          mv server.json.tmp server.json
 
       - run: pnpm build
 
