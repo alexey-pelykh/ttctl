@@ -145,6 +145,89 @@ describe("formatResult — default format", () => {
   });
 });
 
+describe("formatResult — empty-state wrapper (#122)", () => {
+  it("emits single-line `[]` for json when input is an empty top-level array AND empty option is provided", () => {
+    const result = formatResult([] as Sample[], "json", { empty: { command: "profile.skills.list" } });
+    expect(result.output).toBe("[]");
+    expect("warning" in result).toBe(false);
+  });
+
+  it("emits single-line `[]` for json when input is the future {items: []} envelope", () => {
+    const result = formatResult({ items: [] } as { items: Sample[] }, "json", {
+      empty: { command: "profile.skills.list" },
+    });
+    expect(result.output).toBe("[]");
+  });
+
+  it("emits prose+CTA for text when input is empty and the command is registered", () => {
+    const result = formatResult([] as Sample[], "text", { empty: { command: "profile.skills.list" } });
+    expect(result.output).toBe("No skills found. Add one with: ttctl profile skills add <name>");
+    expect("warning" in result).toBe(false);
+  });
+
+  it("emits prose+CTA for table (NOT a header-only grid) — same line as text branch", () => {
+    const textResult = formatResult([] as Sample[], "text", { empty: { command: "profile.portfolio.list" } });
+    const tableResult = formatResult([] as Sample[], "table", { empty: { command: "profile.portfolio.list" } });
+    expect(tableResult.output).toBe(textResult.output);
+    expect(tableResult.output).toBe("No portfolio items found. Add one with: ttctl profile portfolio add");
+    // Defensive: the table branch must NOT render a `cli-table3` header
+    // grid — that's the docker-style "looks broken" pattern the
+    // empty-state wrapper exists to replace.
+    expect(tableResult.output).not.toContain("┌");
+    expect(tableResult.output).not.toContain("│");
+  });
+
+  it("falls back to the generic 'No items found.' line for unregistered command paths", () => {
+    const result = formatResult([] as Sample[], "text", { empty: { command: "profile.unknown.list" } });
+    expect(result.output).toBe("No items found.");
+  });
+
+  it("does NOT fire the wrapper when `empty` option is absent (existing behavior preserved)", () => {
+    // Caller provides a text formatter; wrapper would short-circuit if
+    // it fired, but without `empty:` the formatter MUST run.
+    const result = formatResult([] as Sample[], "text", { text: () => "EXPLICIT_FORMATTER" });
+    expect(result.output).toBe("EXPLICIT_FORMATTER");
+  });
+
+  it("does NOT fire the wrapper for non-empty arrays (delegates to the per-format formatter)", () => {
+    const result = formatResult([SAMPLE], "text", {
+      text: (data) => `count=${data.length.toString()}`,
+      empty: { command: "profile.skills.list" },
+    });
+    expect(result.output).toBe("count=1");
+  });
+
+  it("does NOT fire the wrapper for show-shape payloads (single object, no `items` field)", () => {
+    // SAMPLE is `{name, count, tags}` — not an empty collection. The
+    // wrapper must let the regular text formatter run.
+    const result = formatResult(SAMPLE, "text", {
+      text: (data) => `name=${data.name}`,
+      empty: { command: "profile.skills.list" },
+    });
+    expect(result.output).toBe("name=Ada");
+  });
+
+  it("the wrapper short-circuits BEFORE calling the per-format text formatter", () => {
+    const textSpy = vi.fn(() => "FORMATTER_CALLED");
+    const result = formatResult([] as Sample[], "text", {
+      text: textSpy,
+      empty: { command: "profile.skills.list" },
+    });
+    expect(textSpy).not.toHaveBeenCalled();
+    expect(result.output).not.toBe("FORMATTER_CALLED");
+  });
+
+  it("the wrapper short-circuits BEFORE calling the per-format table formatter", () => {
+    const tableSpy = vi.fn(() => "TABLE_FORMATTER_CALLED");
+    const result = formatResult([] as Sample[], "table", {
+      table: tableSpy,
+      empty: { command: "profile.skills.list" },
+    });
+    expect(tableSpy).not.toHaveBeenCalled();
+    expect(result.output).not.toBe("TABLE_FORMATTER_CALLED");
+  });
+});
+
 describe("emitResult", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -194,5 +277,29 @@ describe("emitResult", () => {
     captureStderr();
     emitResult(SAMPLE, undefined, { text: () => "default-branch" });
     expect(stdout.lines.join("")).toBe("default-branch\n");
+  });
+
+  it("emits empty-state json with single trailing newline (no warning)", () => {
+    const stdout = captureStdout();
+    const stderr = captureStderr();
+    emitResult([] as Sample[], "json", { empty: { command: "profile.skills.list" } });
+    expect(stdout.lines.join("")).toBe("[]\n");
+    expect(stderr.lines.join("")).toBe("");
+  });
+
+  it("emits empty-state prose+CTA for text with single trailing newline (no warning)", () => {
+    const stdout = captureStdout();
+    const stderr = captureStderr();
+    emitResult([] as Sample[], "text", { empty: { command: "profile.skills.list" } });
+    expect(stdout.lines.join("")).toBe("No skills found. Add one with: ttctl profile skills add <name>\n");
+    expect(stderr.lines.join("")).toBe("");
+  });
+
+  it("emits empty-state prose+CTA for table (no header-only grid)", () => {
+    const stdout = captureStdout();
+    const stderr = captureStderr();
+    emitResult([] as Sample[], "table", { empty: { command: "profile.industries.list" } });
+    expect(stdout.lines.join("")).toBe("No industries found. Add one with: ttctl profile industries add <name>\n");
+    expect(stderr.lines.join("")).toBe("");
   });
 });

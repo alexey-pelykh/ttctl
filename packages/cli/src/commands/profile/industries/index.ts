@@ -167,7 +167,11 @@ async function runList(format: OutputFormat): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile industries list", err);
   }
-  emitResult(result, format, { text: formatIndustryListText, table: formatIndustryListTable });
+  emitResult(result, format, {
+    text: formatIndustryListText,
+    table: formatIndustryListTable,
+    empty: { command: "profile.industries.list" },
+  });
 }
 
 async function runAutocomplete(query: string, options: { limit: string; output: OutputFormat }): Promise<void> {
