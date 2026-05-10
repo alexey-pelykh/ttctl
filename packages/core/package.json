@@ -51,6 +51,7 @@
     "vitest": "catalog:"
   },
   "dependencies": {
+    "ffmpeg-static": "5.3.0",
     "graphql": "catalog:",
     "node-wreq": "catalog:",
     "proper-lockfile": "catalog:",
