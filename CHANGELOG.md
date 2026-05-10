@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sub-domain formatter audit + per-command override registry (#124)**.
+  Triage of all 11 profile sub-domain formatters
+  (`packages/cli/src/commands/profile/*`) against entity types vs
+  user-settable fields, recorded at
+  `docs/audit/2026-05-output-format-formatter-audit.md`. The audit
+  identifies field-dropping defects of HIGH severity in `basic` (bio,
+  headline — query root cause; downstream issue #127) and `portfolio`
+  (description, accomplishment, coverImage, clientOrCompanyName —
+  formatter root cause; downstream issue #129), MEDIUM in `industries`,
+  `employment`, `visas`, and LOW in `skills`; remaining sub-domains are
+  clean. Recommends a single null-rendering convention for the
+  in-flight `pretty` format (`(unset)` for fields the user can set
+  but hasn't; `null` for `json`/`yaml`; key omission only when
+  structurally absent). Ships
+  `packages/cli/src/lib/format-overrides.ts` with the `FormatStrategy`
+  type, `FORMAT_OVERRIDES` registry, and `resolveStrategy()` lookup —
+  registered today: `profile reviews list` → `multi-line` (forward-
+  looking; load-bearing once #127 surfaces reviewer-comment fields).
+  Defects to be fixed in follow-up issues (#127 query extensions, #129
+  formatter rewrites).
+
 - **Profile basic + skills sub-domains (#73)**. First Wave-3 vertical-slice
   bundle: end-to-end coverage of the `basic` (4 leaves) and `skills` (7
   leaves) sub-domains across `@ttctl/core`, `@ttctl/cli`, and
