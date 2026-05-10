@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import { emptyStateProse, isEmptyCollection } from "./empty-state-cta.js";
+
 /**
  * Cross-CLI output format for `show` and `list` commands.
  *
@@ -29,13 +31,27 @@ export const OUTPUT_FORMATS: readonly OutputFormat[] = ["text", "json", "table"]
  * `json` format has no formatter slot — the helper stringifies the data
  * directly via `JSON.stringify(data)`.
  *
- * Both fields are optional; the helper falls through the format lattice
- * (`table → text → JSON.stringify(_, null, 2)`) when a formatter is
- * missing.
+ * `text` and `table` are optional; the helper falls through the format
+ * lattice (`table → text → JSON.stringify(_, null, 2)`) when a
+ * formatter is missing.
+ *
+ * `empty` opts the call site into the empty-state wrapper (#122). When
+ * present AND `isEmptyCollection(data)` returns true, the wrapper
+ * short-circuits BEFORE per-format dispatch and emits a per-format
+ * empty payload — `[]` (single-line) for `json`; the prose+CTA from
+ * `emptyStateProse(empty.command)` for `text` and `table` (the latter
+ * deliberately AVOIDS a header-only `cli-table3` grid, which the
+ * v0.4 reframe categorised as a "looks broken" pattern).
+ *
+ * The wrapper is opt-in (not auto-fire on every call) so search
+ * leaves like `autocomplete` — which return arrays but want a
+ * query-aware "no matches" line, not a create-CTA — can keep their
+ * custom empty handling without overriding.
  */
 export interface OutputFormatters<T> {
   text?: (data: T) => string;
   table?: (data: T) => string;
+  empty?: { command: string };
 }
 
 /**
@@ -84,6 +100,17 @@ export function formatResult<T>(
   format: OutputFormat = "text",
   options: OutputFormatters<T> = {},
 ): FormatResult {
+  // Empty-state wrapper (#122): fires BEFORE per-format dispatch when
+  // the caller opts in via `options.empty` AND `data` is detected as an
+  // empty collection (`[]` or `{items: []}`). Single-source per-format
+  // empty output — text/table render the same prose+CTA from the
+  // registry; json renders a stable single-line `[]`.
+  if (options.empty !== undefined && isEmptyCollection(data)) {
+    if (format === "json") {
+      return { output: "[]" };
+    }
+    return { output: emptyStateProse(options.empty.command) };
+  }
   if (format === "json") {
     return { output: JSON.stringify(data) };
   }

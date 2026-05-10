@@ -193,6 +193,7 @@ async function runSkillsList(format: OutputFormat): Promise<void> {
   emitResult(result, format, {
     text: formatSkillsListText,
     table: formatSkillsListTable,
+    empty: { command: "profile.skills.list" },
   });
 }
 

@@ -26,6 +26,7 @@ export async function runProfileVisasList(format: OutputFormat): Promise<void> {
   emitResult(visas, format, {
     text: formatVisasText,
     table: formatVisasTable,
+    empty: { command: "profile.visas.list" },
   });
 }
 
