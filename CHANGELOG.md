@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Default `pretty` output for `basic show` and `portfolio list` now
+  surfaces every editable field (#129)**. Closes the audit-confirmed
+  HIGH-severity formatter defects from #124: `ttctl profile basic show`
+  and `ttctl profile portfolio list` previously hid up to half of the
+  fields the user can edit, so a freshly-set `--bio` / `--headline` /
+  `--description` / `--accomplishment` was invisible at the default
+  output unless the user added `--output=json`.
+  - **`formatProfilePretty`** (renamed from `formatProfileText` per the
+    #126 slot rename): now renders `bio` (multi-paragraph block,
+    paragraph breaks preserved as actual blank lines), `headline`,
+    `languages` (comma-separated when ≤3, sub-list when >3), and the
+    `photoUrl` (`Profile.photo.large`) — previously dropped per the
+    audit. Field ordering: identity (name, email, phone, city) first,
+    then user-narrative (headline, bio, languages), then role metadata
+    (vertical, specializations, availability, rate, time zone, public
+    skills), then server-side metadata (photo URL).
+  - **`runProfileBasicShow`** dispatches a second call (the new
+    `profile.basic.getBasicInfo()` from #127) against
+    `talent_profile/graphql` to fetch the bio/headline/languages
+    fields the mobile-gateway `Profile` type does not surface. The two
+    payloads merge into a `BasicShowPayload` shape (`{ profile,
+basicInfo }`) consumed by the formatter / JSON / YAML branches.
+    Auth-revoked / Cloudflare-403 from the secondary call propagate;
+    other failures (NETWORK_ERROR, GRAPHQL_ERROR on the secondary
+    surface) are non-fatal — the formatter renders `(unset)` for the
+    talent-profile fields and a stderr diagnostic surfaces the
+    underlying message.
+  - **`formatPortfolioPretty`** (renamed from `formatPortfolioText`):
+    now renders `description` (multi-paragraph block), `accomplishment`
+    (multi-paragraph block, skip-if-null), `coverImage`, and
+    `clientOrCompanyName` — previously dropped per the audit. Items
+    are rendered as multi-line blocks separated by a blank line; the
+    server's order is preserved. `tags` and `media` were flagged by
+    the issue body as candidates but are NOT on the wire `PortfolioItem`
+    (verified empirically by #127); the formatter does not invent them.
+  - **`runProfilePortfolioList`** registers only the `pretty` slot with
+    `emitResult`, routing the user-visible `--output=pretty` to the
+    curated multi-line layout. The shape dispatcher in `formatResult`
+    prefers `table` for list-shape data when both slots are present,
+    but `description` and `accomplishment` are paragraph-length —
+    a row-based table layout collapses them. `formatPortfolioTable`
+    stays exported for direct test use and future override-registry
+    dispatch wiring.
+  - **Standardised null convention for `pretty`** (per the #124 audit
+    § Standardization Recommendation): fields the user CAN set but
+    hasn't render as `(unset)`. Empty `bio` carries a CTA-style
+    `(unset — set with: ttctl profile basic update --bio "<text>")`
+    hint. Skip-if-null is reserved for fields that aren't user-editable
+    from the CLI (`phoneNumber` empty, no public skills, …). The
+    standard is exposed via the new `packages/cli/src/lib/format-helpers.ts`
+    module — `unsetOr(value, fallback?)`, `indentLines(text, indent?)`,
+    `renderMultiParagraph(prefix, body, outerIndent?)` — so other
+    sub-domains adopt it as their formatters are revisited.
+  - **JSON/YAML branches**: multi-paragraph `bio` round-trips correctly.
+    JSON renders `\n\n` as a single-level escape; YAML renders as a
+    `|` literal block scalar with paragraph breaks visible (no
+    double-escape `\\n\\n` artifacts).
+  - **Tests**: snapshot tests for `formatProfilePretty` (full-data,
+    minimal-data, multi-paragraph bio, language sub-list, viewer-null,
+    talent-profile-call-failed branches), `formatPortfolioPretty`
+    (full-data, minimal-data, multi-paragraph description+accomplishment,
+    server-ordering preservation, singular/plural header,
+    no-truncation-for-long-URLs branches), and the new
+    `lib/format-helpers.ts` module (`unsetOr` / `indentLines` /
+    `renderMultiParagraph`).
+
 ### Changed
 
 - **Output flag reframe: `--output={pretty,json,yaml}` (#126)**. The
