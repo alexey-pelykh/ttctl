@@ -82,7 +82,9 @@ describe("exitCodeForAuthStatus", () => {
 
 describe("formatAuthStatusPretty", () => {
   it("formats valid as `Signed in as <email>`", () => {
-    expect(formatAuthStatusPretty({ status: "valid", email: "user@example.com" })).toBe("Signed in as user@example.com");
+    expect(formatAuthStatusPretty({ status: "valid", email: "user@example.com" })).toBe(
+      "Signed in as user@example.com",
+    );
   });
   it("formats no-session with sign-in instructions", () => {
     expect(formatAuthStatusPretty({ status: "invalid", reason: "no-session" })).toBe(

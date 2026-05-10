@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`--output=text` / `--output=table` rejection**: Commander rejects
     the dropped names with its standard
     `error: option '-o, --output <format>' argument 'text' is invalid.
-    Allowed choices are pretty, json, yaml.` line.
+Allowed choices are pretty, json, yaml.` line.
   - **Behavior parity**: previous `--output=text` use cases route
     through `pretty` (identical rendering until the D3 formatter
     rewrites land in #129). Previous `--output=table` use cases route
