@@ -8,6 +8,7 @@ import type { Command as CommanderCommand } from "commander";
 
 import { ConfigError } from "@ttctl/core";
 
+import { buildApplicationsCommand } from "./commands/applications/index.js";
 import { registerAuthCommand } from "./commands/auth/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
@@ -181,6 +182,7 @@ export function buildProgram(): Command {
   registerAuthCommand(program);
 
   program.addCommand(buildProfileCommand());
+  program.addCommand(buildApplicationsCommand());
 
   return program;
 }

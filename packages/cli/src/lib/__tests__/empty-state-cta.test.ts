@@ -96,7 +96,11 @@ describe("EMPTY_STATE_CTAS — registry hygiene", () => {
     for (const key of Object.keys(EMPTY_STATE_CTAS)) {
       expect(key).toBe(key.trim());
       expect(key).not.toContain(" ");
-      expect(key.split(".").length).toBeGreaterThanOrEqual(3);
+      // ≥2 segments: top-level groups (e.g. `applications.list` from #15)
+      // need the noun + verb only; nested sub-domains (e.g.
+      // `profile.skills.list`) extend to 3+. The minimum is the
+      // smallest canonical path the registry supports.
+      expect(key.split(".").length).toBeGreaterThanOrEqual(2);
     }
   });
 

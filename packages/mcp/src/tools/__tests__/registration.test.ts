@@ -98,6 +98,10 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_reviews_approve_item",
   "ttctl_profile_reviews_approve_section",
   "ttctl_profile_reviews_submit_for_review",
+  // applications (#15) — 3 read-only tools at top-level
+  "ttctl_applications_list",
+  "ttctl_applications_show",
+  "ttctl_applications_stats",
 ];
 
 /**
@@ -113,7 +117,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (56 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (59 tools = 56 wave-3 profile + 3 #15 applications)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
