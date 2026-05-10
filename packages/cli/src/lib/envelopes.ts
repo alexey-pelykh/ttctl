@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import type { DryRunPreview } from "@ttctl/core";
+
 import { formatYaml } from "./output.js";
 import type { OutputFormat } from "./output.js";
 
@@ -573,6 +575,156 @@ function renderSuccessRemove(
     prettySummary,
     notice: envelope.notice,
   });
+}
+
+/**
+ * Discriminated success envelope for `--dry-run` (issue #52). Mirrors
+ * the wire shape of {@link SuccessEnvelopeUpdate} (`ok: true, version,
+ * operation, …`) plus a `dryRun: true` discriminator and a `preview`
+ * field carrying the structured "would-have-sent" payload from the
+ * core layer's {@link DryRunPreview}.
+ *
+ * Why a separate envelope variant rather than reusing
+ * `SuccessEnvelopeUpdate`: dry-run is fundamentally a "no-op confirmed"
+ * outcome — there is NO updated entity, only a preview of the request
+ * that WOULD have updated one. Reusing the update envelope would force
+ * `updated: ...` to carry a fake/empty value that downstream consumers
+ * could mistake for a real result. The `dryRun: true` discriminator
+ * makes the no-effect semantics legible at the JSON layer.
+ *
+ * Wire shape: `{ ok, version, operation, dryRun: true, preview: { … } }`
+ * where the `preview` body matches the AC (#52 § Output format under
+ * --dry-run): `{ operation, variables, transport, surface, headers }`
+ * with secrets redacted.
+ */
+export interface SuccessEnvelopeDryRun {
+  ok: true;
+  version: typeof ENVELOPE_VERSION;
+  operation: string;
+  dryRun: true;
+  preview: DryRunPreview;
+  notice?: string;
+}
+
+/**
+ * Build the dry-run success envelope object (pure — no I/O). Shape:
+ * `{ok: true, version: "1.0", operation, dryRun: true, preview, notice?}`.
+ *
+ * Exposed separately from {@link emitDryRunSuccess} so callers (and
+ * tests) can inspect the structured shape without going through stdout.
+ */
+export function buildDryRunEnvelope(args: {
+  operation: string;
+  preview: DryRunPreview;
+  notice?: string | undefined;
+}): SuccessEnvelopeDryRun {
+  const env: SuccessEnvelopeDryRun = {
+    ok: true,
+    version: ENVELOPE_VERSION,
+    operation: args.operation,
+    dryRun: true,
+    preview: args.preview,
+  };
+  if (args.notice !== undefined) env.notice = args.notice;
+  return env;
+}
+
+/**
+ * Stringify the JSON dry-run envelope (single-line, no extra whitespace
+ * — matches `formatResult` json branch). Exposed for tests.
+ */
+export function formatDryRunJson(envelope: SuccessEnvelopeDryRun): string {
+  return JSON.stringify(envelope);
+}
+
+/**
+ * Stringify the YAML dry-run envelope as block-style YAML via
+ * `formatYaml`. Exposed for tests.
+ */
+export function formatDryRunYaml(envelope: SuccessEnvelopeDryRun): string {
+  return formatYaml(envelope);
+}
+
+/**
+ * Build the pretty-format rendering of a dry-run envelope:
+ *
+ *     ✓ Dry run: would call `<operationName>` (no changes sent)
+ *       surface:    <surface> (<transport>)
+ *       endpoint:   <endpoint>
+ *       variables:
+ *         <pretty-printed-JSON, 2-space indented>
+ *       headers:
+ *         authorization: Token token=<redacted>
+ *         <other-header>: <value>
+ *         …
+ *
+ * Pure — directly unit-testable. The output is human-friendly: the
+ * variables block uses `JSON.stringify(_, null, 2)` to give a readable
+ * multi-line shape, while headers list one-per-line so the redacted
+ * `authorization` is obvious at a glance.
+ */
+export function formatDryRunPretty(envelope: SuccessEnvelopeDryRun): string {
+  const { preview } = envelope;
+  const lines: string[] = [
+    `${PRETTY_SUCCESS_PREFIX} Dry run: would call \`${preview.operationName}\` (no changes sent)`,
+    indent(`surface:    ${preview.surface} (${preview.transport})`),
+    indent(`endpoint:   ${preview.endpoint}`),
+    indent(`variables:`),
+  ];
+  const variablesJson = JSON.stringify(preview.variables, null, 2);
+  for (const line of variablesJson.split("\n")) {
+    // 4-space indent (2 base + 2 nest) so the JSON body is visibly
+    // grouped under the `variables:` header.
+    lines.push(`    ${line}`);
+  }
+  lines.push(indent("headers:"));
+  // Sort headers for stable pretty rendering — JSON.stringify preserves
+  // insertion order, but sort here so the human view doesn't depend on
+  // the order COMMON_HEADERS keys were defined in. The `authorization`
+  // line surfaces under "a" naturally; redaction is visible without
+  // prejudice across sort orders.
+  for (const key of Object.keys(preview.headers).sort()) {
+    lines.push(`    ${key}: ${preview.headers[key] ?? ""}`);
+  }
+  if (envelope.notice !== undefined) {
+    lines.push(indent(`notice: ${envelope.notice}`));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Side-effecting emitter for the dry-run success envelope. Mirrors
+ * {@link emitUpdateSuccess} for the dry-run variant — writes the
+ * per-format payload to stdout with a trailing newline; never throws.
+ *
+ * - `json` → single-line JSON envelope on stdout
+ * - `yaml` → block-style YAML envelope on stdout
+ * - `pretty` → multi-line `✓ Dry run: …` block on stdout
+ *
+ * The success path always exits 0 (helper does not call `process.exit`
+ * — leaves it to the caller / Node's natural exit). This matches the
+ * AC: a well-formed dry-run preview exits 0 regardless of whether the
+ * apply-path WOULD have errored at the server level.
+ */
+export function emitDryRunSuccess(args: {
+  operation: string;
+  format: OutputFormat;
+  preview: DryRunPreview;
+  notice?: string | undefined;
+}): void {
+  const envelope = buildDryRunEnvelope({
+    operation: args.operation,
+    preview: args.preview,
+    notice: args.notice,
+  });
+  const payload = renderDryRun(envelope, args.format);
+  process.stdout.write(`${payload}\n`);
+}
+
+function renderDryRun(envelope: SuccessEnvelopeDryRun, format: OutputFormat): string {
+  if (format === "json") return formatDryRunJson(envelope);
+  if (format === "yaml") return formatDryRunYaml(envelope);
+  return formatDryRunPretty(envelope);
 }
 
 /**

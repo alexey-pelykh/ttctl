@@ -35,15 +35,23 @@ export { AuthRevokedError, TtctlError } from "./auth/errors.js";
 export {
   Cf403Error,
   Cf403PersistentError,
+  DRY_RUN_REDACTED_AUTHORIZATION,
   IMPERSONATE_PROFILE,
   SchedulerBearerExpired,
+  buildDryRunPreview,
   buildGraphQLMultipart,
   callSurface,
   impersonatedMultipartTransport,
   impersonatedTransport,
   stockTransport,
 } from "./transport.js";
-export type { MultipartFile, MultipartTransportRequest, TransportRequest, TransportResponse } from "./transport.js";
+export type {
+  DryRunPreview,
+  MultipartFile,
+  MultipartTransportRequest,
+  TransportRequest,
+  TransportResponse,
+} from "./transport.js";
 
 export { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 export type { Credentials, GraphQLRequest, ToptalSurface } from "./types.js";

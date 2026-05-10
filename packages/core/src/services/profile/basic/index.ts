@@ -5,8 +5,14 @@ import { fetch as wreqFetch } from "node-wreq";
 
 import type { ProfileShowQuery } from "../../../__generated__/graphql.js";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { Cf403Error, IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../../../transport.js";
-import type { TransportResponse } from "../../../transport.js";
+import {
+  buildDryRunPreview,
+  Cf403Error,
+  IMPERSONATE_PROFILE,
+  impersonatedTransport,
+  stockTransport,
+} from "../../../transport.js";
+import type { DryRunPreview, TransportResponse } from "../../../transport.js";
 import { SURFACE_ENDPOINTS } from "../../../types.js";
 import { isAuthRevokedExtensionCode } from "../shared.js";
 
@@ -660,6 +666,72 @@ export interface UpdateProfileResult {
 }
 
 /**
+ * Options accepted by {@link set}. Today carries only `dryRun` (#52);
+ * a `confirm`-style anti-fat-finger gate is planned for `timesheet
+ * submit` (#13) and will follow the same option-object shape so callers
+ * can opt in additively without API churn.
+ */
+export interface SetOptions {
+  /**
+   * When `true`, {@link set} short-circuits before any transport call,
+   * returning a {@link DryRunPreview}-bearing outcome ({@link
+   * SetOutcomePreview}) instead of executing the mutation. Default:
+   * `false` — normal apply-the-mutation path.
+   *
+   * The preview is built with placeholder substitutions for fields that
+   * would normally be resolved via sibling reads (e.g. `profileId`,
+   * which {@link set} fetches from `show()` in the apply path). Neither
+   * the read transport nor the write transport is invoked when `dryRun`
+   * is true — the AC for issue #52 is "transport never called" and the
+   * helper honors it for both directions of network I/O.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * Placeholder string substituted for fields that the apply-path would
+ * normally resolve via a sibling read (e.g. `profileId` from `show()`).
+ * Surfaced verbatim in the dry-run preview's variables payload so
+ * downstream consumers can see the request structure without TTCtl
+ * having fired any network I/O.
+ *
+ * Public (re-exported via `index.ts`) so MCP / future CLI tooling can
+ * recognize the placeholder when surfacing the preview.
+ */
+export const DRY_RUN_PROFILE_ID_PLACEHOLDER = "<resolved at send-time from session token>" as const;
+
+/**
+ * Discriminated outcome of a {@link set} call when the apply-path
+ * succeeded — the server-confirmed payload normalised to {@link
+ * UpdateProfileResult}. Identical to the pre-#52 return type wrapped in
+ * a `{ kind: "applied" }` discriminator.
+ */
+export interface SetOutcomeApplied {
+  kind: "applied";
+  result: UpdateProfileResult;
+}
+
+/**
+ * Discriminated outcome of a {@link set} call invoked with
+ * `dryRun: true` — the structured preview of the request that WOULD have
+ * been sent. No transport (read or write) was invoked along this path.
+ */
+export interface SetOutcomePreview {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link set}. Apply-path callers
+ * branch on `outcome.kind === "applied"`; dry-run callers branch on
+ * `"preview"`. The pre-#52 surface returned `UpdateProfileResult`
+ * directly — that surface no longer exists. Pre-1.0 (`0.0.0`) the
+ * breaking change is acceptable per CLAUDE.md's "single-step migration"
+ * stance for the programmatic API.
+ */
+export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
+
+/**
  * Update a subset of the signed-in user's basic-info fields (currently
  * `bio` → `about` and `headline` → `quote`) via the Cloudflare-protected
  * `talent_profile/graphql` surface.
@@ -670,28 +742,70 @@ export interface UpdateProfileResult {
  * (against mobile-gateway) first to obtain the `profileId` required by the
  * mutation input, then issues the typed `UpdateBasicInfo` mutation against
  * talent-profile via `impersonatedTransport`. Returns the server-confirmed
- * updated values.
+ * updated values wrapped in a {@link SetOutcomeApplied} discriminator.
+ *
+ * Dry-run path (issue #52): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the WRITE request without invoking
+ * any transport (read OR write) and returns it wrapped in {@link
+ * SetOutcomePreview}. The preview substitutes a placeholder string
+ * ({@link DRY_RUN_PROFILE_ID_PLACEHOLDER}) for `profileId` because the
+ * apply-path resolves it via `show()` (a stock-transport read call) and
+ * the dry-run AC requires zero transport invocations. The bearer token
+ * is redacted in the preview's `headers.authorization` per the security
+ * contract documented on {@link DryRunPreview}.
  *
  * Errors:
  * - `ProfileError` with code `VALIDATION_ERROR` when neither `bio` nor
- *   `headline` is supplied — the contract requires at least one.
+ *   `headline` is supplied — the contract requires at least one. Fires
+ *   in BOTH the apply-path and the dry-run path.
  * - `Cf403Error` propagates from the talent-profile transport when
- *   Cloudflare returns 403.
+ *   Cloudflare returns 403. Apply-path only.
  * - `AuthRevokedError` on token expiry (HTTP 401, or any GraphQL
  *   `extensions.code` matching `isAuthRevokedExtensionCode` — currently
  *   `'UNAUTHENTICATED'`, `'AUTHENTICATION_REQUIRED'`, or `'UNAUTHORIZED'`).
+ *   Apply-path only.
  * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
+ *   Apply-path only — dry-run skips the read entirely.
  * - `ProfileError` with code `USER_ERROR` when the mutation returns a
  *   non-empty `errors` array (validation failures from the server, e.g., a
- *   bio that exceeds the platform's length limit). The message includes the
- *   first reported error.
- * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors
- *   (other than auth-revoked).
+ *   bio that exceeds the platform's length limit). Apply-path only.
+ * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors.
+ *   Apply-path only.
  * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
+ *   Apply-path only.
  */
-export async function set(token: string, changes: ProfileUpdate): Promise<UpdateProfileResult> {
+export async function set(token: string, changes: ProfileUpdate, options: SetOptions = {}): Promise<SetOutcome> {
   if (changes.bio === undefined && changes.headline === undefined) {
     throw new ProfileError("VALIDATION_ERROR", "Profile update requires at least one of `bio` or `headline`.");
+  }
+
+  const profileFields: UpdateBasicInfoInput["profile"] = {};
+  if (changes.bio !== undefined) profileFields.about = changes.bio;
+  if (changes.headline !== undefined) profileFields.quote = changes.headline;
+
+  // Dry-run short-circuit: build the WRITE request shape with a
+  // placeholder `profileId` and return a preview without any transport
+  // call. Apply-path resolves `profileId` via `show()` (a mobile-gateway
+  // read), but dry-run skips that step so neither transport is invoked
+  // — the AC for issue #52 reads "transport never called" in the
+  // singular and the helper honors it for both directions.
+  if (options.dryRun === true) {
+    const previewInput: UpdateBasicInfoInput = {
+      profileId: DRY_RUN_PROFILE_ID_PLACEHOLDER,
+      profile: profileFields,
+    };
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "UPDATE_BASIC_INFO",
+          query: UPDATE_BASIC_INFO_MUTATION,
+          variables: { input: previewInput },
+        },
+      }),
+    };
   }
 
   // Need profileId for the mutation input — fetch the current profile first.
@@ -707,10 +821,6 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
       "Cannot update profile: viewer or profile id missing from the session response.",
     );
   }
-
-  const profileFields: UpdateBasicInfoInput["profile"] = {};
-  if (changes.bio !== undefined) profileFields.about = changes.bio;
-  if (changes.headline !== undefined) profileFields.quote = changes.headline;
 
   let res: TransportResponse;
   try {
@@ -772,12 +882,15 @@ export async function set(token: string, changes: ProfileUpdate): Promise<Update
   }
 
   return {
-    profile: {
-      id: payload.profile.id,
-      about: payload.profile.about ?? null,
-      quote: payload.profile.quote ?? null,
+    kind: "applied",
+    result: {
+      profile: {
+        id: payload.profile.id,
+        about: payload.profile.about ?? null,
+        quote: payload.profile.quote ?? null,
+      },
+      notice: payload.notice ?? null,
     },
-    notice: payload.notice ?? null,
   };
 }
 

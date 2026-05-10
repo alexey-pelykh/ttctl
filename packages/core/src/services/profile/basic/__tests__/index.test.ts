@@ -511,19 +511,25 @@ describe("set", () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    const result = await set(TOKEN, { bio: "new bio", headline: "new headline" });
+    const outcome = await set(TOKEN, { bio: "new bio", headline: "new headline" });
 
-    expect(result.profile.id).toBe("p1");
-    expect(result.profile.about).toBe("new bio");
-    expect(result.profile.quote).toBe("new headline");
+    // Apply-path returns `{ kind: "applied", result }` — the discriminator
+    // narrows the union for downstream property access.
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return; // unreachable; kept for type narrowing
+    expect(outcome.result.profile.id).toBe("p1");
+    expect(outcome.result.profile.about).toBe("new bio");
+    expect(outcome.result.profile.quote).toBe("new headline");
   });
 
   it("normalizes a missing `notice` to null (callers can branch cleanly)", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: UPDATE_OK });
 
-    const result = await set(TOKEN, { bio: "x" });
-    expect(result.notice).toBeNull();
+    const outcome = await set(TOKEN, { bio: "x" });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return; // unreachable; kept for type narrowing
+    expect(outcome.result.notice).toBeNull();
   });
 
   it("propagates Cf403Error from the write-side mutation call (talent-profile is Cloudflare-protected)", async () => {
@@ -699,6 +705,119 @@ describe("set", () => {
       code: "UNKNOWN",
       message: expect.stringMatching(/no `data\.updateBasicInfo`/),
     });
+  });
+
+  // ====================================================================
+  // dry-run path (issue #52)
+  // ====================================================================
+  //
+  // Per the AC for #52, `set(token, changes, { dryRun: true })` must:
+  //   - NOT invoke any transport (read or write)
+  //   - return `{ kind: "preview", preview: <DryRunPreview> }`
+  //   - redact the bearer token in the preview's `headers.authorization`
+  //   - substitute a placeholder for `profileId` (would be resolved at
+  //     send-time via show()) so the preview reflects the request shape
+  //     faithfully without firing the read side.
+  // ====================================================================
+
+  it("dry-run path returns preview without invoking either transport (transport never called AC)", async () => {
+    const outcome = await set(TOKEN, { bio: "preview bio" }, { dryRun: true });
+
+    // The CRITICAL AC: zero transport calls in dry-run path. show()
+    // would fire stockTransport for profileId; the mutation would fire
+    // impersonatedTransport. Both must remain unmocked-out and untouched.
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+
+    // The outcome shape: discriminated-union `kind: "preview"` so the
+    // CLI / MCP can branch on it without inspecting the inner payload.
+    expect(outcome.kind).toBe("preview");
+  });
+
+  it("dry-run preview carries the talent-profile/impersonated transport classification (mutation surface)", async () => {
+    const outcome = await set(TOKEN, { bio: "x" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.surface).toBe("talent-profile");
+    expect(outcome.preview.transport).toBe("impersonated");
+    expect(outcome.preview.endpoint).toBe("https://www.toptal.com/api/talent_profile/graphql");
+    expect(outcome.preview.operationName).toBe("UPDATE_BASIC_INFO");
+  });
+
+  it("dry-run preview maps `bio` -> `about` and `headline` -> `quote` (same as apply path)", async () => {
+    const outcome = await set(TOKEN, { bio: "long bio", headline: "tagline" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    const variables = outcome.preview.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile).toEqual({ about: "long bio", quote: "tagline" });
+  });
+
+  it("dry-run preview substitutes the profileId placeholder (would be resolved at send-time)", async () => {
+    const outcome = await set(TOKEN, { bio: "x" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    const variables = outcome.preview.variables as { input: { profileId: string } };
+    expect(variables.input.profileId).toMatch(/<resolved at send-time/);
+    // Adversarial: the placeholder must NOT look like a real id (e.g.
+    // never the "p1" used elsewhere in the suite).
+    expect(variables.input.profileId).not.toBe("p1");
+  });
+
+  it("dry-run preview redacts the bearer token in the headers projection (no leakage)", async () => {
+    const outcome = await set(TOKEN, { bio: "x" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.headers.authorization).toBe("Token token=<redacted>");
+    // Adversarial: scan ALL header values to ensure the literal token
+    // string never appears anywhere — closes accidental-prefix leaks.
+    for (const value of Object.values(outcome.preview.headers)) {
+      expect(value).not.toContain(TOKEN);
+    }
+  });
+
+  it("dry-run path STILL rejects empty changes (validation guard fires before short-circuit)", async () => {
+    await expect(set(TOKEN, {}, { dryRun: true })).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "VALIDATION_ERROR",
+    });
+    // Even on the validation throw, neither transport was touched.
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("dry-run preview omits unset fields from `profile` (partial updates surface accurately)", async () => {
+    const outcome = await set(TOKEN, { headline: "only headline" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    const variables = outcome.preview.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile).toEqual({ quote: "only headline" });
+    expect(variables.input.profile).not.toHaveProperty("about");
+  });
+
+  it("explicit `dryRun: false` is the apply path (default behavior; ensures option does not invert)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: UPDATE_OK });
+
+    const outcome = await set(TOKEN, { bio: "x" }, { dryRun: false });
+
+    expect(outcome.kind).toBe("applied");
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("omitted options is the apply path (backward-compat: third arg is optional)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: UPDATE_OK });
+
+    const outcome = await set(TOKEN, { bio: "x" });
+
+    expect(outcome.kind).toBe("applied");
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
   });
 });
 
