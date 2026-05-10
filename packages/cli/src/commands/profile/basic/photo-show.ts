@@ -32,7 +32,7 @@ export async function runProfileBasicPhotoShow(format: OutputFormat): Promise<vo
   }
 
   emitResult(photo, format, {
-    text: formatPhotoText,
+    pretty: formatPhotoText,
     table: formatPhotoTable,
   });
 }

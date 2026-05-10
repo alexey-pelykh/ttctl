@@ -3,6 +3,7 @@
 
 import { profile } from "@ttctl/core";
 
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "../shared.js";
 import { handleResumeError } from "./upload.js";
@@ -27,9 +28,10 @@ export async function runProfileResumeCancelUpload(format: OutputFormat): Promis
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  if (format === "table") {
-    process.stdout.write(`field\tvalue\nsuccess\t${result.success ? "true" : "false"}\n`);
+  if (format === "yaml") {
+    process.stdout.write(`${formatYaml(result)}\n`);
     return;
   }
+  // pretty — show-shape command, curated single-line confirmation
   process.stdout.write(`Resume upload canceled (success=${result.success ? "true" : "false"}).\n`);
 }

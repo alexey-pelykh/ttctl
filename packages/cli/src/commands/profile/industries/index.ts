@@ -40,7 +40,7 @@ export function buildProfileIndustriesCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (name: string, options: AddOptions) => {
       await runAdd(name, options);
@@ -56,7 +56,7 @@ export function buildProfileIndustriesCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: UpdateOptions) => {
       await runUpdate(id, options);
@@ -76,7 +76,7 @@ export function buildProfileIndustriesCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runList(options.output);
@@ -90,7 +90,7 @@ export function buildProfileIndustriesCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (query: string, options: { limit: string; output: OutputFormat }) => {
       await runAutocomplete(query, options);
@@ -124,7 +124,7 @@ async function runAdd(name: string, options: AddOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile industries add", err);
   }
-  emitResult(result, options.output, { text: formatIndustryText, table: formatIndustryTable });
+  emitResult(result, options.output, { pretty: formatIndustryText, table: formatIndustryTable });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -145,7 +145,7 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile industries update", err);
   }
-  emitResult(result, options.output, { text: formatIndustryText, table: formatIndustryTable });
+  emitResult(result, options.output, { pretty: formatIndustryText, table: formatIndustryTable });
 }
 
 async function runRemove(id: string): Promise<void> {
@@ -168,7 +168,7 @@ async function runList(format: OutputFormat): Promise<void> {
     presentSubDomainError("profile industries list", err);
   }
   emitResult(result, format, {
-    text: formatIndustryListText,
+    pretty: formatIndustryListText,
     table: formatIndustryListTable,
     empty: { command: "profile.industries.list" },
   });
@@ -184,7 +184,7 @@ async function runAutocomplete(query: string, options: { limit: string; output: 
     presentSubDomainError("profile industries autocomplete", err);
   }
   emitResult(suggestions, options.output, {
-    text: formatCatalogText,
+    pretty: formatCatalogText,
     table: formatCatalogTable,
   });
 }

@@ -39,7 +39,7 @@ export function buildProfileEducationCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: AddOptions) => {
       await runAdd(options);
@@ -60,7 +60,7 @@ export function buildProfileEducationCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: UpdateOptions) => {
       await runUpdate(id, options);
@@ -81,7 +81,7 @@ export function buildProfileEducationCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runShow(id, options.output);
@@ -137,7 +137,7 @@ async function runAdd(options: AddOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile education add", err);
   }
-  emitResult(result, options.output, { text: formatEducationText, table: formatEducationTable });
+  emitResult(result, options.output, { pretty: formatEducationText, table: formatEducationTable });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -170,7 +170,7 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile education update", err);
   }
-  emitResult(result, options.output, { text: formatEducationText, table: formatEducationTable });
+  emitResult(result, options.output, { pretty: formatEducationText, table: formatEducationTable });
 }
 
 async function runRemove(id: string): Promise<void> {
@@ -192,7 +192,7 @@ async function runShow(id: string, format: OutputFormat): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile education show", err);
   }
-  emitResult(result, format, { text: formatEducationText, table: formatEducationTable });
+  emitResult(result, format, { pretty: formatEducationText, table: formatEducationTable });
 }
 
 async function runHighlight(id: string, value: boolean): Promise<void> {

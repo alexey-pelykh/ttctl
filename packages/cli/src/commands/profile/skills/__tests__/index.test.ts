@@ -150,12 +150,12 @@ describe("buildProfileSkillsCommand", () => {
     expect(flags).toEqual(expect.arrayContaining(["--rating", "--experience", "--public", "--private"]));
   });
 
-  it("show / list / autocomplete / readiness expose -o/--output with text/json/table/yaml choices", () => {
+  it("show / list / autocomplete / readiness expose -o/--output with pretty/json/yaml choices", () => {
     for (const name of ["show", "list", "autocomplete", "readiness"]) {
       const sub = cmd.commands.find((c) => c.name() === name);
       const output = sub?.options.find((o) => o.long === "--output");
       expect(output, `${name} should declare --output`).toBeDefined();
-      expect(output?.argChoices).toEqual(["text", "json", "table", "yaml"]);
+      expect(output?.argChoices).toEqual(["pretty", "json", "yaml"]);
     }
   });
 

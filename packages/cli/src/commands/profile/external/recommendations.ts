@@ -31,7 +31,7 @@ export async function runProfileExternalRecommendations(format: OutputFormat): P
   }
 
   emitResult(result, format, {
-    text: formatRecommendationsText,
+    pretty: formatRecommendationsText,
     table: formatRecommendationsTable,
   });
 }

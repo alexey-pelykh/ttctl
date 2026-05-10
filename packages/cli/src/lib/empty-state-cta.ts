@@ -3,10 +3,11 @@
 
 /**
  * Per-command empty-state hint registry and detection helper for the
- * `formatResult` empty-state wrapper (introduced #122). The wrapper
- * checks for empty collection input BEFORE per-format dispatch and emits
- * a per-format empty payload — `[]` for `json`, prose with create-CTA
- * for `text` / `table`.
+ * `formatResult` empty-state wrapper (introduced #122; format names
+ * updated for the #126 reframe). The wrapper checks for empty
+ * collection input BEFORE per-format dispatch and emits a per-format
+ * empty payload — `[]` for `json`, prose with create-CTA for `pretty`,
+ * normal block-style rendering for `yaml`.
  *
  * This module is the single source of truth for the empty-state CTA
  * wording across all `list` leaves; per-formatter `if (items.length ===

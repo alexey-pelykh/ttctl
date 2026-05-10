@@ -36,7 +36,7 @@ export function buildProfileBasicCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileBasicShow(options.output);
@@ -51,7 +51,7 @@ export function buildProfileBasicCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: OutputFormat }) => {
       await runProfileBasicUpdate(options);
@@ -65,7 +65,7 @@ export function buildProfileBasicCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileBasicPhotoShow(options.output);
@@ -77,7 +77,7 @@ export function buildProfileBasicCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (file: string, options: { output: OutputFormat }) => {
       await runProfileBasicPhotoUpload(file, options.output);

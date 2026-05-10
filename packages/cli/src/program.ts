@@ -11,6 +11,7 @@ import { ConfigError } from "@ttctl/core";
 import { registerAuthCommand } from "./commands/auth/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
+import type { OutputFormat } from "./lib/output.js";
 
 /**
  * Build the root TTCtl Commander program. Sub-commands are registered as they
@@ -37,6 +38,12 @@ import { setCliConfigPath } from "./lib/config-context.js";
  *   `~/.config/ttctl/config.yaml`) are NOT consulted (closed in #107 — the
  *   single-file model places the captured bearer in the same YAML, so
  *   `~/.ttctl.yaml` is the canonical home location).
+ *
+ *   `--json` / `--yaml` — boolean shortcuts for `--output=json` /
+ *   `--output=yaml` (post-#126). Mutual exclusion with `--output`/`-o` is
+ *   enforced in the preAction hook: any two of `{--output, -o, --json,
+ *   --yaml}` present together raise a parse-time error before the
+ *   sub-command's action runs.
  */
 export function buildProgram(): Command {
   const program = new Command();
@@ -45,14 +52,56 @@ export function buildProgram(): Command {
     .description("Unofficial CLI for the Toptal Talent platform — personal-productivity tool")
     .version("0.0.0")
     .addOption(new Option("--config <path>", "path to YAML config (overrides TTCTL_CONFIG_FILE and ~/.ttctl.yaml)"))
+    .addOption(new Option("--json", "shortcut for --output=json (mutually exclusive with --output, -o, --yaml)"))
+    .addOption(new Option("--yaml", "shortcut for --output=yaml (mutually exclusive with --output, -o, --json)"))
     .hook("preAction", (thisCommand, actionCommand) => {
       // `thisCommand` is the root program where the hook is registered;
       // global options are read off it directly. The hook fires before
       // every sub-command's action, so the path is captured exactly once
       // per invocation. `actionCommand` is the deepest command being
       // executed (e.g., the `init` leaf under `auth init`).
-      const opts = thisCommand.opts<{ config?: string }>();
+      const opts = thisCommand.opts<{ config?: string; json?: boolean; yaml?: boolean }>();
       const configPath = opts.config;
+
+      // Mutual exclusion across format flags (post-#126). The user-visible
+      // surface is `--output={pretty,yaml,json}` plus boolean shortcuts
+      // `--json` / `--yaml`. Any two flags from the set
+      // `{--output, -o, --json, --yaml}` present together is a parse-time
+      // error — fired BEFORE the sub-command's action runs so the error
+      // message is uniform regardless of which leaf the user invoked.
+      //
+      // `getOptionValueSource("output")` distinguishes "user passed it"
+      // (source === `"cli"`) from "Commander filled the default"
+      // (source === `"default"`). Without this check the default value
+      // would always fire and every `--json` / `--yaml` use would be
+      // (incorrectly) flagged as a conflict.
+      const outputExplicit = actionCommand.getOptionValueSource("output") === "cli";
+      const explicitFlags: string[] = [];
+      if (outputExplicit) {
+        const out = actionCommand.opts<{ output?: string }>().output;
+        explicitFlags.push(`--output=${out ?? ""}`);
+      }
+      if (opts.json === true) explicitFlags.push("--json");
+      if (opts.yaml === true) explicitFlags.push("--yaml");
+      if (explicitFlags.length > 1) {
+        const head = explicitFlags.slice(0, -1).join(", ");
+        const tail = explicitFlags[explicitFlags.length - 1] ?? "";
+        process.stderr.write(`Error: Conflicting output flags: ${head} and ${tail}\n`);
+        process.exit(1);
+      }
+
+      // Propagate `--json` / `--yaml` to the action command's `output`
+      // option. Sub-commands that don't carry an `--output` option simply
+      // ignore the propagation (Commander tolerates `setOptionValue` on
+      // an unknown key — the action handler never reads it).
+      const hasOutputOption = actionCommand.options.some((o) => o.long === "--output");
+      if (hasOutputOption) {
+        if (opts.json === true) {
+          actionCommand.setOptionValue("output", "json" satisfies OutputFormat);
+        } else if (opts.yaml === true) {
+          actionCommand.setOptionValue("output", "yaml" satisfies OutputFormat);
+        }
+      }
 
       // `auth init` is a BOOTSTRAP command — its own `--config <path>`
       // flag is the OUTPUT destination, which by definition must not

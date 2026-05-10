@@ -30,7 +30,7 @@ export function buildProfileResumeCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (file: string, options: { output: OutputFormat }) => {
       await runProfileResumeUpload(file, options.output);
@@ -42,7 +42,7 @@ export function buildProfileResumeCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileResumeCancelUpload(options.output);

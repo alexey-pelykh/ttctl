@@ -37,7 +37,7 @@ export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
   }
 
   emitResult(payload, format, {
-    text: formatProfileText,
+    pretty: formatProfileText,
     table: formatProfileTable,
   });
 }

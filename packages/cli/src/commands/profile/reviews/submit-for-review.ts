@@ -4,6 +4,7 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "./_shared.js";
 
@@ -46,12 +47,10 @@ export function formatSubmitResult(result: profile.reviews.SubmitForReviewResult
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }
-  if (format === "table") {
-    const rows: [string, string][] = [["status", "submitted"]];
-    if (result.notice !== null) rows.push(["notice", result.notice]);
-    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+  if (format === "yaml") {
+    return formatYaml(result);
   }
-  // text
+  // pretty — show-shape command, curated confirmation
   const lines: string[] = ["Profile submitted for review."];
   if (result.notice !== null) lines.push(`  ${result.notice}`);
   return lines.join("\n");

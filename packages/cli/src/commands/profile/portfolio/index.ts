@@ -43,7 +43,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(
       async (options: {
@@ -73,7 +73,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(
       async (
@@ -101,7 +101,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runProfilePortfolioRemove(id, options.output);
@@ -113,7 +113,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfilePortfolioList(options.output);
@@ -129,7 +129,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { before?: string; after?: string; to?: string; output: OutputFormat }) => {
       await runProfilePortfolioReorder(id, options);
@@ -143,7 +143,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { off?: boolean; output: OutputFormat }) => {
       await runProfilePortfolioHighlight(id, options);
@@ -158,7 +158,7 @@ export function buildProfilePortfolioCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string | undefined, options: { cover?: string; file?: string; output: OutputFormat }) => {
       await runProfilePortfolioUpload(id, options);

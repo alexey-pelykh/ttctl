@@ -28,7 +28,7 @@ export async function runProfilePortfolioList(format: OutputFormat): Promise<voi
   }
 
   emitResult(items, format, {
-    text: formatPortfolioText,
+    pretty: formatPortfolioText,
     table: formatPortfolioTable,
     empty: { command: "profile.portfolio.list" },
   });

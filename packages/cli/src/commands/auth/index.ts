@@ -4,6 +4,8 @@
 import { Option } from "commander";
 import type { Command } from "commander";
 
+import { OUTPUT_FORMATS } from "../../lib/output.js";
+import type { OutputFormat } from "../../lib/output.js";
 import { exitCodeForInitResult, formatInitOutput, runAuthInit } from "./init.js";
 import type { AuthInitOptions } from "./init.js";
 import { runAuthSignIn } from "./signin.js";
@@ -18,9 +20,11 @@ import type { AuthStatusOptions } from "./status.js";
  *
  * The auth subcommand surface is a noun-verb tree: `auth init`, `auth
  * status`, `auth signin`, `auth signout`. The status / signin / signout
- * trio share the same `-o, --output` option (`table` default, `json` for
- * scripting); `auth init` is purely interactive and produces a side-effect
- * (file on disk), so its surface is a confirmation line (no `-o` flag).
+ * trio share the same `-o, --output` option (post-#126: `pretty` default
+ * via `OUTPUT_FORMATS`, with `json` and `yaml` available — pre-#126 the
+ * auth surface defaulted to `table`, which collapsed into `pretty`);
+ * `auth init` is purely interactive and produces a side-effect (file on
+ * disk), so its surface is a confirmation line (no `-o` flag).
  *
  * The parent `auth` command itself prints help when invoked without a
  * sub-command (commander default), which is the desired UX.
@@ -48,7 +52,11 @@ export function registerAuthCommand(parent: Command): void {
   auth
     .command("status")
     .description("Report whether the current session is valid")
-    .addOption(new Option("-o, --output <format>", "output format").choices(["table", "json"]).default("table"))
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
     .action(async (options: AuthStatusOptions) => {
       await runAuthStatus(options);
     });
@@ -56,7 +64,11 @@ export function registerAuthCommand(parent: Command): void {
   auth
     .command("signin")
     .description("Sign in with credentials from .ttctl.yaml and persist the session")
-    .addOption(new Option("-o, --output <format>", "output format").choices(["table", "json"]).default("table"))
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
     .action(async (options: AuthSignInOptions) => {
       await runAuthSignIn(options);
     });
@@ -64,7 +76,11 @@ export function registerAuthCommand(parent: Command): void {
   auth
     .command("signout")
     .description("Clear the persisted session cookie jar (idempotent)")
-    .addOption(new Option("-o, --output <format>", "output format").choices(["table", "json"]).default("table"))
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
     .action(async (options: AuthSignOutOptions) => {
       await runAuthSignOut(options);
     });

@@ -4,6 +4,7 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "../shared.js";
 
@@ -30,10 +31,11 @@ export async function runProfileResumeUpload(file: string, format: OutputFormat)
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  if (format === "table") {
-    process.stdout.write(`field\tvalue\nsuccess\t${result.success ? "true" : "false"}\n`);
+  if (format === "yaml") {
+    process.stdout.write(`${formatYaml(result)}\n`);
     return;
   }
+  // pretty — show-shape command, curated confirmation
   process.stdout.write(`Resume uploaded.\n  file: ${file}\n`);
 }
 

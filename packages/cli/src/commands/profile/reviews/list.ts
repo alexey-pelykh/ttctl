@@ -30,7 +30,7 @@ export async function runProfileReviewsList(format: OutputFormat): Promise<void>
   }
 
   emitResult(result, format, {
-    text: formatReviewsText,
+    pretty: formatReviewsText,
     table: formatReviewsTable,
     empty: { command: "profile.reviews.list" },
   });

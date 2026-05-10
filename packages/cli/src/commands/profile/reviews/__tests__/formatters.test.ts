@@ -76,8 +76,8 @@ describe("formatApproveResult", () => {
     notice: "Approved.",
   };
 
-  it("text: renders confirmation + remaining-pending count", () => {
-    const out = formatApproveResult(SAMPLE, "text");
+  it("pretty: renders confirmation + remaining-pending count", () => {
+    const out = formatApproveResult(SAMPLE, "pretty");
     expect(out).toContain("Item approved.");
     expect(out).toContain("pending-reviews remaining: 1");
     expect(out).toContain("Approved.");
@@ -88,24 +88,21 @@ describe("formatApproveResult", () => {
     expect(JSON.parse(out)).toEqual(SAMPLE);
   });
 
-  it("table: renders status + count + notice rows", () => {
-    const out = formatApproveResult(SAMPLE, "table");
-    const lines = out.split("\n");
-    expect(lines).toContain("status\tapproved");
-    expect(lines).toContain("pending-reviews\t1");
-    expect(lines).toContain("notice\tApproved.");
+  it("yaml: renders the full result object as block-style YAML", () => {
+    const out = formatApproveResult(SAMPLE, "yaml");
+    expect(out).toContain("notice: Approved.");
+    expect(out).toContain("sectionReviews:");
   });
 });
 
 describe("formatSubmitResult", () => {
-  it("text: renders confirmation + notice", () => {
-    const out = formatSubmitResult({ notice: "Profile submitted for review." }, "text");
-    expect(out).toContain("Profile submitted for review.");
+  it("pretty: renders confirmation + notice", () => {
+    const out = formatSubmitResult({ notice: "Profile submitted for review." }, "pretty");
     expect(out).toContain("Profile submitted for review.");
   });
 
-  it("text: renders confirmation when no notice is provided", () => {
-    const out = formatSubmitResult({ notice: null }, "text");
+  it("pretty: renders confirmation when no notice is provided", () => {
+    const out = formatSubmitResult({ notice: null }, "pretty");
     expect(out).toBe("Profile submitted for review.");
   });
 
@@ -114,8 +111,8 @@ describe("formatSubmitResult", () => {
     expect(JSON.parse(out)).toEqual({ notice: "ok" });
   });
 
-  it("table: renders status + notice rows", () => {
-    const out = formatSubmitResult({ notice: "ok" }, "table");
-    expect(out.split("\n")).toEqual(["status\tsubmitted", "notice\tok"]);
+  it("yaml: renders the full result as block-style YAML", () => {
+    const out = formatSubmitResult({ notice: "ok" }, "yaml");
+    expect(out).toBe("notice: ok");
   });
 });

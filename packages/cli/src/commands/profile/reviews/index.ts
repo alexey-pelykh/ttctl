@@ -37,7 +37,7 @@ export function buildProfileReviewsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileReviewsList(options.output);
@@ -55,7 +55,7 @@ export function buildProfileReviewsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { reviewId: string; itemId: string; kind: string; output: OutputFormat }) => {
       await runProfileReviewsApproveItem(options);
@@ -69,7 +69,7 @@ export function buildProfileReviewsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { reviewId: string; section: string; output: OutputFormat }) => {
       await runProfileReviewsApproveSection(options);
@@ -81,7 +81,7 @@ export function buildProfileReviewsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileReviewsSubmitForReview(options);

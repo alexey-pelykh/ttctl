@@ -4,6 +4,7 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, truncate } from "./_shared.js";
 
@@ -68,8 +69,8 @@ function handleError(err: unknown): never {
 }
 
 /**
- * Format the typed update result for the chosen output mode. Pure function —
- * no I/O — directly unit-testable.
+ * Format the typed update result for the chosen output mode. Pure
+ * function — no I/O — directly unit-testable.
  */
 export function formatUpdateResult(
   result: profile.external.UpdateExternalProfilesResult,
@@ -78,22 +79,12 @@ export function formatUpdateResult(
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }
-
-  const { profile: updated, notice } = result;
-  if (format === "table") {
-    const rows: [string, string][] = [
-      ["status", "updated"],
-      ["linkedin", updated.linkedin ?? ""],
-      ["github", updated.github ?? ""],
-      ["website", updated.website ?? ""],
-      ["behance", updated.behance ?? ""],
-      ["dribbble", updated.dribbble ?? ""],
-    ];
-    if (notice !== null) rows.push(["notice", notice]);
-    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+  if (format === "yaml") {
+    return formatYaml(result);
   }
 
-  // text — confirmation + echoed values
+  // pretty — show-shape command, curated confirmation + echoed values
+  const { profile: updated, notice } = result;
   const lines: string[] = ["External profiles updated."];
   if (updated.linkedin !== null) lines.push(truncate(`  linkedin: ${updated.linkedin}`, 80));
   if (updated.github !== null) lines.push(truncate(`  github: ${updated.github}`, 80));

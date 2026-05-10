@@ -33,7 +33,7 @@ export function buildProfileVisasCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(
       async (options: { country: string; type: string; issued?: string; expires?: string; output: OutputFormat }) => {
@@ -51,7 +51,7 @@ export function buildProfileVisasCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(
       async (id: string, options: { country?: string; type?: string; expires?: string; output: OutputFormat }) => {
@@ -67,7 +67,7 @@ export function buildProfileVisasCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runProfileVisasRemove(id, options.output);
@@ -79,7 +79,7 @@ export function buildProfileVisasCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileVisasList(options.output);

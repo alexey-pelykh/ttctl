@@ -5,6 +5,7 @@ import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "../shared.js";
 import { truncate } from "./show.js";
@@ -110,30 +111,22 @@ function handleProfileUpdateError(err: unknown): never {
 }
 
 /**
- * Format the typed update result for the chosen output mode. Pure function —
- * no I/O — so directly unit-testable. The text branch reads as a
- * confirmation: "Profile updated" + the newly-stored values for any field
- * the server returned. JSON returns the raw structured payload; table
- * emits one `key\tvalue` row per returned field for shell-pipe consumption.
+ * Format the typed update result for the chosen output mode. Pure
+ * function — no I/O — so directly unit-testable. The `pretty` branch
+ * reads as a confirmation: "Profile updated" + the newly-stored values
+ * for any field the server returned. JSON returns the raw structured
+ * payload single-line; YAML emits the same shape as block-style YAML.
  */
 export function formatUpdateResult(result: profile.basic.UpdateProfileResult, format: OutputFormat): string {
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }
-
-  const { profile: updatedProfile, notice } = result;
-
-  if (format === "table") {
-    const rows: [string, string][] = [
-      ["status", "updated"],
-      ["bio", updatedProfile.about ?? ""],
-      ["headline", updatedProfile.quote ?? ""],
-    ];
-    if (notice !== null) rows.push(["notice", notice]);
-    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+  if (format === "yaml") {
+    return formatYaml(result);
   }
 
-  // text — confirmation + echoed values
+  // pretty — show-shape command, curated confirmation + echoed values
+  const { profile: updatedProfile, notice } = result;
   const lines: string[] = ["Profile updated."];
   if (updatedProfile.about !== null) {
     lines.push(truncate(`  bio: ${updatedProfile.about}`, 80));

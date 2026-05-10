@@ -37,13 +37,13 @@ describe("buildProfileCommand (top-level shortcuts)", () => {
     expect(outputOption?.short).toBe("-o");
   });
 
-  it("limits --output choices to text|json|table|yaml and defaults to text on the show shortcut", () => {
+  it("limits --output choices to pretty|json|yaml and defaults to text on the show shortcut", () => {
     const cmd = buildProfileCommand();
     const show = findSubcommand(cmd, "show");
     const outputOption = show?.options.find((o) => o.long === "--output");
 
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
-    expect(outputOption?.defaultValue).toBe("text");
+    expect(outputOption?.argChoices).toEqual(["pretty", "json", "yaml"]);
+    expect(outputOption?.defaultValue).toBe("pretty");
   });
 
   it("rejects unknown output formats on the show shortcut", () => {
@@ -73,7 +73,7 @@ describe("buildProfileCommand (top-level shortcuts)", () => {
     expect(bioOption).toBeDefined();
     expect(headlineOption).toBeDefined();
     expect(outputOption).toBeDefined();
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
+    expect(outputOption?.argChoices).toEqual(["pretty", "json", "yaml"]);
   });
 
   it("parses --bio and --headline values from argv into the action options on the update shortcut", () => {
@@ -121,8 +121,8 @@ describe("buildProfileCommand (canonical `basic` sub-tree)", () => {
     const outputOption = basicShow?.options.find((o) => o.long === "--output");
 
     expect(outputOption).toBeDefined();
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
-    expect(outputOption?.defaultValue).toBe("text");
+    expect(outputOption?.argChoices).toEqual(["pretty", "json", "yaml"]);
+    expect(outputOption?.defaultValue).toBe("pretty");
   });
 
   it("registers --bio, --headline, --output on `basic update`", () => {
@@ -137,7 +137,7 @@ describe("buildProfileCommand (canonical `basic` sub-tree)", () => {
     expect(bioOption).toBeDefined();
     expect(headlineOption).toBeDefined();
     expect(outputOption).toBeDefined();
-    expect(outputOption?.argChoices).toEqual(["text", "json", "table", "yaml"]);
+    expect(outputOption?.argChoices).toEqual(["pretty", "json", "yaml"]);
   });
 });
 

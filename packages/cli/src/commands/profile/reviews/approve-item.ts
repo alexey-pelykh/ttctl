@@ -4,6 +4,7 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "./_shared.js";
 
@@ -56,23 +57,18 @@ function handleError(err: unknown): never {
 }
 
 /**
- * Format the approve result. Pure function — directly unit-testable. Shared
- * with `approve-section` since both mutations return the same shape (the
- * post-approval pending-reviews list).
+ * Format the approve result. Pure function — directly unit-testable.
+ * Shared with `approve-section` since both mutations return the same
+ * shape (the post-approval pending-reviews list).
  */
 export function formatApproveResult(result: profile.reviews.ApproveItemReviewResult, format: OutputFormat): string {
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }
-  if (format === "table") {
-    const rows: [string, string][] = [
-      ["status", "approved"],
-      ["pending-reviews", result.sectionReviews.length.toString()],
-    ];
-    if (result.notice !== null) rows.push(["notice", result.notice]);
-    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+  if (format === "yaml") {
+    return formatYaml(result);
   }
-  // text
+  // pretty — show-shape command, curated confirmation + summary line
   const lines: string[] = ["Item approved."];
   lines.push(`  pending-reviews remaining: ${result.sectionReviews.length.toString()}`);
   if (result.notice !== null) lines.push(`  ${result.notice}`);

@@ -257,4 +257,178 @@ describe("program help and metadata", () => {
     expect(configOpt).toBeDefined();
     expect(configOpt?.flags).toContain("<path>");
   });
+
+  it("registers --json and --yaml boolean shortcuts at the root program level (post-#126)", () => {
+    const program = buildProgram();
+    const jsonOpt = program.options.find((o) => o.long === "--json");
+    const yamlOpt = program.options.find((o) => o.long === "--yaml");
+    expect(jsonOpt).toBeDefined();
+    expect(yamlOpt).toBeDefined();
+    // Boolean flags — no argument descriptor in the flag spec.
+    expect(jsonOpt?.flags).not.toContain("<");
+    expect(yamlOpt?.flags).not.toContain("<");
+  });
+});
+
+/**
+ * Tests for the post-#126 output-flag mutual exclusion and shortcut
+ * propagation. The preAction hook is the single point of enforcement;
+ * these tests pin its behavior so adding new sub-commands does not
+ * silently regress the surface.
+ */
+describe("program output-format shortcuts (#126)", () => {
+  beforeEach(() => {
+    resetCliConfigPath();
+    mockedResolveConfig.mockReset();
+    mockedResolveConfig.mockReturnValue({
+      config: { auth: { credentials: "op://Personal/ttctl" } },
+      path: "/cwd/.ttctl.yaml",
+    });
+    mockedGetAuthStatus.mockReset();
+    mockedGetAuthStatus.mockResolvedValue({ status: "valid", email: "u@e.com" });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetCliConfigPath();
+  });
+
+  it("--json propagates to actionCommand.output as `json` (preAction hook)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureExit();
+    try {
+      await program.parseAsync(["--json", "auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    // auth status pretty/json are different shapes; json is single-line
+    // JSON of the AuthStatusResult — assert on that.
+    const stdoutText = stdout.lines.join("").trim();
+    expect(JSON.parse(stdoutText)).toEqual({ status: "valid", email: "u@e.com" });
+  });
+
+  it("--yaml propagates to actionCommand.output as `yaml` (preAction hook)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureExit();
+    try {
+      await program.parseAsync(["--yaml", "auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    const stdoutText = stdout.lines.join("");
+    // YAML rendering of the result; check for block-style markers.
+    expect(stdoutText).toContain("status: valid");
+    expect(stdoutText).toContain("email: u@e.com");
+  });
+
+  it("--json and --yaml together raise a parse-time mutual-exclusion error", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stderr = captureStderr();
+    captureStdout();
+    const exit = captureExit();
+    try {
+      await program.parseAsync(["--json", "--yaml", "auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    expect(exit.exit?.code).toBe(1);
+    const stderrText = stderr.lines.join("");
+    expect(stderrText).toContain("Conflicting output flags");
+    expect(stderrText).toContain("--json");
+    expect(stderrText).toContain("--yaml");
+  });
+
+  it("--output=json and --json together raise a parse-time mutual-exclusion error", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stderr = captureStderr();
+    captureStdout();
+    const exit = captureExit();
+    try {
+      await program.parseAsync(["--json", "auth", "status", "--output", "json"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    expect(exit.exit?.code).toBe(1);
+    const stderrText = stderr.lines.join("");
+    expect(stderrText).toContain("Conflicting output flags");
+    expect(stderrText).toContain("--output=json");
+    expect(stderrText).toContain("--json");
+  });
+
+  it("--output=text is rejected with an invalid-format error from Commander", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stderr = captureStderr();
+    captureStdout();
+    captureExit();
+    try {
+      await program.parseAsync(["auth", "status", "--output", "text"], { from: "user" });
+    } catch (err) {
+      // commander throws InvalidArgumentError or a CommanderError on
+      // invalid choice; the exit-override path may surface it as an
+      // exception. We accept either ExitInvoked (process.exit fired)
+      // or any commander error.
+      if (!(err instanceof ExitInvoked) && !(err instanceof Error)) throw err;
+    }
+    const stderrText = stderr.lines.join("");
+    // commander's choices error mentions the value AND the allowed
+    // choices.
+    expect(stderrText).toMatch(/text/);
+  });
+
+  it("-o pretty short alias works (verifies #83 -o still applies after the rename)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureExit();
+    try {
+      await program.parseAsync(["auth", "status", "-o", "pretty"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    expect(stdout.lines.join("")).toContain("Signed in as u@e.com");
+  });
+
+  it("--output=pretty (default) emits the human-readable line for auth status", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureExit();
+    try {
+      await program.parseAsync(["auth", "status"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    expect(stdout.lines.join("")).toContain("Signed in as u@e.com");
+  });
+
+  it("--json on a sub-command that has no --output option (auth init) is silently ignored at the root", async () => {
+    // Set stdin non-TTY so init refuses cleanly without prompts.
+    const originalIsTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    try {
+      const program = buildProgram();
+      program.exitOverride();
+      const stderr = captureStderr();
+      captureStdout();
+      captureExit();
+      try {
+        await program.parseAsync(["--json", "auth", "init"], { from: "user" });
+      } catch (err) {
+        if (!(err instanceof ExitInvoked)) throw err;
+      }
+      // No mutual-exclusion error fires (only one flag was passed), and
+      // no propagation happens (init has no --output). The init command
+      // proceeds to its own non-TTY refusal path.
+      expect(stderr.lines.join("")).not.toContain("Conflicting output flags");
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalIsTty });
+    }
+  });
 });

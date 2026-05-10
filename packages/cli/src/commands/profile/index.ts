@@ -45,7 +45,7 @@ export function buildProfileCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runProfileBasicShow(options.output);
@@ -60,7 +60,7 @@ export function buildProfileCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: OutputFormat }) => {
       await runProfileBasicUpdate(options);

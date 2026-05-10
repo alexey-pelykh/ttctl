@@ -5,19 +5,18 @@ import { ConfigError, getAuthStatus } from "@ttctl/core";
 import type { AuthStatusResult } from "@ttctl/core";
 
 import { resolveConfigForCli } from "../../lib/config-context.js";
+import { formatYaml } from "../../lib/output.js";
+import type { OutputFormat } from "../../lib/output.js";
 
 /**
- * Output format for `ttctl auth status`. `table` (the default) emits a
- * human-readable single-line summary; `json` emits the `AuthStatusResult`
- * shape verbatim for scripting.
- *
- * `csv` and `yaml` are explicitly out of scope until the global-flags issue
- * lands a unified output formatter — see issue #6 § Out of Scope.
+ * Output format for `ttctl auth status`. Aligned with the cross-CLI
+ * `OutputFormat` post-#126: `pretty` (default) emits a human-readable
+ * single-line summary; `json` emits the `AuthStatusResult` shape
+ * verbatim for scripting; `yaml` emits the same shape as block-style
+ * YAML.
  */
-export type AuthStatusOutput = "table" | "json";
-
 export interface AuthStatusOptions {
-  output: AuthStatusOutput;
+  output: OutputFormat;
 }
 
 /**
@@ -37,15 +36,16 @@ export function exitCodeForAuthStatus(result: AuthStatusResult): number {
 }
 
 /**
- * Render an `AuthStatusResult` for the table format. Keeps the user-facing
- * strings here so the CLI surface owns wording (the core library returns
- * stable machine-readable codes; this layer translates them to prose).
+ * Render an `AuthStatusResult` for the human-readable `pretty` format.
+ * Keeps the user-facing strings here so the CLI surface owns wording
+ * (the core library returns stable machine-readable codes; this layer
+ * translates them to prose).
  *
  * Both `session-expired` and the rarer 200-with-malformed-payload cases
  * collapse to the same "Session expired" message — from the user's
  * perspective the next action is identical (re-run signin).
  */
-export function formatAuthStatusTable(result: AuthStatusResult): string {
+export function formatAuthStatusPretty(result: AuthStatusResult): string {
   if (result.status === "valid") {
     return `Signed in as ${result.email}`;
   }
@@ -59,16 +59,19 @@ export function formatAuthStatusTable(result: AuthStatusResult): string {
 }
 
 /**
- * Format an `AuthStatusResult` for the requested output mode. The JSON shape
- * mirrors `AuthStatusResult` 1:1 — `email` only on `valid`, `reason` on the
- * other two — which lets callers consume the same discriminated-union
- * structure on the wire.
+ * Format an `AuthStatusResult` for the requested output mode. The JSON
+ * and YAML shapes mirror `AuthStatusResult` 1:1 — `email` only on
+ * `valid`, `reason` on the other two — which lets callers consume the
+ * same discriminated-union structure on the wire.
  */
-export function formatAuthStatusOutput(result: AuthStatusResult, output: AuthStatusOutput): string {
+export function formatAuthStatusOutput(result: AuthStatusResult, output: OutputFormat): string {
   if (output === "json") {
     return JSON.stringify(result);
   }
-  return formatAuthStatusTable(result);
+  if (output === "yaml") {
+    return formatYaml(result);
+  }
+  return formatAuthStatusPretty(result);
 }
 
 /**
