@@ -101,6 +101,69 @@ ESLint enforces this via `@tony.ganchev/eslint-plugin-header`.
 - ESLint uses `tseslint.configs.strictTypeChecked` (strict type-aware rules)
 - Explicit `types: ["node"]` at base — TS 6 narrowed default ambient resolution; opt-in required for Node globals
 
+## Schema/contract validation rule
+
+Any implementation that consumes a research note marked **INFERRED**,
+**UNVERIFIED**, or that fills a documented schema gap (e.g. a
+`Scalars.Unknown` mutation input, an enum with a `_UNKNOWN` placeholder, a
+Pattern N input shape) **MUST** ship with a live integration test
+(`*.e2e.test.ts`, gated by `TTCTL_E2E=1`) that exercises the wire format
+BEFORE the change merges.
+
+Unit tests with mocks are insufficient because:
+
+- Mocks accept whatever shape the code sends; they cannot detect contract
+  mismatches.
+- The whole point of "INFERRED" is that the wire format is best-effort —
+  the only authority is the live API.
+
+Examples of triggers:
+
+- Any new mutation against `talent_profile/graphql` whose input shape was
+  inferred from `research/notes/10-mutation-input-patterns.md` patterns.
+  Historical examples: **#59** — `auth.ts` shipped on the inferred claim
+  that cookies sufficed for `talent_schema`, with the auth-header
+  injection point flagged unverified (R8-merged decompile gap); unit
+  tests passed against mocks, the live API rejected. **#60** —
+  `UPDATE_BASIC_INFO` shipped using Pattern 1's input wrapper key, which
+  was wrong for that specific operation; unit tests passed, the live API
+  would have rejected on first use.
+- Any new query against any surface whose response type is synthesized
+  from the schema-coverage gap region (~370 ops without live captures
+  per `research/notes/11`).
+- Any new GraphQL operation NOT present in `codegen.config.ts` documents
+  at the time of writing — hand-rolling the operation IS the inference
+  act.
+
+The E2E test must hit the live API and assert at least:
+
+- Operation succeeds (HTTP 200, no GraphQL `errors[]`).
+- Response contains the asserted fields (positive shape check).
+- For mutations: round-trip the change and verify it persisted (where
+  reasonable).
+
+E2E tests are gated by `TTCTL_E2E=1` and never run in CI (no live
+credentials in CI). Validation happens locally; the PR description must
+include a transcript or screenshot of the passing E2E run.
+
+### Code-review checklist
+
+PRs touching any of the following must explicitly state in the PR body
+whether this rule was triggered and, if so, how it was satisfied (E2E
+test path + transcript):
+
+- `packages/core/src/auth.ts`
+- Any file under `packages/core/src/services/profile/` (the
+  talent-profile domain services — e.g. `services/profile/basic/index.ts`
+  for `UPDATE_BASIC_INFO`)
+- Any new GraphQL operation — query, mutation, or subscription — whose
+  document was hand-authored rather than generated from a live capture
+
+If the rule was NOT triggered (e.g. the change touches only types,
+refactors without altering wire format, or otherwise does not introduce
+an inferred contract), state that explicitly. Silence is not
+satisfaction.
+
 ## Auth Model
 
 TTCtl uses a session bearer **token** (no cookies, no API keys), stored
