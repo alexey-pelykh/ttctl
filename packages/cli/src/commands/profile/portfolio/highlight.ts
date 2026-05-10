@@ -3,6 +3,7 @@
 
 import { profile } from "@ttctl/core";
 
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handlePortfolioError } from "./add.js";
 import { loadAuthTokenOrExit } from "./shared.js";
@@ -31,9 +32,10 @@ export async function runProfilePortfolioHighlight(
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  if (options.output === "table") {
-    process.stdout.write(`id\thighlight\n${result.id}\t${result.highlight ? "true" : "false"}\n`);
+  if (options.output === "yaml") {
+    process.stdout.write(`${formatYaml(result)}\n`);
     return;
   }
+  // pretty — show-shape command, curated confirmation
   process.stdout.write(`Portfolio item ${result.id} highlight ${result.highlight ? "enabled" : "cleared"}.\n`);
 }

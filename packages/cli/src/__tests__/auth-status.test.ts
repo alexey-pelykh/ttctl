@@ -30,7 +30,7 @@ import type { AuthStatusResult } from "@ttctl/core";
 import {
   exitCodeForAuthStatus,
   formatAuthStatusOutput,
-  formatAuthStatusTable,
+  formatAuthStatusPretty,
   runAuthStatus,
 } from "../commands/auth/status.js";
 
@@ -80,32 +80,32 @@ describe("exitCodeForAuthStatus", () => {
   });
 });
 
-describe("formatAuthStatusTable", () => {
+describe("formatAuthStatusPretty", () => {
   it("formats valid as `Signed in as <email>`", () => {
-    expect(formatAuthStatusTable({ status: "valid", email: "user@example.com" })).toBe("Signed in as user@example.com");
+    expect(formatAuthStatusPretty({ status: "valid", email: "user@example.com" })).toBe("Signed in as user@example.com");
   });
   it("formats no-session with sign-in instructions", () => {
-    expect(formatAuthStatusTable({ status: "invalid", reason: "no-session" })).toBe(
+    expect(formatAuthStatusPretty({ status: "invalid", reason: "no-session" })).toBe(
       "No session found. Run `ttctl auth signin`.",
     );
   });
   it("formats session-expired with sign-in instructions", () => {
-    expect(formatAuthStatusTable({ status: "invalid", reason: "session-expired" })).toBe(
+    expect(formatAuthStatusPretty({ status: "invalid", reason: "session-expired" })).toBe(
       "Session expired. Run `ttctl auth signin`.",
     );
   });
   it("formats no-email-in-response as session-expired (collapses to same UX)", () => {
-    expect(formatAuthStatusTable({ status: "invalid", reason: "no-email-in-response" })).toBe(
+    expect(formatAuthStatusPretty({ status: "invalid", reason: "no-email-in-response" })).toBe(
       "Session expired. Run `ttctl auth signin`.",
     );
   });
   it("formats unexpected-status as session-expired (collapses to same UX)", () => {
-    expect(formatAuthStatusTable({ status: "invalid", reason: "unexpected-status" })).toBe(
+    expect(formatAuthStatusPretty({ status: "invalid", reason: "unexpected-status" })).toBe(
       "Session expired. Run `ttctl auth signin`.",
     );
   });
   it("formats unreachable as `Could not reach Toptal.`", () => {
-    expect(formatAuthStatusTable({ status: "unreachable", reason: "ECONNREFUSED" })).toBe("Could not reach Toptal.");
+    expect(formatAuthStatusPretty({ status: "unreachable", reason: "ECONNREFUSED" })).toBe("Could not reach Toptal.");
   });
 });
 
@@ -122,8 +122,13 @@ describe("formatAuthStatusOutput", () => {
     const out = formatAuthStatusOutput({ status: "unreachable", reason: "ECONNREFUSED" }, "json");
     expect(JSON.parse(out)).toEqual({ status: "unreachable", reason: "ECONNREFUSED" });
   });
-  it("emits table format when output is `table`", () => {
-    expect(formatAuthStatusOutput({ status: "valid", email: "u@e.com" }, "table")).toBe("Signed in as u@e.com");
+  it("emits pretty format when output is `pretty`", () => {
+    expect(formatAuthStatusOutput({ status: "valid", email: "u@e.com" }, "pretty")).toBe("Signed in as u@e.com");
+  });
+  it("emits yaml format when output is `yaml`", () => {
+    const out = formatAuthStatusOutput({ status: "valid", email: "u@e.com" }, "yaml");
+    expect(out).toContain("status: valid");
+    expect(out).toContain("email: u@e.com");
   });
 });
 
@@ -142,7 +147,7 @@ describe("runAuthStatus", () => {
 
   async function runAndCapture(
     result: AuthStatusResult,
-    output: "table" | "json",
+    output: "pretty" | "json",
   ): Promise<{ stdout: string[]; exitCode: number }> {
     mockedFetchStatus.mockResolvedValue(result);
     const stdout = captureStdout();
@@ -157,25 +162,25 @@ describe("runAuthStatus", () => {
   }
 
   it("exit-path 1: valid → exit 0 + `Signed in as <email>`", async () => {
-    const { stdout, exitCode } = await runAndCapture({ status: "valid", email: "user@example.com" }, "table");
+    const { stdout, exitCode } = await runAndCapture({ status: "valid", email: "user@example.com" }, "pretty");
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toBe("Signed in as user@example.com\n");
   });
 
   it("exit-path 2: invalid (no session) → exit 1 + sign-in message", async () => {
-    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "no-session" }, "table");
+    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "no-session" }, "pretty");
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("No session found. Run `ttctl auth signin`.\n");
   });
 
   it("exit-path 2: invalid (session-expired) → exit 1 + expired message", async () => {
-    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "session-expired" }, "table");
+    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "session-expired" }, "pretty");
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("Session expired. Run `ttctl auth signin`.\n");
   });
 
   it("exit-path 3: unreachable → exit 2 + unreachable message", async () => {
-    const { stdout, exitCode } = await runAndCapture({ status: "unreachable", reason: "ECONNREFUSED" }, "table");
+    const { stdout, exitCode } = await runAndCapture({ status: "unreachable", reason: "ECONNREFUSED" }, "pretty");
     expect(exitCode).toBe(2);
     expect(stdout.join("")).toBe("Could not reach Toptal.\n");
   });
@@ -201,7 +206,7 @@ describe("runAuthStatus", () => {
     captureStdout();
     captureExit();
     try {
-      await runAuthStatus({ output: "table" });
+      await runAuthStatus({ output: "pretty" });
     } catch (err) {
       if (!(err instanceof ExitInvoked)) throw err;
     }
@@ -214,7 +219,7 @@ describe("runAuthStatus", () => {
       config: { auth: { credentials: "op://Personal/ttctl" } },
       path: "/cwd/.ttctl.yaml",
     });
-    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "no-session" }, "table");
+    const { stdout, exitCode } = await runAndCapture({ status: "invalid", reason: "no-session" }, "pretty");
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toContain("No session found");
     expect(mockedFetchStatus).toHaveBeenCalledWith(null);
@@ -229,7 +234,7 @@ describe("runAuthStatus", () => {
     const stdout = captureStdout();
     const exit = captureExit();
     try {
-      await runAuthStatus({ output: "table" });
+      await runAuthStatus({ output: "pretty" });
     } catch (err) {
       if (!(err instanceof ExitInvoked)) throw err;
     }

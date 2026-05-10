@@ -30,7 +30,7 @@ export async function runProfileExternalCustomRequirementsShow(format: OutputFor
   }
 
   emitResult(result, format, {
-    text: formatCustomRequirementsText,
+    pretty: formatCustomRequirementsText,
     table: formatCustomRequirementsTable,
   });
 }

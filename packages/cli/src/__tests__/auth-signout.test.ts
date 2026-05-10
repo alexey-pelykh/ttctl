@@ -39,7 +39,7 @@ import { AuthTokenPersistError, ConfigError, clearAuthToken, resolveConfig } fro
 import {
   exitCodeForSignOutResult,
   formatSignOutOutput,
-  formatSignOutTable,
+  formatSignOutPretty,
   runAuthSignOut,
 } from "../commands/auth/signout.js";
 
@@ -78,17 +78,17 @@ function captureStreams(): { stdout: string[]; stderr: string[] } {
   return captured;
 }
 
-describe("formatSignOutTable", () => {
+describe("formatSignOutPretty", () => {
   it("renders signed-out (removed=true) as `Signed out.`", () => {
-    expect(formatSignOutTable({ status: "signed-out", removed: true, path: "/p" })).toBe("Signed out.");
+    expect(formatSignOutPretty({ status: "signed-out", removed: true, path: "/p" })).toBe("Signed out.");
   });
 
   it("renders signed-out (removed=false, no token present) ALSO as `Signed out.` (idempotent UX)", () => {
-    expect(formatSignOutTable({ status: "signed-out", removed: false, path: "/p" })).toBe("Signed out.");
+    expect(formatSignOutPretty({ status: "signed-out", removed: false, path: "/p" })).toBe("Signed out.");
   });
 
   it("renders error as `Sign-out failed: <message>`", () => {
-    expect(formatSignOutTable({ status: "error", message: "EACCES: permission denied" })).toBe(
+    expect(formatSignOutPretty({ status: "error", message: "EACCES: permission denied" })).toBe(
       "Sign-out failed: EACCES: permission denied",
     );
   });
@@ -110,8 +110,14 @@ describe("formatSignOutOutput", () => {
     expect(JSON.parse(out)).toEqual({ status: "error", message: "boom" });
   });
 
-  it("emits table when output=table", () => {
-    expect(formatSignOutOutput({ status: "signed-out", removed: true, path: "/p" }, "table")).toBe("Signed out.");
+  it("emits pretty when output=pretty", () => {
+    expect(formatSignOutOutput({ status: "signed-out", removed: true, path: "/p" }, "pretty")).toBe("Signed out.");
+  });
+  it("emits yaml when output=yaml", () => {
+    const out = formatSignOutOutput({ status: "signed-out", removed: true, path: "/p" }, "yaml");
+    expect(out).toContain("status: signed-out");
+    expect(out).toContain("removed: true");
+    expect(out).toContain("path: /p");
   });
 });
 
@@ -137,7 +143,7 @@ describe("runAuthSignOut", () => {
     vi.restoreAllMocks();
   });
 
-  async function invoke(output: "table" | "json"): Promise<{ stdout: string[]; stderr: string[]; exitCode: number }> {
+  async function invoke(output: "pretty" | "json"): Promise<{ stdout: string[]; stderr: string[]; exitCode: number }> {
     const streams = captureStreams();
     const exit = captureExit();
     try {
@@ -156,7 +162,7 @@ describe("runAuthSignOut", () => {
     });
     mockedClearAuthToken.mockResolvedValue(undefined);
 
-    const { stdout, stderr, exitCode } = await invoke("table");
+    const { stdout, stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toBe("Signed out.\n");
@@ -207,7 +213,7 @@ describe("runAuthSignOut", () => {
       new AuthTokenPersistError("Config file at /home/u/.ttctl.yaml was modified concurrently", "/home/u/.ttctl.yaml"),
     );
 
-    const { stdout, stderr, exitCode } = await invoke("table");
+    const { stdout, stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
@@ -222,7 +228,7 @@ describe("runAuthSignOut", () => {
       );
     });
 
-    const { stdout, stderr, exitCode } = await invoke("table");
+    const { stdout, stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");

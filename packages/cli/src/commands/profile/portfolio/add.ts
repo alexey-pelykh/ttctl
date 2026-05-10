@@ -5,6 +5,7 @@ import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
 import { FreeTextError, resolveFreeText } from "../../../lib/freetext.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "./shared.js";
 
@@ -104,19 +105,13 @@ export function emitListResult(
     process.stdout.write(`${JSON.stringify(items)}\n`);
     return;
   }
-  if (format === "table") {
-    const rows = items.map((it) => `${it.id}\t${it.title ?? ""}\t${it.highlight ? "★" : ""}\t${it.link ?? ""}`);
-    process.stdout.write(`${successMessage}\n${["id\ttitle\thighlight\tlink", ...rows].join("\n")}\n`);
+  if (format === "yaml") {
+    process.stdout.write(`${successMessage}\n${formatYaml(items)}\n`);
     return;
   }
-  // text — readable summary
-  const lines: string[] = [successMessage];
-  for (const it of items) {
-    const star = it.highlight ? " ★" : "";
-    lines.push(`  ${it.id}${star} ${it.title ?? "(untitled)"}`);
-    if (it.link !== null) lines.push(`    ${it.link}`);
-  }
-  process.stdout.write(`${lines.join("\n")}\n`);
+  // pretty — list-shape verb, default to table layout per the #126 shape dispatch
+  const rows = items.map((it) => `${it.id}\t${it.title ?? ""}\t${it.highlight ? "★" : ""}\t${it.link ?? ""}`);
+  process.stdout.write(`${successMessage}\n${["id\ttitle\thighlight\tlink", ...rows].join("\n")}\n`);
 }
 
 export { handlePortfolioError };

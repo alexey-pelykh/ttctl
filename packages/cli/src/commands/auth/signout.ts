@@ -4,16 +4,17 @@
 import { AuthTokenPersistError, ConfigError, clearAuthToken } from "@ttctl/core";
 
 import { resolveConfigForCli } from "../../lib/config-context.js";
+import { formatYaml } from "../../lib/output.js";
+import type { OutputFormat } from "../../lib/output.js";
 
 /**
- * Output format for `ttctl auth signout`. Mirrors the rest of the auth
- * subcommand tree — `table` is the human-readable default, `json` is the
- * machine-readable shape for scripting.
+ * Output format for `ttctl auth signout`. Aligned with the cross-CLI
+ * `OutputFormat` post-#126: `pretty` (default) is the human-readable
+ * confirmation, `json` and `yaml` emit the machine-readable shape for
+ * scripting.
  */
-export type AuthSignOutOutput = "table" | "json";
-
 export interface AuthSignOutOptions {
-  output: AuthSignOutOutput;
+  output: OutputFormat;
 }
 
 /**
@@ -35,12 +36,13 @@ export type SignOutResult =
   | { status: "error"; message: string };
 
 /**
- * Render a `SignOutResult` for the table format. The success line is "Signed
- * out." regardless of whether a token was removed — the user-facing semantics
- * ("you are no longer signed in") are identical, and the AC explicitly calls
- * out idempotency. Errors surface verbatim.
+ * Render a `SignOutResult` for the human-readable `pretty` format. The
+ * success line is "Signed out." regardless of whether a token was
+ * removed — the user-facing semantics ("you are no longer signed in")
+ * are identical, and the AC explicitly calls out idempotency. Errors
+ * surface verbatim.
  */
-export function formatSignOutTable(result: SignOutResult): string {
+export function formatSignOutPretty(result: SignOutResult): string {
   if (result.status === "signed-out") {
     return "Signed out.";
   }
@@ -48,15 +50,19 @@ export function formatSignOutTable(result: SignOutResult): string {
 }
 
 /**
- * Format a `SignOutResult` for the requested output mode. JSON shape mirrors
- * the discriminated union exactly — `removed` and `path` on success, `message`
- * on error — so scripts can branch on `removed` to detect the no-op case.
+ * Format a `SignOutResult` for the requested output mode. JSON and YAML
+ * shapes mirror the discriminated union exactly — `removed` and `path`
+ * on success, `message` on error — so scripts can branch on `removed`
+ * to detect the no-op case.
  */
-export function formatSignOutOutput(result: SignOutResult, output: AuthSignOutOutput): string {
+export function formatSignOutOutput(result: SignOutResult, output: OutputFormat): string {
   if (output === "json") {
     return JSON.stringify(result);
   }
-  return formatSignOutTable(result);
+  if (output === "yaml") {
+    return formatYaml(result);
+  }
+  return formatSignOutPretty(result);
 }
 
 /**

@@ -3,6 +3,7 @@
 
 import { profile } from "@ttctl/core";
 
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handlePortfolioError } from "./add.js";
 import { loadAuthTokenOrExit } from "./shared.js";
@@ -65,12 +66,11 @@ function emitCoverResult(result: profile.portfolio.UploadPortfolioCoverResult, f
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  if (format === "table") {
-    process.stdout.write(
-      `field\tvalue\ncoverImageCacheName\t${result.coverImageCacheName ?? ""}\ncoverImageUrl\t${result.coverImageUrl ?? ""}\n`,
-    );
+  if (format === "yaml") {
+    process.stdout.write(`${formatYaml(result)}\n`);
     return;
   }
+  // pretty — show-shape command, curated confirmation + echoed values
   const lines: string[] = ["Cover image uploaded."];
   if (result.coverImageCacheName !== null) lines.push(`  cacheName: ${result.coverImageCacheName}`);
   if (result.coverImageUrl !== null) lines.push(`  url: ${result.coverImageUrl}`);
@@ -82,12 +82,11 @@ function emitFileResult(result: profile.portfolio.UploadPortfolioFileResult, for
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  if (format === "table") {
-    process.stdout.write(
-      `field\tvalue\nfileCacheName\t${result.fileCacheName ?? ""}\nfileUrl\t${result.fileUrl ?? ""}\n`,
-    );
+  if (format === "yaml") {
+    process.stdout.write(`${formatYaml(result)}\n`);
     return;
   }
+  // pretty — show-shape command, curated confirmation + echoed values
   const lines: string[] = ["Portfolio file uploaded."];
   if (result.fileCacheName !== null) lines.push(`  cacheName: ${result.fileCacheName}`);
   if (result.fileUrl !== null) lines.push(`  url: ${result.fileUrl}`);

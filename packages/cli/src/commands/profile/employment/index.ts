@@ -49,7 +49,7 @@ export function buildProfileEmploymentCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: AddOptions) => {
       await runAdd(options);
@@ -74,7 +74,7 @@ export function buildProfileEmploymentCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: UpdateOptions) => {
       await runUpdate(id, options);
@@ -95,7 +95,7 @@ export function buildProfileEmploymentCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runShow(id, options.output);
@@ -118,7 +118,7 @@ export function buildProfileEmploymentCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (query: string, options: { limit: string; output: OutputFormat }) => {
       await runEmployerAutocomplete(query, options);
@@ -169,7 +169,7 @@ async function runAdd(options: AddOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile employment add", err);
   }
-  emitResult(result, options.output, { text: formatEmploymentText, table: formatEmploymentTable });
+  emitResult(result, options.output, { pretty: formatEmploymentText, table: formatEmploymentTable });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -227,7 +227,7 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile employment update", err);
   }
-  emitResult(result, options.output, { text: formatEmploymentText, table: formatEmploymentTable });
+  emitResult(result, options.output, { pretty: formatEmploymentText, table: formatEmploymentTable });
 }
 
 async function runRemove(id: string): Promise<void> {
@@ -249,7 +249,7 @@ async function runShow(id: string, format: OutputFormat): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile employment show", err);
   }
-  emitResult(result, format, { text: formatEmploymentText, table: formatEmploymentTable });
+  emitResult(result, format, { pretty: formatEmploymentText, table: formatEmploymentTable });
 }
 
 async function runHighlight(id: string, value: boolean): Promise<void> {
@@ -273,7 +273,7 @@ async function runEmployerAutocomplete(query: string, options: { limit: string; 
     presentSubDomainError("profile employment employer-autocomplete", err);
   }
   emitResult(suggestions, options.output, {
-    text: formatEmployersText,
+    pretty: formatEmployersText,
     table: formatEmployersTable,
   });
 }

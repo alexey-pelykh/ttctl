@@ -32,8 +32,8 @@ describe("formatUpdateResult (external update)", () => {
     notice: "Saved.",
   };
 
-  it("renders text mode with confirmation + non-null fields", () => {
-    const out = formatUpdateResult(sample, "text");
+  it("renders pretty mode with confirmation + non-null fields", () => {
+    const out = formatUpdateResult(sample, "pretty");
     expect(out).toContain("External profiles updated.");
     expect(out).toContain("linkedin: https://linkedin.com/in/ada");
     expect(out).toContain("github: https://github.com/ada");
@@ -46,13 +46,12 @@ describe("formatUpdateResult (external update)", () => {
     expect(JSON.parse(out)).toEqual(sample);
   });
 
-  it("renders table mode as key\\tvalue with empty cells for null fields", () => {
-    const out = formatUpdateResult(sample, "table");
-    const lines = out.split("\n");
-    expect(lines).toContain("status\tupdated");
-    expect(lines).toContain("linkedin\thttps://linkedin.com/in/ada");
-    expect(lines).toContain("website\t");
-    expect(lines).toContain("notice\tSaved.");
+  it("renders yaml mode as block-style YAML with the typed payload", () => {
+    const out = formatUpdateResult(sample, "yaml");
+    expect(out).toContain("notice: Saved.");
+    expect(out).toContain("linkedin: https://linkedin.com/in/ada");
+    expect(out).toContain("github: https://github.com/ada");
+    expect(out).toContain("website: null");
   });
 });
 
@@ -93,8 +92,8 @@ describe("formatSetResult (custom requirements set)", () => {
     notice: null,
   };
 
-  it("renders text mode with the post-update boolean trio", () => {
-    const out = formatSetResult(sample, "text");
+  it("renders pretty mode with the post-update boolean trio", () => {
+    const out = formatSetResult(sample, "pretty");
     expect(out).toContain("Custom requirements updated.");
     expect(out).toContain("background-check:    yes");
     expect(out).toContain("drug-test:           no");

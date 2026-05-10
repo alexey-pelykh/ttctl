@@ -13,17 +13,17 @@ import {
 import type { ConfigErrorCode, SignInErrorCode } from "@ttctl/core";
 
 import { resolveConfigForCli } from "../../lib/config-context.js";
+import { formatYaml } from "../../lib/output.js";
+import type { OutputFormat } from "../../lib/output.js";
 
 /**
- * Output format for `ttctl auth signin`. Mirrors `auth status` — `table` is
- * the human-readable default, `json` emits the `SignInResult` discriminated
- * union for scripting. Other formats (csv, yaml) are deferred to the global
- * output-formatter issue, matching the same scope boundary as `auth status`.
+ * Output format for `ttctl auth signin`. Aligned with the cross-CLI
+ * `OutputFormat` post-#126: `pretty` (default) is the human-readable
+ * confirmation line, `json` emits the `SignInResult` discriminated
+ * union for scripting, `yaml` emits the same shape as block-style YAML.
  */
-export type AuthSignInOutput = "table" | "json";
-
 export interface AuthSignInOptions {
-  output: AuthSignInOutput;
+  output: OutputFormat;
 }
 
 /**
@@ -69,12 +69,13 @@ export function exitCodeForSignInResult(result: SignInResult): number {
 }
 
 /**
- * Render a `SignInResult` for the table format. Success collapses to a
- * single-line confirmation; failures surface the underlying message verbatim
- * (the upstream errors already carry actionable hints — `OnePasswordError`
- * names the install URL, `ConfigError` names the missing path).
+ * Render a `SignInResult` for the human-readable `pretty` format.
+ * Success collapses to a single-line confirmation; failures surface the
+ * underlying message verbatim (the upstream errors already carry
+ * actionable hints — `OnePasswordError` names the install URL,
+ * `ConfigError` names the missing path).
  */
-export function formatSignInTable(result: SignInResult): string {
+export function formatSignInPretty(result: SignInResult): string {
   if (result.status === "signed-in") {
     return `Signed in as ${result.email}`;
   }
@@ -82,16 +83,19 @@ export function formatSignInTable(result: SignInResult): string {
 }
 
 /**
- * Format a `SignInResult` for the requested output mode. The JSON shape
- * mirrors the discriminated union 1:1 — `email` only on success, `code` and
- * `message` only on error — so callers can consume the same union structure
- * over the wire.
+ * Format a `SignInResult` for the requested output mode. The JSON and
+ * YAML shapes mirror the discriminated union 1:1 — `email` only on
+ * success, `code` and `message` only on error — so callers can consume
+ * the same union structure over the wire.
  */
-export function formatSignInOutput(result: SignInResult, output: AuthSignInOutput): string {
+export function formatSignInOutput(result: SignInResult, output: OutputFormat): string {
   if (output === "json") {
     return JSON.stringify(result);
   }
-  return formatSignInTable(result);
+  if (output === "yaml") {
+    return formatYaml(result);
+  }
+  return formatSignInPretty(result);
 }
 
 /**

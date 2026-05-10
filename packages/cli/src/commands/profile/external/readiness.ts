@@ -29,7 +29,7 @@ export async function runProfileExternalReadiness(format: OutputFormat): Promise
   }
 
   emitResult(result, format, {
-    text: formatReadinessText,
+    pretty: formatReadinessText,
     table: formatReadinessTable,
   });
 }

@@ -67,7 +67,7 @@ import {
 import {
   exitCodeForSignInResult,
   formatSignInOutput,
-  formatSignInTable,
+  formatSignInPretty,
   runAuthSignIn,
 } from "../commands/auth/signin.js";
 import type { SignInResult } from "../commands/auth/signin.js";
@@ -150,14 +150,14 @@ describe("exitCodeForSignInResult", () => {
   });
 });
 
-describe("formatSignInTable", () => {
+describe("formatSignInPretty", () => {
   it("formats signed-in as `Signed in as <email>`", () => {
-    expect(formatSignInTable({ status: "signed-in", email: "ada@example.com" })).toBe("Signed in as ada@example.com");
+    expect(formatSignInPretty({ status: "signed-in", email: "ada@example.com" })).toBe("Signed in as ada@example.com");
   });
 
   it("formats error as `Sign-in failed (<code>): <message>`", () => {
     expect(
-      formatSignInTable({ status: "error", code: "INVALID_CREDENTIALS", message: "Invalid email or password" }),
+      formatSignInPretty({ status: "error", code: "INVALID_CREDENTIALS", message: "Invalid email or password" }),
     ).toBe("Sign-in failed (INVALID_CREDENTIALS): Invalid email or password");
   });
 });
@@ -173,8 +173,13 @@ describe("formatSignInOutput", () => {
     expect(JSON.parse(out)).toEqual({ status: "error", code: "MFA_REQUIRED", message: "MFA needed" });
   });
 
-  it("emits table format when output is `table`", () => {
-    expect(formatSignInOutput({ status: "signed-in", email: "u@e.com" }, "table")).toBe("Signed in as u@e.com");
+  it("emits pretty format when output is `pretty`", () => {
+    expect(formatSignInOutput({ status: "signed-in", email: "u@e.com" }, "pretty")).toBe("Signed in as u@e.com");
+  });
+  it("emits yaml format when output is `yaml`", () => {
+    const out = formatSignInOutput({ status: "signed-in", email: "u@e.com" }, "yaml");
+    expect(out).toContain("status: signed-in");
+    expect(out).toContain("email: u@e.com");
   });
 });
 
@@ -189,7 +194,7 @@ describe("runAuthSignIn", () => {
     vi.restoreAllMocks();
   });
 
-  async function invoke(output: "table" | "json"): Promise<{ stdout: string[]; stderr: string[]; exitCode: number }> {
+  async function invoke(output: "pretty" | "json"): Promise<{ stdout: string[]; stderr: string[]; exitCode: number }> {
     const streams = captureStreams();
     const exit = captureExit();
     try {
@@ -210,7 +215,7 @@ describe("runAuthSignIn", () => {
     mockedSignIn.mockResolvedValue({ token: "user_abc_123" });
     mockedPersistAuthToken.mockResolvedValue(undefined);
 
-    const { stdout, stderr, exitCode } = await invoke("table");
+    const { stdout, stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toBe("Signed in as ada@example.com\n");
@@ -234,7 +239,7 @@ describe("runAuthSignIn", () => {
     mockedSignIn.mockResolvedValue({ token: "user_xxx_yyy" });
     mockedPersistAuthToken.mockResolvedValue(undefined);
 
-    const { exitCode } = await invoke("table");
+    const { exitCode } = await invoke("pretty");
     expect(exitCode).toBe(0);
     expect(mockedResolveCredentials).toHaveBeenCalledWith({ username: "ada@example.com", password: "hunter2" });
   });
@@ -260,7 +265,7 @@ describe("runAuthSignIn", () => {
       path: "/cwd/.ttctl.yaml",
     });
 
-    const { stderr, exitCode } = await invoke("table");
+    const { stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toMatch(/NO_CREDENTIALS/);
@@ -278,7 +283,7 @@ describe("runAuthSignIn", () => {
       );
     });
 
-    const { stdout, stderr, exitCode } = await invoke("table");
+    const { stdout, stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stdout.join("")).toBe("");
@@ -300,7 +305,7 @@ describe("runAuthSignIn", () => {
       );
     });
 
-    const { stderr, exitCode } = await invoke("table");
+    const { stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toContain("ONEPASSWORD_ERROR");
@@ -317,7 +322,7 @@ describe("runAuthSignIn", () => {
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "wrong" });
     mockedSignIn.mockRejectedValue(new SignInError("INVALID_CREDENTIALS", "Invalid email or password"));
 
-    const { stderr, exitCode } = await invoke("table");
+    const { stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toBe("Sign-in failed (INVALID_CREDENTIALS): Invalid email or password\n");
@@ -332,7 +337,7 @@ describe("runAuthSignIn", () => {
     mockedResolveCredentials.mockReturnValue({ email: "ada@example.com", password: "hunter2" });
     mockedSignIn.mockRejectedValue(new SignInError("NETWORK_ERROR", "Sign-in request failed: ECONNREFUSED"));
 
-    const { stderr, exitCode } = await invoke("table");
+    const { stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(2);
     expect(stderr.join("")).toContain("NETWORK_ERROR");
@@ -354,7 +359,7 @@ describe("runAuthSignIn", () => {
       ),
     );
 
-    const { stderr, exitCode } = await invoke("table");
+    const { stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toContain("SAVE_FAILED");
@@ -370,7 +375,7 @@ describe("runAuthSignIn", () => {
       throw "weird non-error";
     });
 
-    const { stderr, exitCode } = await invoke("table");
+    const { stderr, exitCode } = await invoke("pretty");
 
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toContain("UNKNOWN");

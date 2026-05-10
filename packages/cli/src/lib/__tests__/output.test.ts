@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse as yamlParse } from "yaml";
 
-import { OUTPUT_FORMATS, TEXT_FALLBACK_HINT, emitResult, formatResult, formatYaml } from "../output.js";
+import { OUTPUT_FORMATS, PRETTY_FALLBACK_HINT, emitResult, formatResult, formatYaml } from "../output.js";
 import type { OutputFormat } from "../output.js";
 
 interface Sample {
@@ -34,14 +34,19 @@ function captureStderr(): { lines: string[] } {
 }
 
 describe("OUTPUT_FORMATS", () => {
-  it("enumerates the four valid formats in declared order (AC: --output={text,json,table,yaml})", () => {
-    expect(OUTPUT_FORMATS).toEqual(["text", "json", "table", "yaml"]);
+  it("enumerates the three valid formats in declared order (AC #126: --output={pretty,json,yaml})", () => {
+    expect(OUTPUT_FORMATS).toEqual(["pretty", "json", "yaml"]);
   });
 
   it("element types are assignable to OutputFormat", () => {
     // Compile-time check: OUTPUT_FORMATS is `readonly OutputFormat[]`.
-    const sample: OutputFormat = OUTPUT_FORMATS[0] ?? "text";
-    expect(["text", "json", "table", "yaml"]).toContain(sample);
+    const sample: OutputFormat = OUTPUT_FORMATS[0] ?? "pretty";
+    expect(["pretty", "json", "yaml"]).toContain(sample);
+  });
+
+  it("does NOT include the dropped pre-#126 names `text` or `table`", () => {
+    expect(OUTPUT_FORMATS).not.toContain("text");
+    expect(OUTPUT_FORMATS).not.toContain("table");
   });
 });
 
@@ -58,13 +63,13 @@ describe("formatResult — json branch", () => {
     expect(result.output).not.toContain(", ");
   });
 
-  it("ignores the text/table formatters when format is json", () => {
+  it("ignores the pretty/table formatters when format is json", () => {
     const result = formatResult(SAMPLE, "json", {
-      text: () => "TEXT_OUTPUT",
+      pretty: () => "PRETTY_OUTPUT",
       table: () => "TABLE_OUTPUT",
     });
     expect(result.output).toBe(JSON.stringify(SAMPLE));
-    expect(result.output).not.toContain("TEXT_OUTPUT");
+    expect(result.output).not.toContain("PRETTY_OUTPUT");
     expect(result.output).not.toContain("TABLE_OUTPUT");
   });
 
@@ -74,72 +79,91 @@ describe("formatResult — json branch", () => {
   });
 });
 
-describe("formatResult — text branch", () => {
-  it("uses the caller-provided text formatter when present", () => {
-    const result = formatResult(SAMPLE, "text", {
-      text: (d) => `name=${d.name},count=${d.count.toString()}`,
+describe("formatResult — pretty branch (show-shape data)", () => {
+  it("uses the caller-provided pretty formatter when present (show shape: object)", () => {
+    const result = formatResult(SAMPLE, "pretty", {
+      pretty: (d) => `name=${d.name},count=${d.count.toString()}`,
     });
     expect(result.output).toBe("name=Ada,count=3");
     expect("warning" in result).toBe(false);
   });
 
-  it("falls through to pretty-printed JSON.stringify(data, null, 2) when no text formatter (AC: fall-through to JSON.stringify when text formatter absent)", () => {
-    const result = formatResult(SAMPLE, "text");
+  it("falls through to pretty-printed JSON.stringify(data, null, 2) when no formatters supplied", () => {
+    const result = formatResult(SAMPLE, "pretty");
     expect(result.output).toBe(JSON.stringify(SAMPLE, null, 2));
-    // Two-space indent characteristic.
     expect(result.output).toContain('  "name": "Ada"');
   });
 
-  it("surfaces the text-fallback warning when no text formatter is provided", () => {
-    const result = formatResult(SAMPLE, "text");
+  it("surfaces the pretty-fallback warning when no pretty/table formatter is provided", () => {
+    const result = formatResult(SAMPLE, "pretty");
     expect("warning" in result).toBe(true);
     if ("warning" in result) {
-      expect(result.warning).toBe(TEXT_FALLBACK_HINT);
+      expect(result.warning).toBe(PRETTY_FALLBACK_HINT);
     }
   });
 
-  it("does NOT surface the text-fallback warning when the caller provides a text formatter", () => {
-    const result = formatResult(SAMPLE, "text", { text: () => "explicit" });
+  it("does NOT surface the pretty-fallback warning when the caller provides a pretty formatter", () => {
+    const result = formatResult(SAMPLE, "pretty", { pretty: () => "explicit" });
     expect("warning" in result).toBe(false);
   });
-});
 
-describe("formatResult — table branch", () => {
-  it("uses the caller-provided table formatter when present", () => {
-    const result = formatResult(SAMPLE, "table", {
+  it("show-shape with both formatters prefers `pretty` (curated layout for show verbs)", () => {
+    const result = formatResult(SAMPLE, "pretty", {
+      pretty: (d) => `pretty:${d.name}`,
+      table: (d) => `table:${d.name}`,
+    });
+    // The shape dispatch picks `pretty` for show-shape data (single object).
+    expect(result.output).toBe("pretty:Ada");
+  });
+
+  it("show-shape with only `table` formatter falls back to it (no pretty available)", () => {
+    const result = formatResult(SAMPLE, "pretty", {
       table: (d) => `[table:${d.name}]`,
     });
     expect(result.output).toBe("[table:Ada]");
     expect("warning" in result).toBe(false);
   });
+});
 
-  it("falls through to the text branch when no table formatter is provided (AC: fall-through to text when table formatter absent)", () => {
-    const result = formatResult(SAMPLE, "table", {
-      text: (d) => `text-render:${d.name}`,
+describe("formatResult — pretty branch (list-shape data)", () => {
+  it("list-shape with both formatters prefers `table` (column layout for list verbs)", () => {
+    const data = [SAMPLE, SAMPLE];
+    const result = formatResult(data, "pretty", {
+      pretty: (d) => `pretty:${d.length.toString()}`,
+      table: (d) => `table:${d.length.toString()}`,
     });
-    expect(result.output).toBe("text-render:Ada");
+    // The shape dispatch picks `table` for list-shape data (array).
+    expect(result.output).toBe("table:2");
+  });
+
+  it("list-shape with only `pretty` formatter falls back to it (no table available)", () => {
+    const data = [SAMPLE];
+    const result = formatResult(data, "pretty", {
+      pretty: (d) => `pretty:${d.length.toString()}`,
+    });
+    expect(result.output).toBe("pretty:1");
     expect("warning" in result).toBe(false);
   });
 
-  it("table-without-table-or-text falls through to JSON.stringify(_, null, 2) and surfaces the text-fallback warning", () => {
-    const result = formatResult(SAMPLE, "table");
-    expect(result.output).toBe(JSON.stringify(SAMPLE, null, 2));
-    expect("warning" in result).toBe(true);
-    if ("warning" in result) {
-      expect(result.warning).toBe(TEXT_FALLBACK_HINT);
-    }
+  it("envelope-shape `{items: [...]}` is treated as list-shape", () => {
+    const data = { items: [SAMPLE, SAMPLE] };
+    const result = formatResult(data, "pretty", {
+      pretty: () => "PRETTY_BRANCH",
+      table: () => "TABLE_BRANCH",
+    });
+    expect(result.output).toBe("TABLE_BRANCH");
   });
 });
 
 describe("formatResult — default format", () => {
-  it("defaults to text when format is unspecified (AC: default to text when format unspecified)", () => {
+  it("defaults to pretty when format is unspecified (AC #126: default to pretty)", () => {
     const result = formatResult(SAMPLE, undefined, {
-      text: () => "DEFAULT_TEXT",
+      pretty: () => "DEFAULT_PRETTY",
     });
-    expect(result.output).toBe("DEFAULT_TEXT");
+    expect(result.output).toBe("DEFAULT_PRETTY");
   });
 
-  it("defaults to text and falls through to JSON when no formatter is provided either", () => {
+  it("defaults to pretty and falls through to JSON when no formatter is provided either", () => {
     const result = formatResult(SAMPLE);
     expect(result.output).toBe(JSON.stringify(SAMPLE, null, 2));
     expect("warning" in result).toBe(true);
@@ -160,39 +184,30 @@ describe("formatResult — empty-state wrapper (#122)", () => {
     expect(result.output).toBe("[]");
   });
 
-  it("emits prose+CTA for text when input is empty and the command is registered", () => {
-    const result = formatResult([] as Sample[], "text", { empty: { command: "profile.skills.list" } });
+  it("emits prose+CTA for pretty when input is empty and the command is registered", () => {
+    const result = formatResult([] as Sample[], "pretty", { empty: { command: "profile.skills.list" } });
     expect(result.output).toBe("No skills found. Add one with: ttctl profile skills add <name>");
     expect("warning" in result).toBe(false);
   });
 
-  it("emits prose+CTA for table (NOT a header-only grid) — same line as text branch", () => {
-    const textResult = formatResult([] as Sample[], "text", { empty: { command: "profile.portfolio.list" } });
-    const tableResult = formatResult([] as Sample[], "table", { empty: { command: "profile.portfolio.list" } });
-    expect(tableResult.output).toBe(textResult.output);
-    expect(tableResult.output).toBe("No portfolio items found. Add one with: ttctl profile portfolio add");
-    // Defensive: the table branch must NOT render a `cli-table3` header
-    // grid — that's the docker-style "looks broken" pattern the
-    // empty-state wrapper exists to replace.
-    expect(tableResult.output).not.toContain("┌");
-    expect(tableResult.output).not.toContain("│");
-  });
-
   it("falls back to the generic 'No items found.' line for unregistered command paths", () => {
-    const result = formatResult([] as Sample[], "text", { empty: { command: "profile.unknown.list" } });
+    const result = formatResult([] as Sample[], "pretty", { empty: { command: "profile.unknown.list" } });
     expect(result.output).toBe("No items found.");
   });
 
   it("does NOT fire the wrapper when `empty` option is absent (existing behavior preserved)", () => {
-    // Caller provides a text formatter; wrapper would short-circuit if
+    // Caller provides a pretty formatter; wrapper would short-circuit if
     // it fired, but without `empty:` the formatter MUST run.
-    const result = formatResult([] as Sample[], "text", { text: () => "EXPLICIT_FORMATTER" });
+    // List-shape data (empty array) without empty wrapper still picks the
+    // table formatter first per shape dispatch — provide only pretty here
+    // to force the show-style fallback.
+    const result = formatResult([] as Sample[], "pretty", { pretty: () => "EXPLICIT_FORMATTER" });
     expect(result.output).toBe("EXPLICIT_FORMATTER");
   });
 
-  it("does NOT fire the wrapper for non-empty arrays (delegates to the per-format formatter)", () => {
-    const result = formatResult([SAMPLE], "text", {
-      text: (data) => `count=${data.length.toString()}`,
+  it("does NOT fire the wrapper for non-empty arrays (delegates to the table formatter via shape dispatch)", () => {
+    const result = formatResult([SAMPLE], "pretty", {
+      table: (data) => `count=${data.length.toString()}`,
       empty: { command: "profile.skills.list" },
     });
     expect(result.output).toBe("count=1");
@@ -200,27 +215,27 @@ describe("formatResult — empty-state wrapper (#122)", () => {
 
   it("does NOT fire the wrapper for show-shape payloads (single object, no `items` field)", () => {
     // SAMPLE is `{name, count, tags}` — not an empty collection. The
-    // wrapper must let the regular text formatter run.
-    const result = formatResult(SAMPLE, "text", {
-      text: (data) => `name=${data.name}`,
+    // wrapper must let the regular pretty formatter run.
+    const result = formatResult(SAMPLE, "pretty", {
+      pretty: (data) => `name=${data.name}`,
       empty: { command: "profile.skills.list" },
     });
     expect(result.output).toBe("name=Ada");
   });
 
-  it("the wrapper short-circuits BEFORE calling the per-format text formatter", () => {
-    const textSpy = vi.fn(() => "FORMATTER_CALLED");
-    const result = formatResult([] as Sample[], "text", {
-      text: textSpy,
+  it("the wrapper short-circuits BEFORE calling the per-format pretty formatter", () => {
+    const prettySpy = vi.fn(() => "FORMATTER_CALLED");
+    const result = formatResult([] as Sample[], "pretty", {
+      pretty: prettySpy,
       empty: { command: "profile.skills.list" },
     });
-    expect(textSpy).not.toHaveBeenCalled();
+    expect(prettySpy).not.toHaveBeenCalled();
     expect(result.output).not.toBe("FORMATTER_CALLED");
   });
 
   it("the wrapper short-circuits BEFORE calling the per-format table formatter", () => {
     const tableSpy = vi.fn(() => "TABLE_FORMATTER_CALLED");
-    const result = formatResult([] as Sample[], "table", {
+    const result = formatResult([] as Sample[], "pretty", {
       table: tableSpy,
       empty: { command: "profile.skills.list" },
     });
@@ -331,13 +346,13 @@ describe("formatResult — yaml branch", () => {
     expect(result.output).toMatch(/tags:\n {2}- a\n {2}- b/);
   });
 
-  it("ignores the text/table formatters when format is yaml", () => {
+  it("ignores the pretty/table formatters when format is yaml", () => {
     const result = formatResult(SAMPLE, "yaml", {
-      text: () => "TEXT_OUTPUT",
+      pretty: () => "PRETTY_OUTPUT",
       table: () => "TABLE_OUTPUT",
     });
     expect(result.output).toBe(formatYaml(SAMPLE));
-    expect(result.output).not.toContain("TEXT_OUTPUT");
+    expect(result.output).not.toContain("PRETTY_OUTPUT");
     expect(result.output).not.toContain("TABLE_OUTPUT");
   });
 
@@ -359,42 +374,26 @@ describe("emitResult", () => {
     expect(stdout.lines.join("")).toBe(`${JSON.stringify(SAMPLE)}\n`);
   });
 
-  it("writes the warning line to stderr BEFORE the stdout payload (text fall-through)", () => {
+  it("writes the warning line to stderr BEFORE the stdout payload (pretty fall-through)", () => {
     const stdout = captureStdout();
     const stderr = captureStderr();
-    emitResult(SAMPLE, "text");
-    expect(stderr.lines.join("")).toBe(`${TEXT_FALLBACK_HINT}\n`);
+    emitResult(SAMPLE, "pretty");
+    expect(stderr.lines.join("")).toBe(`${PRETTY_FALLBACK_HINT}\n`);
     expect(stdout.lines.join("")).toBe(`${JSON.stringify(SAMPLE, null, 2)}\n`);
   });
 
   it("emits no stderr line when the format/formatter combination doesn't warrant a warning", () => {
     const stdout = captureStdout();
     const stderr = captureStderr();
-    emitResult(SAMPLE, "text", { text: (d) => `T:${d.name}` });
+    emitResult(SAMPLE, "pretty", { pretty: (d) => `T:${d.name}` });
     expect(stdout.lines.join("")).toBe("T:Ada\n");
     expect(stderr.lines.join("")).toBe("");
   });
 
-  it("emits a stderr warning AND writes the JSON pretty-print to stdout for table-without-formatters", () => {
-    const stdout = captureStdout();
-    const stderr = captureStderr();
-    emitResult(SAMPLE, "table");
-    expect(stderr.lines.join("")).toBe(`${TEXT_FALLBACK_HINT}\n`);
-    expect(stdout.lines.join("")).toBe(`${JSON.stringify(SAMPLE, null, 2)}\n`);
-  });
-
-  it("emits no stderr warning when table fall-through reaches a caller-provided text formatter", () => {
-    const stdout = captureStdout();
-    const stderr = captureStderr();
-    emitResult(SAMPLE, "table", { text: (d) => `T:${d.name}` });
-    expect(stderr.lines.join("")).toBe("");
-    expect(stdout.lines.join("")).toBe("T:Ada\n");
-  });
-
-  it("defaults to text format when format is omitted", () => {
+  it("defaults to pretty format when format is omitted", () => {
     const stdout = captureStdout();
     captureStderr();
-    emitResult(SAMPLE, undefined, { text: () => "default-branch" });
+    emitResult(SAMPLE, undefined, { pretty: () => "default-branch" });
     expect(stdout.lines.join("")).toBe("default-branch\n");
   });
 
@@ -406,19 +405,11 @@ describe("emitResult", () => {
     expect(stderr.lines.join("")).toBe("");
   });
 
-  it("emits empty-state prose+CTA for text with single trailing newline (no warning)", () => {
+  it("emits empty-state prose+CTA for pretty with single trailing newline (no warning)", () => {
     const stdout = captureStdout();
     const stderr = captureStderr();
-    emitResult([] as Sample[], "text", { empty: { command: "profile.skills.list" } });
+    emitResult([] as Sample[], "pretty", { empty: { command: "profile.skills.list" } });
     expect(stdout.lines.join("")).toBe("No skills found. Add one with: ttctl profile skills add <name>\n");
-    expect(stderr.lines.join("")).toBe("");
-  });
-
-  it("emits empty-state prose+CTA for table (no header-only grid)", () => {
-    const stdout = captureStdout();
-    const stderr = captureStderr();
-    emitResult([] as Sample[], "table", { empty: { command: "profile.industries.list" } });
-    expect(stdout.lines.join("")).toBe("No industries found. Add one with: ttctl profile industries add <name>\n");
     expect(stderr.lines.join("")).toBe("");
   });
 

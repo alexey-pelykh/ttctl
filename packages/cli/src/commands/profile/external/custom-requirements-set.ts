@@ -4,6 +4,7 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, parseBooleanFlag } from "./_shared.js";
 
@@ -82,18 +83,11 @@ export function formatSetResult(result: profile.external.CustomRequirementsSetRe
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }
-  const cr = result.profile.customRequirements;
-  if (format === "table") {
-    const rows: [string, string][] = [
-      ["status", "updated"],
-      ["background-check", renderBoolean(cr.backgroundCheck)],
-      ["drug-test", renderBoolean(cr.drugTest)],
-      ["time-tracking-tools", renderBoolean(cr.timeTrackingTools)],
-    ];
-    if (result.notice !== null) rows.push(["notice", result.notice]);
-    return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
+  if (format === "yaml") {
+    return formatYaml(result);
   }
-  // text
+  // pretty — show-shape command, curated key:value layout
+  const cr = result.profile.customRequirements;
   const lines: string[] = ["Custom requirements updated."];
   lines.push(`  background-check:    ${renderBoolean(cr.backgroundCheck)}`);
   lines.push(`  drug-test:           ${renderBoolean(cr.drugTest)}`);

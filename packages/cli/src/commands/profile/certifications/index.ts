@@ -44,7 +44,7 @@ export function buildProfileCertificationsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: AddOptions) => {
       await runAdd(options);
@@ -64,7 +64,7 @@ export function buildProfileCertificationsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: UpdateOptions) => {
       await runUpdate(id, options);
@@ -85,7 +85,7 @@ export function buildProfileCertificationsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runShow(id, options.output);
@@ -140,7 +140,7 @@ async function runAdd(options: AddOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile certifications add", err);
   }
-  emitResult(result, options.output, { text: formatCertificationText, table: formatCertificationTable });
+  emitResult(result, options.output, { pretty: formatCertificationText, table: formatCertificationTable });
 }
 
 async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
@@ -174,7 +174,7 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile certifications update", err);
   }
-  emitResult(result, options.output, { text: formatCertificationText, table: formatCertificationTable });
+  emitResult(result, options.output, { pretty: formatCertificationText, table: formatCertificationTable });
 }
 
 async function runRemove(id: string): Promise<void> {
@@ -196,7 +196,7 @@ async function runShow(id: string, format: OutputFormat): Promise<void> {
   } catch (err) {
     presentSubDomainError("profile certifications show", err);
   }
-  emitResult(result, format, { text: formatCertificationText, table: formatCertificationTable });
+  emitResult(result, format, { pretty: formatCertificationText, table: formatCertificationTable });
 }
 
 async function runHighlight(id: string, value: boolean): Promise<void> {

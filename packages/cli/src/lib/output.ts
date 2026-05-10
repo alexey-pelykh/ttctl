@@ -8,11 +8,16 @@ import { emptyStateProse, isEmptyCollection } from "./empty-state-cta.js";
 /**
  * Cross-CLI output format for `show` and `list` commands.
  *
- * - `text`: human-formatted multi-line summary (default; trimmed/laid out
- *   for direct terminal reading)
- * - `json`: stable single-line JSON, suitable for piping to `jq` or `yq`
- * - `table`: rendered table (consumers typically use cli-table3) that
- *   respects terminal width
+ * - `pretty`: human-formatted layout (default; trimmed/laid out for direct
+ *   terminal reading). Internally dispatches on shape — `show` verbs render
+ *   a curated key:value layout via the caller-supplied `pretty` formatter,
+ *   `list` verbs render a column-aligned table via the caller-supplied
+ *   `table` formatter, and paragraph-bearing lists render a curated
+ *   multi-line layout (the override registry at
+ *   `lib/format-overrides.ts` carries the strategy classification; the
+ *   shape dispatch is internal — `pretty` is the only user-visible name
+ *   for the human layout).
+ * - `json`: stable single-line JSON, suitable for piping to `jq` or `yq`.
  * - `yaml`: block-style YAML rendered via `yaml.stringify` with
  *   `customTags: []` (no `!!timestamp` auto-parse on roundtrip),
  *   `aliasDuplicateObjects: false` (no `&anchor`/`*alias` noise on
@@ -27,51 +32,89 @@ import { emptyStateProse, isEmptyCollection } from "./empty-state-cta.js";
  * The JSON shape commitment is "may break across 0.x" pre-1.0 and
  * "stable across majors per semver" at 1.0+; the helper enforces
  * single-line JSON to keep that contract observable to downstream tools.
+ *
+ * The pre-#126 enum carried `text` and `table` as user-visible values;
+ * both were collapsed into the single `pretty` name with internal shape
+ * dispatch. Pre-launch is free moves — there are no backward-compat
+ * aliases.
  */
-export type OutputFormat = "text" | "json" | "table" | "yaml";
+export type OutputFormat = "pretty" | "json" | "yaml";
 
 /**
  * All valid `OutputFormat` values, intended for `commander`'s
  * `Option#choices()`. Frozen at the type level via `readonly` so callers
  * cannot mutate the shared array.
  */
-export const OUTPUT_FORMATS: readonly OutputFormat[] = ["text", "json", "table", "yaml"];
+export const OUTPUT_FORMATS: readonly OutputFormat[] = ["pretty", "json", "yaml"];
 
 /**
  * Caller-supplied formatters per format. Each returns the exact string
  * to emit on stdout (the helper appends a single trailing newline). The
- * `json` format has no formatter slot — the helper stringifies the data
- * directly via `JSON.stringify(data)`.
+ * `json` and `yaml` formats have no formatter slot — the helper
+ * stringifies the data directly via `JSON.stringify(data)` /
+ * `formatYaml(data)`.
  *
- * `text` and `table` are optional; the helper falls through the format
- * lattice (`table → text → JSON.stringify(_, null, 2)`) when a
- * formatter is missing.
+ * `pretty` is the user-visible human-layout slot used by `show` verbs
+ * for curated key:value renderings. `table` is an internal-only slot
+ * used by `list` verbs to provide a column-aligned table rendering.
+ * The user-visible `pretty` format internally dispatches on data shape
+ * (per #126):
+ *
+ * - data is array-shaped or `{items: [...]}`-shaped (list) → prefer
+ *   `table`, fall back to `pretty`.
+ * - data is object-shaped (show) → prefer `pretty`, fall back to
+ *   `table`.
+ * - neither formatter present → fall through to
+ *   `JSON.stringify(_, null, 2)` plus a stderr warning.
+ *
+ * The shape dispatch is internal — `pretty` is the only user-visible
+ * name for the human layout. Show / list / paragraph-bearing-list
+ * routing is the dispatcher's job, not the user's.
  *
  * `empty` opts the call site into the empty-state wrapper (#122). When
  * present AND `isEmptyCollection(data)` returns true, the wrapper
  * short-circuits BEFORE per-format dispatch and emits a per-format
  * empty payload — `[]` (single-line) for `json`; the prose+CTA from
- * `emptyStateProse(empty.command)` for `text` and `table` (the latter
- * deliberately AVOIDS a header-only `cli-table3` grid, which the
- * v0.4 reframe categorised as a "looks broken" pattern).
- *
- * The wrapper is opt-in (not auto-fire on every call) so search
- * leaves like `autocomplete` — which return arrays but want a
- * query-aware "no matches" line, not a create-CTA — can keep their
- * custom empty handling without overriding.
+ * `emptyStateProse(empty.command)` for `pretty` (deliberately AVOIDS a
+ * header-only `cli-table3` grid, which the v0.4 reframe categorised
+ * as a "looks broken" pattern). The wrapper is opt-in (not auto-fire on
+ * every call) so search leaves like `autocomplete` — which return
+ * arrays but want a query-aware "no matches" line, not a create-CTA —
+ * can keep their custom empty handling without overriding.
  */
 export interface OutputFormatters<T> {
-  text?: (data: T) => string;
+  pretty?: (data: T) => string;
   table?: (data: T) => string;
   empty?: { command: string };
 }
 
 /**
- * Stderr hint surfaced when the helper falls through to pretty-printed
- * JSON because no `text` formatter was provided. Exposed as a constant so
- * tests can assert on the exact wording without duplicating it.
+ * Detect whether `data` is list-shaped — an array (current top-level
+ * shape) or `{items: [...]}` (the future `{items, pageInfo?}` envelope
+ * reserved by the v0.4 reframe). Used by the `pretty` dispatcher to
+ * pick `table` vs `pretty` formatter on shape (`list` → `table`,
+ * `show` → `pretty`).
+ *
+ * Returns `false` for `null`, scalars, and objects without an `items`
+ * field — those collapse to the show branch. Note this is a
+ * NON-emptiness signal: `[]` is still list-shape (the empty-state
+ * wrapper handles the empty case BEFORE the dispatcher fires; once it
+ * passes through to dispatch, the array's emptiness no longer matters).
  */
-export const TEXT_FALLBACK_HINT = "note: no text formatter provided; falling back to pretty-printed JSON.";
+function isListShape(data: unknown): boolean {
+  if (Array.isArray(data)) return true;
+  if (typeof data !== "object" || data === null) return false;
+  if (!Object.prototype.hasOwnProperty.call(data, "items")) return false;
+  return Array.isArray((data as { items: unknown }).items);
+}
+
+/**
+ * Stderr hint surfaced when the helper falls through to pretty-printed
+ * JSON because no `pretty` or `table` formatter was provided. Exposed as
+ * a constant so tests can assert on the exact wording without
+ * duplicating it.
+ */
+export const PRETTY_FALLBACK_HINT = "note: no pretty formatter provided; falling back to pretty-printed JSON.";
 
 /**
  * Configuration object passed to `yaml.stringify` for the `yaml` output
@@ -132,8 +175,9 @@ export function formatYaml(data: unknown): string {
  * Result of resolving a `(data, format, options)` triple to a string for
  * stdout. The optional `warning` field is present only when the helper
  * fell through to a default branch worth surfacing on stderr (currently:
- * `text` with no formatter). Callers using `formatResult` directly can
- * inspect this field instead of letting `emitResult` write to stderr.
+ * `pretty` with neither `pretty` nor `table` formatter). Callers using
+ * `formatResult` directly can inspect this field instead of letting
+ * `emitResult` write to stderr.
  *
  * `exactOptionalPropertyTypes` is enabled, so `warning` is either absent
  * or a string — never `undefined`.
@@ -149,37 +193,42 @@ export type FormatResult = { output: string } | { output: string; warning: strin
  * - `json` → `JSON.stringify(data)` (single-line; no extra whitespace)
  * - `yaml` → `formatYaml(data)` (block-style YAML; no formatter slot —
  *   the helper is the single source of truth for `yaml` rendering)
- * - `text` with `options.text` → `options.text(data)`
- * - `text` without `options.text` → `JSON.stringify(data, null, 2)` plus
- *   a `warning` describing the fallthrough
- * - `table` with `options.table` → `options.table(data)`
- * - `table` without `options.table` → falls through to the `text` branch
- *   above (the warning surfaces if `options.text` is also absent)
+ * - `pretty` → shape-dispatched human layout:
+ *   - list-shape data (array, `{items: [...]}`) → prefer
+ *     `options.table`, fall back to `options.pretty`
+ *   - show-shape data (single object) → prefer `options.pretty`, fall
+ *     back to `options.table`
+ *   - neither formatter present → `JSON.stringify(data, null, 2)` plus
+ *     a stderr warning
  *
  * The helper does NOT validate `data` for JSON/YAML-safe shapes
  * (cycles, `undefined`, `Date`, `BigInt`, etc.); callers are
  * responsible for shaping data into a serialization-friendly form
  * before passing it.
  *
- * The `format` parameter defaults to `"text"` so the spec's "default
- * format is text" behavior holds even when commander defaults aren't
+ * The `format` parameter defaults to `"pretty"` so the spec's "default
+ * format is pretty" behavior holds even when commander defaults aren't
  * available (e.g., direct programmatic use).
  */
 export function formatResult<T>(
   data: T,
-  format: OutputFormat = "text",
+  format: OutputFormat = "pretty",
   options: OutputFormatters<T> = {},
 ): FormatResult {
   // Empty-state wrapper (#122): fires BEFORE per-format dispatch when
   // the caller opts in via `options.empty` AND `data` is detected as an
   // empty collection (`[]` or `{items: []}`). Single-source per-format
-  // empty output — text/table render the same prose+CTA from the
-  // registry; json renders a stable single-line `[]`.
+  // empty output — pretty renders the prose+CTA from the registry; json
+  // renders a stable single-line `[]`; yaml falls through to its normal
+  // rendering of the empty payload.
   if (options.empty !== undefined && isEmptyCollection(data)) {
     if (format === "json") {
       return { output: "[]" };
     }
-    return { output: emptyStateProse(options.empty.command) };
+    if (format === "pretty") {
+      return { output: emptyStateProse(options.empty.command) };
+    }
+    // yaml — fall through to normal yaml rendering of the empty payload
   }
   if (format === "json") {
     return { output: JSON.stringify(data) };
@@ -187,28 +236,33 @@ export function formatResult<T>(
   if (format === "yaml") {
     return { output: formatYaml(data) };
   }
-  if (format === "table" && options.table !== undefined) {
-    return { output: options.table(data) };
+  // pretty branch — internal shape dispatch (per #126 AC):
+  // - list-shape data → table formatter (the column-aligned default for
+  //   list verbs; matches pre-#126 `--output=table` behavior)
+  // - show-shape data → pretty formatter (the curated key:value layout
+  //   for show verbs; matches pre-#126 `--output=text` behavior)
+  // - missing formatters fall through to JSON pretty-print + warning
+  if (isListShape(data)) {
+    if (options.table !== undefined) return { output: options.table(data) };
+    if (options.pretty !== undefined) return { output: options.pretty(data) };
+  } else {
+    if (options.pretty !== undefined) return { output: options.pretty(data) };
+    if (options.table !== undefined) return { output: options.table(data) };
   }
-  // text branch — reached directly for `format === "text"` and as the
-  // fall-through for `format === "table"` without a `table` formatter.
-  if (options.text !== undefined) {
-    return { output: options.text(data) };
-  }
-  return { output: JSON.stringify(data, null, 2), warning: TEXT_FALLBACK_HINT };
+  return { output: JSON.stringify(data, null, 2), warning: PRETTY_FALLBACK_HINT };
 }
 
 /**
  * Format `data` per `format` and write the result to `process.stdout`
  * (with a trailing newline). When `formatResult` surfaces a `warning`
- * (`text` fall-through with no formatter), it's written to
+ * (`pretty` fall-through with neither formatter), it's written to
  * `process.stderr` BEFORE the stdout payload — keeping stdout
  * structured for downstream consumers.
  *
  * Tests can spy on `process.stdout.write` and `process.stderr.write` to
  * assert the exact bytes emitted.
  */
-export function emitResult<T>(data: T, format: OutputFormat = "text", options: OutputFormatters<T> = {}): void {
+export function emitResult<T>(data: T, format: OutputFormat = "pretty", options: OutputFormatters<T> = {}): void {
   const result = formatResult(data, format, options);
   if ("warning" in result) {
     process.stderr.write(`${result.warning}\n`);

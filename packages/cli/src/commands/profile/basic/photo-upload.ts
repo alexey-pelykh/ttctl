@@ -4,9 +4,10 @@
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit } from "../shared.js";
-import { formatPhotoText, formatPhotoTable } from "./photo-show.js";
+import { formatPhotoText } from "./photo-show.js";
 
 /**
  * Action handler for `ttctl profile basic photo upload <file>`. Reads the
@@ -54,15 +55,16 @@ function handlePhotoUploadError(err: unknown): never {
 
 /**
  * Format the typed photo-upload result for the chosen output mode.
- * Reuses the same renderers as `photo show` (consistent column layout,
- * same JSON shape) and prepends a confirmation line on the text branch.
+ * Shares `formatPhotoText` with `photo show` for consistent rendering,
+ * prepended with a confirmation line on the `pretty` branch.
  */
 export function formatUploadResult(result: profile.basic.PhotoUrl, format: OutputFormat): string {
   if (format === "json") {
     return JSON.stringify(result, null, 2);
   }
-  if (format === "table") {
-    return formatPhotoTable(result);
+  if (format === "yaml") {
+    return formatYaml(result);
   }
+  // pretty — show-shape command, curated multi-line layout with confirmation header
   return ["Photo updated.", formatPhotoText(result)].join("\n");
 }

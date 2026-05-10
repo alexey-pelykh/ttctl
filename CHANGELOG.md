@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Output flag reframe: `--output={pretty,json,yaml}` (#126)**. The
+  cross-CLI `--output` enum collapses to three user-visible names —
+  `pretty`, `json`, `yaml`. The pre-#126 `text` and `table` names are
+  removed (no backward-compat aliases — pre-launch is free moves). The
+  user-visible default is `pretty` for ALL `show` and `list` verbs across
+  ALL packages — fixing the prior incoherence where `auth status` /
+  `auth signin` / `auth signout` defaulted to `table` while every
+  `profile *` leaf defaulted to `text`.
+  - **Internal `pretty` dispatcher**: `pretty` is the only user-visible
+    name for the human layout. `formatResult` dispatches on data shape:
+    list-shape data (array, `{items: [...]}`) prefers the caller's
+    `table` formatter (column-aligned `cli-table3` rendering for list
+    verbs); show-shape data prefers the caller's `pretty` formatter
+    (curated key:value rendering for show verbs); both fall back to the
+    other when one is missing, with a final `JSON.stringify(_, null, 2)`
+    fallthrough plus a stderr hint.
+  - **Boolean shortcuts**: `--json` and `--yaml` are global boolean
+    flags equivalent to `--output=json` / `--output=yaml`. `-o` short
+    alias from #83 continues to work after the rename.
+  - **Mutual exclusion**: any two of `{--output, -o, --json, --yaml}`
+    present together raise a parse-time error
+    (`Conflicting output flags: ... and ...`) before the sub-command's
+    action runs. Implemented in the root program's `preAction` hook via
+    Commander's `getOptionValueSource("output")` — the default value
+    does NOT count as "user-passed".
+  - **Slot rename**: `OutputFormatters#text` is renamed to
+    `OutputFormatters#pretty` across all 14 sub-command formatter
+    registrations and tests. The `table` slot stays — internal-only
+    after #126; the dispatcher prefers it for list-shape data.
+  - **`--output=text` / `--output=table` rejection**: Commander rejects
+    the dropped names with its standard
+    `error: option '-o, --output <format>' argument 'text' is invalid.
+    Allowed choices are pretty, json, yaml.` line.
+  - **Behavior parity**: previous `--output=text` use cases route
+    through `pretty` (identical rendering until the D3 formatter
+    rewrites land in #129). Previous `--output=table` use cases route
+    through `pretty` for list verbs (identical rendering — the
+    dispatcher picks the table formatter via shape detection).
+  - **Per-command override registry**: the `format-overrides.ts`
+    registry from #124 stays in place for D5 to wire into the `pretty`
+    dispatcher's multi-line strategy lookup.
+
+### Removed
+
+- **`--output=text` and `--output=table` user-visible names (#126)**.
+  Both collapse into `--output=pretty` with internal shape dispatch (see
+  the `### Changed` entry above). The `text` and `table` names are not
+  accepted at the CLI surface — Commander rejects them with the
+  invalid-choice error.
+
 ### Added
 
 - **Sub-domain formatter audit + per-command override registry (#124)**.

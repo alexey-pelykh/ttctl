@@ -15,14 +15,14 @@ const UPDATED: profile.basic.UpdateProfileResult = {
   notice: null,
 };
 
-describe("formatUpdateResult (text)", () => {
+describe("formatUpdateResult (pretty)", () => {
   it("leads with a `Profile updated.` confirmation line", () => {
-    const out = formatUpdateResult(UPDATED, "text");
+    const out = formatUpdateResult(UPDATED, "pretty");
     expect(out.split("\n")[0]).toBe("Profile updated.");
   });
 
   it("echoes back the new bio and headline using the user-facing flag names", () => {
-    const out = formatUpdateResult(UPDATED, "text");
+    const out = formatUpdateResult(UPDATED, "pretty");
     expect(out).toContain("bio: a brand new bio");
     expect(out).toContain("headline: shorter, sharper, smarter");
   });
@@ -32,7 +32,7 @@ describe("formatUpdateResult (text)", () => {
       profile: { id: "p1", about: "only bio", quote: null },
       notice: null,
     };
-    const out = formatUpdateResult(partial, "text");
+    const out = formatUpdateResult(partial, "pretty");
     expect(out).toContain("bio: only bio");
     expect(out).not.toContain("headline:");
   });
@@ -43,7 +43,7 @@ describe("formatUpdateResult (text)", () => {
       profile: { id: "p1", about: longBio, quote: null },
       notice: null,
     };
-    const out = formatUpdateResult(wide, "text");
+    const out = formatUpdateResult(wide, "pretty");
     for (const line of out.split("\n")) {
       expect(line.length).toBeLessThanOrEqual(80);
     }
@@ -56,7 +56,7 @@ describe("formatUpdateResult (text)", () => {
       profile: { id: "p1", about: "x", quote: null },
       notice: "Profile review may be required for some changes",
     };
-    const out = formatUpdateResult(withNotice, "text");
+    const out = formatUpdateResult(withNotice, "pretty");
     expect(out).toContain("Profile review may be required");
   });
 });
@@ -74,36 +74,16 @@ describe("formatUpdateResult (json)", () => {
   });
 });
 
-describe("formatUpdateResult (table)", () => {
-  it("emits a `status\\tupdated` row plus one row per echoed field", () => {
-    const out = formatUpdateResult(UPDATED, "table");
-    const rows = out.split("\n").map((r) => r.split("\t"));
-    const map = new Map(rows.map(([k, v]) => [k, v]));
-
-    expect(map.get("status")).toBe("updated");
-    expect(map.get("bio")).toBe("a brand new bio");
-    expect(map.get("headline")).toBe("shorter, sharper, smarter");
+describe("formatUpdateResult (yaml)", () => {
+  it("returns block-style YAML carrying the typed payload (post-#126 yaml branch)", () => {
+    const out = formatUpdateResult(UPDATED, "yaml");
+    expect(out).toContain("about: a brand new bio");
+    expect(out).toContain("quote: shorter, sharper, smarter");
+    expect(out).toContain("notice: null");
   });
 
-  it("uses an empty string for a null `quote` (table mode is shell-pipe friendly)", () => {
-    const partial: profile.basic.UpdateProfileResult = {
-      profile: { id: "p1", about: "only bio", quote: null },
-      notice: null,
-    };
-    const out = formatUpdateResult(partial, "table");
-    const rows = out.split("\n").map((r) => r.split("\t"));
-    const map = new Map(rows.map(([k, v]) => [k, v]));
-    expect(map.get("headline")).toBe("");
-  });
-
-  it("includes a `notice` row when the server returns one", () => {
-    const withNotice: profile.basic.UpdateProfileResult = {
-      profile: { id: "p1", about: "x", quote: null },
-      notice: "Profile review may be required",
-    };
-    const out = formatUpdateResult(withNotice, "table");
-    const rows = out.split("\n").map((r) => r.split("\t"));
-    const map = new Map(rows.map(([k, v]) => [k, v]));
-    expect(map.get("notice")).toBe("Profile review may be required");
+  it("does not apply pretty/confirmation framing to the yaml branch", () => {
+    const out = formatUpdateResult(UPDATED, "yaml");
+    expect(out).not.toContain("Profile updated.");
   });
 });

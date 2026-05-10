@@ -4,7 +4,7 @@
 import Table from "cli-table3";
 import { profile } from "@ttctl/core";
 
-import { emitResult } from "../../../lib/output.js";
+import { emitResult, formatYaml } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { handleVisasError, loadAuthTokenOrExit } from "./shared.js";
 
@@ -24,7 +24,7 @@ export async function runProfileVisasList(format: OutputFormat): Promise<void> {
   }
 
   emitResult(visas, format, {
-    text: formatVisasText,
+    pretty: formatVisasText,
     table: formatVisasTable,
     empty: { command: "profile.visas.list" },
   });
@@ -71,9 +71,10 @@ export function emitVisaListResult(
     process.stdout.write(`${JSON.stringify(visas)}\n`);
     return;
   }
-  if (format === "table") {
-    process.stdout.write(`${successMessage}\n${formatVisasTable(visas)}\n`);
+  if (format === "yaml") {
+    process.stdout.write(`${successMessage}\n${formatYaml(visas)}\n`);
     return;
   }
-  process.stdout.write(`${successMessage}\n${formatVisasText(visas)}\n`);
+  // pretty — list-shape verb, default to table layout per the #126 shape dispatch
+  process.stdout.write(`${successMessage}\n${formatVisasTable(visas)}\n`);
 }

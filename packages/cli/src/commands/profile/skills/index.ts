@@ -175,7 +175,7 @@ async function runSkillsShow(id: string, format: OutputFormat): Promise<void> {
     handleSkillsError(err, commandLabel);
   }
   emitResult(result, format, {
-    text: formatSkillSetText,
+    pretty: formatSkillSetText,
     table: formatSkillSetTable,
   });
 }
@@ -191,7 +191,7 @@ async function runSkillsList(format: OutputFormat): Promise<void> {
     handleSkillsError(err, commandLabel);
   }
   emitResult(result, format, {
-    text: formatSkillsListText,
+    pretty: formatSkillsListText,
     table: formatSkillsListTable,
     empty: { command: "profile.skills.list" },
   });
@@ -208,7 +208,7 @@ async function runSkillsAutocomplete(query: string, format: OutputFormat, limit:
     handleSkillsError(err, commandLabel);
   }
   emitResult(suggestions, format, {
-    text: (data) =>
+    pretty: (data) =>
       data.length === 0 ? `(no matches for "${query}")` : data.map((s) => `${s.name}\t${s.id}`).join("\n"),
     table: (data) => {
       const table = new Table({ head: ["Name", "Id"], wordWrap: true });
@@ -229,7 +229,7 @@ async function runSkillsReadiness(format: OutputFormat): Promise<void> {
     handleSkillsError(err, commandLabel);
   }
   emitResult(result, format, {
-    text: (data) =>
+    pretty: (data) =>
       Object.entries(data)
         .map(([k, v]) => `${humanReadiness(k)}: ${v ? "✓" : "✗"}`)
         .join("\n"),
@@ -352,7 +352,7 @@ export function buildProfileSkillsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runSkillsShow(id, options.output);
@@ -364,7 +364,7 @@ export function buildProfileSkillsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runSkillsList(options.output);
@@ -377,7 +377,7 @@ export function buildProfileSkillsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (query: string, options: { output: OutputFormat; limit: string }) => {
       const limit = Number.parseInt(options.limit, 10);
@@ -396,7 +396,7 @@ export function buildProfileSkillsCommand(): Command {
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
-        .default("text" satisfies OutputFormat),
+        .default("pretty" satisfies OutputFormat),
     )
     .action(async (options: { output: OutputFormat }) => {
       await runSkillsReadiness(options.output);

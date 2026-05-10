@@ -46,11 +46,11 @@ describe("buildProfileEducationCommand (5 leaves)", () => {
     expect(degree?.required).toBe(true);
   });
 
-  it("show declares -o/--output with text|json|table|yaml", () => {
+  it("show declares -o/--output with pretty|json|yaml", () => {
     const show = findSubcommand(cmd, "show");
     const out = show?.options.find((o) => o.long === "--output");
     expect(out).toBeDefined();
-    expect(out?.argChoices).toEqual(["text", "json", "table", "yaml"]);
+    expect(out?.argChoices).toEqual(["pretty", "json", "yaml"]);
   });
 });
 

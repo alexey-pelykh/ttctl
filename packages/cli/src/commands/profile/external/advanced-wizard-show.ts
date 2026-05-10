@@ -29,7 +29,7 @@ export async function runProfileExternalAdvancedWizardShow(format: OutputFormat)
   }
 
   emitResult(result, format, {
-    text: formatAdvancedWizardText,
+    pretty: formatAdvancedWizardText,
     table: formatAdvancedWizardTable,
   });
 }
