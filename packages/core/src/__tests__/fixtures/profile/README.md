@@ -84,7 +84,7 @@ import { buildEmptyProfile, buildSingleItemList } from "../fixtures/profile";
 
 // Empty-state rendering test
 const empty = buildEmptyProfile();
-expect(formatPortfolioText(empty.portfolio)).toBe("(no portfolio items)");
+expect(formatPortfolioPretty(empty.portfolio)).toBe("(no portfolio items)");
 
 // Single-row table test with field override
 const oneSkill = buildSingleItemList("skills", { rating: "COMPETENT" });
