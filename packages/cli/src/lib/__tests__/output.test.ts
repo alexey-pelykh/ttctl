@@ -170,18 +170,32 @@ describe("formatResult — default format", () => {
   });
 });
 
-describe("formatResult — empty-state wrapper (#122)", () => {
+describe("formatResult — empty-state wrapper (#122 + #128 envelope-preserved post-#147)", () => {
   it("emits single-line `[]` for json when input is an empty top-level array AND empty option is provided", () => {
+    // Raw [] is serialized as the literal `[]` by JSON.stringify — same
+    // result whether the wrapper short-circuits or falls through.
     const result = formatResult([] as Sample[], "json", { empty: { command: "profile.skills.list" } });
     expect(result.output).toBe("[]");
     expect("warning" in result).toBe(false);
   });
 
-  it("emits single-line `[]` for json when input is the future {items: []} envelope", () => {
+  it("preserves the envelope on json when input is the {items: []} envelope (envelope ABI v1.0 lock from #128)", () => {
+    // Pre-#147 this short-circuited to literal "[]" which silently
+    // dropped the envelope wrapper; that broke E2E suites that read
+    // `.items`. Surfaced by #147 (engagements breaks round-trip on an
+    // engagement with zero existing breaks). Pretty mode still emits
+    // the CTA prose (see test below).
     const result = formatResult({ items: [] } as { items: Sample[] }, "json", {
       empty: { command: "profile.skills.list" },
     });
-    expect(result.output).toBe("[]");
+    expect(result.output).toBe('{"items":[]}');
+  });
+
+  it("preserves the envelope on json when input is the full v1.0 envelope {version, items: []}", () => {
+    const result = formatResult({ version: "1.0", items: [] } as { version: string; items: Sample[] }, "json", {
+      empty: { command: "profile.skills.list" },
+    });
+    expect(result.output).toBe('{"version":"1.0","items":[]}');
   });
 
   it("emits prose+CTA for pretty when input is empty and the command is registered", () => {

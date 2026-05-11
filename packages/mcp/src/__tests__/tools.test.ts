@@ -13,7 +13,8 @@ import { registerAllTools } from "../tools/index.js";
  * tracks the cumulative Wave-3 sub-domain landing (#73 basic+skills,
  * #74 industries+education+certifications+employment, #75
  * portfolio+visas+resume, #76 external+reviews = 56 tools, plus the
- * #15 applications top-level group (3 tools) = 59 tools total).
+ * #15 applications top-level group (3 tools) = 59 tools, plus the
+ * #147 engagements top-level group (6 tools) = 65 tools total).
  *
  * The MCP SDK does not expose a public listing of registered tools, so
  * we approximate by listing the keys on the underlying `_registeredTools`
@@ -33,7 +34,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (59 tools = 56 wave-3 profile + 3 #15 applications)", () => {
+  it("registers exactly the cumulative tool set (65 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -43,6 +44,13 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_applications_list",
       "ttctl_applications_show",
       "ttctl_applications_stats",
+      // #147 — engagements (6, list/show/stats + breaks list/add/remove)
+      "ttctl_engagements_breaks_add",
+      "ttctl_engagements_breaks_list",
+      "ttctl_engagements_breaks_remove",
+      "ttctl_engagements_list",
+      "ttctl_engagements_show",
+      "ttctl_engagements_stats",
       // #73 — profile.basic (4)
       "ttctl_profile_basic_photo_show",
       "ttctl_profile_basic_photo_upload",

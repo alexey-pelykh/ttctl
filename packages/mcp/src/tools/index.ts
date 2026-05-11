@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { ToolRegistrationContext } from "./_shared.js";
 import { registerApplicationsTools } from "./applications.js";
+import { registerEngagementsTools } from "./engagements.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerEducationTools } from "./profile/education.js";
 import { registerEmploymentTools } from "./profile/employment.js";
@@ -102,4 +103,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // Toptal Talent Activity view (TalentJobActivityItem rows). Per
   // project non-goals, no apply / withdraw / edit tools are exposed.
   registerApplicationsTools(server, ctx);
+
+  // engagements — 6 leaves (#147). View current and past engagements;
+  // manage engagement breaks (list / add / remove). `allocated-hours`
+  // moved to availability (#146) per scope amendment.
+  registerEngagementsTools(server, ctx);
 }
