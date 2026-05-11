@@ -14,7 +14,8 @@ import { registerAllTools } from "../tools/index.js";
  * #74 industries+education+certifications+employment, #75
  * portfolio+visas+resume, #76 external+reviews = 56 tools, plus the
  * #15 applications top-level group (3 tools) = 59 tools, plus the
- * #147 engagements top-level group (6 tools) = 65 tools total).
+ * #147 engagements top-level group (6 tools) = 65 tools, plus the #146
+ * availability top-level group (5 tools) = 70 tools total).
  *
  * The MCP SDK does not expose a public listing of registered tools, so
  * we approximate by listing the keys on the underlying `_registeredTools`
@@ -34,7 +35,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (65 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements)", () => {
+  it("registers exactly the cumulative tool set (70 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -44,6 +45,12 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_applications_list",
       "ttctl_applications_show",
       "ttctl_applications_stats",
+      // #146 amended — availability (5, top-level show + working-hours show/set + allocated-hours show/set)
+      "ttctl_availability_allocated_hours_set",
+      "ttctl_availability_allocated_hours_show",
+      "ttctl_availability_show",
+      "ttctl_availability_working_hours_set",
+      "ttctl_availability_working_hours_show",
       // #147 — engagements (6, list/show/stats + breaks list/add/remove)
       "ttctl_engagements_breaks_add",
       "ttctl_engagements_breaks_list",

@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { ToolRegistrationContext } from "./_shared.js";
 import { registerApplicationsTools } from "./applications.js";
+import { registerAvailabilityTools } from "./availability.js";
 import { registerEngagementsTools } from "./engagements.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerEducationTools } from "./profile/education.js";
@@ -50,7 +51,9 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * 5 `profile.certifications` + 6 `profile.employment` (#74, one file per
  * sub-domain registering its full leaf set) + 8 `profile.portfolio` +
  * 4 `profile.visas` + 2 `profile.resume` (#75) + 6 `profile.external` +
- * 4 `profile.reviews` (#76, one tool per file) = 56 tools.
+ * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
+ * 3 `applications` (#15) + 6 `engagements` (#147) + 5 `availability`
+ * (#146 amended) = 70 tools total.
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`
@@ -108,4 +111,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // manage engagement breaks (list / add / remove). `allocated-hours`
   // moved to availability (#146) per scope amendment.
   registerEngagementsTools(server, ctx);
+
+  // availability — 5 leaves (#146 amended). Top-level snapshot + working-hours
+  // show/set + allocated-hours show/set. Per-engagement time-off (= engagement
+  // breaks) stays on `engagements` and is NOT mirrored here.
+  registerAvailabilityTools(server, ctx);
 }

@@ -10,6 +10,7 @@ import { ConfigError } from "@ttctl/core";
 
 import { buildApplicationsCommand } from "./commands/applications/index.js";
 import { registerAuthCommand } from "./commands/auth/index.js";
+import { buildAvailabilityCommand } from "./commands/availability/index.js";
 import { buildEngagementsCommand } from "./commands/engagements/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
@@ -185,6 +186,7 @@ export function buildProgram(): Command {
   program.addCommand(buildProfileCommand());
   program.addCommand(buildApplicationsCommand());
   program.addCommand(buildEngagementsCommand());
+  program.addCommand(buildAvailabilityCommand());
 
   return program;
 }
