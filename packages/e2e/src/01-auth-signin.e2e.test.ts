@@ -85,7 +85,7 @@ describe("auth signin + profile (live Toptal, shared session)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "profile show: returns parseable JSON with the rich mobile-gateway-native shape (#66)",
+    "profile show: returns parseable JSON with the merged mobile-gateway + talent-profile envelope (#66, #129)",
     async () => {
       const result = await cli.run(["profile", "show", "-o", "json"]);
       expect(result.exitCode).toBe(0);
@@ -98,8 +98,19 @@ describe("auth signin + profile (live Toptal, shared session)", () => {
       expect(typeof payload).toBe("object");
       expect(payload).not.toBeNull();
 
-      const root = payload as { viewer?: unknown };
-      const viewer = root.viewer as { viewerRole?: unknown } | undefined;
+      // Post-#129 envelope: the CLI emits the merged `BasicShowPayload`
+      // (`packages/cli/src/commands/profile/basic/show.ts:36`) with
+      // mobile-gateway `ProfileShowQuery` under `profile` and the
+      // talent-profile `BasicInfo` projection under `basicInfo`. The pre-#129
+      // shape (`viewer` at root) was dropped when #127's second
+      // talent-profile call landed; this test had not been updated (#167).
+      const root = payload as { profile?: unknown; basicInfo?: unknown };
+      const profileEnvelope = root.profile as { viewer?: unknown } | undefined;
+      expect(typeof profileEnvelope).toBe("object");
+      expect(profileEnvelope).not.toBeNull();
+      if (profileEnvelope === undefined || profileEnvelope === null) return;
+
+      const viewer = profileEnvelope.viewer as { viewerRole?: unknown } | undefined;
       expect(typeof viewer).toBe("object");
       expect(viewer).not.toBeNull();
       if (viewer === undefined || viewer === null) return;
@@ -130,14 +141,33 @@ describe("auth signin + profile (live Toptal, shared session)", () => {
 
       // Profile substructure — assert keys exist via boolean membership so
       // failure diffs don't dump the object.
-      const profile = viewerRole["profile"] as Record<string, unknown> | undefined;
-      expect(typeof profile).toBe("object");
-      expect(profile).not.toBeNull();
-      if (profile === undefined || profile === null) return;
+      const viewerProfile = viewerRole["profile"] as Record<string, unknown> | undefined;
+      expect(typeof viewerProfile).toBe("object");
+      expect(viewerProfile).not.toBeNull();
+      if (viewerProfile === undefined || viewerProfile === null) return;
 
-      expect("id" in profile).toBe(true);
-      expect("city" in profile).toBe(true);
-      expect("skillSets" in profile).toBe(true);
+      expect("id" in viewerProfile).toBe(true);
+      expect("city" in viewerProfile).toBe(true);
+      expect("skillSets" in viewerProfile).toBe(true);
+
+      // basicInfo envelope (#127, #129) — talent-profile-side projection
+      // merged alongside the mobile-gateway shape. `basicInfo` is `null` only
+      // when the secondary call failed in a non-fatal way (per the
+      // show.ts:77 contract); a live session against a real account renders
+      // an object with the editable fields. Field-membership only — the
+      // values themselves (bio/headline content, language list) are not
+      // stable fixtures.
+      expect("basicInfo" in root).toBe(true);
+      const basicInfo = root.basicInfo as Record<string, unknown> | null | undefined;
+      // `typeof null === "object"` in JS, so a single typeof check accepts
+      // both the null fallback and a populated projection while rejecting
+      // undefined (which would mean the envelope key vanished).
+      expect(typeof basicInfo).toBe("object");
+      if (basicInfo !== null && basicInfo !== undefined) {
+        expect("bio" in basicInfo).toBe(true);
+        expect("headline" in basicInfo).toBe(true);
+        expect("languages" in basicInfo).toBe(true);
+      }
     },
   );
 });
