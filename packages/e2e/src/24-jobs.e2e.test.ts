@@ -166,4 +166,134 @@ describe("jobs (live mobile-gateway)", () => {
     expect(payload.ok).toBe(false);
     expect(payload.errors?.[0]?.code).toBe("NOT_FOUND");
   });
+
+  // -------------------------------------------------------------------
+  // Dry-run E2E coverage (issue #162)
+  //
+  // Mandatory per CLAUDE.md § Schema/contract validation rule — wiring
+  // `--dry-run` through inferred mutation operations REQUIRES live
+  // verification before merge. Because the dry-run path has zero
+  // side effects by construction (transport never called), all 7
+  // mutating leaves can be exercised in a single E2E run safely.
+  //
+  // Each assertion verifies:
+  //   - exitCode === 0
+  //   - JSON envelope has `dryRun: true`
+  //   - envelope's `operation` matches the leaf
+  //   - `preview.operationName` matches the wire operation per the
+  //     issue's mapping table (this is the CRITICAL wire-shape AC)
+  //   - `preview.surface === "mobile-gateway"`
+  //   - `preview.transport === "stock"`
+  //   - bearer redacted in `preview.headers.authorization`
+  // -------------------------------------------------------------------
+
+  interface DryRunEnvelope {
+    ok?: boolean;
+    version?: string;
+    operation?: string;
+    dryRun?: boolean;
+    preview?: {
+      operationName?: string;
+      surface?: string;
+      transport?: string;
+      variables?: Record<string, unknown>;
+      headers?: Record<string, string>;
+    };
+  }
+
+  function assertDryRunEnvelope(
+    payload: DryRunEnvelope,
+    expectedOperation: string,
+    expectedWireOperation: string,
+  ): void {
+    expect(payload.ok).toBe(true);
+    expect(payload.version).toBe("1.0");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.operation).toBe(expectedOperation);
+    expect(payload.preview?.operationName).toBe(expectedWireOperation);
+    expect(payload.preview?.surface).toBe("mobile-gateway");
+    expect(payload.preview?.transport).toBe("stock");
+    // Bearer redaction — the captured session token MUST NOT leak.
+    expect(payload.preview?.headers?.["authorization"]).toBe("Token token=<redacted>");
+  }
+
+  it.skipIf(!e2eEnabled)("jobs save --dry-run emits the dry-run envelope without server side effects", async () => {
+    const result = await cli.run(["--dry-run", "jobs", "save", "fake-job-id", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+    assertDryRunEnvelope(payload, "jobs.save", "JobMarkSaved");
+    expect(payload.preview?.variables).toEqual({ jobID: "fake-job-id" });
+    // Stderr should be silent (no read-no-op note — leaf was markMutation'd).
+    expect(result.stderr).not.toContain("no-op for read commands");
+  });
+
+  it.skipIf(!e2eEnabled)("jobs unsave --dry-run emits the dry-run envelope (wire op = JobClearInterest)", async () => {
+    const result = await cli.run(["--dry-run", "jobs", "unsave", "fake-job-id", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+    // CLI verb = "jobs.unsave"; wire operation = "JobClearInterest" (delegated).
+    assertDryRunEnvelope(payload, "jobs.unsave", "JobClearInterest");
+    expect(payload.preview?.variables).toEqual({ jobID: "fake-job-id" });
+    expect(result.stderr).not.toContain("no-op for read commands");
+  });
+
+  it.skipIf(!e2eEnabled)("jobs mark-viewed --dry-run emits the dry-run envelope", async () => {
+    const result = await cli.run(["--dry-run", "jobs", "mark-viewed", "fake-job-id", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+    assertDryRunEnvelope(payload, "jobs.mark-viewed", "JobMarkViewed");
+    expect(payload.preview?.variables).toEqual({ jobID: "fake-job-id" });
+    expect(result.stderr).not.toContain("no-op for read commands");
+  });
+
+  it.skipIf(!e2eEnabled)("jobs not-interested --dry-run preserves the --reason in preview variables", async () => {
+    const result = await cli.run([
+      "--dry-run",
+      "jobs",
+      "not-interested",
+      "fake-job-id",
+      "--reason",
+      "low_rate",
+      "-o",
+      "json",
+    ]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+    assertDryRunEnvelope(payload, "jobs.not-interested", "JobMarkNotInterested");
+    expect(payload.preview?.variables).toEqual({ jobID: "fake-job-id", reason: "low_rate" });
+    expect(result.stderr).not.toContain("no-op for read commands");
+  });
+
+  it.skipIf(!e2eEnabled)("jobs clear-interest --dry-run emits the dry-run envelope", async () => {
+    const result = await cli.run(["--dry-run", "jobs", "clear-interest", "fake-job-id", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+    assertDryRunEnvelope(payload, "jobs.clear-interest", "JobClearInterest");
+    expect(payload.preview?.variables).toEqual({ jobID: "fake-job-id" });
+    expect(result.stderr).not.toContain("no-op for read commands");
+  });
+
+  it.skipIf(!e2eEnabled)(
+    "jobs search save --dry-run emits the dry-run envelope (wire op = JobSearchSubscriptionStart)",
+    async () => {
+      const result = await cli.run(["--dry-run", "jobs", "search", "save", "--skill", "React", "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+      assertDryRunEnvelope(payload, "jobs.search.save", "JobSearchSubscriptionStart");
+      expect(payload.preview?.variables["skills"]).toEqual(["React"]);
+      expect(result.stderr).not.toContain("no-op for read commands");
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "jobs search remove --dry-run emits the dry-run envelope (wire op = JobSearchSubscriptionTerminate)",
+    async () => {
+      const result = await cli.run(["--dry-run", "jobs", "search", "remove", "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+      assertDryRunEnvelope(payload, "jobs.search.remove", "JobSearchSubscriptionTerminate");
+      expect(payload.preview?.variables).toEqual({});
+      expect(result.stderr).not.toContain("no-op for read commands");
+    },
+  );
 });

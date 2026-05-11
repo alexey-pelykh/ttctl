@@ -254,7 +254,7 @@ describe("jobs.show", () => {
 });
 
 describe("jobs interest mutations", () => {
-  it("save() returns the post-mutation state", async () => {
+  it("save() returns the post-mutation state wrapped in an applied outcome", async () => {
     reply({
       body: {
         data: {
@@ -270,8 +270,11 @@ describe("jobs interest mutations", () => {
         },
       },
     });
-    const state = await save(TOKEN, "job-1");
-    expect(state).toEqual({ id: "job-1", saved: true, notInterested: false, viewed: false });
+    const outcome = await save(TOKEN, "job-1");
+    expect(outcome).toEqual({
+      kind: "applied",
+      result: { id: "job-1", saved: true, notInterested: false, viewed: false },
+    });
   });
 
   it("unsave() routes to ClearJobInterestStatus", async () => {
@@ -290,8 +293,10 @@ describe("jobs interest mutations", () => {
         },
       },
     });
-    const state = await unsave(TOKEN, "job-1");
-    expect(state.saved).toBe(false);
+    const outcome = await unsave(TOKEN, "job-1");
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.saved).toBe(false);
     const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string };
     expect(body.operationName).toBe("JobClearInterest");
   });
@@ -315,7 +320,7 @@ describe("jobs interest mutations", () => {
     expect(body.variables["reason"]).toBe("not_a_match");
   });
 
-  it("markViewed() returns the post-mutation state", async () => {
+  it("markViewed() returns the post-mutation state wrapped in an applied outcome", async () => {
     reply({
       body: {
         data: {
@@ -329,11 +334,13 @@ describe("jobs interest mutations", () => {
         },
       },
     });
-    const state = await markViewed(TOKEN, "job-1");
-    expect(state.viewed).toBe(true);
+    const outcome = await markViewed(TOKEN, "job-1");
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.viewed).toBe(true);
   });
 
-  it("clearInterest() returns the post-mutation state", async () => {
+  it("clearInterest() returns the post-mutation state wrapped in an applied outcome", async () => {
     reply({
       body: {
         data: {
@@ -347,9 +354,11 @@ describe("jobs interest mutations", () => {
         },
       },
     });
-    const state = await clearInterest(TOKEN, "job-1");
-    expect(state.saved).toBe(false);
-    expect(state.notInterested).toBe(false);
+    const outcome = await clearInterest(TOKEN, "job-1");
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.saved).toBe(false);
+    expect(outcome.result.notInterested).toBe(false);
   });
 
   it("translates success:false to MUTATION_ERROR with formatted errors", async () => {
@@ -421,7 +430,7 @@ describe("jobs.searchSubscription", () => {
     });
   });
 
-  it("save passes filters through and returns projected state", async () => {
+  it("save passes filters through and returns projected state wrapped in an applied outcome", async () => {
     reply({
       body: {
         data: {
@@ -447,15 +456,17 @@ describe("jobs.searchSubscription", () => {
         },
       },
     });
-    const state = await searchSubscriptionSave(TOKEN, { skills: ["React"] });
-    expect(state.active).toBe(true);
-    expect(state.filters?.skills).toEqual(["React"]);
+    const outcome = await searchSubscriptionSave(TOKEN, { skills: ["React"] });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.active).toBe(true);
+    expect(outcome.result.filters?.skills).toEqual(["React"]);
     const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
     expect(body.variables["skills"]).toEqual(["React"]);
     expect(body.variables["keywords"]).toBeNull();
   });
 
-  it("remove returns {terminated: true}", async () => {
+  it("remove returns {terminated: true} wrapped in an applied outcome", async () => {
     reply({
       body: {
         data: {
@@ -465,8 +476,8 @@ describe("jobs.searchSubscription", () => {
         },
       },
     });
-    const result = await searchSubscriptionRemove(TOKEN);
-    expect(result).toEqual({ terminated: true });
+    const outcome = await searchSubscriptionRemove(TOKEN);
+    expect(outcome).toEqual({ kind: "applied", result: { terminated: true } });
   });
 
   it("translates start success:false to MUTATION_ERROR", async () => {
@@ -487,6 +498,129 @@ describe("jobs.searchSubscription", () => {
       name: "JobsError",
       code: "MUTATION_ERROR",
     });
+  });
+});
+
+// ---------------------------------------------------------------------
+// dry-run path (issue #162)
+//
+// Per the AC for #162, every mutation entry point with `dryRun: true`
+// must:
+//   - SHORT-CIRCUIT — `stockTransport` is never called (transport-zero AC)
+//   - return `{ kind: "preview", preview: <DryRunPreview> }`
+//   - the preview surfaces the operation name from the issue's mapping
+//     table verbatim, the mobile-gateway transport classification,
+//     the literal variables payload, and a redacted Authorization header
+// Tests assert the wire-shape contract end-to-end.
+// ---------------------------------------------------------------------
+describe("jobs dry-run path (issue #162)", () => {
+  it("save({ dryRun: true }) returns preview without invoking transport (transport-zero AC)", async () => {
+    const outcome = await save(TOKEN, "job-1", { dryRun: true });
+    // The CRITICAL AC: zero transport calls in dry-run path.
+    expect(mockedStock).not.toHaveBeenCalled();
+    // Discriminator + preview shape.
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("JobMarkSaved");
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.transport).toBe("stock");
+    expect(outcome.preview.variables).toEqual({ jobID: "job-1" });
+    // Bearer redaction.
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
+  });
+
+  it("unsave({ dryRun: true }) reports the JobClearInterest wire operation (delegated)", async () => {
+    const outcome = await unsave(TOKEN, "job-1", { dryRun: true });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    // unsave delegates to clearInterest, so the wire op is JobClearInterest.
+    expect(outcome.preview.operationName).toBe("JobClearInterest");
+    expect(outcome.preview.variables).toEqual({ jobID: "job-1" });
+  });
+
+  it("markViewed({ dryRun: true }) returns preview without invoking transport", async () => {
+    const outcome = await markViewed(TOKEN, "job-1", { dryRun: true });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("JobMarkViewed");
+    expect(outcome.preview.variables).toEqual({ jobID: "job-1" });
+  });
+
+  it("notInterested({ dryRun: true }) preserves reason in preview variables", async () => {
+    const outcome = await notInterested(TOKEN, "job-1", { reason: "low_rate" }, { dryRun: true });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("JobMarkNotInterested");
+    expect(outcome.preview.variables).toEqual({ jobID: "job-1", reason: "low_rate" });
+  });
+
+  it("clearInterest({ dryRun: true }) returns preview without invoking transport", async () => {
+    const outcome = await clearInterest(TOKEN, "job-1", { dryRun: true });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("JobClearInterest");
+    expect(outcome.preview.variables).toEqual({ jobID: "job-1" });
+  });
+
+  it("searchSubscriptionSave({ dryRun: true }) normalises filters identically to the apply path", async () => {
+    const outcome = await searchSubscriptionSave(
+      TOKEN,
+      { skills: ["React"], keywords: [], excludeUnspecifiedBudget: true },
+      { dryRun: true },
+    );
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("JobSearchSubscriptionStart");
+    // Empty arrays normalised to null (matches apply path).
+    expect(outcome.preview.variables["skills"]).toEqual(["React"]);
+    expect(outcome.preview.variables["keywords"]).toBeNull();
+    expect(outcome.preview.variables["excludeUnspecifiedBudget"]).toBe(true);
+  });
+
+  it("searchSubscriptionRemove({ dryRun: true }) returns preview with empty variables", async () => {
+    const outcome = await searchSubscriptionRemove(TOKEN, { dryRun: true });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("JobSearchSubscriptionTerminate");
+    expect(outcome.preview.variables).toEqual({});
+  });
+
+  it("explicit `dryRun: false` is the apply path (ensures option does not invert)", async () => {
+    reply({
+      body: {
+        data: {
+          job: {
+            markSaved: { success: true, errors: [], job: INTEREST_STATE },
+          },
+        },
+      },
+    });
+    const outcome = await save(TOKEN, "job-1", { dryRun: false });
+    // Apply-path: transport was called once.
+    expect(mockedStock).toHaveBeenCalledOnce();
+    expect(outcome.kind).toBe("applied");
+  });
+
+  it("omitting options entirely is the apply path (default behavior)", async () => {
+    reply({
+      body: {
+        data: {
+          job: {
+            markViewed: { success: true, errors: [], job: { ...INTEREST_STATE, viewed: true } },
+          },
+        },
+      },
+    });
+    const outcome = await markViewed(TOKEN, "job-1");
+    expect(mockedStock).toHaveBeenCalledOnce();
+    expect(outcome.kind).toBe("applied");
   });
 });
 

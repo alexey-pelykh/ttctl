@@ -134,8 +134,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const state = await jobs.save(auth.token, args.id);
-        return successResponse(state);
+        const outcome = await jobs.save(auth.token, args.id);
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
@@ -157,8 +157,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const state = await jobs.unsave(auth.token, args.id);
-        return successResponse(state);
+        const outcome = await jobs.unsave(auth.token, args.id);
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
@@ -227,8 +227,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const state = await jobs.markViewed(auth.token, args.id);
-        return successResponse(state);
+        const outcome = await jobs.markViewed(auth.token, args.id);
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
@@ -255,8 +255,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const state = await jobs.notInterested(auth.token, args.id, { reason: args.reason });
-        return successResponse(state);
+        const outcome = await jobs.notInterested(auth.token, args.id, { reason: args.reason });
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
@@ -298,8 +298,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const state = await jobs.clearInterest(auth.token, args.id);
-        return successResponse(state);
+        const outcome = await jobs.clearInterest(auth.token, args.id);
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
@@ -368,8 +368,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         if (args.excludeUnspecifiedBudget !== undefined) {
           filters.excludeUnspecifiedBudget = args.excludeUnspecifiedBudget;
         }
-        const state = await jobs.searchSubscriptionSave(auth.token, filters);
-        return successResponse(state);
+        const outcome = await jobs.searchSubscriptionSave(auth.token, filters);
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
@@ -391,13 +391,34 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const result = await jobs.searchSubscriptionRemove(auth.token);
-        return successResponse(result);
+        const outcome = await jobs.searchSubscriptionRemove(auth.token);
+        return successResponse(unwrapJobOutcome(outcome));
       } catch (err) {
         return mapJobsError(err);
       }
     },
   );
+}
+
+/**
+ * Narrow a jobs mutation outcome to the payload that MCP tools surface
+ * to LLM clients (issue #162). The MCP layer currently never passes
+ * `dryRun: true` — so the apply path is always taken and
+ * `outcome.kind === "applied"` always holds. The `preview` branch is
+ * defensively rendered (returning the preview payload verbatim) for
+ * future-proofing against the companion MCP-wide `dryRun?` work
+ * tracked in #165.
+ *
+ * Kept as a single helper so all 7 MCP jobs mutations share one
+ * narrowing rule. Generic over the union type so each call site
+ * preserves its specific outcome variant's apply-path payload type
+ * (e.g. `JobInterestState` vs `SearchSubscriptionState` vs
+ * `{ terminated: true }`).
+ */
+function unwrapJobOutcome<TApplied, TPreview>(
+  outcome: { kind: "applied"; result: TApplied } | { kind: "preview"; preview: TPreview },
+): TApplied | TPreview {
+  return outcome.kind === "applied" ? outcome.result : outcome.preview;
 }
 
 interface ToolSuccessResponse {

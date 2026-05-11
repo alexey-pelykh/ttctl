@@ -3,7 +3,8 @@
 
 import { jobs } from "@ttctl/core";
 
-import { emitRemoveSuccess, emitUpdateSuccess, wrapListEnvelope } from "../../lib/envelopes.js";
+import { getCliDryRun } from "../../lib/dry-run.js";
+import { emitDryRunSuccess, emitRemoveSuccess, emitUpdateSuccess, wrapListEnvelope } from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { handleJobsError, loadAuthTokenOrExit } from "./shared.js";
@@ -67,6 +68,7 @@ export interface JobsSearchSaveOptions {
 
 export async function runJobsSearchSave(opts: JobsSearchSaveOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("jobs search save", opts.output);
+  const dryRun = getCliDryRun();
 
   const filters: jobs.SearchSubscriptionFilters = {};
   if (opts.skills !== undefined) filters.skills = opts.skills;
@@ -78,13 +80,19 @@ export async function runJobsSearchSave(opts: JobsSearchSaveOptions): Promise<vo
   if (opts.estimatedLengths !== undefined) filters.estimatedLengths = opts.estimatedLengths;
   if (opts.excludeUnspecifiedBudget !== undefined) filters.excludeUnspecifiedBudget = opts.excludeUnspecifiedBudget;
 
-  let state: jobs.SearchSubscriptionState;
+  let outcome: jobs.SearchSubscriptionSaveOutcome;
   try {
-    state = await jobs.searchSubscriptionSave(token, filters);
+    outcome = await jobs.searchSubscriptionSave(token, filters, { dryRun });
   } catch (err) {
     handleJobsError("jobs search save", err, opts.output);
   }
 
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({ operation: "jobs.search.save", format: opts.output, preview: outcome.preview });
+    return;
+  }
+
+  const { result: state } = outcome;
   const row: SearchSubscriptionRow | InactiveRow =
     state.active && state.filters !== null ? renderRow(state.filters) : { active: false, filters: null };
   const nameNote = opts.name !== undefined ? ` (advisory name "${opts.name}" not stored server-side)` : "";
@@ -102,14 +110,24 @@ export async function runJobsSearchSave(opts: JobsSearchSaveOptions): Promise<vo
  * Action handler for `ttctl jobs search remove`. Terminates the
  * active subscription. The optional `<id>` argument is ignored — the
  * wire has only one subscription per viewer.
+ *
+ * Routes through the core layer's `dryRun` option (issue #162) when
+ * the global `--dry-run` flag is set.
  */
 export async function runJobsSearchRemove(id: string | undefined, output: OutputFormat): Promise<void> {
   const token = await loadAuthTokenOrExit("jobs search remove", output);
+  const dryRun = getCliDryRun();
 
+  let outcome: jobs.SearchSubscriptionRemoveOutcome;
   try {
-    await jobs.searchSubscriptionRemove(token);
+    outcome = await jobs.searchSubscriptionRemove(token, { dryRun });
   } catch (err) {
     handleJobsError("jobs search remove", err, output);
+  }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({ operation: "jobs.search.remove", format: output, preview: outcome.preview });
+    return;
   }
 
   const idNote = id !== undefined ? ` (supplied id "${id}" ignored — only one subscription exists per user)` : "";
