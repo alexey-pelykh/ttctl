@@ -21,6 +21,9 @@ import { registerAllTools } from "../tools/index.js";
  * we approximate by listing the keys on the underlying `_registeredTools`
  * record. If a future SDK version renames that internal field, update
  * this test — the expectation is structural, not the access mechanism.
+ *
+ * Post-#148: + 13 jobs tools (browse + interest + search subscription)
+ * = 83 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -35,7 +38,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (70 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability)", () => {
+  it("registers exactly the cumulative tool set (83 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -58,6 +61,20 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_engagements_list",
       "ttctl_engagements_show",
       "ttctl_engagements_stats",
+      // #148 — jobs (13, browse + interest + search subscription)
+      "ttctl_jobs_clear_interest",
+      "ttctl_jobs_list",
+      "ttctl_jobs_mark_viewed",
+      "ttctl_jobs_not_interested",
+      "ttctl_jobs_not_interested_list",
+      "ttctl_jobs_save",
+      "ttctl_jobs_saved",
+      "ttctl_jobs_search_list",
+      "ttctl_jobs_search_remove",
+      "ttctl_jobs_search_save",
+      "ttctl_jobs_show",
+      "ttctl_jobs_unsave",
+      "ttctl_jobs_viewed",
       // #73 — profile.basic (4)
       "ttctl_profile_basic_photo_show",
       "ttctl_profile_basic_photo_upload",

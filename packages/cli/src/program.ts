@@ -12,6 +12,7 @@ import { buildApplicationsCommand } from "./commands/applications/index.js";
 import { registerAuthCommand } from "./commands/auth/index.js";
 import { buildAvailabilityCommand } from "./commands/availability/index.js";
 import { buildEngagementsCommand } from "./commands/engagements/index.js";
+import { buildJobsCommand } from "./commands/jobs/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
 import { DRY_RUN_NO_OP_STDERR_NOTE, isMutationCommand, setCliDryRun } from "./lib/dry-run.js";
@@ -187,6 +188,7 @@ export function buildProgram(): Command {
   program.addCommand(buildApplicationsCommand());
   program.addCommand(buildEngagementsCommand());
   program.addCommand(buildAvailabilityCommand());
+  program.addCommand(buildJobsCommand());
 
   return program;
 }

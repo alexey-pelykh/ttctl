@@ -116,6 +116,22 @@ const EXPECTED_TOOLS = [
   "ttctl_availability_working_hours_set",
   "ttctl_availability_allocated_hours_show",
   "ttctl_availability_allocated_hours_set",
+  // jobs (#148) — 13 tools (browse + interest + search subscription).
+  // Per AC: MCP names use canonical `jobs_*` prefix only — no
+  // `opportunities_*` aliasing.
+  "ttctl_jobs_list",
+  "ttctl_jobs_show",
+  "ttctl_jobs_save",
+  "ttctl_jobs_unsave",
+  "ttctl_jobs_saved",
+  "ttctl_jobs_viewed",
+  "ttctl_jobs_mark_viewed",
+  "ttctl_jobs_not_interested",
+  "ttctl_jobs_not_interested_list",
+  "ttctl_jobs_clear_interest",
+  "ttctl_jobs_search_list",
+  "ttctl_jobs_search_save",
+  "ttctl_jobs_search_remove",
 ];
 
 /**
@@ -131,7 +147,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (70 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (83 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
