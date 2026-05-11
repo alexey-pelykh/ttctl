@@ -10,6 +10,7 @@ import { ConfigError } from "@ttctl/core";
 
 import { buildApplicationsCommand } from "./commands/applications/index.js";
 import { registerAuthCommand } from "./commands/auth/index.js";
+import { buildEngagementsCommand } from "./commands/engagements/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
 import { DRY_RUN_NO_OP_STDERR_NOTE, isMutationCommand, setCliDryRun } from "./lib/dry-run.js";
@@ -183,6 +184,7 @@ export function buildProgram(): Command {
 
   program.addCommand(buildProfileCommand());
   program.addCommand(buildApplicationsCommand());
+  program.addCommand(buildEngagementsCommand());
 
   return program;
 }

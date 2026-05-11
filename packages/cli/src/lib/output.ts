@@ -217,18 +217,17 @@ export function formatResult<T>(
 ): FormatResult {
   // Empty-state wrapper (#122): fires BEFORE per-format dispatch when
   // the caller opts in via `options.empty` AND `data` is detected as an
-  // empty collection (`[]` or `{items: []}`). Single-source per-format
-  // empty output — pretty renders the prose+CTA from the registry; json
-  // renders a stable single-line `[]`; yaml falls through to its normal
-  // rendering of the empty payload.
+  // empty collection (`[]` or `{items: []}`). Pretty mode renders the
+  // CTA prose; JSON / YAML fall through to normal serialization so the
+  // list envelope (`{version, items: []}`, per #128) is preserved on
+  // empty collections — the pre-#147 behavior of emitting a literal
+  // "[]" on the JSON path silently dropped the envelope wrapper, which
+  // tripped E2E suites that read `.items` (surfaced by #147 round-trip).
   if (options.empty !== undefined && isEmptyCollection(data)) {
-    if (format === "json") {
-      return { output: "[]" };
-    }
     if (format === "pretty") {
       return { output: emptyStateProse(options.empty.command) };
     }
-    // yaml — fall through to normal yaml rendering of the empty payload
+    // json / yaml: fall through to normal serialization
   }
   if (format === "json") {
     return { output: JSON.stringify(data) };

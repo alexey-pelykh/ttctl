@@ -102,6 +102,13 @@ const EXPECTED_TOOLS = [
   "ttctl_applications_list",
   "ttctl_applications_show",
   "ttctl_applications_stats",
+  // engagements (#147) — 6 tools (3 read + 3 break write/read)
+  "ttctl_engagements_list",
+  "ttctl_engagements_show",
+  "ttctl_engagements_stats",
+  "ttctl_engagements_breaks_list",
+  "ttctl_engagements_breaks_add",
+  "ttctl_engagements_breaks_remove",
 ];
 
 /**
@@ -117,7 +124,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (59 tools = 56 wave-3 profile + 3 #15 applications)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (65 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
