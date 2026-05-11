@@ -137,9 +137,30 @@ describe("jobs (live mobile-gateway)", () => {
     }
   });
 
-  it.skipIf(!e2eEnabled)("jobs show returns NOT_FOUND for an unknown id", async () => {
-    const fakeId = "job_00000000000000000000000000000000";
+  // Toptal job IDs are base64-encoded (e.g. `VjEtSm9iLTQ5MzY4OA`).
+  // The mobile-gateway has TWO error shapes for "no such job":
+  //   1. valid-format-but-non-existent → `viewer.eligibleJob = null`
+  //   2. malformed/unparseable ID       → GraphQL error `"Invalid ID"`
+  // Both must collapse to `NOT_FOUND` on the user-visible envelope.
+  // See #166 — case 2 originally fell through as `GRAPHQL_ERROR`.
+
+  it.skipIf(!e2eEnabled)("jobs show returns NOT_FOUND for a valid-format non-existent id", async () => {
+    // Valid base64 shape, but a job number guaranteed not to exist.
+    // Exercises the `viewer.eligibleJob === null` branch.
+    const fakeId = "VjEtSm9iLTk5OTk5OTk5OQ";
     const result = await cli.run(["jobs", "show", fakeId, "-o", "json"]);
+    expect(result.exitCode).not.toBe(0);
+    const payload = JSON.parse(result.stdout) as { ok?: boolean; errors?: Array<{ code?: string }> };
+    expect(payload.ok).toBe(false);
+    expect(payload.errors?.[0]?.code).toBe("NOT_FOUND");
+  });
+
+  it.skipIf(!e2eEnabled)("jobs show returns NOT_FOUND for a malformed id (#166)", async () => {
+    // Wrong-format ID — the live API rejects with `Invalid ID` BEFORE
+    // performing lookup. This case originally bypassed the regex
+    // and surfaced as `GRAPHQL_ERROR`; #166 collapsed it to `NOT_FOUND`.
+    const malformedId = "job_00000000000000000000000000000000";
+    const result = await cli.run(["jobs", "show", malformedId, "-o", "json"]);
     expect(result.exitCode).not.toBe(0);
     const payload = JSON.parse(result.stdout) as { ok?: boolean; errors?: Array<{ code?: string }> };
     expect(payload.ok).toBe(false);
