@@ -76,8 +76,8 @@
  */
 
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { stockTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
+import { buildDryRunPreview, stockTransport } from "../../transport.js";
+import type { DryRunPreview, TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
 
 /**
@@ -299,6 +299,94 @@ export interface AddBreakOptions {
   reasonIdentifier: string;
   comment?: string;
 }
+
+/**
+ * Per-mutation option object for the dry-run short-circuit (issue #163,
+ * mirroring the #52 reference pattern on `profile.basic.set()` and the
+ * #162 replication across `jobs`). When `dryRun === true`, the mutation
+ * builds a {@link DryRunPreview} and returns `{ kind: "preview", preview }`
+ * WITHOUT invoking the gateway transport. Default `false` — the apply
+ * path runs and a `{ kind: "applied", result }` outcome is returned.
+ *
+ * Kept as a stand-alone interface (not a discriminated-union option) so
+ * future per-mutation options can extend the same shape additively. The
+ * signature is deliberately uniform across the 2 engagement-breaks
+ * mutations.
+ */
+export interface DryRunOptions {
+  /**
+   * When `true`, short-circuit before any transport call and return a
+   * {@link DryRunPreview}-bearing outcome instead of executing the
+   * mutation. Default: `false` — normal apply path.
+   *
+   * **`breaks.add` specifics**: the apply path issues an
+   * `EngagementBreaks` query first to translate `jobActivityItem.id`
+   * → `engagement.id` for the mutation root. The dry-run path SKIPS
+   * that prefetch (per the AC's "no GraphQL request is sent (mock
+   * transport assertion)") and uses the caller-supplied
+   * `jobActivityItemId` as the placeholder value for `engagementId`
+   * in the preview's variables payload. The preview's wire SHAPE
+   * (field names, operation name, surface, redacted headers) is
+   * verbatim; the `engagementId` VALUE is a placeholder that resolves
+   * at apply time. The dry-run envelope carries a `notice` field
+   * surfacing this caveat to the user.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * Apply-path outcome for {@link breaks.add}. Wraps the
+ * server-confirmed {@link EngagementBreak} in a discriminated union so
+ * callers can branch deterministically between the apply path
+ * (`kind: "applied"`) and the dry-run path (`kind: "preview"`, see
+ * {@link EngagementBreaksDryRunPreviewOutcome}).
+ */
+export interface EngagementBreakAddAppliedOutcome {
+  kind: "applied";
+  result: EngagementBreak;
+}
+
+/**
+ * Apply-path outcome for {@link breaks.remove}. Carries the
+ * `{ id }` confirmation that the wire's `CancelEngagementBreak`
+ * mutation returns.
+ */
+export interface EngagementBreakRemoveAppliedOutcome {
+  kind: "applied";
+  result: { id: string };
+}
+
+/**
+ * Dry-run outcome shared by every engagement-breaks mutation. Carries a
+ * {@link DryRunPreview} (operation name, surface, transport, endpoint,
+ * variables payload, redacted headers) — emitted verbatim by the CLI's
+ * dry-run envelope (`emitDryRunSuccess` in
+ * `packages/cli/src/lib/envelopes.ts`).
+ */
+export interface EngagementBreaksDryRunPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link breaks.add}. The apply
+ * path returns the post-mutation {@link EngagementBreak} wrapped in
+ * `{ kind: "applied", result }`; the dry-run path returns a
+ * {@link DryRunPreview} wrapped in `{ kind: "preview", preview }`.
+ *
+ * Pre-1.0 the pre-#163 return type (`Promise<EngagementBreak>`) no
+ * longer exists — callers must branch on `outcome.kind` to access
+ * either `outcome.result` or `outcome.preview`. The MCP layer (and any
+ * future consumer) updates in lockstep with this rename via the
+ * `unwrapEngagementOutcome` generic in
+ * `packages/mcp/src/tools/engagements.ts`.
+ */
+export type AddBreakOutcome = EngagementBreakAddAppliedOutcome | EngagementBreaksDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link breaks.remove}.
+ */
+export type RemoveBreakOutcome = EngagementBreakRemoveAppliedOutcome | EngagementBreaksDryRunPreviewOutcome;
 
 // ---------------------------------------------------------------------
 // GraphQL operation strings
@@ -819,8 +907,49 @@ export const breaks = {
    * Throws `EngagementsError("MUTATION_ERROR")` when the gateway
    * returns `success: false` (overlapping break dates, validation
    * failures, etc.).
+   *
+   * Dry-run path (issue #163): when invoked with `options.dryRun ===
+   * true`, builds a {@link DryRunPreview} of the mutation WITHOUT
+   * invoking the gateway transport — including the prefetch
+   * `EngagementBreaks` query (per the AC's "no GraphQL request is
+   * sent" requirement). The preview's `variables.engagementId` is
+   * populated with the caller-supplied `jobActivityItemId` as a
+   * placeholder; the wire SHAPE (field names, operation, surface,
+   * redacted headers) is verbatim. The actual `engagement.id` resolves
+   * at apply time via the skipped prefetch.
    */
-  async add(token: string, jobActivityItemId: string, opts: AddBreakOptions): Promise<EngagementBreak> {
+  async add(
+    token: string,
+    jobActivityItemId: string,
+    opts: AddBreakOptions,
+    options: DryRunOptions = {},
+  ): Promise<AddBreakOutcome> {
+    if (options.dryRun === true) {
+      // Skip the prefetch entirely — the AC mandates zero transport
+      // calls in dry-run mode. The literal `jobActivityItemId` stands
+      // in for `engagementId` so the preview's variable structure
+      // matches the wire shape; the CLI envelope surfaces a `notice`
+      // explaining the deferred resolution.
+      const previewVariables: Record<string, unknown> = {
+        engagementId: jobActivityItemId,
+        startDate: opts.startDate,
+        endDate: opts.endDate,
+        reasonIdentifier: opts.reasonIdentifier,
+        comment: opts.comment ?? null,
+      };
+      return {
+        kind: "preview",
+        preview: buildDryRunPreview({
+          surface: "mobile-gateway",
+          authToken: token,
+          body: {
+            operationName: "CreateEngagementBreak",
+            query: CREATE_ENGAGEMENT_BREAK_MUTATION,
+            variables: previewVariables,
+          },
+        }),
+      };
+    }
     const { engagementId } = await fetchEngagementBreaksAndId(token, jobActivityItemId);
     const variables: Record<string, unknown> = {
       engagementId,
@@ -848,7 +977,7 @@ export const breaks = {
     if (result.break === null) {
       throw new EngagementsError("UNKNOWN", "CreateEngagementBreak returned success but the `break` payload was null.");
     }
-    return result.break;
+    return { kind: "applied", result: result.break };
   },
 
   /**
@@ -857,13 +986,35 @@ export const breaks = {
    *
    * Returns `{ id }` of the cancelled break for envelope wrapping.
    * Throws `EngagementsError("MUTATION_ERROR")` on `success: false`.
+   *
+   * Dry-run path (issue #163): when invoked with `options.dryRun ===
+   * true`, builds a {@link DryRunPreview} of the mutation without
+   * invoking the gateway transport and returns it wrapped in
+   * {@link EngagementBreaksDryRunPreviewOutcome}. The single
+   * `engagementBreakId` variable is preserved verbatim — no
+   * translation needed for this mutation.
    */
-  async remove(token: string, engagementBreakId: string): Promise<{ id: string }> {
+  async remove(token: string, engagementBreakId: string, options: DryRunOptions = {}): Promise<RemoveBreakOutcome> {
+    const variables = { engagementBreakId };
+    if (options.dryRun === true) {
+      return {
+        kind: "preview",
+        preview: buildDryRunPreview({
+          surface: "mobile-gateway",
+          authToken: token,
+          body: {
+            operationName: "CancelEngagementBreak",
+            query: CANCEL_ENGAGEMENT_BREAK_MUTATION,
+            variables,
+          },
+        }),
+      };
+    }
     const data = await callGateway<CancelEngagementBreakResponse>(
       token,
       "CancelEngagementBreak",
       CANCEL_ENGAGEMENT_BREAK_MUTATION,
-      { engagementBreakId },
+      variables,
     );
     if (data.engagementBreak === null) {
       throw new EngagementsError("NOT_FOUND", `Engagement break "${engagementBreakId}" not found.`);
@@ -875,6 +1026,6 @@ export const breaks = {
     if (!result.success) {
       throw new EngagementsError("MUTATION_ERROR", formatMutationErrors("CancelEngagementBreak failed", result.errors));
     }
-    return { id: engagementBreakId };
+    return { kind: "applied", result: { id: engagementBreakId } };
   },
 };

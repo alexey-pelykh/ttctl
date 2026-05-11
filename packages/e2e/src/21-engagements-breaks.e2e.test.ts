@@ -186,4 +186,115 @@ describe("engagements breaks (live mobile-gateway)", () => {
     expect(payload.ok).toBe(false);
     expect(payload.errors?.[0]?.code).toBe("NOT_FOUND");
   });
+
+  // -------------------------------------------------------------------
+  // Dry-run E2E coverage (issue #163)
+  //
+  // Mandatory per CLAUDE.md § Schema/contract validation rule — wiring
+  // `--dry-run` through inferred mutation operations
+  // (`CreateEngagementBreak`, `CancelEngagementBreak`) REQUIRES live
+  // verification before merge. Because the dry-run path has zero side
+  // effects by construction (transport never called — including the
+  // `EngagementBreaks` prefetch in `breaks add`), both mutating leaves
+  // can be exercised in a single E2E run safely without any account
+  // state mutation.
+  //
+  // Each assertion verifies:
+  //   - exitCode === 0
+  //   - JSON envelope has `dryRun: true`
+  //   - envelope's `operation` matches the leaf
+  //   - `preview.operationName` matches the wire operation per the
+  //     issue's mapping table (this is the CRITICAL wire-shape AC)
+  //   - `preview.surface === "mobile-gateway"`
+  //   - `preview.transport === "stock"`
+  //   - bearer redacted in `preview.headers.authorization`
+  // -------------------------------------------------------------------
+
+  interface DryRunEnvelope {
+    ok?: boolean;
+    version?: string;
+    operation?: string;
+    dryRun?: boolean;
+    notice?: string;
+    preview?: {
+      operationName?: string;
+      surface?: string;
+      transport?: string;
+      variables?: Record<string, unknown>;
+      headers?: Record<string, string>;
+    };
+  }
+
+  function assertDryRunEnvelope(
+    payload: DryRunEnvelope,
+    expectedOperation: string,
+    expectedWireOperation: string,
+  ): void {
+    expect(payload.ok).toBe(true);
+    expect(payload.version).toBe("1.0");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.operation).toBe(expectedOperation);
+    expect(payload.preview?.operationName).toBe(expectedWireOperation);
+    expect(payload.preview?.surface).toBe("mobile-gateway");
+    expect(payload.preview?.transport).toBe("stock");
+    // Bearer redaction — the captured session token MUST NOT leak.
+    expect(payload.preview?.headers?.["authorization"]).toBe("Token token=<redacted>");
+  }
+
+  it.skipIf(!e2eEnabled)(
+    "engagements breaks add --dry-run emits the dry-run envelope without server side effects (prefetch skipped)",
+    async () => {
+      // Use a synthetic activity-item id — the dry-run path skips the
+      // prefetch, so no live engagement is needed. The preview will
+      // carry the synthetic id as the `engagementId` placeholder per
+      // the deferred-resolution semantics.
+      const result = await cli.run([
+        "--dry-run",
+        "engagements",
+        "breaks",
+        "add",
+        "act-fake-engagement-id",
+        "--from",
+        "2030-01-01",
+        "--to",
+        "2030-01-08",
+        "--reason-id",
+        "talent_on_vacation",
+        "--comment",
+        "dry-run preview",
+        "-o",
+        "json",
+      ]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+      assertDryRunEnvelope(payload, "engagements.breaks.add", "CreateEngagementBreak");
+      expect(payload.preview?.variables).toEqual({
+        engagementId: "act-fake-engagement-id",
+        startDate: "2030-01-01",
+        endDate: "2030-01-08",
+        reasonIdentifier: "talent_on_vacation",
+        comment: "dry-run preview",
+      });
+      // Notice surfaces the deferred-resolution caveat.
+      expect(typeof payload.notice).toBe("string");
+      expect(payload.notice).toContain("placeholder");
+      // Stderr should be silent (no read-no-op note — leaf was markMutation'd).
+      expect(result.stderr).not.toContain("no-op for read commands");
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "engagements breaks remove --dry-run emits the dry-run envelope without server side effects",
+    async () => {
+      // Use a synthetic break id — no live break is needed since the
+      // mutation is never sent on dry-run.
+      const result = await cli.run(["--dry-run", "engagements", "breaks", "remove", "br-fake-break-id", "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+      assertDryRunEnvelope(payload, "engagements.breaks.remove", "CancelEngagementBreak");
+      expect(payload.preview?.variables).toEqual({ engagementBreakId: "br-fake-break-id" });
+      // Stderr should be silent (no read-no-op note — leaf was markMutation'd).
+      expect(result.stderr).not.toContain("no-op for read commands");
+    },
+  );
 });

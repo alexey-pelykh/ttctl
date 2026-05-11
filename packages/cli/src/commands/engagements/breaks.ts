@@ -4,11 +4,29 @@
 import Table from "cli-table3";
 import { engagements } from "@ttctl/core";
 
-import { emitAddSuccess, emitRemoveSuccess, wrapListEnvelope } from "../../lib/envelopes.js";
+import { getCliDryRun } from "../../lib/dry-run.js";
+import { emitAddSuccess, emitDryRunSuccess, emitRemoveSuccess, wrapListEnvelope } from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { formatDate } from "./list.js";
 import { handleEngagementsError, loadAuthTokenOrExit } from "./shared.js";
+
+/**
+ * Notice text emitted on the dry-run envelope for `breaks.add`. The
+ * mutation's apply path resolves the underlying `engagement.id` via a
+ * separate `EngagementBreaks` query (one extra round-trip) before
+ * issuing `CreateEngagementBreak`. The dry-run path SKIPS that
+ * prefetch entirely (per the AC's "no GraphQL request is sent"
+ * requirement), so the preview's `variables.engagementId` carries the
+ * caller-supplied `jobActivityItemId` as a placeholder — the real
+ * `engagement.id` would be resolved at apply time.
+ *
+ * Surfaced as the `notice` field on the dry-run envelope so consumers
+ * (CLI users reading `pretty` output AND machine consumers parsing
+ * `json` / `yaml`) see the caveat without ambiguity.
+ */
+const ADD_BREAK_DRY_RUN_NOTICE =
+  "engagementId in the preview is a placeholder (the caller's jobActivityItem.id); the apply path resolves the real engagement.id via an EngagementBreaks query before issuing the mutation — this read is skipped on dry-run.";
 
 /**
  * Action handler for `ttctl engagements breaks list <id>`. Lists
@@ -54,6 +72,7 @@ export interface EngagementsBreaksAddOptions {
 
 export async function runEngagementsBreaksAdd(id: string, opts: EngagementsBreaksAddOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("engagements breaks add", opts.output);
+  const dryRun = getCliDryRun();
 
   const addOpts: engagements.AddBreakOptions = {
     startDate: opts.from,
@@ -62,13 +81,24 @@ export async function runEngagementsBreaksAdd(id: string, opts: EngagementsBreak
   };
   if (opts.comment !== undefined) addOpts.comment = opts.comment;
 
-  let created: engagements.EngagementBreak;
+  let outcome: engagements.AddBreakOutcome;
   try {
-    created = await engagements.breaks.add(token, id, addOpts);
+    outcome = await engagements.breaks.add(token, id, addOpts, { dryRun });
   } catch (err) {
     handleEngagementsError("engagements breaks add", err, opts.output);
   }
 
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "engagements.breaks.add",
+      format: opts.output,
+      preview: outcome.preview,
+      notice: ADD_BREAK_DRY_RUN_NOTICE,
+    });
+    return;
+  }
+
+  const { result: created } = outcome;
   emitAddSuccess({
     operation: "engagements.breaks.add",
     format: opts.output,
@@ -88,11 +118,22 @@ export async function runEngagementsBreaksAdd(id: string, opts: EngagementsBreak
  */
 export async function runEngagementsBreaksRemove(breakId: string, output: OutputFormat): Promise<void> {
   const token = await loadAuthTokenOrExit("engagements breaks remove", output);
+  const dryRun = getCliDryRun();
 
+  let outcome: engagements.RemoveBreakOutcome;
   try {
-    await engagements.breaks.remove(token, breakId);
+    outcome = await engagements.breaks.remove(token, breakId, { dryRun });
   } catch (err) {
     handleEngagementsError("engagements breaks remove", err, output);
+  }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "engagements.breaks.remove",
+      format: output,
+      preview: outcome.preview,
+    });
+    return;
   }
 
   emitRemoveSuccess({
