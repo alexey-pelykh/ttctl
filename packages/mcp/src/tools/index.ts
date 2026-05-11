@@ -7,6 +7,7 @@ import type { ToolRegistrationContext } from "./_shared.js";
 import { registerApplicationsTools } from "./applications.js";
 import { registerAvailabilityTools } from "./availability.js";
 import { registerEngagementsTools } from "./engagements.js";
+import { registerJobsTools } from "./jobs.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerEducationTools } from "./profile/education.js";
 import { registerEmploymentTools } from "./profile/employment.js";
@@ -53,7 +54,7 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * 4 `profile.visas` + 2 `profile.resume` (#75) + 6 `profile.external` +
  * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
  * 3 `applications` (#15) + 6 `engagements` (#147) + 5 `availability`
- * (#146 amended) = 70 tools total.
+ * (#146 amended) + 13 `jobs` (#148) = 83 tools total.
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`
@@ -116,4 +117,12 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // show/set + allocated-hours show/set. Per-engagement time-off (= engagement
   // breaks) stays on `engagements` and is NOT mirrored here.
   registerAvailabilityTools(server, ctx);
+
+  // jobs — 13 leaves (#148). Browse opportunities (list/show/saved/viewed/
+  // not-interested-list) + interest mutations (save/unsave/mark-viewed/
+  // not-interested/clear-interest) + search-subscription management
+  // (list/save/remove — single-subscription model per R2). Per the AC, MCP
+  // tool names use canonical `jobs_*` prefix only (no `opportunities_*`
+  // aliasing).
+  registerJobsTools(server, ctx);
 }
