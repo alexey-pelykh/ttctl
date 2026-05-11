@@ -424,13 +424,15 @@ describe("engagements.breaks.add", () => {
         },
       },
     });
-    const result = await breaks.add(TOKEN, "act-eng-1", {
+    const outcome = await breaks.add(TOKEN, "act-eng-1", {
       startDate: "2026-06-01",
       endDate: "2026-06-08",
       reasonIdentifier: "vacation",
       comment: "Vacation",
     });
-    expect(result.id).toBe("br-1");
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.id).toBe("br-1");
     expect(mockedStock).toHaveBeenCalledTimes(2);
     expect(mockedStock.mock.calls[0]?.[0]?.body).toMatchObject({ operationName: "EngagementBreaks" });
     expect(mockedStock.mock.calls[1]?.[0]?.body).toMatchObject({
@@ -537,8 +539,10 @@ describe("engagements.breaks.remove", () => {
         },
       },
     });
-    const result = await breaks.remove(TOKEN, "br-1");
-    expect(result.id).toBe("br-1");
+    const outcome = await breaks.remove(TOKEN, "br-1");
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.id).toBe("br-1");
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "CancelEngagementBreak",
@@ -572,5 +576,118 @@ describe("engagements.breaks.remove", () => {
       name: "EngagementsError",
       code: "NOT_FOUND",
     });
+  });
+});
+
+// ---------------------------------------------------------------------
+// dry-run path (issue #163)
+//
+// Per the AC for #163, every engagement-breaks mutation invoked with
+// `dryRun: true` must:
+//   - SHORT-CIRCUIT — `stockTransport` is never called (transport-zero
+//     AC; includes the prefetch `EngagementBreaks` query that `add`
+//     normally issues to translate jobActivityItem.id → engagement.id)
+//   - return `{ kind: "preview", preview: <DryRunPreview> }`
+//   - the preview surfaces the operation name from the issue's mapping
+//     table verbatim (`CreateEngagementBreak` / `CancelEngagementBreak`),
+//     the mobile-gateway transport classification, the literal variables
+//     payload, and a redacted Authorization header
+//
+// `breaks.add` placeholder semantics: because the prefetch is skipped,
+// the preview's `variables.engagementId` carries the caller-supplied
+// `jobActivityItemId` as a placeholder. The CLI envelope's `notice`
+// field surfaces the deferred-resolution caveat to the user.
+// ---------------------------------------------------------------------
+describe("engagements.breaks dry-run path (issue #163)", () => {
+  it("breaks.add({ dryRun: true }) returns preview without invoking transport (transport-zero AC, prefetch skipped)", async () => {
+    const outcome = await breaks.add(
+      TOKEN,
+      "act-eng-1",
+      {
+        startDate: "2026-06-01",
+        endDate: "2026-06-08",
+        reasonIdentifier: "talent_on_vacation",
+        comment: "Summer break",
+      },
+      { dryRun: true },
+    );
+    // The CRITICAL AC: zero transport calls in dry-run path — including
+    // the prefetch that the apply path uses to resolve engagement.id.
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("CreateEngagementBreak");
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.transport).toBe("stock");
+    // Wire-shape contract: variable field names match the captured op;
+    // `engagementId` carries the jobActivityItemId placeholder.
+    expect(outcome.preview.variables).toEqual({
+      engagementId: "act-eng-1",
+      startDate: "2026-06-01",
+      endDate: "2026-06-08",
+      reasonIdentifier: "talent_on_vacation",
+      comment: "Summer break",
+    });
+    // Bearer redaction.
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
+  });
+
+  it("breaks.add({ dryRun: true }) preserves comment=null when comment is omitted", async () => {
+    const outcome = await breaks.add(
+      TOKEN,
+      "act-eng-1",
+      { startDate: "2026-06-01", endDate: "2026-06-08", reasonIdentifier: "other" },
+      { dryRun: true },
+    );
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.variables).toMatchObject({ reasonIdentifier: "other", comment: null });
+  });
+
+  it("breaks.remove({ dryRun: true }) returns preview without invoking transport", async () => {
+    const outcome = await breaks.remove(TOKEN, "br-1", { dryRun: true });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("CancelEngagementBreak");
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.transport).toBe("stock");
+    expect(outcome.preview.variables).toEqual({ engagementBreakId: "br-1" });
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
+  });
+
+  it("explicit `dryRun: false` is the apply path (ensures option does not invert)", async () => {
+    // breaks.remove apply path — one transport call expected.
+    reply({
+      body: {
+        data: {
+          engagementBreak: {
+            cancel: { success: true, errors: null, break: { id: "br-1" } },
+          },
+        },
+      },
+    });
+    const outcome = await breaks.remove(TOKEN, "br-1", { dryRun: false });
+    expect(mockedStock).toHaveBeenCalledOnce();
+    expect(outcome.kind).toBe("applied");
+  });
+
+  it("omitting options entirely is the apply path (default behavior)", async () => {
+    // breaks.remove apply path with no options arg — defaults to dryRun=false.
+    reply({
+      body: {
+        data: {
+          engagementBreak: {
+            cancel: { success: true, errors: null, break: { id: "br-1" } },
+          },
+        },
+      },
+    });
+    const outcome = await breaks.remove(TOKEN, "br-1");
+    expect(mockedStock).toHaveBeenCalledOnce();
+    expect(outcome.kind).toBe("applied");
   });
 });

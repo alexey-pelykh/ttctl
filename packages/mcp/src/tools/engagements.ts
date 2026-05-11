@@ -213,8 +213,8 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
           reasonIdentifier: args.reasonIdentifier,
         };
         if (args.comment !== undefined) opts.comment = args.comment;
-        const created = await engagements.breaks.add(auth.token, args.id, opts);
-        return successResponse(created);
+        const outcome = await engagements.breaks.add(auth.token, args.id, opts);
+        return successResponse(unwrapEngagementOutcome(outcome));
       } catch (err) {
         return mapEngagementsError(err);
       }
@@ -244,13 +244,34 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const result = await engagements.breaks.remove(auth.token, args.breakId);
-        return successResponse(result);
+        const outcome = await engagements.breaks.remove(auth.token, args.breakId);
+        return successResponse(unwrapEngagementOutcome(outcome));
       } catch (err) {
         return mapEngagementsError(err);
       }
     },
   );
+}
+
+/**
+ * Narrow an engagement-breaks mutation outcome to the payload that MCP
+ * tools surface to LLM clients (issue #163). The MCP layer currently
+ * never passes `dryRun: true` — so the apply path is always taken and
+ * `outcome.kind === "applied"` always holds. The `preview` branch is
+ * defensively rendered (returning the preview payload verbatim) for
+ * future-proofing against the companion MCP-wide `dryRun?` work
+ * tracked in #165.
+ *
+ * Kept as a single helper so both MCP engagement-breaks mutations
+ * share one narrowing rule. Generic over the union type so each call
+ * site preserves its specific outcome variant's apply-path payload
+ * type (e.g. `EngagementBreak` for `add`, `{ id: string }` for
+ * `remove`).
+ */
+function unwrapEngagementOutcome<TApplied, TPreview>(
+  outcome: { kind: "applied"; result: TApplied } | { kind: "preview"; preview: TPreview },
+): TApplied | TPreview {
+  return outcome.kind === "applied" ? outcome.result : outcome.preview;
 }
 
 interface ToolSuccessResponse {

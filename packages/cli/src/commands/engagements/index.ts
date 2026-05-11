@@ -5,6 +5,7 @@ import { Command, InvalidArgumentError, Option } from "commander";
 
 import { engagements } from "@ttctl/core";
 
+import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { runEngagementsBreaksAdd, runEngagementsBreaksList, runEngagementsBreaksRemove } from "./breaks.js";
@@ -107,56 +108,64 @@ export function buildEngagementsCommand(): Command {
       await runEngagementsBreaksList(id, options.output);
     });
 
-  breaks
-    .command("add")
-    .description("Schedule a new break on an engagement")
-    .argument("<id>", "engagement id (the row id from `engagements list`)", parseIdArg)
-    .requiredOption("--from <date>", "start date (YYYY-MM-DD)")
-    .requiredOption("--to <date>", "end date (YYYY-MM-DD)")
-    .requiredOption(
-      "--reason-id <id>",
-      "server-side reason identifier (e.g. `talent_on_vacation`, `client_needs_preparation`, `client_on_vacation`, `other`)",
-    )
-    .option("--comment <text>", "optional free-text comment")
-    .addOption(
-      new Option("-o, --output <format>", "output format")
-        .choices(OUTPUT_FORMATS)
-        .default("pretty" satisfies OutputFormat),
-    )
-    .action(
-      async (
-        id: string,
-        options: {
-          from: string;
-          to: string;
-          reasonId: string;
-          comment?: string;
-          output: OutputFormat;
+  // Marked as a mutation (issue #163) so the global `--dry-run` flag
+  // routes through to `engagements.breaks.add()`'s `dryRun` option.
+  markMutation(
+    breaks
+      .command("add")
+      .description("Schedule a new break on an engagement")
+      .argument("<id>", "engagement id (the row id from `engagements list`)", parseIdArg)
+      .requiredOption("--from <date>", "start date (YYYY-MM-DD)")
+      .requiredOption("--to <date>", "end date (YYYY-MM-DD)")
+      .requiredOption(
+        "--reason-id <id>",
+        "server-side reason identifier (e.g. `talent_on_vacation`, `client_needs_preparation`, `client_on_vacation`, `other`)",
+      )
+      .option("--comment <text>", "optional free-text comment")
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(
+        async (
+          id: string,
+          options: {
+            from: string;
+            to: string;
+            reasonId: string;
+            comment?: string;
+            output: OutputFormat;
+          },
+        ) => {
+          const addOpts: import("./breaks.js").EngagementsBreaksAddOptions = {
+            from: options.from,
+            to: options.to,
+            reasonId: options.reasonId,
+            output: options.output,
+          };
+          if (options.comment !== undefined) addOpts.comment = options.comment;
+          await runEngagementsBreaksAdd(id, addOpts);
         },
-      ) => {
-        const addOpts: import("./breaks.js").EngagementsBreaksAddOptions = {
-          from: options.from,
-          to: options.to,
-          reasonId: options.reasonId,
-          output: options.output,
-        };
-        if (options.comment !== undefined) addOpts.comment = options.comment;
-        await runEngagementsBreaksAdd(id, addOpts);
-      },
-    );
+      ),
+  );
 
-  breaks
-    .command("remove")
-    .description("Cancel a scheduled break by id")
-    .argument("<break-id>", "engagementBreak id (from `breaks list`)", parseIdArg)
-    .addOption(
-      new Option("-o, --output <format>", "output format")
-        .choices(OUTPUT_FORMATS)
-        .default("pretty" satisfies OutputFormat),
-    )
-    .action(async (breakId: string, options: { output: OutputFormat }) => {
-      await runEngagementsBreaksRemove(breakId, options.output);
-    });
+  // Marked as a mutation (issue #163) so the global `--dry-run` flag
+  // routes through to `engagements.breaks.remove()`'s `dryRun` option.
+  markMutation(
+    breaks
+      .command("remove")
+      .description("Cancel a scheduled break by id")
+      .argument("<break-id>", "engagementBreak id (from `breaks list`)", parseIdArg)
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (breakId: string, options: { output: OutputFormat }) => {
+        await runEngagementsBreaksRemove(breakId, options.output);
+      }),
+  );
 
   return cmd;
 }
