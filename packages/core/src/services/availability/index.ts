@@ -1,0 +1,576 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Oleksii PELYKH
+
+/**
+ * `availability` service module — view and manage the signed-in user's
+ * platform-wide availability: time zone, working-hours window, flexible
+ * shift range, and viewer-scoped allocated-hours.
+ *
+ * **Vocabulary note**: in the Toptal Talent portal the per-engagement
+ * "time off" feature is implemented as engagement breaks (`scheduleTimeOff`
+ * UI buttons fire `engagement.createBreak`). Per-engagement break
+ * management is owned by `services/engagements/breaks.{list,add,remove}`
+ * — this module deliberately does NOT expose a parallel "time-off"
+ * surface (the underlying API would be identical to the engagement-break
+ * one, so duplication would only confuse users). The "lead time"
+ * concept that exists in the portal is "Minimum scheduling notice" for
+ * booking pages / consultations — a different surface, out of scope here.
+ *
+ * | Leaf                          | Operation                                     |
+ * |-------------------------------|-----------------------------------------------|
+ * | `show()`                      | `GetAvailability` (read viewerRole snapshot)  |
+ * | `workingHours.show()`         | `GetAvailability` (subset projection)         |
+ * | `workingHours.set(input)`     | `UpdateWorkingHours`                          |
+ * | `allocatedHours.show()`       | `GetAvailability` (subset projection)         |
+ * | `allocatedHours.set(hours)`   | `UpdateAllocatedHours`                        |
+ *
+ * **Routing**: All ops talk to the **mobile-gateway** surface
+ * (`https://www.toptal.com/gateway/graphql/talent/graphql`) via
+ * `stockTransport`. The gateway is plain HTTPS — no Cloudflare, no TLS
+ * impersonation needed. Same surface as `engagements` and
+ * `applications`.
+ *
+ * **Operations are inlined as strings** (not codegen-driven) — same
+ * pattern as `engagements` and `applications`. The
+ * `UpdateAllocatedHours` mutation is used VERBATIM from
+ * `../research/graphql/gateway/operations/mobile/UpdateAllocatedHours.graphql`.
+ * `UpdateWorkingHours` is derived from the captured
+ * `../research/graphql/gateway/operations/portal/UpdateWorkingHours.graphql`,
+ * with the input shape VERIFIED against the live mobile-gateway on
+ * 2026-05-11 (the captured schema documents `UpdateWorkingHoursInput
+ * { _placeholder: String }` — a schema gap). The verified shape is:
+ *
+ *     input UpdateWorkingHoursInput {
+ *       profileId: ID!                    # viewer.viewerRole.profile.id
+ *       profile: WorkingHoursInput!
+ *     }
+ *     input WorkingHoursInput {
+ *       timeZone: String
+ *       workingTimeFrom: String
+ *       workingTimeTo: String
+ *       availableShiftRangeFrom: String
+ *       availableShiftRangeTo: String
+ *     }
+ *
+ * The `profile` sub-object's fields are all optional — the mutation
+ * supports partial updates (the portal sends only the changed fields).
+ * Times are formatted as `"HH:MM:SS"` strings (e.g., `"09:00:00"`);
+ * time-zone values match the IANA-zone `value` field on `TimeZone`
+ * (e.g., `"Europe/Berlin"`).
+ *
+ * **CLAUDE.md schema/contract validation rule TRIGGERED**: the
+ * `UpdateWorkingHours` mutation here uses a verified-from-live-probe
+ * input shape. The gated `*.e2e.test.ts` files must pass against a live
+ * session before merge (see `packages/e2e/src/23-availability-write.e2e.test.ts`).
+ *
+ * **Out of scope for v1** (per #146 amended spec):
+ *   - Time-off list/add/remove — already shipped as `engagements breaks`.
+ *   - Lead-time setting — different surface (booking pages /
+ *     consultations); follow-up issue.
+ *   - `meetingTimeFrom` / `meetingTimeTo` — not selected by the
+ *     `GetAvailability` query and not writable via the portal bundle's
+ *     mutation input.
+ *   - Per-engagement availability overrides — does not exist in the
+ *     API.
+ */
+
+import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { stockTransport } from "../../transport.js";
+import type { TransportResponse } from "../../transport.js";
+import { isAuthRevokedExtensionCode } from "../profile/shared.js";
+
+/**
+ * Availability-domain error codes. Mirrors the `EngagementsError` /
+ * `ApplicationsError` shape per project convention.
+ *
+ * - `NO_VIEWER`: HTTP 200 + `data.viewer === null` (impossible in
+ *   practice — auth-revoked is signalled differently — but kept for
+ *   defensive coverage).
+ * - `NO_VIEWER_ROLE`: viewer is present but `viewerRole === null`
+ *   (e.g., user is signed in but has no role assigned on the platform).
+ * - `GRAPHQL_ERROR`: top-level `errors[]` from the gateway, not an
+ *   auth-revoked extension.
+ * - `MUTATION_ERROR`: the `MutationResult.errors[]` payload (operation
+ *   succeeded at GraphQL level, but the mutation itself reports
+ *   per-field errors — validation failures, etc.).
+ * - `NETWORK_ERROR`, `UNKNOWN`: standard transport failure modes.
+ *
+ * Auth-revoked failures throw `AuthRevokedError` (cross-cutting
+ * `TtctlError` subclass per #77), not a code on this enum.
+ */
+export type AvailabilityErrorCode =
+  | "NO_VIEWER"
+  | "NO_VIEWER_ROLE"
+  | "GRAPHQL_ERROR"
+  | "MUTATION_ERROR"
+  | "NETWORK_ERROR"
+  | "UNKNOWN";
+
+export class AvailabilityError extends Error {
+  override readonly name = "AvailabilityError";
+  constructor(
+    public readonly code: AvailabilityErrorCode,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+  }
+}
+
+/**
+ * Time zone projection — matches the wire `TimeZone` type. `value` is the
+ * IANA zone identifier (e.g., `"Europe/Berlin"`) and the canonical input
+ * for `workingHours.set({ timeZone })`. `location` and the offsets are
+ * read-only metadata for human-facing rendering.
+ */
+export interface AvailabilityTimeZone {
+  name: string | null;
+  value: string;
+  location: string | null;
+  utcOffset: string | null;
+  stdOffset: string | null;
+}
+
+/**
+ * Top-level availability snapshot returned by `show()`.
+ *
+ * Times are `"HH:MM:SS"` strings; null when the field is unset on the
+ * server. `allocatedHours` is a non-negative integer in [0, 80] per the
+ * platform's UI-enforced range (`SetAvailability` validator caps at 80),
+ * or null when unset.
+ */
+export interface AvailabilitySnapshot {
+  /** Viewer id (Viewer.id from the gateway). */
+  viewerId: string;
+  /** Profile id (viewer.viewerRole.profile.id) — needed as the `profileId` field on `UpdateWorkingHoursInput`. Null when the viewer has a role but no bound profile (unusual but defensively handled). */
+  profileId: string | null;
+  /** Time zone, IANA identifier in `.value`. */
+  timeZone: AvailabilityTimeZone | null;
+  /** Daily working hours window start, `"HH:MM:SS"`. */
+  workingTimeFrom: string | null;
+  /** Daily working hours window end, `"HH:MM:SS"`. */
+  workingTimeTo: string | null;
+  /** Flexible shift-range start (the "I could shift to these hours if needed" window). */
+  availableShiftRangeFrom: string | null;
+  /** Flexible shift-range end. */
+  availableShiftRangeTo: string | null;
+  /** Allocated hours (viewer-scoped, integer in [0, 80]). */
+  allocatedHours: number | null;
+}
+
+/**
+ * Input for `workingHours.set()`. All fields optional — the mutation
+ * supports partial updates. The CLI/MCP surfaces require at least one
+ * field to be provided.
+ */
+export interface UpdateWorkingHoursInput {
+  /** IANA time-zone identifier (e.g., `"Europe/Berlin"`). */
+  timeZone?: string;
+  /** Daily working hours window start, `"HH:MM:SS"`. */
+  workingTimeFrom?: string;
+  /** Daily working hours window end, `"HH:MM:SS"`. */
+  workingTimeTo?: string;
+  /** Flexible shift-range start, `"HH:MM:SS"`. */
+  availableShiftRangeFrom?: string;
+  /** Flexible shift-range end, `"HH:MM:SS"`. */
+  availableShiftRangeTo?: string;
+}
+
+// ---------------------------------------------------------------------
+// GraphQL operation strings
+//
+// `GetAvailability` is a derived query selecting only the fields
+// `workingHours.show()` / `allocatedHours.show()` / top-level `show()`
+// need.
+//
+// `UpdateWorkingHours` is derived from the captured portal operation;
+// the input shape was recovered from the portal bundle call-site (see
+// module doc comment).
+//
+// `UpdateAllocatedHours` is used VERBATIM from
+// `../research/graphql/gateway/operations/mobile/UpdateAllocatedHours.graphql`.
+// ---------------------------------------------------------------------
+
+const GET_AVAILABILITY_QUERY = `query GetAvailability {
+  viewer {
+    __typename
+    id
+    viewerRole {
+      __typename
+      allocatedHours
+      timeZone { __typename name value location utcOffset stdOffset }
+      workingTimeFrom
+      workingTimeTo
+      availableShiftRangeFrom
+      availableShiftRangeTo
+      profile { __typename id }
+    }
+  }
+}`;
+
+const UPDATE_WORKING_HOURS_MUTATION = `mutation UpdateWorkingHours($input: UpdateWorkingHoursInput!) {
+  updateWorkingHours(input: $input) {
+    __typename
+    success
+    notice
+    errors { __typename code key message }
+    profile {
+      __typename
+      id
+      timeZone { __typename name value location utcOffset stdOffset }
+      workingTimeFrom
+      workingTimeTo
+      availableShiftRangeFrom
+      availableShiftRangeTo
+    }
+  }
+}`;
+
+// Verbatim from `../research/graphql/gateway/operations/mobile/UpdateAllocatedHours.graphql`.
+const UPDATE_ALLOCATED_HOURS_MUTATION = `mutation UpdateAllocatedHours($hours: Int!) { viewerRole { __typename update(input: { allocatedHours: $hours } ) { __typename notice ...mutationResultFields viewer { __typename id ...availabilityData } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment lastAllocatedHoursChangeRequestData on AllocatedHoursChangeRequest { __typename id allocatedHours rejectReason comment statusV2 { __typename value } futureAvailableHours returnInDate useReturnAvailability reviewedManually }  fragment availabilityData on Viewer { __typename id preliminarySearchSetting { __typename enabled disablingReason comment } viewerRole { __typename allocatedHours hiredHours lastAllocatedHoursChangeRequest { __typename ...lastAllocatedHoursChangeRequestData } } }`;
+
+interface GraphQLErrorEntry {
+  message?: string | null;
+  extensions?: { code?: string | null } | null;
+}
+
+interface MutationResultErrors {
+  key?: string | null;
+  message?: string | null;
+  code?: string | null;
+}
+
+interface MutationResult {
+  success: boolean;
+  errors?: MutationResultErrors[] | null;
+}
+
+interface ViewerRoleAvailabilityFields {
+  allocatedHours: number;
+  timeZone: AvailabilityTimeZone | null;
+  workingTimeFrom: string | null;
+  workingTimeTo: string | null;
+  availableShiftRangeFrom: string | null;
+  availableShiftRangeTo: string | null;
+  profile: { id: string } | null;
+}
+
+interface GetAvailabilityResponse {
+  viewer: {
+    id: string;
+    viewerRole: ViewerRoleAvailabilityFields | null;
+  } | null;
+}
+
+interface UpdateWorkingHoursResponse {
+  updateWorkingHours:
+    | (MutationResult & {
+        notice?: string | null;
+        profile: {
+          id: string;
+          timeZone: AvailabilityTimeZone | null;
+          workingTimeFrom: string | null;
+          workingTimeTo: string | null;
+          availableShiftRangeFrom: string | null;
+          availableShiftRangeTo: string | null;
+        } | null;
+      })
+    | null;
+}
+
+interface UpdateAllocatedHoursResponse {
+  viewerRole: {
+    update:
+      | (MutationResult & {
+          notice?: string | null;
+          viewer: {
+            id: string;
+            viewerRole: {
+              allocatedHours: number;
+              hiredHours?: number | null;
+            } | null;
+          } | null;
+        })
+      | null;
+  } | null;
+}
+
+/**
+ * Issue a GraphQL request against the mobile-gateway surface and
+ * normalize transport / GraphQL outcomes into typed `AvailabilityError`
+ * throws. Mirrors the `callGateway` helper in `services/engagements/`.
+ */
+async function callGateway<T>(
+  token: string,
+  operationName: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  let res: TransportResponse;
+  try {
+    res = await stockTransport({
+      surface: "mobile-gateway",
+      authToken: token,
+      body: { operationName, query, variables },
+    });
+  } catch (err) {
+    if (err instanceof TtctlError) throw err;
+    throw new AvailabilityError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
+      cause: err,
+    });
+  }
+
+  if (res.status === 401) {
+    throw new AuthRevokedError("Session is invalid or expired.");
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new AvailabilityError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
+  }
+
+  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
+  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
+    const first = body.errors[0];
+    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
+      throw new AuthRevokedError("Session is invalid or expired.");
+    }
+    throw new AvailabilityError("GRAPHQL_ERROR", `${operationName} failed: ${first?.message ?? "GraphQL error"}`);
+  }
+  if (!body?.data) {
+    throw new AvailabilityError("UNKNOWN", `${operationName} response had no \`data\` field`);
+  }
+  return body.data;
+}
+
+function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | null | undefined): string {
+  if (errors == null || errors.length === 0) {
+    return `${prefix}: no error detail returned.`;
+  }
+  const parts = errors.map((e) => {
+    const fields: string[] = [];
+    if (e.code != null) fields.push(`code=${e.code}`);
+    if (e.key != null) fields.push(`key=${e.key}`);
+    const head = fields.length > 0 ? `[${fields.join(", ")}] ` : "";
+    return `${head}${e.message ?? "(no message)"}`;
+  });
+  return `${prefix}: ${parts.join("; ")}`;
+}
+
+/**
+ * Read the signed-in user's full availability snapshot — time zone,
+ * working-hours window, flexible shift range, and allocated hours.
+ *
+ * Throws `AvailabilityError("NO_VIEWER")` when the server returns a
+ * null viewer (defensive — auth-revoked surfaces via `AuthRevokedError`
+ * instead).
+ *
+ * Throws `AvailabilityError("NO_VIEWER_ROLE")` when the viewer exists
+ * but has no role assigned (no role = no working-hours / allocated-hours
+ * shape).
+ */
+export async function show(token: string): Promise<AvailabilitySnapshot> {
+  const data = await callGateway<GetAvailabilityResponse>(token, "GetAvailability", GET_AVAILABILITY_QUERY, {});
+  if (data.viewer === null) {
+    throw new AvailabilityError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.viewerRole === null) {
+    throw new AvailabilityError(
+      "NO_VIEWER_ROLE",
+      "Viewer has no role assigned — no availability data is available. (Are you signed in as a Toptal Talent?)",
+    );
+  }
+  const role = data.viewer.viewerRole;
+  return {
+    viewerId: data.viewer.id,
+    profileId: role.profile?.id ?? null,
+    timeZone: role.timeZone,
+    workingTimeFrom: role.workingTimeFrom,
+    workingTimeTo: role.workingTimeTo,
+    availableShiftRangeFrom: role.availableShiftRangeFrom,
+    availableShiftRangeTo: role.availableShiftRangeTo,
+    allocatedHours: role.allocatedHours,
+  };
+}
+
+/**
+ * Working-hours sub-namespace under the service. Mirrors
+ * `engagements.breaks` so the public surface stays
+ * `availability.workingHours.{show, set}` — matches the CLI verb path
+ * `availability working-hours {show, set}`.
+ */
+export const workingHours = {
+  /**
+   * Read just the working-hours subset of the snapshot. Identical
+   * underlying query to `show()`; the projection here drops
+   * `allocatedHours` for callers that only care about the time-zone
+   * and working-hours fields.
+   */
+  async show(token: string): Promise<{
+    viewerId: string;
+    timeZone: AvailabilityTimeZone | null;
+    workingTimeFrom: string | null;
+    workingTimeTo: string | null;
+    availableShiftRangeFrom: string | null;
+    availableShiftRangeTo: string | null;
+  }> {
+    const snap = await show(token);
+    return {
+      viewerId: snap.viewerId,
+      timeZone: snap.timeZone,
+      workingTimeFrom: snap.workingTimeFrom,
+      workingTimeTo: snap.workingTimeTo,
+      availableShiftRangeFrom: snap.availableShiftRangeFrom,
+      availableShiftRangeTo: snap.availableShiftRangeTo,
+    };
+  },
+
+  /**
+   * Update working-hours fields. All input fields are optional — only
+   * the provided keys are sent in the mutation payload, supporting
+   * partial updates (per portal bundle's call-site behavior).
+   *
+   * Throws `AvailabilityError("MUTATION_ERROR")` when the gateway
+   * returns `success: false` (validation failures, malformed time
+   * strings, unknown time-zone identifiers).
+   *
+   * Returns the post-update working-hours shape.
+   */
+  async set(
+    token: string,
+    input: UpdateWorkingHoursInput,
+  ): Promise<{
+    timeZone: AvailabilityTimeZone | null;
+    workingTimeFrom: string | null;
+    workingTimeTo: string | null;
+    availableShiftRangeFrom: string | null;
+    availableShiftRangeTo: string | null;
+    notice: string | null;
+  }> {
+    const profileFields: Record<string, string> = {};
+    if (input.timeZone !== undefined) profileFields["timeZone"] = input.timeZone;
+    if (input.workingTimeFrom !== undefined) profileFields["workingTimeFrom"] = input.workingTimeFrom;
+    if (input.workingTimeTo !== undefined) profileFields["workingTimeTo"] = input.workingTimeTo;
+    if (input.availableShiftRangeFrom !== undefined)
+      profileFields["availableShiftRangeFrom"] = input.availableShiftRangeFrom;
+    if (input.availableShiftRangeTo !== undefined) profileFields["availableShiftRangeTo"] = input.availableShiftRangeTo;
+
+    if (Object.keys(profileFields).length === 0) {
+      throw new AvailabilityError(
+        "MUTATION_ERROR",
+        "UpdateWorkingHours requires at least one field (timeZone, workingTimeFrom, workingTimeTo, availableShiftRangeFrom, availableShiftRangeTo).",
+      );
+    }
+
+    // The mutation's `UpdateWorkingHoursInput` requires `profileId: ID!` and
+    // `profile: WorkingHoursInput!` (verified live 2026-05-11 via wire probe
+    // against mobile-gateway — see `.tmp/probe-update-working-hours.mjs`).
+    // Fetch the profile id from the live snapshot so callers don't have to
+    // plumb it through.
+    const snap = await show(token);
+    if (snap.profileId === null) {
+      throw new AvailabilityError(
+        "NO_VIEWER_ROLE",
+        "Viewer has a role but no bound profile id — cannot construct UpdateWorkingHours payload.",
+      );
+    }
+
+    const data = await callGateway<UpdateWorkingHoursResponse>(
+      token,
+      "UpdateWorkingHours",
+      UPDATE_WORKING_HOURS_MUTATION,
+      { input: { profileId: snap.profileId, profile: profileFields } },
+    );
+    if (data.updateWorkingHours === null) {
+      throw new AvailabilityError("UNKNOWN", "UpdateWorkingHours returned a null payload.");
+    }
+    const result = data.updateWorkingHours;
+    if (!result.success) {
+      throw new AvailabilityError("MUTATION_ERROR", formatMutationErrors("UpdateWorkingHours failed", result.errors));
+    }
+    if (result.profile === null) {
+      throw new AvailabilityError("UNKNOWN", "UpdateWorkingHours returned success but the `profile` payload was null.");
+    }
+    return {
+      timeZone: result.profile.timeZone,
+      workingTimeFrom: result.profile.workingTimeFrom,
+      workingTimeTo: result.profile.workingTimeTo,
+      availableShiftRangeFrom: result.profile.availableShiftRangeFrom,
+      availableShiftRangeTo: result.profile.availableShiftRangeTo,
+      notice: result.notice ?? null,
+    };
+  },
+};
+
+/**
+ * Allocated-hours sub-namespace. The wire mutation
+ * (`UpdateAllocatedHours`) operates on `viewerRole`, NOT on a specific
+ * engagement — `allocatedHours` is global across all of the viewer's
+ * active engagements. This is why the surface lives under
+ * `availability` rather than under `engagements` (per #147 scope
+ * amendment that absorbed it into #146).
+ */
+export const allocatedHours = {
+  /**
+   * Read just the allocated-hours value. `hiredHours` is NOT
+   * surfaced here — it's only returned by `set()` (where the
+   * post-update payload includes it for context).
+   */
+  async show(token: string): Promise<{ allocatedHours: number }> {
+    const snap = await show(token);
+    if (snap.allocatedHours === null) {
+      throw new AvailabilityError("UNKNOWN", "Viewer role payload had no allocatedHours field.");
+    }
+    return { allocatedHours: snap.allocatedHours };
+  },
+
+  /**
+   * Set the viewer-scoped allocated-hours value. The platform UI caps
+   * this at 80 (`SetAvailability` validator); the server enforces the
+   * same range — pass an out-of-range value at your own risk (the
+   * mutation will return `success: false` with a validation error).
+   *
+   * Returns the post-update `{ allocatedHours, hiredHours, notice }`
+   * triple.
+   */
+  async set(
+    token: string,
+    hours: number,
+  ): Promise<{
+    allocatedHours: number;
+    hiredHours: number | null;
+    notice: string | null;
+  }> {
+    if (!Number.isInteger(hours) || hours < 0) {
+      throw new AvailabilityError(
+        "MUTATION_ERROR",
+        `UpdateAllocatedHours: hours must be a non-negative integer (got ${String(hours)}).`,
+      );
+    }
+    const data = await callGateway<UpdateAllocatedHoursResponse>(
+      token,
+      "UpdateAllocatedHours",
+      UPDATE_ALLOCATED_HOURS_MUTATION,
+      { hours },
+    );
+    if (data.viewerRole === null) {
+      throw new AvailabilityError("NO_VIEWER_ROLE", "Viewer has no role assigned.");
+    }
+    const result = data.viewerRole.update;
+    if (result === null) {
+      throw new AvailabilityError("UNKNOWN", "UpdateAllocatedHours returned a null payload.");
+    }
+    if (!result.success) {
+      throw new AvailabilityError("MUTATION_ERROR", formatMutationErrors("UpdateAllocatedHours failed", result.errors));
+    }
+    if (result.viewer === null || result.viewer.viewerRole === null) {
+      throw new AvailabilityError(
+        "UNKNOWN",
+        "UpdateAllocatedHours returned success but the post-update viewer payload was null.",
+      );
+    }
+    return {
+      allocatedHours: result.viewer.viewerRole.allocatedHours,
+      hiredHours: result.viewer.viewerRole.hiredHours ?? null,
+      notice: result.notice ?? null,
+    };
+  },
+};
