@@ -630,7 +630,16 @@ interface TerminateSearchSubscriptionResponse {
   } | null;
 }
 
-const NOT_FOUND_MESSAGE_PATTERN = /Record not found/i;
+// The mobile-gateway returns at least two distinct GraphQL error
+// messages that both mean "no such job from the caller's perspective":
+//   - `"Record not found"`     for some lookup paths (kept for safety;
+//                              originally inferred, not yet observed)
+//   - `"Invalid ID"`           for malformed/unparseable IDs (live-
+//                              observed during #148 E2E — see #166)
+// A successful response with `viewer.eligibleJob === null` is the
+// third (live-observed) NOT_FOUND signal; that branch is handled
+// inline in `show()` and `markViewed()` and is not regex-driven.
+const NOT_FOUND_MESSAGE_PATTERN = /Record not found|Invalid ID/i;
 
 /**
  * Issue a GraphQL request against the mobile-gateway surface and

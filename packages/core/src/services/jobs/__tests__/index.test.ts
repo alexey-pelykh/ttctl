@@ -228,6 +228,20 @@ describe("jobs.show", () => {
     });
   });
 
+  it("translates `Invalid ID` GraphQL error to NOT_FOUND (#166)", async () => {
+    // Live-observed: the mobile-gateway uses `Invalid ID` (NOT
+    // `Record not found`) for malformed job IDs — verified against
+    // `https://www.toptal.com/gateway/graphql/talent/graphql` during
+    // #148 E2E. Both messages collapse to the same user-visible code.
+    reply({
+      body: { data: null, errors: [{ message: "JobShow failed: Invalid ID" }] },
+    });
+    await expect(show(TOKEN, "garbage")).rejects.toMatchObject({
+      name: "JobsError",
+      code: "NOT_FOUND",
+    });
+  });
+
   it("translates viewer.job=null to NOT_FOUND", async () => {
     reply({
       body: { data: { viewer: { id: "v1", job: null } } },
