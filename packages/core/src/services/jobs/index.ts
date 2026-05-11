@@ -77,8 +77,8 @@
  */
 
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { stockTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
+import { buildDryRunPreview, stockTransport } from "../../transport.js";
+import type { DryRunPreview, TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
 
 /**
@@ -130,6 +130,119 @@ export class JobsError extends Error {
 export interface NotInterestedOptions {
   reason: string;
 }
+
+/**
+ * Per-mutation option object for the dry-run short-circuit (issue #162,
+ * mirroring the #52 reference pattern on `profile.basic.set()`). When
+ * `dryRun === true`, the mutation builds a {@link DryRunPreview} and
+ * returns `{ kind: "preview", preview }` WITHOUT invoking the gateway
+ * transport. Default `false` — the apply path runs and a
+ * `{ kind: "applied", result }` outcome is returned.
+ *
+ * Kept as a stand-alone interface (not a discriminated-union option) so
+ * future per-mutation options (e.g. a hypothetical idempotency-key
+ * parameter) can extend the same shape additively. The signature is
+ * deliberately uniform across the 7 jobs mutations.
+ */
+export interface DryRunOptions {
+  /**
+   * When `true`, short-circuit before any transport call and return a
+   * {@link DryRunPreview}-bearing outcome instead of executing the
+   * mutation. Default: `false` — normal apply path.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * Apply-path outcome for a jobs interest-state mutation
+ * (`save` / `unsave` / `markViewed` / `notInterested` / `clearInterest`).
+ * Wraps the server-confirmed `JobInterestState` in a discriminated
+ * union so callers can branch deterministically between the apply path
+ * (`kind: "applied"`) and the dry-run path (`kind: "preview"`, see
+ * {@link JobsDryRunPreviewOutcome}).
+ */
+export interface JobInterestAppliedOutcome {
+  kind: "applied";
+  result: JobInterestState;
+}
+
+/**
+ * Dry-run outcome shared by every jobs mutation. Carries a
+ * {@link DryRunPreview} (operation name, surface, transport, endpoint,
+ * variables payload, redacted headers) — emitted verbatim by the CLI's
+ * dry-run envelope (`emitDryRunSuccess` in
+ * `packages/cli/src/lib/envelopes.ts`).
+ */
+export interface JobsDryRunPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link save}. The
+ * apply path returns the post-mutation {@link JobInterestState} wrapped
+ * in `{ kind: "applied", result }`; the dry-run path returns a
+ * {@link DryRunPreview} wrapped in `{ kind: "preview", preview }`.
+ *
+ * Pre-1.0 the pre-#162 return type (`Promise<JobInterestState>`) no
+ * longer exists — callers must branch on `outcome.kind` to access either
+ * `outcome.result` or `outcome.preview`. The MCP layer (and any future
+ * consumer) updates in lockstep with this rename.
+ */
+export type SaveOutcome = JobInterestAppliedOutcome | JobsDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link unsave}. Identical shape
+ * to {@link SaveOutcome} since `unsave` delegates to {@link
+ * clearInterest} (same wire operation `JobClearInterest`).
+ */
+export type UnsaveOutcome = JobInterestAppliedOutcome | JobsDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link markViewed}.
+ */
+export type MarkViewedOutcome = JobInterestAppliedOutcome | JobsDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link notInterested}.
+ */
+export type NotInterestedOutcome = JobInterestAppliedOutcome | JobsDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link clearInterest}.
+ */
+export type ClearInterestOutcome = JobInterestAppliedOutcome | JobsDryRunPreviewOutcome;
+
+/**
+ * Apply-path outcome for {@link searchSubscriptionSave}. Carries the
+ * post-mutation {@link SearchSubscriptionState} (the active filters, or
+ * `{ active: false, filters: null }` if the server unexpectedly reports
+ * no subscription after a successful `start`).
+ */
+export interface SearchSubscriptionSaveAppliedOutcome {
+  kind: "applied";
+  result: SearchSubscriptionState;
+}
+
+/**
+ * Discriminated-union return type for {@link searchSubscriptionSave}.
+ */
+export type SearchSubscriptionSaveOutcome = SearchSubscriptionSaveAppliedOutcome | JobsDryRunPreviewOutcome;
+
+/**
+ * Apply-path outcome for {@link searchSubscriptionRemove}. Carries the
+ * `{ terminated: true }` confirmation that the wire's idempotent
+ * `terminate` mutation returns.
+ */
+export interface SearchSubscriptionRemoveAppliedOutcome {
+  kind: "applied";
+  result: { terminated: true };
+}
+
+/**
+ * Discriminated-union return type for {@link searchSubscriptionRemove}.
+ */
+export type SearchSubscriptionRemoveOutcome = SearchSubscriptionRemoveAppliedOutcome | JobsDryRunPreviewOutcome;
 
 /**
  * Filter inputs for {@link list}. All fields fold into the captured
@@ -894,12 +1007,28 @@ export async function viewedList(token: string): Promise<JobListItem[]> {
  * (`MarkJobAsSaved`) toggles `saved=true` and clears `notInterested=false`
  * if it was set — the server's interest-status model is one-of-three
  * (`saved` | `not-interested` | `cleared`).
+ *
+ * Dry-run path (issue #162): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the mutation without invoking the
+ * gateway transport and returns it wrapped in {@link
+ * JobsDryRunPreviewOutcome}. The bearer token is redacted per the
+ * `DryRunPreview` contract; the `jobID` variable carries the caller's
+ * literal id (no sibling read needed for this surface).
  */
-export async function save(token: string, id: string): Promise<JobInterestState> {
-  const data = await callGateway<MarkJobMutationResponse>(token, "JobMarkSaved", MARK_JOB_SAVED_MUTATION, {
-    jobID: id,
-  });
-  return narrowMutation(data, "markSaved", id, "JobMarkSaved");
+export async function save(token: string, id: string, options: DryRunOptions = {}): Promise<SaveOutcome> {
+  const variables = { jobID: id };
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: { operationName: "JobMarkSaved", query: MARK_JOB_SAVED_MUTATION, variables },
+      }),
+    };
+  }
+  const data = await callGateway<MarkJobMutationResponse>(token, "JobMarkSaved", MARK_JOB_SAVED_MUTATION, variables);
+  return { kind: "applied", result: narrowMutation(data, "markSaved", id, "JobMarkSaved") };
 }
 
 /**
@@ -910,9 +1039,15 @@ export async function save(token: string, id: string): Promise<JobInterestState>
  * the "remove saved without affecting not-interested" semantics aren't
  * supported by the wire; they would need to re-mark not-interested
  * after.
+ *
+ * Delegates to {@link clearInterest} (same wire operation
+ * `JobClearInterest`) — the dry-run preview therefore reports
+ * `operationName: "JobClearInterest"`. The CLI envelope's
+ * surface-level `operation` field is `jobs.unsave` (kept distinct so
+ * users see the verb they invoked).
  */
-export async function unsave(token: string, id: string): Promise<JobInterestState> {
-  return clearInterest(token, id);
+export async function unsave(token: string, id: string, options: DryRunOptions = {}): Promise<UnsaveOutcome> {
+  return clearInterest(token, id, options);
 }
 
 /**
@@ -923,37 +1058,97 @@ export async function unsave(token: string, id: string): Promise<JobInterestStat
  * `reason` is server-side `String!` — rejects empty strings with
  * `code=blank, key=reason`. Caller must supply a non-empty value; the
  * wire does not validate against a closed enum, so free-text is fine.
+ *
+ * Dry-run path (issue #162): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the mutation without invoking the
+ * gateway transport and returns it wrapped in {@link
+ * JobsDryRunPreviewOutcome}. The `reason` variable is preserved in the
+ * preview's variables payload (it carries no session-bound material) so
+ * callers can verify the wire-shape end-to-end.
  */
-export async function notInterested(token: string, id: string, opts: NotInterestedOptions): Promise<JobInterestState> {
+export async function notInterested(
+  token: string,
+  id: string,
+  opts: NotInterestedOptions,
+  options: DryRunOptions = {},
+): Promise<NotInterestedOutcome> {
+  const variables = { jobID: id, reason: opts.reason };
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: { operationName: "JobMarkNotInterested", query: MARK_JOB_NOT_INTERESTED_MUTATION, variables },
+      }),
+    };
+  }
   const data = await callGateway<MarkJobMutationResponse>(
     token,
     "JobMarkNotInterested",
     MARK_JOB_NOT_INTERESTED_MUTATION,
-    { jobID: id, reason: opts.reason },
+    variables,
   );
-  return narrowMutation(data, "markNotInterested", id, "JobMarkNotInterested");
+  return { kind: "applied", result: narrowMutation(data, "markNotInterested", id, "JobMarkNotInterested") };
 }
 
 /**
  * Mark a job as viewed (UX-only signal — typically the UI auto-marks
  * on detail-page open; this surface lets the CLI do it explicitly).
+ *
+ * Dry-run path (issue #162): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the mutation without invoking the
+ * gateway transport and returns it wrapped in {@link
+ * JobsDryRunPreviewOutcome}.
  */
-export async function markViewed(token: string, id: string): Promise<JobInterestState> {
-  const data = await callGateway<MarkJobMutationResponse>(token, "JobMarkViewed", MARK_JOB_VIEWED_MUTATION, {
-    jobID: id,
-  });
-  return narrowMutation(data, "markViewed", id, "JobMarkViewed");
+export async function markViewed(token: string, id: string, options: DryRunOptions = {}): Promise<MarkViewedOutcome> {
+  const variables = { jobID: id };
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: { operationName: "JobMarkViewed", query: MARK_JOB_VIEWED_MUTATION, variables },
+      }),
+    };
+  }
+  const data = await callGateway<MarkJobMutationResponse>(token, "JobMarkViewed", MARK_JOB_VIEWED_MUTATION, variables);
+  return { kind: "applied", result: narrowMutation(data, "markViewed", id, "JobMarkViewed") };
 }
 
 /**
  * Clear the interest-status flags (both `saved` and `notInterested`)
  * on a job. The wire's "undo" path for either save or not-interested.
+ *
+ * Dry-run path (issue #162): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the mutation without invoking the
+ * gateway transport and returns it wrapped in {@link
+ * JobsDryRunPreviewOutcome}.
  */
-export async function clearInterest(token: string, id: string): Promise<JobInterestState> {
-  const data = await callGateway<MarkJobMutationResponse>(token, "JobClearInterest", CLEAR_JOB_INTEREST_MUTATION, {
-    jobID: id,
-  });
-  return narrowMutation(data, "clearInterestStatus", id, "JobClearInterest");
+export async function clearInterest(
+  token: string,
+  id: string,
+  options: DryRunOptions = {},
+): Promise<ClearInterestOutcome> {
+  const variables = { jobID: id };
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: { operationName: "JobClearInterest", query: CLEAR_JOB_INTEREST_MUTATION, variables },
+      }),
+    };
+  }
+  const data = await callGateway<MarkJobMutationResponse>(
+    token,
+    "JobClearInterest",
+    CLEAR_JOB_INTEREST_MUTATION,
+    variables,
+  );
+  return { kind: "applied", result: narrowMutation(data, "clearInterestStatus", id, "JobClearInterest") };
 }
 
 function narrowMutation(
@@ -1009,11 +1204,19 @@ export async function searchSubscriptionShow(token: string): Promise<SearchSubsc
  * it (the server does NOT error on "already subscribed").
  *
  * Returns the post-mutation subscription state.
+ *
+ * Dry-run path (issue #162): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the mutation without invoking the
+ * gateway transport and returns it wrapped in {@link
+ * JobsDryRunPreviewOutcome}. The filters payload is normalised
+ * identically to the apply path so the preview's `variables` reflect
+ * the exact wire shape that WOULD have been sent.
  */
 export async function searchSubscriptionSave(
   token: string,
   filters: SearchSubscriptionFilters,
-): Promise<SearchSubscriptionState> {
+  options: DryRunOptions = {},
+): Promise<SearchSubscriptionSaveOutcome> {
   const variables: Record<string, unknown> = {
     skills: filters.skills && filters.skills.length > 0 ? filters.skills : null,
     keywords: filters.keywords && filters.keywords.length > 0 ? filters.keywords : null,
@@ -1024,6 +1227,16 @@ export async function searchSubscriptionSave(
     estimatedLengths: filters.estimatedLengths && filters.estimatedLengths.length > 0 ? filters.estimatedLengths : null,
     excludeUnspecifiedBudget: filters.excludeUnspecifiedBudget ?? null,
   };
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: { operationName: "JobSearchSubscriptionStart", query: START_JOB_SUBSCRIPTION_MUTATION, variables },
+      }),
+    };
+  }
   const data = await callGateway<StartSearchSubscriptionResponse>(
     token,
     "JobSearchSubscriptionStart",
@@ -1040,7 +1253,7 @@ export async function searchSubscriptionSave(
   if (!result.success) {
     throw new JobsError("MUTATION_ERROR", formatMutationErrors("JobSearchSubscriptionStart", result.errors));
   }
-  return projectSubscription(result.viewer?.searchSubscription ?? null);
+  return { kind: "applied", result: projectSubscription(result.viewer?.searchSubscription ?? null) };
 }
 
 /**
@@ -1051,8 +1264,31 @@ export async function searchSubscriptionSave(
  * Returns `{ terminated: true }` on success. The post-terminate
  * subscription state is implicit (`active: false`) and is not re-
  * fetched here.
+ *
+ * Dry-run path (issue #162): when invoked with `options.dryRun === true`,
+ * builds a {@link DryRunPreview} of the mutation without invoking the
+ * gateway transport and returns it wrapped in {@link
+ * JobsDryRunPreviewOutcome}. The variables payload is `{}` (the wire
+ * `terminate` mutation takes no variables).
  */
-export async function searchSubscriptionRemove(token: string): Promise<{ terminated: true }> {
+export async function searchSubscriptionRemove(
+  token: string,
+  options: DryRunOptions = {},
+): Promise<SearchSubscriptionRemoveOutcome> {
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "JobSearchSubscriptionTerminate",
+          query: TERMINATE_JOB_SUBSCRIPTION_MUTATION,
+          variables: {},
+        },
+      }),
+    };
+  }
   const data = await callGateway<TerminateSearchSubscriptionResponse>(
     token,
     "JobSearchSubscriptionTerminate",
@@ -1069,5 +1305,5 @@ export async function searchSubscriptionRemove(token: string): Promise<{ termina
   if (!result.success) {
     throw new JobsError("MUTATION_ERROR", formatMutationErrors("JobSearchSubscriptionTerminate", result.errors));
   }
-  return { terminated: true };
+  return { kind: "applied", result: { terminated: true } };
 }
