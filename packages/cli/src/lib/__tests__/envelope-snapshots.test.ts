@@ -171,8 +171,7 @@ describe("envelope JSON snapshots — error", () => {
       errors: [
         {
           code: "CF_403_PERSISTENT",
-          message:
-            "Cloudflare blocked the request to talent-profile/graphql despite Chrome TLS impersonation.",
+          message: "Cloudflare blocked the request to talent-profile/graphql despite Chrome TLS impersonation.",
           hint: "File an issue at https://github.com/alexey-pelykh/ttctl/issues with the surface name and timestamp.",
         },
       ],

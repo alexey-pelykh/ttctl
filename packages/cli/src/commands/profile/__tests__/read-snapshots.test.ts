@@ -446,9 +446,7 @@ describe("profile.reviews — read snapshots", () => {
     id: "review_test_001",
     section: "EDUCATION",
     requestedAt: "2026-05-01T14:30:00Z",
-    items: [
-      { id: "item_test_001", itemId: "edu_test_001", requestedAt: "2026-05-01T14:30:00Z" },
-    ],
+    items: [{ id: "item_test_001", itemId: "edu_test_001", requestedAt: "2026-05-01T14:30:00Z" }],
   };
 
   const SECTION_REVIEW_MULTI_ITEM: profile.reviews.SectionReview = {
