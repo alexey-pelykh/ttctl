@@ -8,6 +8,7 @@ import { registerApplicationsTools } from "./applications.js";
 import { registerAvailabilityTools } from "./availability.js";
 import { registerEngagementsTools } from "./engagements.js";
 import { registerJobsTools } from "./jobs.js";
+import { registerTimesheetTools } from "./timesheet.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerEducationTools } from "./profile/education.js";
 import { registerEmploymentTools } from "./profile/employment.js";
@@ -54,7 +55,7 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * 4 `profile.visas` + 2 `profile.resume` (#75) + 6 `profile.external` +
  * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
  * 3 `applications` (#15) + 6 `engagements` (#147) + 5 `availability`
- * (#146 amended) + 13 `jobs` (#148) = 83 tools total.
+ * (#146 amended) + 13 `jobs` (#148) + 3 `timesheet` (#13) = 86 tools total.
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`
@@ -125,4 +126,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // tool names use canonical `jobs_*` prefix only (no `opportunities_*`
   // aliasing).
   registerJobsTools(server, ctx);
+
+  // timesheet — 3 leaves (#13). list (viewer-wide pending OR scoped) +
+  // show (BillingCycle.id detail) + submit (destructive: enters Toptal's
+  // billing pipeline; LLM clients must confirm with the user first).
+  registerTimesheetTools(server, ctx);
 }

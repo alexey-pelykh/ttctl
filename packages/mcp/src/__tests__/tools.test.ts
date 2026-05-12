@@ -38,7 +38,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (83 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs)", () => {
+  it("registers exactly the cumulative tool set (86 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -143,6 +143,11 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_visas_list",
       "ttctl_profile_visas_remove",
       "ttctl_profile_visas_update",
+      // #13 — timesheet (3, list/show/submit). Submit is destructive
+      // (one-way); LLM clients must confirm with the user.
+      "ttctl_timesheet_list",
+      "ttctl_timesheet_show",
+      "ttctl_timesheet_submit",
     ]);
   });
 

@@ -132,6 +132,11 @@ const EXPECTED_TOOLS = [
   "ttctl_jobs_search_list",
   "ttctl_jobs_search_save",
   "ttctl_jobs_search_remove",
+  // timesheet (#13) — 3 tools (list/show/submit). Submit is destructive
+  // (one-way at the wire level); LLM clients must confirm with the user.
+  "ttctl_timesheet_list",
+  "ttctl_timesheet_show",
+  "ttctl_timesheet_submit",
 ];
 
 /**
@@ -147,7 +152,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (83 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (86 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
