@@ -5,13 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../transport.js", () => ({
   stockTransport: vi.fn(),
+  impersonatedTransport: vi.fn(),
 }));
 
-import { getAuthStatus, signIn, SignInError } from "../auth.js";
-import { stockTransport } from "../transport.js";
+import { getAuthStatus, signIn, signOut, SignInError } from "../auth.js";
+import { impersonatedTransport, stockTransport } from "../transport.js";
 import type { TransportRequest, TransportResponse } from "../transport.js";
 
 const mockedTransport = vi.mocked(stockTransport);
+const mockedImpersonatedTransport = vi.mocked(impersonatedTransport);
 
 interface MockResponse {
   status?: number;
@@ -228,5 +230,158 @@ describe("getAuthStatus", () => {
     mockedTransport.mockRejectedValueOnce(new Error("DNS lookup failed"));
 
     await expect(getAuthStatus("tok-abc-123")).resolves.not.toThrow();
+  });
+});
+
+const LOGOUT_OK = (success: boolean = true): unknown => ({
+  data: { logOut: { success, notice: null, returnTo: null, errors: [] } },
+});
+
+function impersonatedReply(...responses: MockResponse[]): void {
+  for (const r of responses) {
+    mockedImpersonatedTransport.mockResolvedValueOnce({
+      status: r.status ?? 200,
+      headers: {},
+      body: r.body,
+    } satisfies TransportResponse);
+  }
+}
+
+describe("signOut", () => {
+  beforeEach(() => {
+    mockedImpersonatedTransport.mockReset();
+  });
+
+  it("returns invalid/no-session when no token is supplied (null)", async () => {
+    const result = await signOut(null);
+    expect(result).toEqual({ status: "invalid", reason: "no-session" });
+    expect(mockedImpersonatedTransport).not.toHaveBeenCalled();
+  });
+
+  it("returns invalid/no-session when an empty-string token is supplied", async () => {
+    const result = await signOut("");
+    expect(result).toEqual({ status: "invalid", reason: "no-session" });
+    expect(mockedImpersonatedTransport).not.toHaveBeenCalled();
+  });
+
+  it("issues a LogOut call against talent-profile with Authorization: Token token=... and empty input", async () => {
+    impersonatedReply({ body: LOGOUT_OK(true) });
+
+    await signOut("tok-abc-123");
+
+    expect(mockedImpersonatedTransport).toHaveBeenCalledTimes(1);
+    const call = mockedImpersonatedTransport.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.surface).toBe("talent-profile");
+    expect(call.body.operationName).toBe("LogOut");
+    expect(call.body.query).toContain("mutation LogOut");
+    expect(call.body.query).toContain("logOut(input: $input)");
+    expect(call.body.variables).toEqual({ input: {} });
+    expect(call.authToken).toBe("tok-abc-123");
+  });
+
+  it("returns { status: 'logged-out' } on a 200 + success:true response", async () => {
+    impersonatedReply({ body: LOGOUT_OK(true) });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "logged-out" });
+  });
+
+  it("returns invalid/session-expired on a 401", async () => {
+    impersonatedReply({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "invalid", reason: "session-expired" });
+  });
+
+  it("returns invalid/session-expired on a 403", async () => {
+    impersonatedReply({ status: 403, body: { errors: [{ message: "forbidden" }] } });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "invalid", reason: "session-expired" });
+  });
+
+  it("returns unreachable/http-status on other non-2xx (e.g. 500)", async () => {
+    impersonatedReply({ status: 500, body: { errors: [{ message: "internal" }] } });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "unreachable", reason: { kind: "http-status", status: 500 } });
+  });
+
+  it("returns invalid/graphql-auth-error on top-level errors[0].extensions.code = UNAUTHENTICATED", async () => {
+    impersonatedReply({
+      body: { errors: [{ message: "Unauthenticated", extensions: { code: "UNAUTHENTICATED" } }] },
+    });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "invalid", reason: "graphql-auth-error" });
+  });
+
+  it("returns invalid/graphql-auth-error on top-level errors[0].extensions.code = UNAUTHORIZED", async () => {
+    impersonatedReply({
+      body: { errors: [{ message: "Unauthorized", extensions: { code: "UNAUTHORIZED" } }] },
+    });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "invalid", reason: "graphql-auth-error" });
+  });
+
+  it("returns invalid/graphql-auth-error on top-level errors[0].extensions.code = AUTHENTICATION_REQUIRED", async () => {
+    impersonatedReply({
+      body: { errors: [{ message: "Authentication required", extensions: { code: "AUTHENTICATION_REQUIRED" } }] },
+    });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "invalid", reason: "graphql-auth-error" });
+  });
+
+  it("returns unreachable/graphql-error on top-level errors with a non-auth code", async () => {
+    impersonatedReply({
+      body: { errors: [{ message: "Rate limited", extensions: { code: "TOO_MANY_REQUESTS" } }] },
+    });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({
+      status: "unreachable",
+      reason: { kind: "graphql-error", message: "Rate limited" },
+    });
+  });
+
+  it("returns unreachable/payload-missing when 200 lacks data.logOut", async () => {
+    impersonatedReply({ body: { data: null } });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "unreachable", reason: { kind: "payload-missing" } });
+  });
+
+  it("returns unreachable/success-false when logOut.success is false", async () => {
+    impersonatedReply({ body: LOGOUT_OK(false) });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "unreachable", reason: { kind: "success-false" } });
+  });
+
+  it("returns unreachable/success-false when logOut.success is missing", async () => {
+    impersonatedReply({ body: { data: { logOut: { notice: null, returnTo: null, errors: [] } } } });
+
+    const result = await signOut("tok-abc-123");
+    expect(result).toEqual({ status: "unreachable", reason: { kind: "success-false" } });
+  });
+
+  it("returns unreachable/transport when the transport rejects", async () => {
+    mockedImpersonatedTransport.mockRejectedValueOnce(new Error("connect ECONNREFUSED 1.2.3.4:443"));
+
+    const result = await signOut("tok-abc-123");
+    expect(result.status).toBe("unreachable");
+    if (result.status === "unreachable" && result.reason.kind === "transport") {
+      expect(result.reason.reason).toContain("ECONNREFUSED");
+    } else {
+      throw new Error(`expected transport-reason, got ${JSON.stringify(result)}`);
+    }
+  });
+
+  it("does not throw — every classified failure is returned, not raised", async () => {
+    mockedImpersonatedTransport.mockRejectedValueOnce(new Error("TLS handshake timeout"));
+
+    await expect(signOut("tok-abc-123")).resolves.not.toThrow();
   });
 });

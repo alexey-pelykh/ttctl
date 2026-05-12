@@ -302,10 +302,73 @@ under `auth.token` via `persistAuthToken` (`yaml.parseDocument` + `setIn`
 - atomic temp-rename + chmod 0o600). Comments, key order, and scalar
   styles in the source YAML are preserved.
 
-`ttctl auth signout` removes the `auth.token` field via `clearAuthToken`
-(`deleteIn`). The field is REMOVED, not emptied to `""` — empty-string
-tokens are treated as data and the security architecture mandates
-absence-not-emptiness for revocation.
+`ttctl auth signout` first attempts a SERVER-SIDE signal via
+`core.signOut(token)` — issues the `LogOut` mutation against
+`talent_profile/graphql` (Cloudflare-protected; `impersonatedTransport`)
+authenticated with the captured bearer (`Authorization: Token token=<X>`).
+After the server-side call returns (or fails), the CLI then removes the
+local `auth.token` field via `clearAuthToken` (`deleteIn`). The field
+is REMOVED, not emptied to `""` — empty-string tokens are treated as
+data and the security architecture mandates absence-not-emptiness for
+revocation.
+
+**Empirical scope of the LogOut mutation (#180, captured 2026-05-12,
+delayed-probe investigation across t=0/30/60/180/300s):**
+the `LogOut` mutation succeeds (`data.logOut.success === true`) but does
+NOT invalidate the captured bearer for subsequent `mobile-gateway` calls.
+A `getAuthStatus(token)` probe of a freshly-issued bearer returns
+`{ status: "valid", email }` at t=0 AND at t=30s/60s/180s/300s after the
+LogOut returns — the gateway accepts the bearer across the entire
+5-minute probe window. The schema/decompile evidence aligns: `LogOutInput`
+is empty by design (`{ _placeholder: String }`), no alternative revocation
+mutation exists on either surface, and `research/notes/01-overview.md`
+§ Logout flow describes Android client-side cleanup (token clear + Apollo
+cache reset) rather than server-side bearer invalidation. The mutation
+likely terminates web-session-side state at `talent_profile` (cookies,
+Apollo cache reset) but the long-lived bearer issued by
+`EmailPasswordSignIn` survives. The 24-72h aging-out remains the
+**load-bearing revocation defense**; `LogOut` is **defense-in-depth**: a
+signal to Toptal's audit log + web-session/cookie cleanup + a
+forward-compatible call site if Toptal ever wires up server-side bearer
+revocation. The local `clearAuthToken` is the only guaranteed end-state.
+Naming throughout TTCtl reflects this scope — the discriminant is
+`logged-out`, NOT `revoked` (the latter would overclaim).
+
+`core.signOut(token)` returns a `SignOutResult` discriminated union
+(`{ status: "logged-out" } | { status: "invalid"; reason } | { status:
+"unreachable"; reason }`) — NEVER throws. Failure semantics mirror
+`getAuthStatus`:
+
+- `logged-out` — talent_profile/graphql responded 2xx +
+  `data.logOut.success: true`. The LogOut flow was acknowledged on the
+  talent_profile side. Does NOT imply downstream bearer invalidation —
+  see scope note above.
+- `invalid` — bearer was already invalid server-side (401/403 or top-level
+  `errors[].extensions.code` matched `isAuthRevokedExtensionCode`). User
+  intent (kill the bearer) is satisfied transitively; the CLI proceeds to
+  clear local.
+- `unreachable` — could not deliver the LogOut signal (network, HTTP 5xx,
+  unexpected wire shape, or `data.logOut.success: false`). The CLI emits
+  a stderr warning and STILL clears the local token — the bearer ages out
+  server-side in 24-72h as the load-bearing defense. The user is locally
+  logged out regardless.
+
+CLI `runAuthSignOut` surfaces the server-side outcome in the JSON / YAML
+output via a `serverLogOut: "logged-out" | "already-invalid" | "skipped" |
+"unreachable"` field on the `signed-out` variant. Exit code stays 0 across
+all four — `unreachable` is a soft warning, not a failure. `skipped` fires
+when the local config carries no `auth.token` (idempotent no-op; the
+server is never called).
+
+`runGlobalTeardown` (E2E parent-process teardown, post-#171 / #180) wires
+the same `signOut` call into cleanup: reads the sandbox bearer, attempts
+the LogOut mutation via `core.signOut`, records the outcome in
+`<sandbox>/.teardown-receipt.json` under `serverLogOut: boolean | null`
+and `serverLogOutError: string | null`. `serverLogOut: null` indicates
+no token was present (nothing to call with); `false` indicates the
+LogOut signal could not be delivered (network failure, etc.) with the
+reason captured in `serverLogOutError`. The local clear
+(`clearAuthToken`) runs unconditionally — server-side is best-effort.
 
 `ttctl auth status` and all authenticated commands read
 `config.auth.token` directly from the parsed config — no separate file

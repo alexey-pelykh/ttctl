@@ -22,7 +22,24 @@ import { mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mock only `signOut` from @ttctl/core (and re-export everything else
+// untouched) so the teardown's real `clearAuthToken` / `resolveConfig`
+// keep working against the tmpdir-rooted fake repo, but the LogOut
+// mutation is never actually fired against talent_profile/graphql.
+// `importOriginal` is the canonical vitest pattern for partial mocks
+// (preserves the real ConfigError class, error codes, etc.).
+vi.mock("@ttctl/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ttctl/core")>();
+  return {
+    ...actual,
+    signOut: vi.fn(),
+  };
+});
+
+import { signOut } from "@ttctl/core";
+import type { SignOutResult } from "@ttctl/core";
 
 import { runGlobalTeardown } from "../globalTeardown.js";
 import {
@@ -32,6 +49,8 @@ import {
   resolveSharedSessionFilePath,
   resolveTeardownReceiptPath,
 } from "../paths.js";
+
+const mockedSignOut = vi.mocked(signOut);
 
 interface SeedOptions {
   withToken?: boolean;
@@ -91,6 +110,10 @@ let savedEnv: string | undefined;
 
 beforeEach(() => {
   savedEnv = process.env["TTCTL_E2E"];
+  mockedSignOut.mockReset();
+  // Default to "logged-out" so happy-path tests don't have to wire it up.
+  // Tests that care about the failure / no-token paths override per-case.
+  mockedSignOut.mockResolvedValue({ status: "logged-out" } satisfies SignOutResult);
 });
 
 afterEach(() => {
@@ -99,7 +122,7 @@ afterEach(() => {
 });
 
 describe("runGlobalTeardown — env gate", () => {
-  it("is a no-op when TTCTL_E2E is unset (no receipt, no mutations)", async () => {
+  it("is a no-op when TTCTL_E2E is unset (no receipt, no mutations, no signOut call)", async () => {
     delete process.env["TTCTL_E2E"];
     const repoRoot = await makeFakeRepo();
     await seedSandbox(repoRoot);
@@ -111,6 +134,7 @@ describe("runGlobalTeardown — env gate", () => {
     expect(existsSync(resolveSharedSessionFilePath(repoRoot))).toBe(true);
     const raw = await readFile(resolveSandboxConfigPath(repoRoot), "utf8");
     expect(raw).toContain("token:");
+    expect(mockedSignOut).not.toHaveBeenCalled();
   });
 
   it("is a no-op for any TTCTL_E2E value other than '1' (strict env-gate)", async () => {
@@ -126,11 +150,12 @@ describe("runGlobalTeardown — env gate", () => {
         `receipt should be absent for TTCTL_E2E=${JSON.stringify(value)}`,
       ).toBe(false);
     }
+    expect(mockedSignOut).not.toHaveBeenCalled();
   });
 });
 
 describe("runGlobalTeardown — happy path", () => {
-  it("clears token, releases lock, removes session metadata, writes receipt with succeeded=true", async () => {
+  it("clears token, releases lock, removes session metadata, writes receipt with succeeded=true + serverLogOut=true", async () => {
     process.env["TTCTL_E2E"] = "1";
     const repoRoot = await makeFakeRepo();
     await seedSandbox(repoRoot);
@@ -145,12 +170,19 @@ describe("runGlobalTeardown — happy path", () => {
     expect(existsSync(resolveLockfilePath(repoRoot))).toBe(false);
     expect(existsSync(resolveSharedSessionFilePath(repoRoot))).toBe(false);
 
-    // receipt written with the expected shape
+    // server-side signOut was called with the seeded bearer
+    expect(mockedSignOut).toHaveBeenCalledTimes(1);
+    expect(mockedSignOut).toHaveBeenCalledWith("fixture-bearer-globalTeardown-unit-test-only");
+
+    // receipt written with the expected shape — INCLUDING the post-#180
+    // serverLogOut + serverLogOutError fields.
     expect(existsSync(resolveTeardownReceiptPath(repoRoot))).toBe(true);
     const receiptRaw = await readFile(resolveTeardownReceiptPath(repoRoot), "utf8");
     const receipt = JSON.parse(receiptRaw) as Record<string, unknown>;
     expect(receipt["cleared"]).toBe(true);
     expect(receipt["lockReleased"]).toBe(true);
+    expect(receipt["serverLogOut"]).toBe(true);
+    expect(receipt["serverLogOutError"]).toBeNull();
     expect(receipt["succeeded"]).toBe(true);
     expect(receipt["error"]).toBeNull();
     expect(typeof receipt["ranAt"]).toBe("string");
@@ -159,8 +191,142 @@ describe("runGlobalTeardown — happy path", () => {
   });
 });
 
+describe("runGlobalTeardown — server-side LogOut", () => {
+  it("records serverLogOut=true and serverLogOutError=null when signOut returns logged-out", async () => {
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    await seedSandbox(repoRoot);
+    mockedSignOut.mockResolvedValue({ status: "logged-out" } satisfies SignOutResult);
+
+    await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+
+    const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
+    expect(receipt["serverLogOut"]).toBe(true);
+    expect(receipt["serverLogOutError"]).toBeNull();
+    expect(receipt["cleared"]).toBe(true);
+    expect(receipt["succeeded"]).toBe(true);
+  });
+
+  it("records serverLogOut=true when signOut returns invalid (bearer was already invalid server-side)", async () => {
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    await seedSandbox(repoRoot);
+    mockedSignOut.mockResolvedValue({ status: "invalid", reason: "session-expired" } satisfies SignOutResult);
+
+    await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+
+    const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
+    // Already-invalid bearer also satisfies the cleanup intent — record as serverLogOut=true.
+    expect(receipt["serverLogOut"]).toBe(true);
+    expect(receipt["serverLogOutError"]).toBeNull();
+  });
+
+  it("records serverLogOut=false + transport reason on unreachable/transport", async () => {
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    await seedSandbox(repoRoot);
+    mockedSignOut.mockResolvedValue({
+      status: "unreachable",
+      reason: { kind: "transport", reason: "ECONNREFUSED 1.2.3.4:443" },
+    } satisfies SignOutResult);
+
+    await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+
+    const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
+    expect(receipt["serverLogOut"]).toBe(false);
+    expect(typeof receipt["serverLogOutError"]).toBe("string");
+    expect(receipt["serverLogOutError"]).toContain("transport");
+    expect(receipt["serverLogOutError"]).toContain("ECONNREFUSED");
+    // Local clear still ran — local state is unconditional.
+    expect(receipt["cleared"]).toBe(true);
+    // `succeeded` reflects whether any try/catch fired — server-side
+    // failure is captured in serverLogOutError, NOT in `succeeded`,
+    // because server-side is best-effort. Local cleanup succeeded so
+    // succeeded stays true.
+    expect(receipt["succeeded"]).toBe(true);
+  });
+
+  it("records serverLogOut=false + http-status reason on unreachable/http-status", async () => {
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    await seedSandbox(repoRoot);
+    mockedSignOut.mockResolvedValue({
+      status: "unreachable",
+      reason: { kind: "http-status", status: 503 },
+    } satisfies SignOutResult);
+
+    await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+
+    const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
+    expect(receipt["serverLogOut"]).toBe(false);
+    expect(receipt["serverLogOutError"]).toContain("http-status");
+    expect(receipt["serverLogOutError"]).toContain("503");
+  });
+
+  it("records serverLogOut=false + success-false reason on unreachable/success-false", async () => {
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    await seedSandbox(repoRoot);
+    mockedSignOut.mockResolvedValue({
+      status: "unreachable",
+      reason: { kind: "success-false" },
+    } satisfies SignOutResult);
+
+    await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+
+    const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
+    expect(receipt["serverLogOut"]).toBe(false);
+    expect(receipt["serverLogOutError"]).toBe("success-false");
+  });
+
+  it("never serializes the bearer token into serverLogOutError (security invariant)", async () => {
+    // R-7 mitigation parallel to persistAuthToken-debug.test.ts —
+    // assert the bearer literal never leaks into the receipt error field
+    // across every unreachable branch.
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    await seedSandbox(repoRoot);
+    const bearer = "fixture-bearer-globalTeardown-unit-test-only";
+
+    const cases: SignOutResult[] = [
+      { status: "unreachable", reason: { kind: "transport", reason: "ECONNREFUSED" } },
+      { status: "unreachable", reason: { kind: "http-status", status: 503 } },
+      { status: "unreachable", reason: { kind: "graphql-error", message: "Rate limited" } },
+      { status: "unreachable", reason: { kind: "payload-missing" } },
+      { status: "unreachable", reason: { kind: "success-false" } },
+    ];
+
+    for (const result of cases) {
+      mockedSignOut.mockResolvedValue(result);
+      await seedSandbox(repoRoot); // re-seed because each run drops the lock/session
+      await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+      const raw = await readFile(resolveTeardownReceiptPath(repoRoot), "utf8");
+      expect(raw, `bearer leaked into receipt for ${JSON.stringify(result)}`).not.toContain(bearer);
+    }
+  });
+
+  it("records serverLogOut=null when no token is present in the sandbox config", async () => {
+    process.env["TTCTL_E2E"] = "1";
+    const repoRoot = await makeFakeRepo();
+    // Seed config WITHOUT a token field — resolveConfig will either
+    // reject (auth: {} is strict-invalid) or succeed with token undefined.
+    // Either way, the no-token branch fires and serverLogOut stays null.
+    await seedSandbox(repoRoot, { withToken: false });
+
+    await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
+
+    const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
+    expect(receipt["serverLogOut"]).toBeNull();
+    expect(receipt["serverLogOutError"]).toBeNull();
+    // Local clear still ran (idempotent), so cleared=true.
+    expect(receipt["cleared"]).toBe(true);
+    // signOut was NEVER called — no bearer to send the LogOut with.
+    expect(mockedSignOut).not.toHaveBeenCalled();
+  });
+});
+
 describe("runGlobalTeardown — idempotency", () => {
-  it("reports cleared=true when auth.token field is already absent", async () => {
+  it("reports cleared=true when auth.token field is already absent (serverLogOut=null)", async () => {
     process.env["TTCTL_E2E"] = "1";
     const repoRoot = await makeFakeRepo();
     await seedSandbox(repoRoot, { withToken: false });
@@ -170,6 +336,9 @@ describe("runGlobalTeardown — idempotency", () => {
     const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
     expect(receipt["cleared"]).toBe(true);
     expect(receipt["succeeded"]).toBe(true);
+    // No token to call with — serverLogOut must be null, NOT false.
+    expect(receipt["serverLogOut"]).toBeNull();
+    expect(receipt["serverLogOutError"]).toBeNull();
   });
 
   it("reports lockReleased=true when lockfile is already absent", async () => {
@@ -184,18 +353,22 @@ describe("runGlobalTeardown — idempotency", () => {
     expect(receipt["succeeded"]).toBe(true);
   });
 
-  it("overwrites a pre-existing receipt from a prior run", async () => {
+  it("overwrites a pre-existing receipt from a prior run (including post-#180 fields)", async () => {
     process.env["TTCTL_E2E"] = "1";
     const repoRoot = await makeFakeRepo();
     await seedSandbox(repoRoot);
 
-    // Seed a stale receipt with deliberately-wrong values
+    // Seed a stale receipt with deliberately-wrong values for EVERY
+    // field — including post-#180 fields — to verify the rewrite picks
+    // up the current shape.
     await writeFile(
       resolveTeardownReceiptPath(repoRoot),
       JSON.stringify({
         ranAt: "1970-01-01T00:00:00.000Z",
         cleared: false,
         lockReleased: false,
+        serverLogOut: false,
+        serverLogOutError: "stale-error",
         succeeded: false,
         error: "stale",
       }) + "\n",
@@ -207,6 +380,8 @@ describe("runGlobalTeardown — idempotency", () => {
     const receipt = JSON.parse(await readFile(resolveTeardownReceiptPath(repoRoot), "utf8")) as Record<string, unknown>;
     expect(receipt["cleared"]).toBe(true);
     expect(receipt["succeeded"]).toBe(true);
+    expect(receipt["serverLogOut"]).toBe(true); // default mock returns logged-out
+    expect(receipt["serverLogOutError"]).toBeNull();
     expect(receipt["ranAt"]).not.toBe("1970-01-01T00:00:00.000Z");
   });
 });
@@ -218,7 +393,8 @@ describe("runGlobalTeardown — error path", () => {
     await seedSandbox(repoRoot);
 
     // Remove the sandbox config so clearAuthToken fails (ENOENT on read).
-    // This is the typical "setup never completed" shape.
+    // This is the typical "setup never completed" shape. Server-side
+    // signOut is also skipped because resolveConfig fails to find a token.
     await unlink(resolveSandboxConfigPath(repoRoot));
 
     await runGlobalTeardown({ repoRoot, coolOffMs: 0 });
@@ -227,6 +403,11 @@ describe("runGlobalTeardown — error path", () => {
     expect(receipt["cleared"]).toBe(false);
     expect(receipt["succeeded"]).toBe(false);
     expect(receipt["error"]).not.toBeNull();
+    // No token to call with — serverLogOut stays null (post-#180).
+    expect(receipt["serverLogOut"]).toBeNull();
+    expect(receipt["serverLogOutError"]).toBeNull();
+    // signOut was not called when the config can't be parsed.
+    expect(mockedSignOut).not.toHaveBeenCalled();
     // Lock release runs regardless of clearAuthToken outcome.
     expect(receipt["lockReleased"]).toBe(true);
     // Lock file is actually gone.

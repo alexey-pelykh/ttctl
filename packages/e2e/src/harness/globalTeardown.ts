@@ -33,7 +33,8 @@
 
 import { unlink, writeFile } from "node:fs/promises";
 
-import { clearAuthToken } from "@ttctl/core";
+import { ConfigError, clearAuthToken, resolveConfig, signOut } from "@ttctl/core";
+import type { SignOutResult } from "@ttctl/core";
 
 import { releaseLock } from "./lockfile.js";
 import {
@@ -82,6 +83,39 @@ export interface TeardownReceipt {
    * yields `true` (the post-state matches the intent).
    */
   lockReleased: boolean;
+  /**
+   * Server-side LogOut outcome (post-#180). Three values:
+   *
+   *   - `true`  — talent_profile/graphql acknowledged the LogOut mutation
+   *               (`signOut` returned `logged-out` OR `invalid` — the
+   *               latter means the bearer was already invalid server-side,
+   *               which satisfies the cleanup intent transitively).
+   *               **Does NOT imply** the bearer was revoked for downstream
+   *               mobile-gateway calls — see CLAUDE.md § Auth Model. The
+   *               24-72h aging-out is the load-bearing revocation defense;
+   *               this field records the defense-in-depth signal.
+   *   - `false` — could not deliver the LogOut signal (network failure,
+   *               HTTP non-2xx, wire-shape divergence). `serverLogOutError`
+   *               carries the specific reason. Local clear still ran
+   *               regardless; the bearer ages out in 24-72h either way.
+   *   - `null`  — no token was present in the sandbox config; nothing to
+   *               call with. Distinct from `false` so the crash-recovery
+   *               wrapper can tell "we tried and failed" from "we never
+   *               had a token to call with".
+   *
+   * AC #2 of issue #180 — schema/contract rule TRIGGERED. The wire format
+   * is verified by `packages/e2e/src/97-auth-signout-server-side.e2e.test.ts`
+   * (live integration with `withFreshSession`); this receipt field is the
+   * filesystem-recorded outcome for the cleanup teardown path.
+   */
+  serverLogOut: boolean | null;
+  /**
+   * Serialized failure reason when `serverLogOut === false`; otherwise
+   * `null`. Sourced from `core.signOut()`'s `unreachable.reason` discriminator.
+   * Never carries the bearer token (verified by the unit-test substring
+   * assertion in `harness/__tests__/globalTeardown.test.ts`).
+   */
+  serverLogOutError: string | null;
   /** True iff every cleanup step ran without throwing. */
   succeeded: boolean;
   /**
@@ -132,16 +166,75 @@ export async function runGlobalTeardown(options: RunGlobalTeardownOptions = {}):
 
   let cleared = false;
   let lockReleased = false;
+  let serverLogOut: boolean | null = null;
+  let serverLogOutError: string | null = null;
   let error: string | null = null;
 
+  // Step 1: server-side LogOut (post-#180). Best-effort — failure
+  // never blocks the local clear. We read the sandbox bearer first, then
+  // call `core.signOut(token)` which classifies every failure into a
+  // discriminated `SignOutResult` (never throws). If the sandbox config
+  // is malformed or missing entirely, fall through with `serverLogOut:
+  // null` — the local clear path (idempotent `clearAuthToken`) will
+  // handle that case below without surfacing an error.
+  let sandboxToken: string | undefined;
   try {
-    // `clearAuthToken` is idempotent (no-op when the token field is
-    // already absent) — under that path we still want `cleared: true`
-    // because the post-state matches the intent.
+    const { config } = resolveConfig({ path: sandboxConfigPath });
+    sandboxToken = config.auth.token;
+  } catch (err) {
+    // ConfigError(NO_CREDS) is the expected shape when the sandbox config
+    // doesn't exist (e.g. globalSetup short-circuited before writing it,
+    // or a prior teardown wiped it). Treat as "no token to call with" —
+    // serverLogOut stays null. Other ConfigError codes (PARSE,
+    // VALIDATION) indicate a corrupted sandbox; record but don't fail.
+    if (!(err instanceof ConfigError)) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+    sandboxToken = undefined;
+  }
+
+  if (sandboxToken !== undefined && sandboxToken !== "") {
+    const result: SignOutResult = await signOut(sandboxToken);
+    if (result.status === "logged-out" || result.status === "invalid") {
+      // `invalid` means the bearer was already invalid server-side, which
+      // satisfies the cleanup intent transitively — record as true.
+      serverLogOut = true;
+    } else {
+      serverLogOut = false;
+      // Build a redacted, human-readable reason from the discriminated
+      // unreachable.reason. The bearer is NEVER mentioned in any branch
+      // (verified by the unit-test substring assertion).
+      const reason = result.reason;
+      switch (reason.kind) {
+        case "transport":
+          serverLogOutError = `transport: ${reason.reason}`;
+          break;
+        case "http-status":
+          serverLogOutError = `http-status: ${reason.status.toString()}`;
+          break;
+        case "graphql-error":
+          serverLogOutError = `graphql-error: ${reason.message}`;
+          break;
+        case "payload-missing":
+          serverLogOutError = "payload-missing";
+          break;
+        case "success-false":
+          serverLogOutError = "success-false";
+          break;
+      }
+    }
+  }
+
+  // Step 2: local clear. Always runs regardless of server-side outcome —
+  // local state must end in the "no token" condition. `clearAuthToken`
+  // is idempotent (no-op when the token field is already absent) — under
+  // that path we still want `cleared: true` because the post-state
+  // matches the intent.
+  try {
     await clearAuthToken(sandboxConfigPath);
     cleared = true;
   } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
+    if (error === null) error = err instanceof Error ? err.message : String(err);
   }
 
   try {
@@ -172,6 +265,8 @@ export async function runGlobalTeardown(options: RunGlobalTeardownOptions = {}):
     ranAt: new Date().toISOString(),
     cleared,
     lockReleased,
+    serverLogOut,
+    serverLogOutError,
     succeeded,
     error,
   };
