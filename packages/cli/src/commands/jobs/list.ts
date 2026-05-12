@@ -6,7 +6,6 @@ import { jobs } from "@ttctl/core";
 import { wrapListEnvelope } from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { getCliPagination } from "../../lib/pagination.js";
 import {
   buildJobsPageInfo,
   formatJobsTable,
@@ -21,15 +20,12 @@ import {
  * work types, estimated lengths). Returns a list envelope
  * (`{version, items, pageInfo}`) on `json` / `yaml`.
  *
- * Pagination (#138): reads the global `--page` / `--per-page` flags
- * through `getCliPagination()` and threads them into the service
- * layer's `jobs.list({page?, perPage?})`. The service returns a
- * `JobListPage` carrying `totalCount`; the action handler builds the
- * offset-style `pageInfo` block via `buildJobsPageInfo()` and appends
- * a "Page X of Y (per_page=Z)" footer in pretty mode. When neither
- * flag is set, the service applies defaults (`page: 1, perPage: 20`)
- * — the same behavior as the pre-#138 hardcoded `eligibleJobs(page:
- * 0, pageSize: 20)` wire call.
+ * Pagination (#138, refactored per-command in #183): reads `--page`
+ * / `--per-page` directly from the leaf's parsed `options` payload
+ * (no module-scoped holder, no global capture). When neither flag is
+ * set, the service applies defaults (`page: 1, perPage: 20`) — the
+ * same behavior as the pre-#138 hardcoded `eligibleJobs(page: 0,
+ * pageSize: 20)` wire call.
  */
 export interface JobsListOptions {
   skills?: string[];
@@ -40,13 +36,32 @@ export interface JobsListOptions {
   workTypes?: string[];
   estimatedLengths?: string[];
   sortTarget?: string;
+  page?: number;
+  perPage?: number;
   output: OutputFormat;
 }
+
+/**
+ * Shared shape for the three filter-less paginated leaves. `saved`,
+ * `viewed`, and `not-interested-list` each accept the same three
+ * fields; aliasing them to one another would imply they're
+ * interchangeable, so each gets its own name despite the structural
+ * identity (consistent with the project pattern of one options
+ * interface per CLI surface).
+ */
+interface FilterlessPaginatedOptions {
+  page?: number;
+  perPage?: number;
+  output: OutputFormat;
+}
+
+export type JobsSavedOptions = FilterlessPaginatedOptions;
+export type JobsViewedOptions = FilterlessPaginatedOptions;
+export type JobsNotInterestedListOptions = FilterlessPaginatedOptions;
 
 export async function runJobsList(opts: JobsListOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("jobs list", opts.output);
 
-  const pagination = getCliPagination();
   const listOpts: jobs.ListOptions = {};
   if (opts.skills !== undefined) listOpts.skills = opts.skills;
   if (opts.keywords !== undefined) listOpts.keywords = opts.keywords;
@@ -56,8 +71,8 @@ export async function runJobsList(opts: JobsListOptions): Promise<void> {
   if (opts.workTypes !== undefined) listOpts.workTypes = opts.workTypes;
   if (opts.estimatedLengths !== undefined) listOpts.estimatedLengths = opts.estimatedLengths;
   if (opts.sortTarget !== undefined) listOpts.sortTarget = opts.sortTarget;
-  if (pagination.page !== undefined) listOpts.page = pagination.page;
-  if (pagination.perPage !== undefined) listOpts.perPage = pagination.perPage;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
   let page: jobs.JobListPage;
   try {
@@ -78,27 +93,26 @@ export async function runJobsList(opts: JobsListOptions): Promise<void> {
  * Action handler for `ttctl jobs saved`. Wraps `jobs.saved()` (which
  * issues `eligibleJobs(filter: {saved: true})`).
  *
- * Pagination (#138): reads `--page` / `--per-page` from the global
- * holder; surfaces `pageInfo` and the pretty footer on the same shape
- * as `jobs list`.
+ * Pagination (#138, refactored per-command in #183): reads `--page` /
+ * `--per-page` from the leaf's parsed options; surfaces `pageInfo`
+ * and the pretty footer on the same shape as `jobs list`.
  */
-export async function runJobsSaved(output: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("jobs saved", output);
+export async function runJobsSaved(opts: JobsSavedOptions): Promise<void> {
+  const token = await loadAuthTokenOrExit("jobs saved", opts.output);
 
-  const pagination = getCliPagination();
   const listOpts: jobs.ListOptions = {};
-  if (pagination.page !== undefined) listOpts.page = pagination.page;
-  if (pagination.perPage !== undefined) listOpts.perPage = pagination.perPage;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
   let page: jobs.JobListPage;
   try {
     page = await jobs.saved(token, listOpts);
   } catch (err) {
-    handleJobsError("jobs saved", err, output);
+    handleJobsError("jobs saved", err, opts.output);
   }
 
   const pageInfo = buildJobsPageInfo(page);
-  emitResult(wrapListEnvelope(page.items, pageInfo), output, {
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
     pretty: (data) => renderJobsListPretty(data.items, page),
     table: (data) => renderJobsListPretty(data.items, page),
     empty: { command: "jobs.saved" },
@@ -115,28 +129,28 @@ export async function runJobsSaved(output: OutputFormat): Promise<void> {
  * post-filter list can be shorter than `--per-page`. A follow-up issue
  * tracks the wire-level filter.
  *
- * **Pagination (#138)**: the `totalCount` in `pageInfo` reflects the
- * UNDERLYING fetch (pre-filter). When the post-filter `items.length`
- * differs from `pageInfo.perPage`, that's the R1 narrowing — not a
- * pagination error.
+ * **Pagination (#138, refactored per-command in #183)**: the
+ * `totalCount` in `pageInfo` reflects the UNDERLYING fetch (pre-
+ * filter). When the post-filter `items.length` differs from
+ * `pageInfo.perPage`, that's the R1 narrowing — not a pagination
+ * error.
  */
-export async function runJobsViewed(output: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("jobs viewed", output);
+export async function runJobsViewed(opts: JobsViewedOptions): Promise<void> {
+  const token = await loadAuthTokenOrExit("jobs viewed", opts.output);
 
-  const pagination = getCliPagination();
   const listOpts: jobs.ListOptions = {};
-  if (pagination.page !== undefined) listOpts.page = pagination.page;
-  if (pagination.perPage !== undefined) listOpts.perPage = pagination.perPage;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
   let page: jobs.JobListPage;
   try {
     page = await jobs.viewedList(token, listOpts);
   } catch (err) {
-    handleJobsError("jobs viewed", err, output);
+    handleJobsError("jobs viewed", err, opts.output);
   }
 
   const pageInfo = buildJobsPageInfo(page);
-  emitResult(wrapListEnvelope(page.items, pageInfo), output, {
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
     pretty: (data) => renderJobsListPretty(data.items, page),
     table: (data) => renderJobsListPretty(data.items, page),
     empty: { command: "jobs.viewed" },
@@ -148,25 +162,25 @@ export async function runJobsViewed(output: OutputFormat): Promise<void> {
  * `jobs.notInterestedList()` (issues `eligibleJobs(filter:
  * {notInterested: true})`).
  *
- * Pagination (#138): same shape as `runJobsList` and `runJobsSaved`.
+ * Pagination (#138, refactored per-command in #183): same shape as
+ * `runJobsList` and `runJobsSaved`.
  */
-export async function runJobsNotInterestedList(output: OutputFormat): Promise<void> {
-  const token = await loadAuthTokenOrExit("jobs not-interested-list", output);
+export async function runJobsNotInterestedList(opts: JobsNotInterestedListOptions): Promise<void> {
+  const token = await loadAuthTokenOrExit("jobs not-interested-list", opts.output);
 
-  const pagination = getCliPagination();
   const listOpts: jobs.ListOptions = {};
-  if (pagination.page !== undefined) listOpts.page = pagination.page;
-  if (pagination.perPage !== undefined) listOpts.perPage = pagination.perPage;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
   let page: jobs.JobListPage;
   try {
     page = await jobs.notInterestedList(token, listOpts);
   } catch (err) {
-    handleJobsError("jobs not-interested-list", err, output);
+    handleJobsError("jobs not-interested-list", err, opts.output);
   }
 
   const pageInfo = buildJobsPageInfo(page);
-  emitResult(wrapListEnvelope(page.items, pageInfo), output, {
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
     pretty: (data) => renderJobsListPretty(data.items, page),
     table: (data) => renderJobsListPretty(data.items, page),
     empty: { command: "jobs.not-interested-list" },
