@@ -197,6 +197,26 @@ export interface EngagementListItem {
 }
 
 /**
+ * One entry in the engagement-break reasons catalog — the server-side
+ * dictionary of valid `--reason-id` values for {@link breaks.add}.
+ *
+ * Source: `platformConfiguration.engagementBreakReasons` (returns
+ * `[FeedbackReason]!` on the wire). Each `FeedbackReason` carries:
+ *   - `identifier` — the value to pass to `breaks.add` as
+ *     `reasonIdentifier` (e.g., `talent_on_vacation`, `other`).
+ *   - `nameForRole` — the human-readable label tailored to the
+ *     talent's role.
+ *
+ * The schema's `FeedbackReason` has no `description` field; AC1's "if
+ * available" allowance lets the surface omit it without breaking the
+ * contract.
+ */
+export interface EngagementBreakReason {
+  identifier: string;
+  nameForRole: string;
+}
+
+/**
  * Engagement break wire shape (matches the captured
  * `engagementBreakData` fragment). `operations` mirrors the schema's
  * `EngagementBreakOperations` projection — `callable` is a free-text
@@ -288,9 +308,10 @@ export interface ListOptions {
  * the caller must supply a valid identifier discovered from the
  * `platformConfiguration.engagementBreakReasons` catalog. Known
  * canonical identifiers at time of writing: `talent_on_vacation`,
- * `client_needs_preparation`, `client_on_vacation`, `other`. A
- * dedicated discovery command (`engagements breaks reasons list`)
- * is tracked separately.
+ * `client_needs_preparation`, `client_on_vacation`, `other`. Use
+ * {@link breaks.reasonsList} (CLI: `ttctl engagements breaks reasons
+ * list`; MCP: `ttctl_engagements_breaks_reasons_list`) to discover
+ * the live catalog.
  */
 export interface AddBreakOptions {
   startDate: string;
@@ -549,6 +570,19 @@ const CANCEL_ENGAGEMENT_BREAK_MUTATION = `mutation CancelEngagementBreak($engage
 // Verbatim from `../research/graphql/gateway/operations/mobile/RescheduleEngagementBreak.graphql` (#155).
 const RESCHEDULE_ENGAGEMENT_BREAK_MUTATION = `mutation RescheduleEngagementBreak($engagementBreakId: ID!, $startDate: Date!, $endDate: Date!) { engagementBreak(id: $engagementBreakId) { __typename reschedule(input: { startDate: $startDate endDate: $endDate } ) { __typename ...mutationResultFields break { __typename ...engagementBreakData } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
 
+// Minimal projection on `PlatformConfiguration` — we only need the
+// `engagementBreakReasons` field for the reasons-catalog discovery
+// query, NOT the full platformConfigurationData fragment captured in
+// `../research/graphql/gateway/operations/mobile/PlatformConfiguration.graphql`.
+// The narrower projection keeps the round-trip cheap and the test
+// surface focused; the full fragment is available in the research
+// repo if other engagement code later needs more fields.
+//
+// Per CLAUDE.md § Schema/contract validation rule, this operation is
+// hand-authored (NOT in `codegen.config.ts` documents) → mandatory live
+// E2E coverage. See `packages/e2e/src/29-engagements-breaks-reasons.e2e.test.ts`.
+const ENGAGEMENT_BREAK_REASONS_QUERY = `query PlatformConfiguration { platformConfiguration { __typename id engagementBreakReasons { __typename identifier nameForRole } } }`;
+
 interface GraphQLErrorEntry {
   message?: string | null;
   extensions?: { code?: string | null } | null;
@@ -662,6 +696,13 @@ interface RescheduleEngagementBreakResponse {
           break: EngagementBreak | null;
         })
       | null;
+  } | null;
+}
+
+interface PlatformConfigurationResponse {
+  platformConfiguration: {
+    id: string;
+    engagementBreakReasons: ({ identifier: string; nameForRole: string } | null)[] | null;
   } | null;
 }
 
@@ -1024,6 +1065,53 @@ export const breaks = {
       throw new EngagementsError("UNKNOWN", "CreateEngagementBreak returned success but the `break` payload was null.");
     }
     return { kind: "applied", result: result.break };
+  },
+
+  /**
+   * Fetch the engagement-break reasons catalog — the valid
+   * `--reason-id` values for {@link breaks.add}.
+   *
+   * Issues `PlatformConfiguration` against the mobile gateway with a
+   * minimal projection (`engagementBreakReasons { identifier
+   * nameForRole }`). Returns a defensively-cleaned, sorted-by-identifier
+   * list:
+   *   - null wire entries (`[FeedbackReason]!` — list non-null but
+   *     items nullable per Toptal SDL convention) are filtered out.
+   *   - sort is locale-independent, case-insensitive on `identifier`
+   *     so consumers get a stable, predictable order across runs.
+   *
+   * **CLAUDE.md schema/contract**: this operation is hand-authored
+   * (NOT in `codegen.config.ts`) → live E2E coverage required pre-merge.
+   * See `packages/e2e/src/29-engagements-breaks-reasons.e2e.test.ts`.
+   *
+   * `EngagementsError("NO_VIEWER")` is not raised here:
+   * `platformConfiguration` is a viewer-agnostic root field on the
+   * gateway (the catalog is the same regardless of viewer), so the
+   * `data.viewer === null` defensive branch from the other operations
+   * does not apply. Auth failures still surface via `AuthRevokedError`
+   * per the standard `callGateway` semantics.
+   */
+  async reasonsList(token: string): Promise<EngagementBreakReason[]> {
+    const data = await callGateway<PlatformConfigurationResponse>(
+      token,
+      "PlatformConfiguration",
+      ENGAGEMENT_BREAK_REASONS_QUERY,
+      {},
+    );
+    if (data.platformConfiguration === null) {
+      // Defensive: the gateway should never return null for this root
+      // field in practice, but the schema marks
+      // `platformConfiguration: PlatformConfiguration` as nullable, so
+      // cover the case rather than letting the wire-shape mismatch
+      // surface as a runtime TypeError.
+      return [];
+    }
+    const wireItems = data.platformConfiguration.engagementBreakReasons ?? [];
+    const cleaned: EngagementBreakReason[] = wireItems
+      .filter((r): r is { identifier: string; nameForRole: string } => r != null)
+      .map((r) => ({ identifier: r.identifier, nameForRole: r.nameForRole }));
+    cleaned.sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { sensitivity: "base" }));
+    return cleaned;
   },
 
   /**

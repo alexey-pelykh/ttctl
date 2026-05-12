@@ -812,3 +812,110 @@ describe("engagements.breaks dry-run path (issue #163)", () => {
     expect(outcome.kind).toBe("applied");
   });
 });
+
+describe("engagements.breaks.reasonsList", () => {
+  it("issues PlatformConfiguration and returns the catalog sorted by identifier", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            engagementBreakReasons: [
+              { __typename: "FeedbackReason", identifier: "talent_on_vacation", nameForRole: "On vacation" },
+              { __typename: "FeedbackReason", identifier: "client_on_vacation", nameForRole: "Client on vacation" },
+              { __typename: "FeedbackReason", identifier: "other", nameForRole: "Other" },
+              {
+                __typename: "FeedbackReason",
+                identifier: "client_needs_preparation",
+                nameForRole: "Client needs preparation",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const items = await breaks.reasonsList(TOKEN);
+    expect(items.map((r) => r.identifier)).toEqual([
+      "client_needs_preparation",
+      "client_on_vacation",
+      "other",
+      "talent_on_vacation",
+    ]);
+    // Each entry projects only the two surface fields — no `__typename`,
+    // no extras.
+    expect(Object.keys(items[0] ?? {}).sort()).toEqual(["identifier", "nameForRole"]);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({ operationName: "PlatformConfiguration", variables: {} });
+    expect(call?.surface).toBe("mobile-gateway");
+  });
+
+  it("returns [] when engagementBreakReasons is empty", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: { __typename: "PlatformConfiguration", id: "pc-1", engagementBreakReasons: [] },
+        },
+      },
+    });
+    const items = await breaks.reasonsList(TOKEN);
+    expect(items).toEqual([]);
+  });
+
+  it("filters null wire entries defensively", async () => {
+    // `engagementBreakReasons: [FeedbackReason]!` — list non-null but
+    // items nullable per Toptal SDL convention. Code must drop nulls
+    // rather than coerce them into garbage entries.
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            engagementBreakReasons: [
+              { __typename: "FeedbackReason", identifier: "other", nameForRole: "Other" },
+              null,
+              { __typename: "FeedbackReason", identifier: "talent_on_vacation", nameForRole: "On vacation" },
+            ],
+          },
+        },
+      },
+    });
+    const items = await breaks.reasonsList(TOKEN);
+    expect(items).toEqual([
+      { identifier: "other", nameForRole: "Other" },
+      { identifier: "talent_on_vacation", nameForRole: "On vacation" },
+    ]);
+  });
+
+  it("returns [] when platformConfiguration root is null (defensive)", async () => {
+    reply({ body: { data: { platformConfiguration: null } } });
+    const items = await breaks.reasonsList(TOKEN);
+    expect(items).toEqual([]);
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(breaks.reasonsList(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("sort is case-insensitive (locale-base sensitivity)", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            engagementBreakReasons: [
+              { __typename: "FeedbackReason", identifier: "Beta", nameForRole: "Beta" },
+              { __typename: "FeedbackReason", identifier: "alpha", nameForRole: "Alpha" },
+              { __typename: "FeedbackReason", identifier: "Gamma", nameForRole: "Gamma" },
+            ],
+          },
+        },
+      },
+    });
+    const items = await breaks.reasonsList(TOKEN);
+    expect(items.map((r) => r.identifier)).toEqual(["alpha", "Beta", "Gamma"]);
+  });
+});

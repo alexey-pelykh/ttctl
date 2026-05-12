@@ -232,6 +232,44 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
   );
 
   server.registerTool(
+    "ttctl_engagements_breaks_reasons_list",
+    {
+      title: "List valid break reasons (catalog)",
+      description: [
+        "List the server-side catalog of valid break-reason identifiers for",
+        "`ttctl_engagements_breaks_add` (the `reasonIdentifier` argument).",
+        "",
+        "Reads `platformConfiguration.engagementBreakReasons` from the mobile",
+        "gateway. Returns an array of `{identifier, nameForRole}` sorted by",
+        "`identifier`. `identifier` is what the user supplies to",
+        "`ttctl_engagements_breaks_add`; `nameForRole` is the human-readable",
+        "label.",
+        "",
+        "Use this tool to discover valid `reasonIdentifier` values before",
+        "scheduling a break — the catalog can change over time.",
+        "",
+        "Example user prompts:",
+        '  - "What break reasons can I use when scheduling a Toptal engagement break?"',
+        '  - "List the valid --reason-id values for `ttctl engagements breaks add`."',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("PlatformConfiguration", "mobile-gateway", {}, auth.token));
+      }
+      try {
+        const items = await engagements.breaks.reasonsList(auth.token);
+        return successResponse(items);
+      } catch (err) {
+        return mapEngagementsError(err);
+      }
+    },
+  );
+
+  server.registerTool(
     "ttctl_engagements_breaks_add",
     {
       title: "Schedule a break on an engagement",

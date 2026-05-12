@@ -206,6 +206,61 @@ export async function runEngagementsBreaksReschedule(
 }
 
 /**
+ * Action handler for `ttctl engagements breaks reasons list`. Lists
+ * the server-side catalog of valid `--reason-id` values for
+ * `breaks add` (issue #156).
+ *
+ * Reads `platformConfiguration.engagementBreakReasons` via a hand-
+ * authored `PlatformConfiguration` query (NOT in `codegen.config.ts`
+ * — see core service for the trigger note). Output goes through the
+ * v0.4 list envelope on json/yaml.
+ */
+export async function runEngagementsBreaksReasonsList(output: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("engagements breaks reasons list", output);
+
+  let items: engagements.EngagementBreakReason[];
+  try {
+    items = await engagements.breaks.reasonsList(token);
+  } catch (err) {
+    handleEngagementsError("engagements breaks reasons list", err, output);
+  }
+
+  emitResult(wrapListEnvelope(items), output, {
+    pretty: (data) => formatReasonsTable(data.items),
+    table: (data) => formatReasonsTable(data.items),
+    empty: { command: "engagements.breaks.reasons.list" },
+  });
+}
+
+/**
+ * Render the breaks-reasons catalog as a `cli-table3` table. Columns:
+ * id, label. Pure — directly unit-testable.
+ */
+export function formatReasonsTable(
+  items: engagements.EngagementBreakReason[],
+  terminalWidth: number = process.stdout.columns || 100,
+): string {
+  if (items.length === 0) {
+    const empty = new Table({ head: ["id", "label"] });
+    return empty.toString();
+  }
+  // Find longest identifier to size the id column; cap so the label
+  // column always has at least 20 visible columns to render.
+  const widestId = items.reduce((max, r) => Math.max(max, r.identifier.length), "id".length);
+  const idWidth = Math.min(Math.max(widestId + 2, 12), 40);
+  const labelWidth = Math.max(20, terminalWidth - idWidth - 8);
+  const table = new Table({
+    head: ["id", "label"],
+    colWidths: [idWidth, labelWidth],
+    wordWrap: true,
+  });
+  for (const r of items) {
+    table.push([r.identifier, r.nameForRole]);
+  }
+  return table.toString();
+}
+
+/**
  * Render the breaks list as a `cli-table3` table. Columns: id,
  * starts, ends, comment.
  */
