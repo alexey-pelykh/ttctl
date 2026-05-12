@@ -1,0 +1,41 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`envelope JSON snapshots — dry-run > dry-run envelope: mobile-gateway stock transport 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.list","dryRun":true,"preview":{"operationName":"getSkillSetsWithConnectionsWithConnectionsCount","surface":"mobile-gateway","transport":"stock","endpoint":"https://www.toptal.com/gateway/graphql/talent/graphql","variables":{"profileId":"<resolved-at-apply-time>"},"headers":{"authorization":"Token token=<redacted>","content-type":"application/json"}}}"`;
+
+exports[`envelope JSON snapshots — dry-run > dry-run envelope: talent-profile impersonated transport 1`] = `"{"ok":true,"version":"1.0","operation":"profile.basic.set","dryRun":true,"preview":{"operationName":"updateBasicInfo","surface":"talent-profile","transport":"impersonated","endpoint":"https://www.toptal.com/api/talent_profile/graphql","variables":{"profileId":"<resolved-at-apply-time>","bio":"Senior backend engineer with 8 years of TypeScript + PostgreSQL experience."},"headers":{"authorization":"Token token=<redacted>","content-type":"application/json","user-agent":"Chrome/146"}}}"`;
+
+exports[`envelope JSON snapshots — dry-run > dry-run envelope: with notice 1`] = `"{"ok":true,"version":"1.0","operation":"profile.basic.set","dryRun":true,"preview":{"operationName":"updateBasicInfo","surface":"talent-profile","transport":"impersonated","endpoint":"https://www.toptal.com/api/talent_profile/graphql","variables":{"profileId":"<resolved-at-apply-time>","bio":"Senior backend engineer with 8 years of TypeScript + PostgreSQL experience."},"headers":{"authorization":"Token token=<redacted>","content-type":"application/json","user-agent":"Chrome/146"}},"notice":"Apply path would also clear cached basicInfo."}"`;
+
+exports[`envelope JSON snapshots — error > error envelope: Cloudflare 403 (transport-level) 1`] = `"{"ok":false,"version":"1.0","operation":"profile.basic.set","errors":[{"code":"CF_403_PERSISTENT","message":"Cloudflare blocked the request to talent-profile/graphql despite Chrome TLS impersonation.","hint":"File an issue at https://github.com/alexey-pelykh/ttctl/issues with the surface name and timestamp."}]}"`;
+
+exports[`envelope JSON snapshots — error > error envelope: auth-revoked 1`] = `"{"ok":false,"version":"1.0","operation":"profile.skills.list","errors":[{"code":"AUTH_REVOKED","message":"Session token has been revoked.","hint":"Run \`ttctl auth signin\` to re-authenticate."}]}"`;
+
+exports[`envelope JSON snapshots — error > error envelope: multiple errors (plural array shape) 1`] = `"{"ok":false,"version":"1.0","operation":"profile.skills.add","errors":[{"code":"VALIDATION_ERROR","field":"rating","message":"Rating is required."},{"code":"VALIDATION_ERROR","field":"skill","message":"Skill id not found in catalog."}]}"`;
+
+exports[`envelope JSON snapshots — error > error envelope: single error with all optional fields 1`] = `"{"ok":false,"version":"1.0","operation":"profile.skills.update","errors":[{"code":"VALIDATION_ERROR","field":"experience","message":"Experience must be a non-negative integer.","hint":"Pass months as an integer (e.g., 60) or shorthand (e.g., 5y)."}]}"`;
+
+exports[`envelope JSON snapshots — error > error envelope: single error with code + message 1`] = `"{"ok":false,"version":"1.0","operation":"profile.skills.add","errors":[{"code":"VALIDATION_ERROR","message":"Rating must be one of EXPERT|STRONG|COMPETENT."}]}"`;
+
+exports[`envelope JSON snapshots — list > list envelope: empty items 1`] = `"{"version":"1.0","items":[]}"`;
+
+exports[`envelope JSON snapshots — list > list envelope: multiple items, no pageInfo 1`] = `"{"version":"1.0","items":[{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"},{"id":"sk_def456","name":"Python","rating":null}]}"`;
+
+exports[`envelope JSON snapshots — list > list envelope: single item 1`] = `"{"version":"1.0","items":[{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"}]}"`;
+
+exports[`envelope JSON snapshots — list > list envelope: with pageInfo (currentPage + perPage + totalPages + hasNextPage) 1`] = `"{"version":"1.0","items":[{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"}],"pageInfo":{"currentPage":1,"perPage":25,"totalPages":4,"hasNextPage":true}}"`;
+
+exports[`envelope JSON snapshots — list > list envelope: with partial pageInfo (hasNextPage only — cursor-style backend) 1`] = `"{"version":"1.0","items":[{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"}],"pageInfo":{"hasNextPage":false}}"`;
+
+exports[`envelope JSON snapshots — success > add envelope: full entity 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.add","created":{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"}}"`;
+
+exports[`envelope JSON snapshots — success > add envelope: full entity with notice 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.add","created":{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"},"notice":"Auto-promoted to public after rating set."}"`;
+
+exports[`envelope JSON snapshots — success > remove envelope: id only 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.remove","removed":{"id":"sk_abc123"}}"`;
+
+exports[`envelope JSON snapshots — success > remove envelope: id with notice 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.remove","removed":{"id":"sk_abc123"},"notice":"Sibling industries removed due to dependency."}"`;
+
+exports[`envelope JSON snapshots — success > update envelope: full entity 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.update","updated":{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"}}"`;
+
+exports[`envelope JSON snapshots — success > update envelope: full entity with changes diff 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.update","updated":{"id":"sk_abc123","name":"TypeScript","rating":"EXPERT"},"changes":[{"field":"rating","from":"STRONG","to":"EXPERT"},{"field":"experience","from":48,"to":60}]}"`;
+
+exports[`envelope JSON snapshots — success > update envelope: nullable field set to null 1`] = `"{"ok":true,"version":"1.0","operation":"profile.skills.update","updated":{"id":"sk_def456","name":"Python","rating":null}}"`;
