@@ -6,7 +6,7 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { markPaginated } from "../../lib/pagination.js";
+import { parsePaginationFlag } from "../../lib/pagination.js";
 import {
   runJobsClearInterest,
   runJobsMarkViewed,
@@ -17,6 +17,22 @@ import {
 import { runJobsList, runJobsNotInterestedList, runJobsSaved, runJobsViewed } from "./list.js";
 import { runJobsSearchList, runJobsSearchRemove, runJobsSearchSave } from "./search.js";
 import { runJobsShow } from "./show.js";
+
+/**
+ * Page-number option factory (#183). Each paginating leaf declares its
+ * own copy of `--page` / `--per-page`; the parser and description are
+ * shared via these factories so the four surfaces stay byte-identical
+ * in `--help` output.
+ */
+function pageOption(): Option {
+  return new Option("--page <number>", "page number (1-indexed)").argParser((raw) =>
+    parsePaginationFlag("--page", raw),
+  );
+}
+
+function perPageOption(): Option {
+  return new Option("--per-page <number>", "items per page").argParser((raw) => parsePaginationFlag("--per-page", raw));
+}
 
 /**
  * Build the `ttctl jobs` command tree (#148). Surfaces ten verbs
@@ -54,10 +70,11 @@ import { runJobsShow } from "./show.js";
  *   `--name` and remove-`<id>` are advisory/ignored. `search list` is
  *   NOT a paginated leaf (returns 0-or-1 envelope).
  *
- * **Paginated leaves (#138)**: `list`, `saved`, `viewed`,
- * `not-interested-list` are tagged via `markPaginated()` to accept
- * the global `--page` / `--per-page` flags. All four share
- * `JobsListResponse` and the `eligibleJobs(page, pageSize)` wire path.
+ * **Paginated leaves (#138, refactored per-command in #183)**: `list`,
+ * `saved`, `viewed`, `not-interested-list` each declare their own
+ * `--page <number>` / `--per-page <number>` (1-indexed positive
+ * integers). All four share `JobsListResponse` and the
+ * `eligibleJobs(page, pageSize)` wire path.
  *
  * **Out of scope for v1** (per #148):
  *   - Application funnel (`jobs apply` etc.) — lives in `applications`.
@@ -68,54 +85,55 @@ export function buildJobsCommand(): Command {
     .alias("opportunities")
     .description("Browse job opportunities; manage saved/viewed/not-interested signals; manage search subscription");
 
-  markPaginated(
-    cmd
-      .command("list")
-      .description("List current job opportunities (paginated via global --page / --per-page; default sort)")
-      .option("--skill <skill...>", "filter by skill name (repeatable; AND across)")
-      .option("--keyword <keyword...>", "free-text keyword filter (repeatable; AND across)")
-      .option("--exclude-skill <skill...>", "exclude jobs requiring these skills (repeatable)")
-      .option("--exclude-keyword <keyword...>", "exclude jobs matching these keywords (repeatable)")
-      .option(
-        "--commitment <commitment...>",
-        "filter by JobCommitmentFilterEnum (e.g. FULL_TIME, PART_TIME, repeatable)",
-      )
-      .option("--work-type <type...>", "filter by JobWorkTypeSlug (e.g. REMOTE, ONSITE, repeatable)")
-      .option(
-        "--estimated-length <length...>",
-        "filter by EstimatedLengthFilterEnum (e.g. SHORT_TERM, LONG_TERM, repeatable)",
-      )
-      .option("--sort <target>", 'sort target (e.g. "visible_at", "posted_at")')
-      .addOption(
-        new Option("-o, --output <format>", "output format")
-          .choices(OUTPUT_FORMATS)
-          .default("pretty" satisfies OutputFormat),
-      )
-      .action(
-        async (options: {
-          skill?: string[];
-          keyword?: string[];
-          excludeSkill?: string[];
-          excludeKeyword?: string[];
-          commitment?: string[];
-          workType?: string[];
-          estimatedLength?: string[];
-          sort?: string;
-          output: OutputFormat;
-        }) => {
-          const listOpts: import("./list.js").JobsListOptions = { output: options.output };
-          if (options.skill !== undefined) listOpts.skills = options.skill;
-          if (options.keyword !== undefined) listOpts.keywords = options.keyword;
-          if (options.excludeSkill !== undefined) listOpts.excludeSkills = options.excludeSkill;
-          if (options.excludeKeyword !== undefined) listOpts.excludeKeywords = options.excludeKeyword;
-          if (options.commitment !== undefined) listOpts.commitments = options.commitment;
-          if (options.workType !== undefined) listOpts.workTypes = options.workType;
-          if (options.estimatedLength !== undefined) listOpts.estimatedLengths = options.estimatedLength;
-          if (options.sort !== undefined) listOpts.sortTarget = options.sort;
-          await runJobsList(listOpts);
-        },
-      ),
-  );
+  cmd
+    .command("list")
+    .description("List current job opportunities (paginated via --page / --per-page; default sort)")
+    .option("--skill <skill...>", "filter by skill name (repeatable; AND across)")
+    .option("--keyword <keyword...>", "free-text keyword filter (repeatable; AND across)")
+    .option("--exclude-skill <skill...>", "exclude jobs requiring these skills (repeatable)")
+    .option("--exclude-keyword <keyword...>", "exclude jobs matching these keywords (repeatable)")
+    .option("--commitment <commitment...>", "filter by JobCommitmentFilterEnum (e.g. FULL_TIME, PART_TIME, repeatable)")
+    .option("--work-type <type...>", "filter by JobWorkTypeSlug (e.g. REMOTE, ONSITE, repeatable)")
+    .option(
+      "--estimated-length <length...>",
+      "filter by EstimatedLengthFilterEnum (e.g. SHORT_TERM, LONG_TERM, repeatable)",
+    )
+    .option("--sort <target>", 'sort target (e.g. "visible_at", "posted_at")')
+    .addOption(pageOption())
+    .addOption(perPageOption())
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(
+      async (options: {
+        skill?: string[];
+        keyword?: string[];
+        excludeSkill?: string[];
+        excludeKeyword?: string[];
+        commitment?: string[];
+        workType?: string[];
+        estimatedLength?: string[];
+        sort?: string;
+        page?: number;
+        perPage?: number;
+        output: OutputFormat;
+      }) => {
+        const listOpts: import("./list.js").JobsListOptions = { output: options.output };
+        if (options.skill !== undefined) listOpts.skills = options.skill;
+        if (options.keyword !== undefined) listOpts.keywords = options.keyword;
+        if (options.excludeSkill !== undefined) listOpts.excludeSkills = options.excludeSkill;
+        if (options.excludeKeyword !== undefined) listOpts.excludeKeywords = options.excludeKeyword;
+        if (options.commitment !== undefined) listOpts.commitments = options.commitment;
+        if (options.workType !== undefined) listOpts.workTypes = options.workType;
+        if (options.estimatedLength !== undefined) listOpts.estimatedLengths = options.estimatedLength;
+        if (options.sort !== undefined) listOpts.sortTarget = options.sort;
+        if (options.page !== undefined) listOpts.page = options.page;
+        if (options.perPage !== undefined) listOpts.perPage = options.perPage;
+        await runJobsList(listOpts);
+      },
+    );
 
   cmd
     .command("show")
@@ -164,33 +182,39 @@ export function buildJobsCommand(): Command {
       }),
   );
 
-  markPaginated(
-    cmd
-      .command("saved")
-      .description("List saved jobs (paginated via global --page / --per-page)")
-      .addOption(
-        new Option("-o, --output <format>", "output format")
-          .choices(OUTPUT_FORMATS)
-          .default("pretty" satisfies OutputFormat),
-      )
-      .action(async (options: { output: OutputFormat }) => {
-        await runJobsSaved(options.output);
-      }),
-  );
+  cmd
+    .command("saved")
+    .description("List saved jobs (paginated via --page / --per-page)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { page?: number; perPage?: number; output: OutputFormat }) => {
+      const listOpts: import("./list.js").JobsSavedOptions = { output: options.output };
+      if (options.page !== undefined) listOpts.page = options.page;
+      if (options.perPage !== undefined) listOpts.perPage = options.perPage;
+      await runJobsSaved(listOpts);
+    });
 
-  markPaginated(
-    cmd
-      .command("viewed")
-      .description("List jobs marked as viewed (paginated; client-side filter after page fetch — see R1)")
-      .addOption(
-        new Option("-o, --output <format>", "output format")
-          .choices(OUTPUT_FORMATS)
-          .default("pretty" satisfies OutputFormat),
-      )
-      .action(async (options: { output: OutputFormat }) => {
-        await runJobsViewed(options.output);
-      }),
-  );
+  cmd
+    .command("viewed")
+    .description("List jobs marked as viewed (paginated; client-side filter after page fetch — see R1)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { page?: number; perPage?: number; output: OutputFormat }) => {
+      const listOpts: import("./list.js").JobsViewedOptions = { output: options.output };
+      if (options.page !== undefined) listOpts.page = options.page;
+      if (options.perPage !== undefined) listOpts.perPage = options.perPage;
+      await runJobsViewed(listOpts);
+    });
 
   // Marked as a mutation (issue #162) so the global `--dry-run` flag
   // routes through to `jobs.markViewed()`'s `dryRun` option.
@@ -227,19 +251,22 @@ export function buildJobsCommand(): Command {
       }),
   );
 
-  markPaginated(
-    cmd
-      .command("not-interested-list")
-      .description("List jobs marked as not-interested (paginated via global --page / --per-page)")
-      .addOption(
-        new Option("-o, --output <format>", "output format")
-          .choices(OUTPUT_FORMATS)
-          .default("pretty" satisfies OutputFormat),
-      )
-      .action(async (options: { output: OutputFormat }) => {
-        await runJobsNotInterestedList(options.output);
-      }),
-  );
+  cmd
+    .command("not-interested-list")
+    .description("List jobs marked as not-interested (paginated via --page / --per-page)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { page?: number; perPage?: number; output: OutputFormat }) => {
+      const listOpts: import("./list.js").JobsNotInterestedListOptions = { output: options.output };
+      if (options.page !== undefined) listOpts.page = options.page;
+      if (options.perPage !== undefined) listOpts.perPage = options.perPage;
+      await runJobsNotInterestedList(listOpts);
+    });
 
   // Marked as a mutation (issue #162) so the global `--dry-run` flag
   // routes through to `jobs.clearInterest()`'s `dryRun` option.

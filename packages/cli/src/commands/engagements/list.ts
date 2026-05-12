@@ -18,12 +18,13 @@ import { handleEngagementsError, loadAuthTokenOrExit } from "./shared.js";
  * `--keywords` (free-text, repeatable; passed through to the gateway).
  *
  * **Pagination not supported** — the captured `JobActivityItems`
- * operation has no `page` / `pageSize` args. Per #138 the global
- * `--page` / `--per-page` flags are REFUSED on this leaf (the
- * `engagements list` leaf is NOT marked via `markPaginated()`); users
- * who pass either flag see a non-zero-exit error from the preAction
- * hook. If the wire ever gains pagination args, mark the leaf and
- * extend `engagements.list()` to accept `{page?, perPage?}`.
+ * operation has no `page` / `pageSize` args. Per #183, pagination
+ * flags are declared PER paginating leaf; this leaf does not declare
+ * `--page` / `--per-page`, so Commander emits its standard
+ * `error: unknown option '--page'` (exit 1) when a user passes
+ * either flag. If the wire ever gains pagination args, declare the
+ * flags on this leaf and extend `engagements.list()` to accept
+ * `{page?, perPage?}`.
  */
 export interface EngagementsListOptions {
   status?: engagements.EngagementListStatus;

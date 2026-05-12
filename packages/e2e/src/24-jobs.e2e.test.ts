@@ -331,7 +331,7 @@ describe("jobs (live mobile-gateway)", () => {
   }
 
   it.skipIf(!e2eEnabled)("jobs list --per-page 5 surfaces offset-style pageInfo and limits items (#138)", async () => {
-    const result = await cli.run(["--page", "1", "--per-page", "5", "jobs", "list", "-o", "json"]);
+    const result = await cli.run(["jobs", "list", "--page", "1", "--per-page", "5", "-o", "json"]);
     expect(result.exitCode).toBe(0);
     const payload = JSON.parse(result.stdout) as ListEnvelope;
     expect(payload.version).toBe("1.0");
@@ -363,8 +363,8 @@ describe("jobs (live mobile-gateway)", () => {
       // enough across consecutive paged fetches for the "at least one
       // different" assertion below. (--sort posted_at also works but
       // adds no value here.)
-      const sharedArgs = ["--per-page", "5", "jobs", "list", "-o", "json"];
-      const page1Result = await cli.run(["--page", "1", ...sharedArgs]);
+      const sharedArgs = ["jobs", "list", "--per-page", "5", "-o", "json"];
+      const page1Result = await cli.run([...sharedArgs, "--page", "1"]);
       expect(page1Result.exitCode).toBe(0);
       const page1 = JSON.parse(page1Result.stdout) as ListEnvelope;
 
@@ -378,7 +378,7 @@ describe("jobs (live mobile-gateway)", () => {
         return;
       }
 
-      const page2Result = await cli.run(["--page", "2", ...sharedArgs]);
+      const page2Result = await cli.run([...sharedArgs, "--page", "2"]);
       expect(page2Result.exitCode).toBe(0);
       const page2 = JSON.parse(page2Result.stdout) as ListEnvelope;
       expect(page2.pageInfo?.currentPage).toBe(2);
@@ -405,7 +405,7 @@ describe("jobs (live mobile-gateway)", () => {
   );
 
   it.skipIf(!e2eEnabled)("jobs list pretty footer renders 'Page X of Y' when paginated (#138)", async () => {
-    const result = await cli.run(["--page", "1", "--per-page", "5", "jobs", "list"]);
+    const result = await cli.run(["jobs", "list", "--page", "1", "--per-page", "5"]);
     expect(result.exitCode).toBe(0);
     // Pretty output: the table is followed by the footer line.
     // When items is empty (no eligible jobs), the empty-state CTA
@@ -419,11 +419,15 @@ describe("jobs (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "--page on a non-paginated leaf (`applications list`) refuses with exit 1 (#138)",
+    "--page on a non-paginated leaf (`applications list`) fails with Commander's unknown-option error (#183)",
     async () => {
-      const result = await cli.run(["--page", "1", "applications", "list"]);
+      // Per #183, pagination flags are declared PER paginating leaf
+      // (jobs only). `applications list` does not declare `--page`,
+      // so Commander emits its standard `error: unknown option`
+      // (exit 1) — no custom refusal machinery in the program.
+      const result = await cli.run(["applications", "list", "--page", "1"]);
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("--page / --per-page not supported by 'applications list'");
+      expect(result.stderr).toMatch(/error: unknown option '--page'/);
     },
   );
 });

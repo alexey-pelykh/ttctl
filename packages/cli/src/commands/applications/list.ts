@@ -21,12 +21,12 @@ import { handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
  * — server-side AND across instances).
  *
  * **Pagination & date filters not exposed** — the captured
- * `JobActivityItems` operation accepts neither. Per #138 the global
- * `--page` / `--per-page` flags are REFUSED on this leaf (it is NOT
- * `markPaginated()`-tagged); users who pass either flag see a
- * non-zero-exit error from the preAction hook. Date filters remain
- * out of scope per #15 § Open Questions (RESOLVED) in
- * `.tmp/workitem-15.md`.
+ * `JobActivityItems` operation accepts neither. Per #183, pagination
+ * flags are declared PER paginating leaf (jobs only); this leaf
+ * does not declare `--page` / `--per-page`, so Commander emits its
+ * standard `error: unknown option '--page'` (exit 1) when a user
+ * passes either flag. Date filters remain out of scope per #15
+ * § Open Questions (RESOLVED) in `.tmp/workitem-15.md`.
  */
 export interface ApplicationsListOptions {
   keywords?: string[];
