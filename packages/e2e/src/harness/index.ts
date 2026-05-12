@@ -21,6 +21,8 @@
 export { printPreflightBanner } from "./banner.js";
 export { getCliClient } from "./cli-client.js";
 export type { CliClient, CliClientOptions, CliInvocationOptions, CliInvocationResult } from "./cli-client.js";
+export { TEARDOWN_COOL_OFF_MS, runGlobalTeardown } from "./globalTeardown.js";
+export type { RunGlobalTeardownOptions, TeardownReceipt } from "./globalTeardown.js";
 export { LockfileError, acquireLock, isPidAlive, releaseLock } from "./lockfile.js";
 export type { LockState } from "./lockfile.js";
 export { getMcpClient } from "./mcp-client.js";
@@ -34,6 +36,7 @@ export {
   resolveSandboxConfigPath,
   resolveSandboxDir,
   resolveSharedSessionFilePath,
+  resolveTeardownReceiptPath,
   writeIsolatedSessionConfig,
   writeSandboxConfig,
 } from "./paths.js";

@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:e2e": "vitest run --config vitest.e2e.config.ts --passWithNoTests",
-    "lint": "eslint src/ vitest.config.ts vitest.e2e.config.ts",
+    "test:e2e:crash-recovery": "node scripts/run-crash-recovery.mjs",
+    "lint": "eslint src/ vitest.config.ts vitest.e2e.config.ts scripts/",
     "dev": "tsc --watch"
   },
   "dependencies": {

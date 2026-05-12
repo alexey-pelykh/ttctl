@@ -101,6 +101,23 @@ export function resolveSharedSessionFilePath(repoRoot: string): string {
 }
 
 /**
+ * Path to the globalTeardown receipt file (post-#171).
+ *
+ * `runGlobalTeardown` writes this JSON file at the end of every teardown
+ * invocation that gets past the `TTCTL_E2E === "1"` env-gate. The file's
+ * presence is the post-mortem signal that teardown actually fired (no
+ * test can observe its own teardown — the receipt is the only filesystem
+ * evidence). Its absence after a run means globalTeardown did NOT execute,
+ * which is the regression `pnpm test:e2e:crash-recovery` detects.
+ *
+ * Lives inside the sandbox dir so a single `rm -rf .tmp/e2e/` cleanly
+ * removes it alongside the lock and sandbox config.
+ */
+export function resolveTeardownReceiptPath(repoRoot: string): string {
+  return join(resolveSandboxDir(repoRoot), ".teardown-receipt.json");
+}
+
+/**
  * Sandbox subdirectory for a single `withFreshSession()` invocation.
  *
  * globalSetup owns the SHARED session at `<sandbox>/.ttctl.yaml` (consumed

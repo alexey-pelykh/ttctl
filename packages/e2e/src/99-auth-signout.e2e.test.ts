@@ -2,66 +2,66 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * Final file in the E2E sequence (numeric prefix `99-`). Runs `ttctl auth
- * signout` against the SHARED session that `globalSetup` established at
- * run start, then asserts the post-state.
+ * Final shared-session test in the E2E sequence (numeric prefix `99-`).
  *
- * Must run LAST: signout removes the auth.token field from the sandbox
- * config, which any sibling `getSharedSession()`-using file relies on.
- * The `BaseSequencer` pin in `vitest.e2e.config.ts` + the `99-` numeric
- * prefix enforce this ordering. Removing either invariant would let
- * signout race ahead of sibling tests, breaking the read-side cases (e.g.
- * `01-auth-signin`'s `profile show`).
+ * Post-#171: ASSERTION-ONLY. This file no longer runs `ttctl auth
+ * signout` — the asserted cleanup action moved to the parent-process
+ * `runGlobalTeardown` (see `harness/globalTeardown.ts`) so it fires
+ * unconditionally, including after an earlier worker crashes the fork.
  *
- * AC #6 of #105 (post-#107 shape): after this file runs, the auth.token
- * field is REMOVED from the sandbox YAML AND `ttctl auth status` reports
- * invalid. globalSetup's teardown ALSO clears the token defensively
- * (idempotent), so there's no race on cleanup if this file was skipped.
+ * What this file asserts is the PRE-teardown state: the shared bearer is
+ * present in the sandbox config AND validates against the live Toptal
+ * gateway. That confirms `globalSetup` produced a working session that
+ * the suite consumed end-to-end. The POST-teardown state — bearer field
+ * cleared, lockfile released — is recorded in `<sandbox>/.teardown-
+ * receipt.json` by `runGlobalTeardown` and verified out-of-band by
+ * `pnpm test:e2e:crash-recovery`.
+ *
+ * The `99-` prefix is preserved so this file remains the LAST worker-
+ * side test in the alphabetical sequence: sibling read-side files keep
+ * their valid session, and the parent-side teardown still owns cleanup.
+ * Putting a `getSharedSession()`-using read-side case AFTER this file
+ * would not break anything (the token is still present until teardown
+ * runs), but the convention reserves `9N-` for terminal smoke tests.
  */
 
 import { readFileSync } from "node:fs";
 
-import { parse as parseYaml } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("auth signout (live Toptal, shared session)", () => {
+describe("auth signout — pre-teardown smoke (live Toptal, shared session)", () => {
   let cli: CliClient;
+  let email: string;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
+    const session = getSharedSession();
+    cli = getCliClient({ configPath: session.sandboxConfigPath });
+    email = session.email;
+  });
+
+  it.skipIf(!e2eEnabled)("shared bearer is present in the sandbox config (globalSetup wrote it)", () => {
     const { sandboxConfigPath } = getSharedSession();
-    cli = getCliClient({ configPath: sandboxConfigPath });
+    const raw = readFileSync(sandboxConfigPath, "utf8");
+    const parsed = parseYaml(raw) as { auth?: Record<string, unknown> };
+    expect(parsed.auth).toBeDefined();
+    const token = parsed.auth?.["token"];
+    expect(typeof token).toBe("string");
+    expect(token as string).not.toBe("");
   });
 
   it.skipIf(!e2eEnabled)(
-    "signout: ttctl auth signout exits 0; sandbox config has no auth.token; subsequent auth status reports no session",
+    "ttctl auth status reports the session as valid and surfaces the signed-in email",
     async () => {
-      const { sandboxConfigPath } = getSharedSession();
-
-      // The shared-session signout invocation. Globalsetup's teardown also
-      // clears the token, but only AFTER all tests finish — by that point
-      // a `getSharedSession`-using file would have already failed if this
-      // test didn't run signout first. The CLI invocation here IS the
-      // logical signout; the cleanup in teardown is defensive.
-      const signoutResult = await cli.run(["auth", "signout"]);
-      expect(signoutResult.exitCode).toBe(0);
-
-      // auth.token field gone (signout's contract: remove the field, not
-      // empty it). We re-read the YAML and assert the field is absent.
-      const raw = readFileSync(sandboxConfigPath, "utf8");
-      const parsed = parseYaml(raw) as { auth?: Record<string, unknown> };
-      expect(parsed.auth).toBeDefined();
-      expect("token" in (parsed.auth ?? {})).toBe(false);
-
-      // Status now reports invalid (exit 1 — no-session branch).
-      const statusAfter = await cli.run(["auth", "status"]);
-      expect(statusAfter.exitCode).toBe(1);
-      expect(statusAfter.stdout).toMatch(/no session|session expired/i);
+      const statusResult = await cli.run(["auth", "status"]);
+      expect(statusResult.exitCode).toBe(0);
+      expect(statusResult.stdout).toContain(email);
     },
   );
 });
