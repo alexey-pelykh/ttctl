@@ -18,9 +18,9 @@ const DRY_RUN_FIELD = z
   );
 
 /**
- * Register the `ttctl_engagements_*` MCP tools per the #147 spec. Tool
- * names use the `ttctl_` prefix and the canonical CLI path joined with
- * `_`:
+ * Register the `ttctl_engagements_*` MCP tools (initial #147 spec
+ * extended by #155 with `breaks_reschedule`). Tool names use the
+ * `ttctl_` prefix and the canonical CLI path joined with `_`:
  *
  *   - `ttctl_engagements_list`
  *   - `ttctl_engagements_show`
@@ -28,6 +28,7 @@ const DRY_RUN_FIELD = z
  *   - `ttctl_engagements_breaks_list`
  *   - `ttctl_engagements_breaks_add`
  *   - `ttctl_engagements_breaks_remove`
+ *   - `ttctl_engagements_breaks_reschedule` (#155)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The `<id>` argument is the `jobActivityItem.id` (the row
@@ -307,6 +308,51 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
       if (!auth.ok) return auth.response;
       try {
         const outcome = await engagements.breaks.remove(auth.token, args.breakId, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
+      } catch (err) {
+        return mapEngagementsError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_engagements_breaks_reschedule",
+    {
+      title: "Reschedule a scheduled break to a new date window",
+      description: [
+        "Move an existing scheduled break to a new date window in-place, without",
+        "removing and re-adding it. Preserves the existing break's reason and",
+        "comment (the wire mutation only carries the new startDate + endDate).",
+        "",
+        "Required: `breakId` (the engagementBreak id, from `engagements_breaks_list`),",
+        "`startDate` (YYYY-MM-DD), `endDate` (YYYY-MM-DD).",
+        "",
+        "**This is a write operation**: it changes a scheduled break's dates on the",
+        "live Toptal Talent platform. Confirm with the user before invoking.",
+        "",
+        "Example user prompts:",
+        '  - "Reschedule break br_abc to July 1 through July 8."',
+        '  - "Move my scheduled vacation from June 1-8 to June 15-22."',
+        '  - "Push back the start of my upcoming break by a week."',
+      ].join("\n"),
+      inputSchema: {
+        breakId: z.string().describe("Engagement break id (the engagementBreak id from `engagements_breaks_list`)"),
+        startDate: z.string().describe("New break start date (YYYY-MM-DD)"),
+        endDate: z.string().describe("New break end date (YYYY-MM-DD)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      try {
+        const outcome = await engagements.breaks.reschedule(
+          auth.token,
+          args.breakId,
+          { startDate: args.startDate, endDate: args.endDate },
+          { dryRun: args.dryRun ?? false },
+        );
         if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
         return successResponse(outcome.result);
       } catch (err) {

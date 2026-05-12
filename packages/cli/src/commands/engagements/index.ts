@@ -8,23 +8,30 @@ import { engagements } from "@ttctl/core";
 import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { runEngagementsBreaksAdd, runEngagementsBreaksList, runEngagementsBreaksRemove } from "./breaks.js";
+import {
+  runEngagementsBreaksAdd,
+  runEngagementsBreaksList,
+  runEngagementsBreaksRemove,
+  runEngagementsBreaksReschedule,
+} from "./breaks.js";
 import { runEngagementsList } from "./list.js";
 import { runEngagementsShow } from "./show.js";
 import { runEngagementsStats } from "./stats.js";
 
 /**
- * Build the `ttctl engagements` command tree (#147). Six leaves across
- * the top-level group and one nested sub-group (`breaks`):
+ * Build the `ttctl engagements` command tree (#147, extended by #155).
+ * Seven leaves across the top-level group and one nested sub-group
+ * (`breaks`):
  *
- * | Leaf                                         | Description                                 |
- * |----------------------------------------------|---------------------------------------------|
- * | `list [--status active|past|all]`            | List engagements (active by default)        |
- * | `show <id>`                                  | Engagement detail                           |
- * | `stats`                                      | Per-engagement-status counts                |
- * | `breaks list <id>`                           | List breaks on an engagement                |
- * | `breaks add <id> --from <date> --to <date>`  | Schedule a break                            |
- * | `breaks remove <break-id>`                   | Cancel a break                              |
+ * | Leaf                                              | Description                              |
+ * |---------------------------------------------------|------------------------------------------|
+ * | `list [--status active|past|all]`                 | List engagements (active by default)     |
+ * | `show <id>`                                       | Engagement detail                        |
+ * | `stats`                                           | Per-engagement-status counts             |
+ * | `breaks list <id>`                                | List breaks on an engagement             |
+ * | `breaks add <id> --from <date> --to <date>`       | Schedule a break                         |
+ * | `breaks remove <break-id>`                        | Cancel a break                           |
+ * | `breaks reschedule <break-id> --from <date> --to <date>` | Move an existing break to a new window |
  *
  * `<id>` is always the `jobActivityItem.id` (the row id from
  * `engagements list`); `<break-id>` is the `engagementBreak.id` (from
@@ -36,8 +43,6 @@ import { runEngagementsStats } from "./stats.js";
  *   - Allocated-hours management — moved to `availability` (#146)
  *     after the #147 scope amendment (2026-05-10), since the wire
  *     mutation operates on `viewerRole`, not per-engagement.
- *   - Reschedule break (operation exists but isn't surfaced in v1;
- *     `remove` + `add` covers the same use case).
  */
 export function buildEngagementsCommand(): Command {
   const cmd = new Command("engagements").description("View current and past engagements; manage engagement breaks");
@@ -164,6 +169,30 @@ export function buildEngagementsCommand(): Command {
       )
       .action(async (breakId: string, options: { output: OutputFormat }) => {
         await runEngagementsBreaksRemove(breakId, options.output);
+      }),
+  );
+
+  // Marked as a mutation (#155 inherits the #163 dry-run wiring) so the
+  // global `--dry-run` flag routes through to
+  // `engagements.breaks.reschedule()`'s `dryRun` option.
+  markMutation(
+    breaks
+      .command("reschedule")
+      .description("Move an existing break to a new date window (in-place; preserves reason and comment)")
+      .argument("<break-id>", "engagementBreak id (from `breaks list`)", parseIdArg)
+      .requiredOption("--from <date>", "new start date (YYYY-MM-DD)")
+      .requiredOption("--to <date>", "new end date (YYYY-MM-DD)")
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (breakId: string, options: { from: string; to: string; output: OutputFormat }) => {
+        await runEngagementsBreaksReschedule(breakId, {
+          from: options.from,
+          to: options.to,
+          output: options.output,
+        });
       }),
   );
 

@@ -18,6 +18,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
         ...actual.engagements.breaks,
         add: vi.fn(),
         remove: vi.fn(),
+        reschedule: vi.fn(),
       },
     },
   };
@@ -27,7 +28,7 @@ import { engagements } from "@ttctl/core";
 import type { DryRunPreview } from "@ttctl/core";
 
 import { resetCliDryRun, setCliDryRun } from "../../../lib/dry-run.js";
-import { runEngagementsBreaksAdd, runEngagementsBreaksRemove } from "../breaks.js";
+import { runEngagementsBreaksAdd, runEngagementsBreaksRemove, runEngagementsBreaksReschedule } from "../breaks.js";
 
 /**
  * CLI integration tests for the dry-run path of the 2 mutating
@@ -50,6 +51,7 @@ import { runEngagementsBreaksAdd, runEngagementsBreaksRemove } from "../breaks.j
 
 const MOCKED_BREAKS_ADD = engagements.breaks.add as ReturnType<typeof vi.fn>;
 const MOCKED_BREAKS_REMOVE = engagements.breaks.remove as ReturnType<typeof vi.fn>;
+const MOCKED_BREAKS_RESCHEDULE = engagements.breaks.reschedule as ReturnType<typeof vi.fn>;
 
 function previewFor(operationName: string, variables: Record<string, unknown>): DryRunPreview {
   return {
@@ -116,6 +118,7 @@ describe("ttctl engagements dry-run integration (issue #163)", () => {
   beforeEach(() => {
     MOCKED_BREAKS_ADD.mockReset();
     MOCKED_BREAKS_REMOVE.mockReset();
+    MOCKED_BREAKS_RESCHEDULE.mockReset();
     resetCliDryRun();
   });
 
@@ -294,6 +297,86 @@ describe("ttctl engagements dry-run integration (issue #163)", () => {
       // Apply-path envelope: `removed` present, `dryRun` absent.
       expect(parsed["dryRun"]).toBeUndefined();
       expect((parsed["removed"] as { id?: string })?.id).toBe("br-1");
+    });
+  });
+
+  it("breaks reschedule: forwards { dryRun: true } and emits dry-run envelope (op=engagements.breaks.reschedule, wire=RescheduleEngagementBreak) (#155)", async () => {
+    await withTmpConfig(async () => {
+      setCliDryRun(true);
+      MOCKED_BREAKS_RESCHEDULE.mockResolvedValueOnce({
+        kind: "preview",
+        preview: previewFor("RescheduleEngagementBreak", {
+          engagementBreakId: "br-1",
+          startDate: "2026-07-01",
+          endDate: "2026-07-08",
+        }),
+      });
+
+      const stdout = captureStdout();
+      captureStderr();
+
+      await runEngagementsBreaksReschedule("br-1", {
+        from: "2026-07-01",
+        to: "2026-07-08",
+        output: "json",
+      });
+
+      // Core call shape: (token, engagementBreakId, opts, { dryRun: true })
+      expect(MOCKED_BREAKS_RESCHEDULE).toHaveBeenCalledTimes(1);
+      const args = MOCKED_BREAKS_RESCHEDULE.mock.calls[0];
+      expect(args?.[1]).toBe("br-1");
+      expect(args?.[2]).toEqual({
+        startDate: "2026-07-01",
+        endDate: "2026-07-08",
+      });
+      expect(args?.[3]).toEqual({ dryRun: true });
+
+      const parsed = JSON.parse(stdout.lines.join("").trimEnd()) as Record<string, unknown>;
+      expect(parsed["dryRun"]).toBe(true);
+      expect(parsed["ok"]).toBe(true);
+      expect(parsed["version"]).toBe("1.0");
+      expect(parsed["operation"]).toBe("engagements.breaks.reschedule");
+      expect((parsed["preview"] as DryRunPreview).operationName).toBe("RescheduleEngagementBreak");
+      expect((parsed["preview"] as DryRunPreview).variables).toEqual({
+        engagementBreakId: "br-1",
+        startDate: "2026-07-01",
+        endDate: "2026-07-08",
+      });
+      // Apply-path wire field must NOT appear in dry-run envelope.
+      expect(parsed["updated"]).toBeUndefined();
+    });
+  });
+
+  it("breaks reschedule apply path remains the default when getCliDryRun() is false (sanity check) (#155)", async () => {
+    await withTmpConfig(async () => {
+      MOCKED_BREAKS_RESCHEDULE.mockResolvedValueOnce({
+        kind: "applied",
+        result: {
+          id: "br-1",
+          startDate: "2026-07-01",
+          endDate: "2026-07-08",
+          comment: "Summer break",
+          operations: null,
+        },
+      });
+
+      const stdout = captureStdout();
+      captureStderr();
+
+      await runEngagementsBreaksReschedule("br-1", {
+        from: "2026-07-01",
+        to: "2026-07-08",
+        output: "json",
+      });
+
+      const args = MOCKED_BREAKS_RESCHEDULE.mock.calls[0];
+      expect(args?.[3]).toEqual({ dryRun: false });
+
+      const parsed = JSON.parse(stdout.lines.join("").trimEnd()) as Record<string, unknown>;
+      // Apply-path envelope: `updated` present, `dryRun` absent.
+      expect(parsed["dryRun"]).toBeUndefined();
+      expect((parsed["updated"] as { id?: string; startDate?: string })?.id).toBe("br-1");
+      expect((parsed["updated"] as { startDate?: string })?.startDate).toBe("2026-07-01");
     });
   });
 });

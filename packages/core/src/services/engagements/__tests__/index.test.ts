@@ -579,6 +579,105 @@ describe("engagements.breaks.remove", () => {
   });
 });
 
+describe("engagements.breaks.reschedule (#155)", () => {
+  it("issues RescheduleEngagementBreak with engagementBreakId + startDate + endDate (no prefetch)", async () => {
+    const RESCHEDULED_FIXTURE = {
+      ...BREAK_FIXTURE,
+      startDate: "2026-07-01",
+      endDate: "2026-07-08",
+    };
+    reply({
+      body: {
+        data: {
+          engagementBreak: {
+            __typename: "EngagementBreakOps",
+            reschedule: {
+              __typename: "EngagementBreakReschedulePayload",
+              success: true,
+              errors: null,
+              break: RESCHEDULED_FIXTURE,
+            },
+          },
+        },
+      },
+    });
+    const outcome = await breaks.reschedule(TOKEN, "br-1", {
+      startDate: "2026-07-01",
+      endDate: "2026-07-08",
+    });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.id).toBe("br-1");
+    expect(outcome.result.startDate).toBe("2026-07-01");
+    expect(outcome.result.endDate).toBe("2026-07-08");
+    // CRITICAL contract: only one transport call — NO prefetch, unlike add.
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "RescheduleEngagementBreak",
+      variables: {
+        engagementBreakId: "br-1",
+        startDate: "2026-07-01",
+        endDate: "2026-07-08",
+      },
+    });
+    // Wire input shape — explicitly NO comment / NO reasonIdentifier
+    // fields, per the captured operation.
+    const variables = (call?.body as { variables?: Record<string, unknown> } | undefined)?.variables ?? {};
+    expect(Object.keys(variables).sort()).toEqual(["endDate", "engagementBreakId", "startDate"]);
+  });
+
+  it("throws MUTATION_ERROR when success is false (e.g. overlapping window)", async () => {
+    reply({
+      body: {
+        data: {
+          engagementBreak: {
+            reschedule: {
+              success: false,
+              errors: [{ key: "startDate", message: "Overlaps with another break", code: "OVERLAP" }],
+              break: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(
+      breaks.reschedule(TOKEN, "br-1", { startDate: "2026-07-01", endDate: "2026-07-08" }),
+    ).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "MUTATION_ERROR",
+    });
+  });
+
+  it("throws NOT_FOUND when the break id resolves to null engagementBreak", async () => {
+    reply({ body: { data: { engagementBreak: null } } });
+    await expect(
+      breaks.reschedule(TOKEN, "br-missing", { startDate: "2026-07-01", endDate: "2026-07-08" }),
+    ).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws UNKNOWN when success is true but break payload is null", async () => {
+    reply({
+      body: {
+        data: {
+          engagementBreak: {
+            reschedule: { success: true, errors: null, break: null },
+          },
+        },
+      },
+    });
+    await expect(
+      breaks.reschedule(TOKEN, "br-1", { startDate: "2026-07-01", endDate: "2026-07-08" }),
+    ).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "UNKNOWN",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------
 // dry-run path (issue #163)
 //
@@ -655,6 +754,28 @@ describe("engagements.breaks dry-run path (issue #163)", () => {
     expect(outcome.preview.surface).toBe("mobile-gateway");
     expect(outcome.preview.transport).toBe("stock");
     expect(outcome.preview.variables).toEqual({ engagementBreakId: "br-1" });
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
+  });
+
+  it("breaks.reschedule({ dryRun: true }) returns preview without invoking transport (#155)", async () => {
+    const outcome = await breaks.reschedule(
+      TOKEN,
+      "br-1",
+      { startDate: "2026-07-01", endDate: "2026-07-08" },
+      { dryRun: true },
+    );
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("RescheduleEngagementBreak");
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.transport).toBe("stock");
+    expect(outcome.preview.variables).toEqual({
+      engagementBreakId: "br-1",
+      startDate: "2026-07-01",
+      endDate: "2026-07-08",
+    });
     expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
     expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
   });

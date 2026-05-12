@@ -54,8 +54,8 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * sub-domain registering its full leaf set) + 8 `profile.portfolio` +
  * 4 `profile.visas` + 2 `profile.resume` (#75) + 6 `profile.external` +
  * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
- * 3 `applications` (#15) + 6 `engagements` (#147) + 5 `availability`
- * (#146 amended) + 13 `jobs` (#148) + 3 `timesheet` (#13) = 86 tools total.
+ * 3 `applications` (#15) + 7 `engagements` (#147 + #155) + 5 `availability`
+ * (#146 amended) + 13 `jobs` (#148) + 3 `timesheet` (#13) = 87 tools total.
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`
