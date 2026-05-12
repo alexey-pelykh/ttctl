@@ -13,6 +13,7 @@ import {
   runEngagementsBreaksList,
   runEngagementsBreaksRemove,
   runEngagementsBreaksReschedule,
+  runEngagementsBreaksReasonsList,
 } from "./breaks.js";
 import { runEngagementsList } from "./list.js";
 import { runEngagementsShow } from "./show.js";
@@ -124,7 +125,7 @@ export function buildEngagementsCommand(): Command {
       .requiredOption("--to <date>", "end date (YYYY-MM-DD)")
       .requiredOption(
         "--reason-id <id>",
-        "server-side reason identifier (e.g. `talent_on_vacation`, `client_needs_preparation`, `client_on_vacation`, `other`)",
+        "server-side reason identifier (run `ttctl engagements breaks reasons list` for the live catalog; examples: `talent_on_vacation`, `client_needs_preparation`, `client_on_vacation`, `other`)",
       )
       .option("--comment <text>", "optional free-text comment")
       .addOption(
@@ -195,6 +196,25 @@ export function buildEngagementsCommand(): Command {
         });
       }),
   );
+
+  // ----- Reasons sub-group (issue #156) ----------------------------------
+  // Discovery surface for valid `--reason-id` values. Only read-only,
+  // so no mutation marking needed.
+  const reasons = breaks
+    .command("reasons")
+    .description("Discovery: list the valid `--reason-id` values for `breaks add`");
+
+  reasons
+    .command("list")
+    .description("List the server-side catalog of valid `breaks add --reason-id` values, sorted by id")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runEngagementsBreaksReasonsList(options.output);
+    });
 
   return cmd;
 }

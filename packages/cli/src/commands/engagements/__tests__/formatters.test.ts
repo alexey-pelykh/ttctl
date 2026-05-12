@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { engagements } from "@ttctl/core";
 
-import { formatBreakEntity, formatBreaksTable } from "../breaks.js";
+import { formatBreakEntity, formatBreaksTable, formatReasonsTable } from "../breaks.js";
 import { formatDate, formatEngagementsTable, shortenEngagementStatus } from "../list.js";
 import { formatEngagementDetail } from "../show.js";
 import { formatStatsPretty } from "../stats.js";
@@ -220,5 +220,39 @@ describe("formatBreakEntity", () => {
     expect(out1).not.toContain("Comment:");
     const out2 = formatBreakEntity({ ...BREAK_FIXTURE, comment: "" });
     expect(out2).not.toContain("Comment:");
+  });
+});
+
+describe("formatReasonsTable", () => {
+  const REASONS_FIXTURE: engagements.EngagementBreakReason[] = [
+    { identifier: "client_needs_preparation", nameForRole: "Client needs preparation" },
+    { identifier: "client_on_vacation", nameForRole: "Client on vacation" },
+    { identifier: "other", nameForRole: "Other" },
+    { identifier: "talent_on_vacation", nameForRole: "On vacation" },
+  ];
+
+  it("renders rows with id and label columns", () => {
+    const out = formatReasonsTable(REASONS_FIXTURE);
+    expect(out).toContain("id");
+    expect(out).toContain("label");
+    expect(out).toContain("talent_on_vacation");
+    expect(out).toContain("On vacation");
+    expect(out).toContain("other");
+    expect(out).toContain("Other");
+  });
+
+  it("renders empty header table when items is empty", () => {
+    const out = formatReasonsTable([]);
+    expect(out).toContain("id");
+    expect(out).toContain("label");
+    expect(out).not.toContain("talent_on_vacation");
+  });
+
+  it("widens the id column to fit the longest identifier", () => {
+    // Identifier longer than the default 12-cap floor; rendering must
+    // not truncate it.
+    const long = "very_long_break_reason_identifier_xx";
+    const out = formatReasonsTable([{ identifier: long, nameForRole: "Long label" }]);
+    expect(out).toContain(long);
   });
 });

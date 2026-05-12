@@ -102,7 +102,7 @@ const EXPECTED_TOOLS = [
   "ttctl_applications_list",
   "ttctl_applications_show",
   "ttctl_applications_stats",
-  // engagements (#147, extended by #155) — 7 tools (3 read + 4 break write/read)
+  // engagements (#147 + #155 + #156) — 8 tools (3 read + 5 break: list/add/remove/reschedule/reasons_list)
   "ttctl_engagements_list",
   "ttctl_engagements_show",
   "ttctl_engagements_stats",
@@ -110,6 +110,7 @@ const EXPECTED_TOOLS = [
   "ttctl_engagements_breaks_add",
   "ttctl_engagements_breaks_remove",
   "ttctl_engagements_breaks_reschedule",
+  "ttctl_engagements_breaks_reasons_list",
   // availability (#146 amended) — 5 tools (snapshot show + working-hours
   // show/set + allocated-hours show/set; time-off lives on engagements)
   "ttctl_availability_show",
@@ -153,7 +154,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (87 tools = 56 wave-3 profile + 3 #15 applications + 7 #147/#155 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (88 tools = 56 wave-3 profile + 3 #15 applications + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);
