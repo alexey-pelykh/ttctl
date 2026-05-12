@@ -88,6 +88,5 @@ export {
   SECRET_HEADER_NAMES,
   containsBearerToken,
   redactBody,
-  redactCookieHeader,
   redactHeaders,
 } from "./lib/redact.js";
