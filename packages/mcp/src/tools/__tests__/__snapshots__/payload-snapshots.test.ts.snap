@@ -1,0 +1,469 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP profile_basic_show — payload snapshots > payload: full ProfileShowQuery (jsonResponse 2-space indent) 1`] = `
+"{
+  "viewer": {
+    "__typename": "Viewer",
+    "id": "v_test_001",
+    "appliedAt": "2020-01-15T00:00:00+00:00",
+    "hasSearchSubscription": false,
+    "availabilityRequestTalentCardEnabled": true,
+    "coachingEligibility": "QUICK",
+    "referralUrl": {
+      "__typename": "ReferralUrl",
+      "legacySlug": "test-user",
+      "pathSuffix": "/test-user",
+      "shortenedUrl": "https://tpt.al/test-user",
+      "url": "https://www.toptal.com/r/test-user"
+    },
+    "hireMeBanner": {
+      "__typename": "HireMeBanner",
+      "enabled": true,
+      "submitted": false,
+      "experimentVariant": "control",
+      "referralUrl": "https://www.toptal.com/r/test-user",
+      "personalWebsiteUrl": "",
+      "verificationStatus": "IDLE",
+      "verifiedCount": 0
+    },
+    "codeOfConduct": {
+      "__typename": "CodeOfConduct",
+      "id": "coc_test_001",
+      "acceptedAt": "2024-01-01T00:00:00+00:00",
+      "title": "Code of Conduct",
+      "revisedOn": "2024-01-01"
+    },
+    "termsOfService": {
+      "__typename": "TermsOfService",
+      "id": "tos_test_001",
+      "title": "Terms of Service",
+      "revisedOn": "2024-01-01",
+      "requiredAction": "NONE"
+    },
+    "preliminarySearchSetting": {
+      "__typename": "PreliminarySearchSetting",
+      "enabled": false
+    },
+    "viewerRole": {
+      "__typename": "ViewerRole",
+      "activatedAt": "2020-03-01T00:00:00+00:00",
+      "askExpertMenuVisible": true,
+      "blockedStatus": {
+        "__typename": "BlockedStatus",
+        "isBlocked": false
+      },
+      "roleId": 99999,
+      "profileId": "p_test_001",
+      "availability": "FULL_TIME",
+      "allocatedHours": 40,
+      "hiredHours": 30,
+      "fullName": "Test User",
+      "firstName": "Test",
+      "phoneNumber": "+1 555 0100",
+      "email": "test@example.com",
+      "toptalEmail": "test@toptal.com",
+      "toptalEmailSuspended": false,
+      "sendNotificationsToPrivateEmail": false,
+      "specializationType": "CORE_WITH_MARKETPLACE",
+      "specializations": [
+        {
+          "__typename": "TalentSpecialization",
+          "id": "sp_test_001",
+          "slug": "core",
+          "title": "Core",
+          "deliveryModel": {
+            "__typename": "TalentEngagementDeliveryModel",
+            "id": "dm_test_001",
+            "identifier": "CORE"
+          }
+        }
+      ],
+      "photo": {
+        "__typename": "Photo",
+        "large": "https://example.com/photo-large.jpg",
+        "small": "https://example.com/photo-small.jpg"
+      },
+      "postActivationStepsStatus": "COMPLETED",
+      "publicResumeUrl": "https://www.toptal.com/resume/test-user",
+      "timeZone": {
+        "__typename": "TimeZone",
+        "name": "(UTC+00:00) UTC",
+        "value": "Etc/UTC"
+      },
+      "location": {
+        "__typename": "Location",
+        "city": "San Francisco",
+        "regionId": "us-ca",
+        "regionName": "California",
+        "countryName": "United States",
+        "countryCode": "US"
+      },
+      "canBeFinanciallyVerified": true,
+      "showFinancialVerification": false,
+      "memberSince": "2020-03-01",
+      "seniorityLevel": "SENIOR",
+      "profile": {
+        "__typename": "Profile",
+        "id": "p_test_001",
+        "highlightedSkillSets": [
+          {
+            "__typename": "ProfileSkillSet",
+            "id": "sk_test_001",
+            "experience": 96,
+            "rating": "EXPERT",
+            "public": true,
+            "skill": {
+              "__typename": "Skill",
+              "id": "skill_cat_ts",
+              "name": "TypeScript"
+            }
+          }
+        ]
+      }
+    }
+  }
+}"
+`;
+
+exports[`MCP profile_certifications — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_certifications — payload snapshots > payload: full profile certifications (2) 1`] = `
+"[
+  {
+    "id": "cert_test_001",
+    "certificate": "AWS Certified Solutions Architect — Professional",
+    "institution": "Amazon Web Services",
+    "link": "https://example.com/cert/aws-pro",
+    "number": "AWS-SAP-12345",
+    "validFromMonth": 3,
+    "validFromYear": 2023,
+    "validToMonth": 3,
+    "validToYear": 2026,
+    "highlight": true
+  },
+  {
+    "id": "cert_test_002",
+    "certificate": "Certified Kubernetes Application Developer",
+    "institution": "Cloud Native Computing Foundation",
+    "link": "https://example.com/cert/ckad",
+    "number": "CKAD-67890",
+    "validFromMonth": 6,
+    "validFromYear": 2022,
+    "validToMonth": 6,
+    "validToYear": 2025,
+    "highlight": false
+  }
+]"
+`;
+
+exports[`MCP profile_education — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_education — payload snapshots > payload: full profile education (1 entry) 1`] = `
+"[
+  {
+    "id": "edu_test_001",
+    "institution": "Stanford University",
+    "degree": "Bachelor of Science",
+    "fieldOfStudy": "Computer Science",
+    "location": "Stanford, CA",
+    "title": "BS, Computer Science",
+    "yearFrom": 2010,
+    "yearTo": 2014,
+    "highlight": true
+  }
+]"
+`;
+
+exports[`MCP profile_employment — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_employment — payload snapshots > payload: full profile employment (2 entries) 1`] = `
+"[
+  {
+    "id": "emp_test_001",
+    "company": "Acme Financial",
+    "position": "Principal Engineer",
+    "companyWebsite": "https://example.com/acme",
+    "noWebsite": false,
+    "startDate": 2021,
+    "endDate": null,
+    "experienceItems": [
+      "Owned the architecture of the multi-region transaction ledger from prototype to production at 12k writes/sec.",
+      "Mentored a team of 6 engineers; ran weekly architecture-review forums and pairing sessions on hard-to-debug latency tails.",
+      "Drove the migration off a hand-rolled ORM onto Drizzle, removing ~14k lines of bespoke SQL plumbing."
+    ],
+    "highlight": true,
+    "showViaToptal": true,
+    "toptalRelated": false
+  },
+  {
+    "id": "emp_test_002",
+    "company": "Mercury Health",
+    "position": "Senior Software Engineer",
+    "companyWebsite": "https://example.com/mercury",
+    "noWebsite": false,
+    "startDate": 2017,
+    "endDate": 2021,
+    "experienceItems": [
+      "Built the FHIR-compliant EHR gateway from green field to 11 partner clinics in production.",
+      "Led the SMART-on-FHIR auth integration; co-authored an internal RFC adopted across two sister product teams."
+    ],
+    "highlight": true,
+    "showViaToptal": true,
+    "toptalRelated": false
+  }
+]"
+`;
+
+exports[`MCP profile_external_readiness — payload snapshots > payload: ProfileReadiness (partial — submitAvailable: false) 1`] = `
+"{
+  "isPhotoResolutionSatisfied": true,
+  "isBasicInfoSatisfied": true,
+  "isCertificationsSatisfied": false,
+  "isEmploymentsCountSatisfied": true,
+  "isEmploymentConnectionsSatisfied": false,
+  "isSkillValidationsSatisfied": true,
+  "isPortfolioItemsCountSatisfied": true,
+  "isPortfolioItemConnectionsSatisfied": false,
+  "isWorkingHoursSatisfied": true,
+  "submitAvailable": false,
+  "updatedByTalentAt": "2026-05-01T12:00:00Z"
+}"
+`;
+
+exports[`MCP profile_industries — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_industries — payload snapshots > payload: full profile industries (2) 1`] = `
+"[
+  {
+    "id": "ind_test_001",
+    "title": "Financial services",
+    "about": "8 years building ledger, payments, and reconciliation systems for B2B fintech.",
+    "domainArea": "Payments and ledger"
+  },
+  {
+    "id": "ind_test_002",
+    "title": "Healthcare",
+    "about": "4 years on HIPAA-compliant clinical-data infrastructure and FHIR integrations.",
+    "domainArea": "Clinical data exchange"
+  }
+]"
+`;
+
+exports[`MCP profile_portfolio — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_portfolio — payload snapshots > payload: full profile portfolio (3 items, paragraph-bearing) 1`] = `
+"[
+  {
+    "id": "port_test_001",
+    "title": "Distributed transaction ledger",
+    "description": "Designed and shipped a multi-region transaction ledger handling 12k writes/sec at p99 latency under 35ms. Built on PostgreSQL logical replication with a custom conflict-resolution layer and an audit trail wired into Kafka. Stack: TypeScript, Node 20, PostgreSQL 15, Kafka, Kubernetes on AWS EKS.",
+    "link": "https://example.com/case-studies/ledger",
+    "highlight": true,
+    "coverImage": "https://example.com/covers/ledger.png",
+    "accomplishment": "Cut reconciliation lead time from 18 hours to under 4 minutes; eliminated a recurring weekend on-call class.",
+    "publicationPermit": true,
+    "clientOrCompanyName": "Acme Financial",
+    "websiteUrl": "https://example.com/acme",
+    "toptalRelated": true,
+    "showViaToptal": true
+  },
+  {
+    "id": "port_test_002",
+    "title": "FHIR-compliant EHR gateway",
+    "description": "Built a HIPAA-compliant gateway exposing a subset of FHIR R4 resources to third-party clinical apps. Authentication via SMART-on-FHIR (OAuth 2 + OIDC); per-resource consent enforcement at the API gateway. Operated 99.97% uptime over 14 months across three AWS regions.",
+    "link": "https://example.com/case-studies/fhir-gateway",
+    "highlight": true,
+    "coverImage": null,
+    "accomplishment": "Onboarded 11 partner clinics in the first quarter; passed an external HIPAA audit on first attempt.",
+    "publicationPermit": true,
+    "clientOrCompanyName": "Mercury Health",
+    "websiteUrl": "https://example.com/mercury",
+    "toptalRelated": false,
+    "showViaToptal": true
+  },
+  {
+    "id": "port_test_003",
+    "title": "Internal observability platform",
+    "description": "Replaced a legacy logging stack with an OpenTelemetry-native observability platform for a 200-engineer org. Unified logs, metrics, and traces under a single retention policy; reduced infra spend by 38% while doubling cardinality.",
+    "link": "https://example.com/case-studies/observability",
+    "highlight": false,
+    "coverImage": null,
+    "accomplishment": "MTTR for production incidents dropped from 47 minutes to 11 minutes within two quarters of rollout.",
+    "publicationPermit": true,
+    "clientOrCompanyName": "Stellar Logistics",
+    "websiteUrl": null,
+    "toptalRelated": false,
+    "showViaToptal": false
+  }
+]"
+`;
+
+exports[`MCP profile_portfolio — payload snapshots > payload: single portfolio item 1`] = `
+"[
+  {
+    "id": "port_test_001",
+    "title": "Distributed transaction ledger",
+    "description": "Designed and shipped a multi-region transaction ledger handling 12k writes/sec at p99 latency under 35ms. Built on PostgreSQL logical replication with a custom conflict-resolution layer and an audit trail wired into Kafka. Stack: TypeScript, Node 20, PostgreSQL 15, Kafka, Kubernetes on AWS EKS.",
+    "link": "https://example.com/case-studies/ledger",
+    "highlight": true,
+    "coverImage": "https://example.com/covers/ledger.png",
+    "accomplishment": "Cut reconciliation lead time from 18 hours to under 4 minutes; eliminated a recurring weekend on-call class.",
+    "publicationPermit": true,
+    "clientOrCompanyName": "Acme Financial",
+    "websiteUrl": "https://example.com/acme",
+    "toptalRelated": true,
+    "showViaToptal": true
+  }
+]"
+`;
+
+exports[`MCP profile_resume — payload snapshots > cancel-upload payload: success: true 1`] = `
+"{
+  "success": true
+}"
+`;
+
+exports[`MCP profile_resume — payload snapshots > upload payload: success: true 1`] = `
+"{
+  "success": true
+}"
+`;
+
+exports[`MCP profile_reviews_list — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_reviews_list — payload snapshots > payload: single SectionReview 1`] = `
+"[
+  {
+    "id": "review_test_001",
+    "section": "EDUCATION",
+    "requestedAt": "2026-05-01T14:30:00Z",
+    "items": [
+      {
+        "id": "item_test_001",
+        "itemId": "edu_test_001",
+        "requestedAt": "2026-05-01T14:30:00Z"
+      }
+    ]
+  }
+]"
+`;
+
+exports[`MCP profile_skills_list — payload snapshots > payload: empty array (no skills) 1`] = `"[]"`;
+
+exports[`MCP profile_skills_list — payload snapshots > payload: full profile skills (4 skills) 1`] = `
+"[
+  {
+    "id": "sk_test_001",
+    "experience": 96,
+    "rating": "EXPERT",
+    "public": true,
+    "position": 1,
+    "skill": {
+      "id": "skill_cat_ts",
+      "name": "TypeScript"
+    },
+    "connectionsCount": 4
+  },
+  {
+    "id": "sk_test_002",
+    "experience": 84,
+    "rating": "EXPERT",
+    "public": true,
+    "position": 2,
+    "skill": {
+      "id": "skill_cat_pg",
+      "name": "PostgreSQL"
+    },
+    "connectionsCount": 3
+  },
+  {
+    "id": "sk_test_003",
+    "experience": 48,
+    "rating": "STRONG",
+    "public": true,
+    "position": 3,
+    "skill": {
+      "id": "skill_cat_k8s",
+      "name": "Kubernetes"
+    },
+    "connectionsCount": 2
+  },
+  {
+    "id": "sk_test_004",
+    "experience": 60,
+    "rating": "STRONG",
+    "public": true,
+    "position": 4,
+    "skill": {
+      "id": "skill_cat_gql",
+      "name": "GraphQL"
+    },
+    "connectionsCount": 2
+  }
+]"
+`;
+
+exports[`MCP profile_skills_list — payload snapshots > payload: single skill 1`] = `
+"[
+  {
+    "id": "sk_test_001",
+    "experience": 96,
+    "rating": "EXPERT",
+    "public": true,
+    "position": 1,
+    "skill": {
+      "id": "skill_cat_ts",
+      "name": "TypeScript"
+    },
+    "connectionsCount": 4
+  }
+]"
+`;
+
+exports[`MCP profile_visas — payload snapshots > payload: empty array 1`] = `"[]"`;
+
+exports[`MCP profile_visas — payload snapshots > payload: full profile visas (1) 1`] = `
+"[
+  {
+    "id": "visa_test_001",
+    "countryId": "country_us",
+    "countryName": "United States",
+    "visaType": "B1/B2",
+    "expiryDate": "2030-06-15"
+  }
+]"
+`;
+
+exports[`MCP shared envelopes — payload snapshots > domain-error response: ProfileError-shaped 1`] = `
+"Error: ttctl_profile_skills_list failed (NO_VIEWER): No profile id bound to this session.
+
+(Code: NO_VIEWER)"
+`;
+
+exports[`MCP shared envelopes — payload snapshots > dry-run response: single-preview envelope 1`] = `
+"{
+  "ok": true,
+  "dryRun": true,
+  "preview": {
+    "operationName": "getSkillSetsWithConnectionsWithConnectionsCount",
+    "surface": "mobile-gateway",
+    "transport": "stock",
+    "endpoint": "https://www.toptal.com/gateway/graphql/talent/graphql",
+    "variables": {
+      "profileId": "<resolved-at-apply-time>"
+    },
+    "headers": {
+      "authorization": "Token token=<redacted>",
+      "content-type": "application/json"
+    }
+  }
+}"
+`;
+
+exports[`MCP shared envelopes — payload snapshots > unauthenticated response: no-token error 1`] = `
+"Error: ttctl_profile_basic_show failed (UNAUTHENTICATED): No auth token found.
+
+Recovery: Run \`ttctl auth signin\` to sign in.
+
+(Code: UNAUTHENTICATED)"
+`;
