@@ -6,7 +6,8 @@ import { existsSync } from "node:fs";
 import { Command, Option } from "commander";
 import type { Command as CommanderCommand } from "commander";
 
-import { ConfigError } from "@ttctl/core";
+import { ConfigError, setDiagnosticLogger } from "@ttctl/core";
+import type { DiagnosticLevel } from "@ttctl/core";
 
 import { buildApplicationsCommand } from "./commands/applications/index.js";
 import { registerAuthCommand } from "./commands/auth/index.js";
@@ -63,6 +64,30 @@ import type { OutputFormat } from "./lib/output.js";
  *   when MCP tools that wrap mutations ship, they accept the same
  *   `dryRun?: boolean` input parameter and route through the same core
  *   `dryRun` option. Until then, no MCP-side wiring is required.
+ *
+ *   `--verbose` / `--debug` (issue #139) — diagnostic observability for
+ *   transport-level request/response activity. `--verbose` emits a
+ *   one-line request descriptor + one-line response status per
+ *   transport call to STDERR; `--debug` emits full JSON-encoded
+ *   request/response envelopes (including redacted headers and body)
+ *   to STDERR. Both write EXCLUSIVELY to stderr — the stdout data
+ *   channel (json/yaml/pretty envelopes per #126/#128) is never
+ *   touched, so `--debug --output=json` works as one would expect:
+ *   structured data on stdout, redacted debug trace on stderr.
+ *
+ *   Mutual relationship: `--debug` is a strict superset of
+ *   `--verbose`; if both are passed, `--debug` wins (no warning —
+ *   the user got what they implicitly asked for, the verbose-tier
+ *   data is a subset of the debug-tier data). The preAction hook
+ *   computes the effective level and routes it through
+ *   `setDiagnosticLogger` so every transport (stockTransport,
+ *   impersonatedTransport, impersonatedMultipartTransport, and the
+ *   hand-rolled photo-upload path in profile/basic) emits the same
+ *   shape. Secret redaction (cookies, authorization headers,
+ *   password / token / secret body fields, the
+ *   `user_<24hex>_<20alnum>` bearer pattern) is applied by the
+ *   `redact` module BEFORE serialization, so verbatim bearers /
+ *   cookies cannot appear in either log tier.
  */
 export function buildProgram(): Command {
   const program = new Command();
@@ -76,13 +101,26 @@ export function buildProgram(): Command {
     .addOption(
       new Option("--dry-run", "preview a mutation request without sending it (no-op for read commands)").default(false),
     )
+    .addOption(new Option("--verbose", "log request/response summary to stderr (issue #139)").default(false))
+    .addOption(
+      new Option("--debug", "log full request/response (headers + body, redacted) to stderr (issue #139)").default(
+        false,
+      ),
+    )
     .hook("preAction", (thisCommand, actionCommand) => {
       // `thisCommand` is the root program where the hook is registered;
       // global options are read off it directly. The hook fires before
       // every sub-command's action, so the path is captured exactly once
       // per invocation. `actionCommand` is the deepest command being
       // executed (e.g., the `init` leaf under `auth init`).
-      const opts = thisCommand.opts<{ config?: string; json?: boolean; yaml?: boolean; dryRun?: boolean }>();
+      const opts = thisCommand.opts<{
+        config?: string;
+        json?: boolean;
+        yaml?: boolean;
+        dryRun?: boolean;
+        verbose?: boolean;
+        debug?: boolean;
+      }>();
       const configPath = opts.config;
 
       // Mutual exclusion across format flags (post-#126). The user-visible
@@ -163,6 +201,23 @@ export function buildProgram(): Command {
       // `getCliDryRun()` and route through the core's `dryRun` option.
       const dryRun = opts.dryRun === true;
       setCliDryRun(dryRun);
+
+      // Capture the global `--verbose` / `--debug` flags (issue #139).
+      // `--debug` is a strict superset of `--verbose`; if both are
+      // passed, `--debug` wins silently (verbose's lines are a subset
+      // of debug's content). The level routes through `setDiagnosticLogger`
+      // to the core's transport layer, where every request/response is
+      // logged with secret redaction applied by the `redact` module
+      // BEFORE serialization. Output goes to stderr exclusively — the
+      // stdout data channel (json/yaml/pretty envelopes per #126/#128)
+      // is never touched.
+      let level: DiagnosticLevel = "none";
+      if (opts.debug === true) {
+        level = "debug";
+      } else if (opts.verbose === true) {
+        level = "verbose";
+      }
+      setDiagnosticLogger(level);
 
       // No-op note for non-mutation leaves: when `--dry-run` is set on a
       // leaf that has NOT been tagged via `markMutation()` (today: every

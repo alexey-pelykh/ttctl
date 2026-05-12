@@ -5,6 +5,7 @@ import { fetch as wreqFetch } from "node-wreq";
 
 import type { ProfileShowQuery } from "../../../__generated__/graphql.js";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
+import { logTransportRequest, logTransportResponse } from "../../../lib/diagnostic-log.js";
 import {
   buildDryRunPreview,
   Cf403Error,
@@ -1184,9 +1185,23 @@ export async function photoUpload(token: string, input: PhotoUploadInput): Promi
   const blob = new Blob([new Uint8Array(fileBuffer)], { type: contentType });
   form.set("0", blob, filename);
 
+  // Diagnostic-log context (issue #139): hand over the parsed operation
+  // envelope + multipart map so `multipartImpersonatedFetch` can emit a
+  // truthful debug trace with the full GraphQL body (operationName,
+  // query, variables) and the actual slot label / variable-path mapping
+  // that goes on the wire. Without this, the debug log would show
+  // body=null and a fabricated multipart map — accurate-shape data is
+  // what makes the trace useful for `paste-into-issue` debugging.
+  const operationEnvelope = JSON.parse(operations) as {
+    operationName: string;
+    query: string;
+    variables: Record<string, unknown>;
+  };
+  const slotMap = JSON.parse(map) as Record<string, string[]>;
+
   let res: TransportResponse;
   try {
-    res = await multipartImpersonatedFetch(token, form);
+    res = await multipartImpersonatedFetch(token, form, { operationEnvelope, slotMap });
   } catch (err) {
     if (err instanceof TtctlError) throw err;
     throw new ProfileError("NETWORK_ERROR", `Photo upload request failed: ${(err as Error).message}`, { cause: err });
@@ -1282,7 +1297,26 @@ async function resolvePhotoBinary(input: PhotoUploadInput): Promise<ResolvedPhot
  * sets the override; the fallback `wreqFetch` import resolves at module
  * load time.
  */
-async function multipartImpersonatedFetch(token: string, form: FormData): Promise<TransportResponse> {
+/**
+ * Diagnostic-log context for `multipartImpersonatedFetch`. The caller
+ * (only {@link photoUpload} today) hands over the parsed operation
+ * envelope and the slot-to-variable-path map so the `--debug` trace
+ * carries the actual GraphQL operation name, query, variables, and the
+ * real wire-shape multipart map — not fabricated stand-ins. The fields
+ * mirror the values that get serialized into the `operations` and
+ * `map` form parts of the multipart request body (see the GraphQL
+ * multipart request spec linked in {@link buildGraphQLMultipart}).
+ */
+interface MultipartLogContext {
+  operationEnvelope: { operationName: string; query: string; variables: Record<string, unknown> };
+  slotMap: Record<string, string[]>;
+}
+
+async function multipartImpersonatedFetch(
+  token: string,
+  form: FormData,
+  logContext: MultipartLogContext,
+): Promise<TransportResponse> {
   const url = SURFACE_ENDPOINTS["talent-profile"];
   const fetchImpl = multipartFetchOverride ?? wreqFetch;
 
@@ -1302,6 +1336,26 @@ async function multipartImpersonatedFetch(token: string, form: FormData): Promis
     "x-toptal-analytics-origin": "mobile",
   };
 
+  // Diagnostic log hook (issue #139). This path is photo-upload-specific;
+  // duplicating the `impersonatedMultipartTransport` hook here keeps both
+  // paths covered without adding a circular dep between transport.ts and
+  // this module. The operation envelope and slot map come from the
+  // caller so the trace reflects the actual GraphQL operation +
+  // wire-shape map (the binary file content is intentionally NOT in
+  // the body — it carries no diagnostic value and binary in a terminal
+  // would be useless).
+  logTransportRequest({
+    surface: "talent-profile",
+    endpoint: url,
+    transport: "impersonated-multipart",
+    method: "POST",
+    operationName: logContext.operationEnvelope.operationName,
+    headers,
+    body: logContext.operationEnvelope,
+    multipart: { files: Object.keys(logContext.slotMap), map: logContext.slotMap },
+  });
+  const startMs = performance.now();
+
   const res = await fetchImpl(url, {
     method: "POST",
     headers,
@@ -1309,7 +1363,18 @@ async function multipartImpersonatedFetch(token: string, form: FormData): Promis
     browser: IMPERSONATE_PROFILE,
   });
 
+  const responseHeaders = res.headers.toObject();
+
   if (res.status === 403) {
+    logTransportResponse({
+      surface: "talent-profile",
+      endpoint: url,
+      operationName: logContext.operationEnvelope.operationName,
+      status: 403,
+      headers: responseHeaders,
+      body: null,
+      elapsedMs: performance.now() - startMs,
+    });
     throw new Cf403Error("talent-profile", url);
   }
 
@@ -1320,9 +1385,18 @@ async function multipartImpersonatedFetch(token: string, form: FormData): Promis
   } catch {
     parsed = text;
   }
+  logTransportResponse({
+    surface: "talent-profile",
+    endpoint: url,
+    operationName: logContext.operationEnvelope.operationName,
+    status: res.status,
+    headers: responseHeaders,
+    body: parsed,
+    elapsedMs: performance.now() - startMs,
+  });
   return {
     status: res.status,
-    headers: res.headers.toObject(),
+    headers: responseHeaders,
     body: parsed,
   };
 }

@@ -16,7 +16,7 @@ Because E2E runs against a real Toptal Talent profile, the harness is engineered
 - **Cool-off after signout** — both globalSetup's run-teardown AND `withFreshSession()`'s afterAll wait ≥5s, spacing successive runs to avoid Toptal's rate-limit / abuse heuristics.
 - **Pre-flight banner** — globalSetup prints a visible warning on stderr **before** any network call: "E2E will sign in to Toptal as the configured account. Any concurrent browser session may be invalidated."
 - **Failure output redaction** — assertion diffs and log helpers scrub `cookie`, `email`, `password`, `token` keys; profile-shaped objects collapse to `[redacted profile]`. Tests assert specific fields, not whole snapshots.
-- **Bearer-pattern CI guard** — `scripts/check-secret-leakage.js` (wired into `pnpm lint`) refuses to ship a build with any `user_<24hex>_<20alnum>` pattern outside `.tmp/`. Catches accidental fixture leaks where a bearer was written to a tracked file.
+- **Bearer-pattern CI guard** — `scripts/check-secret-leakage.ts` (wired into `pnpm lint`; run via `tsx`, consumes `BEARER_PATTERN_SOURCE` from `packages/core/src/lib/redact.ts` as the single source of truth) refuses to ship a build with any `user_<24hex>_<20alnum>` pattern outside `.tmp/`. Catches accidental fixture leaks where a bearer was written to a tracked file.
 
 ### What "SignOut" means here
 

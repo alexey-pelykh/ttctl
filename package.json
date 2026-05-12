@@ -19,7 +19,7 @@
     "lint": "turbo run lint && pnpm lint:root && pnpm check-secret-leakage",
     "lint:root": "eslint eslint.config.js vitest.config.ts vitest.e2e.config.ts codegen.config.ts scripts/",
     "license-check": "node scripts/check-licenses.js",
-    "check-secret-leakage": "node scripts/check-secret-leakage.js",
+    "check-secret-leakage": "tsx scripts/check-secret-leakage.ts",
     "codegen": "graphql-codegen --config codegen.config.ts",
     "dev": "turbo run dev"
   },
@@ -33,6 +33,7 @@
     "eslint-config-prettier": "catalog:",
     "graphql": "catalog:",
     "prettier": "catalog:",
+    "tsx": "catalog:",
     "turbo": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",

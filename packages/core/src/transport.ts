@@ -6,6 +6,7 @@ import type { BrowserProfile } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
 import { TtctlError } from "./auth/errors.js";
+import { logTransportRequest, logTransportResponse } from "./lib/diagnostic-log.js";
 import { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 import type { GraphQLRequest, ToptalSurface } from "./types.js";
 
@@ -293,6 +294,21 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
   const headers: Record<string, string> = { ...COMMON_HEADERS };
   if (req.authToken) headers["authorization"] = `Token token=${req.authToken}`;
 
+  // Diagnostic log hook (issue #139). No-op when --verbose/--debug
+  // are absent; otherwise emits a redacted request line/record to
+  // stderr. Records start time outside the disabled-fast-path so
+  // performance.now() is paid only when a logger is active.
+  logTransportRequest({
+    surface: req.surface,
+    endpoint: url,
+    transport: "stock",
+    method: "POST",
+    operationName: req.body.operationName,
+    headers,
+    body: req.body,
+  });
+  const startMs = performance.now();
+
   const res = await undiciRequest(url, {
     method: "POST",
     headers,
@@ -313,6 +329,15 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
       responseHeaders[k] = v;
     }
   }
+  logTransportResponse({
+    surface: req.surface,
+    endpoint: url,
+    operationName: req.body.operationName,
+    status: res.statusCode,
+    headers: responseHeaders,
+    body: parsed,
+    elapsedMs: performance.now() - startMs,
+  });
   return { status: res.statusCode, headers: responseHeaders, body: parsed };
 }
 
@@ -336,6 +361,19 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
   const headers: Record<string, string> = { ...COMMON_HEADERS };
   if (req.authToken) headers["authorization"] = `Token token=${req.authToken}`;
 
+  // Diagnostic log hook (issue #139); see stockTransport for the
+  // disabled-fast-path rationale.
+  logTransportRequest({
+    surface: req.surface,
+    endpoint: url,
+    transport: "impersonated",
+    method: "POST",
+    operationName: req.body.operationName,
+    headers,
+    body: req.body,
+  });
+  const startMs = performance.now();
+
   const res = await wreqFetch(url, {
     method: "POST",
     headers,
@@ -343,7 +381,23 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
     browser: IMPERSONATE_PROFILE,
   });
 
+  // Capture response headers/status BEFORE the Cf403 throw so the
+  // diagnostic trace still records the 403 response when --debug is
+  // active — the caller's exception handler does not see those wire
+  // details, so dropping them on the floor here would leak the
+  // failure mode the operator is trying to diagnose.
+  const responseHeaders = res.headers.toObject();
+
   if (res.status === 403) {
+    logTransportResponse({
+      surface: req.surface,
+      endpoint: url,
+      operationName: req.body.operationName,
+      status: 403,
+      headers: responseHeaders,
+      body: null,
+      elapsedMs: performance.now() - startMs,
+    });
     throw new Cf403Error(req.surface, url);
   }
 
@@ -354,9 +408,18 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
   } catch {
     parsed = text;
   }
+  logTransportResponse({
+    surface: req.surface,
+    endpoint: url,
+    operationName: req.body.operationName,
+    status: res.status,
+    headers: responseHeaders,
+    body: parsed,
+    elapsedMs: performance.now() - startMs,
+  });
   return {
     status: res.status,
-    headers: res.headers.toObject(),
+    headers: responseHeaders,
     body: parsed,
   };
 }
@@ -489,6 +552,22 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
 
   const formData = buildGraphQLMultipart(req.body, req.files, req.map);
 
+  // Diagnostic log hook (issue #139). Multipart binary payloads are
+  // intentionally NOT logged — only the file slot labels + map are
+  // surfaced, which is enough to understand what was uploaded without
+  // dumping arbitrary bytes into a terminal.
+  logTransportRequest({
+    surface: req.surface,
+    endpoint: url,
+    transport: "impersonated-multipart",
+    method: "POST",
+    operationName: req.body.operationName,
+    headers,
+    body: req.body,
+    multipart: { files: Object.keys(req.files), map: req.map },
+  });
+  const startMs = performance.now();
+
   const res = await wreqFetch(url, {
     method: "POST",
     headers,
@@ -496,7 +575,18 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
     browser: IMPERSONATE_PROFILE,
   });
 
+  const responseHeaders = res.headers.toObject();
+
   if (res.status === 403) {
+    logTransportResponse({
+      surface: req.surface,
+      endpoint: url,
+      operationName: req.body.operationName,
+      status: 403,
+      headers: responseHeaders,
+      body: null,
+      elapsedMs: performance.now() - startMs,
+    });
     throw new Cf403Error(req.surface, url);
   }
 
@@ -507,9 +597,18 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
   } catch {
     parsed = text;
   }
+  logTransportResponse({
+    surface: req.surface,
+    endpoint: url,
+    operationName: req.body.operationName,
+    status: res.status,
+    headers: responseHeaders,
+    body: parsed,
+    elapsedMs: performance.now() - startMs,
+  });
   return {
     status: res.status,
-    headers: res.headers.toObject(),
+    headers: responseHeaders,
     body: parsed,
   };
 }
