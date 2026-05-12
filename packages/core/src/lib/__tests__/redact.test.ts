@@ -11,7 +11,6 @@ import {
   SECRET_HEADER_NAMES,
   containsBearerToken,
   redactBody,
-  redactCookieHeader,
   redactHeaders,
 } from "../redact.js";
 
@@ -210,24 +209,6 @@ describe("redactBody", () => {
     // body redaction is a conscious decision.
     const out = redactBody({ free_text: "user_abc123def456789012345678_abcdefghij1234567890" });
     expect(out).toEqual({ free_text: "user_abc123def456789012345678_abcdefghij1234567890" });
-  });
-});
-
-describe("redactCookieHeader", () => {
-  it("redacts all named cookie values, preserving names and delimiters", () => {
-    expect(redactCookieHeader("sid=abc; tracking=xyz")).toBe(`sid=${REDACTED}; tracking=${REDACTED}`);
-  });
-
-  it("preserves valueless attribute-style entries (Secure, HttpOnly)", () => {
-    expect(redactCookieHeader("sid=abc; Secure; HttpOnly")).toBe(`sid=${REDACTED}; Secure; HttpOnly`);
-  });
-
-  it("handles single-cookie input", () => {
-    expect(redactCookieHeader("cf_clearance=longvalue")).toBe(`cf_clearance=${REDACTED}`);
-  });
-
-  it("ignores empty entries from trailing semicolons", () => {
-    expect(redactCookieHeader("sid=abc; ")).toBe(`sid=${REDACTED}`);
   });
 });
 

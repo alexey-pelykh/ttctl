@@ -14,8 +14,8 @@
  * Consumers:
  *
  * - `packages/core/src/lib/diagnostic-log.ts` calls {@link redactHeaders} /
- *   {@link redactBody} / {@link redactCookieHeader} before emitting any
- *   `--verbose` / `--debug` line to stderr.
+ *   {@link redactBody} before emitting any `--verbose` / `--debug` line
+ *   to stderr.
  * - `scripts/check-secret-leakage.ts` consumes {@link BEARER_PATTERN_SOURCE}
  *   to scan tracked source for accidentally committed Toptal session
  *   bearers.
@@ -120,12 +120,12 @@ export const SECRET_BODY_FIELD_NAMES: ReadonlySet<string> = new Set([
  * replaced with {@link REDACTED}. Non-secret headers pass through unchanged.
  *
  * For the `cookie` and `set-cookie` headers, the entire header value is
- * replaced — TTCtl does not currently retain any cookie cleartext (see
- * CLAUDE.md § TLS Impersonation: Chrome TLS fingerprint alone clears
- * Cloudflare on the surfaces TTCtl uses; no `cf_clearance` cookie is
- * sent). If a future revision wires `cf_clearance` retention, this
- * function is the central place to add a per-cookie passlist —
- * meanwhile, redacting the whole header is the safe default.
+ * replaced. TTCtl is bearer-only (no cookie jar is configured in either
+ * transport — see ADR-005), but a server may still emit `Set-Cookie` on
+ * responses (Cloudflare bot-management cookies, Toptal session hints
+ * TTCtl ignores). Whole-value redaction is the safe default for that
+ * case; cookie names carry no operational signal here because TTCtl
+ * never sends them back.
  *
  * Pure — does not mutate the input.
  */
@@ -172,41 +172,6 @@ export function redactBody(body: unknown): unknown {
     }
   }
   return out;
-}
-
-/**
- * Redact every name-value pair inside a raw `Cookie` / `Set-Cookie`
- * header value. The wire shape `"name1=value1; name2=value2"` is
- * preserved (delimiter, names) so a `--debug` trace stays parseable as a
- * cookie header by downstream readers — only the VALUES are replaced
- * with {@link REDACTED}.
- *
- * Currently this helper is reserved for FUTURE use: `redactHeaders`
- * already replaces the entire `cookie` / `set-cookie` header value with
- * `***REDACTED***`. If TTCtl later wires per-cookie retention (e.g.,
- * `cf_clearance` truncation per issue #139's spec hint), this is the
- * function to call from `redactHeaders` instead of the full-value
- * replacement.
- *
- * Pure — does not mutate the input.
- */
-export function redactCookieHeader(cookieValue: string): string {
-  return cookieValue
-    .split(";")
-    .map((part) => {
-      const trimmed = part.trim();
-      if (trimmed.length === 0) return trimmed;
-      const eqIndex = trimmed.indexOf("=");
-      if (eqIndex < 0) {
-        // Cookie attribute without a value (e.g. `Secure`, `HttpOnly`) —
-        // not session-bearing, pass through verbatim.
-        return trimmed;
-      }
-      const name = trimmed.slice(0, eqIndex);
-      return `${name}=${REDACTED}`;
-    })
-    .filter((part) => part.length > 0)
-    .join("; ");
 }
 
 /**
