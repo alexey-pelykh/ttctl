@@ -203,9 +203,11 @@ describe("availability.workingHours.set", () => {
         },
       },
     );
-    const result = await workingHours.set(TOKEN, { workingTimeFrom: "10:00:00", workingTimeTo: "18:00:00" });
-    expect(result.workingTimeFrom).toBe("10:00:00");
-    expect(result.workingTimeTo).toBe("18:00:00");
+    const outcome = await workingHours.set(TOKEN, { workingTimeFrom: "10:00:00", workingTimeTo: "18:00:00" });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("unreachable");
+    expect(outcome.result.workingTimeFrom).toBe("10:00:00");
+    expect(outcome.result.workingTimeTo).toBe("18:00:00");
 
     // First call: GetAvailability (fetches profileId).
     const firstCall = mockedStock.mock.calls[0]?.[0];
@@ -249,13 +251,15 @@ describe("availability.workingHours.set", () => {
         },
       },
     );
-    const result = await workingHours.set(TOKEN, {
+    const outcome = await workingHours.set(TOKEN, {
       timeZone: "Europe/Berlin",
       availableShiftRangeFrom: "06:00:00",
       availableShiftRangeTo: "18:00:00",
     });
-    expect(result.notice).toBe("Working hours updated");
-    expect(result.timeZone?.value).toBe("Europe/Berlin");
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("unreachable");
+    expect(outcome.result.notice).toBe("Working hours updated");
+    expect(outcome.result.timeZone?.value).toBe("Europe/Berlin");
 
     const mutationCall = mockedStock.mock.calls[1]?.[0];
     const profile =
@@ -326,8 +330,10 @@ describe("availability.allocatedHours.set", () => {
         },
       },
     });
-    const result = await allocatedHours.set(TOKEN, 35);
-    expect(result).toEqual({ allocatedHours: 35, hiredHours: 0, notice: "Allocated hours updated" });
+    const outcome = await allocatedHours.set(TOKEN, 35);
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("unreachable");
+    expect(outcome.result).toEqual({ allocatedHours: 35, hiredHours: 0, notice: "Allocated hours updated" });
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "UpdateAllocatedHours",
@@ -372,5 +378,133 @@ describe("availability.allocatedHours.set", () => {
       name: "AvailabilityError",
       code: "MUTATION_ERROR",
     });
+  });
+});
+
+describe("availability dry-run (issue #164)", () => {
+  it("workingHours.set: { dryRun: true } returns a preview, no transport call (including the show() pre-fetch)", async () => {
+    const outcome = await workingHours.set(
+      TOKEN,
+      { workingTimeFrom: "10:00:00", workingTimeTo: "18:00:00", timeZone: "Europe/Berlin" },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+
+    // Critical AC: NO transport call at all — neither the `show()`
+    // profileId pre-fetch nor the `UpdateWorkingHours` mutation hit
+    // the wire.
+    expect(mockedStock).not.toHaveBeenCalled();
+
+    expect(outcome.preview).toMatchObject({
+      surface: "mobile-gateway",
+      transport: "stock",
+      operationName: "UpdateWorkingHours",
+    });
+    // Wire-shape: nested under input.{profileId, profile}, with the
+    // placeholder profileId since the pre-fetch was skipped.
+    const variables = outcome.preview.variables as {
+      input: { profileId: string; profile: Record<string, string> };
+    };
+    expect(variables.input.profileId).toBe("<resolved at apply time>");
+    expect(Object.keys(variables.input.profile).sort()).toEqual(["timeZone", "workingTimeFrom", "workingTimeTo"]);
+    expect(variables.input.profile).toEqual({
+      timeZone: "Europe/Berlin",
+      workingTimeFrom: "10:00:00",
+      workingTimeTo: "18:00:00",
+    });
+    // Bearer redacted (per DryRunPreview contract).
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
+  });
+
+  it("workingHours.set: { dryRun: true } still rejects empty input pre-flight (no transport call)", async () => {
+    // Empty-input guard fires BEFORE the dry-run short-circuit — invalid
+    // input must throw rather than emit a meaningless preview.
+    await expect(workingHours.set(TOKEN, {}, { dryRun: true })).rejects.toMatchObject({
+      name: "AvailabilityError",
+      code: "MUTATION_ERROR",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("workingHours.set: default { dryRun: omitted } takes the apply path (transport called)", async () => {
+    // Sanity: confirms the dry-run path is opt-in. The apply path issues
+    // both the show() pre-fetch AND the UpdateWorkingHours mutation.
+    reply(
+      { body: { data: SNAPSHOT_FIXTURE } },
+      {
+        body: {
+          data: {
+            updateWorkingHours: {
+              __typename: "UpdateWorkingHoursPayload",
+              success: true,
+              notice: null,
+              errors: null,
+              profile: UPDATE_WH_PROFILE,
+            },
+          },
+        },
+      },
+    );
+    const outcome = await workingHours.set(TOKEN, { workingTimeFrom: "09:00:00" });
+    expect(outcome.kind).toBe("applied");
+    expect(mockedStock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allocatedHours.set: { dryRun: true } returns a preview, no transport call", async () => {
+    const outcome = await allocatedHours.set(TOKEN, 35, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+
+    expect(mockedStock).not.toHaveBeenCalled();
+
+    expect(outcome.preview).toMatchObject({
+      surface: "mobile-gateway",
+      transport: "stock",
+      operationName: "UpdateAllocatedHours",
+      variables: { hours: 35 },
+    });
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(outcome.preview.headers["authorization"]).not.toContain(TOKEN);
+  });
+
+  it("allocatedHours.set: { dryRun: true } still rejects negative hours pre-flight", async () => {
+    // Integer-range guard fires BEFORE the dry-run short-circuit.
+    await expect(allocatedHours.set(TOKEN, -1, { dryRun: true })).rejects.toMatchObject({
+      name: "AvailabilityError",
+      code: "MUTATION_ERROR",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("allocatedHours.set: { dryRun: true } still rejects non-integer hours pre-flight", async () => {
+    await expect(allocatedHours.set(TOKEN, 3.5, { dryRun: true })).rejects.toMatchObject({
+      name: "AvailabilityError",
+      code: "MUTATION_ERROR",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("allocatedHours.set: default { dryRun: omitted } takes the apply path (transport called)", async () => {
+    reply({
+      body: {
+        data: {
+          viewerRole: {
+            __typename: "ViewerRoleOps",
+            update: {
+              __typename: "ViewerRoleUpdatePayload",
+              success: true,
+              notice: null,
+              errors: null,
+              viewer: UPDATE_ALLOC_VIEWER,
+            },
+          },
+        },
+      },
+    });
+    const outcome = await allocatedHours.set(TOKEN, 35);
+    expect(outcome.kind).toBe("applied");
+    expect(mockedStock).toHaveBeenCalledTimes(1);
   });
 });

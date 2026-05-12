@@ -178,4 +178,119 @@ describe("availability write paths (live mobile-gateway)", () => {
     expect(payload.ok).toBe(false);
     expect(payload.errors?.[0]?.code).toBe("MUTATION_ERROR");
   });
+
+  // ---------------------------------------------------------------------
+  // Issue #164: --dry-run coverage. The CLAUDE.md schema/contract rule
+  // mandates at least one live E2E run for any wire-behavior change on
+  // inferred mutation operations. Since dry-run by definition issues NO
+  // wire requests, "live" here means: the CLI is exercised against the
+  // real session config (token loader, config resolution, envelope
+  // emission), with the wire transport intentionally never reached.
+  // The assertion is a stdout-envelope-shape check; if any wire call
+  // were to leak through, the apply path would touch the user's actual
+  // settings.
+  // ---------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "allocated-hours set --dry-run: emits dry-run envelope, exit 0, no wire mutation (UpdateAllocatedHours)",
+    async () => {
+      // Capture the pre-state so we can assert no persistence happened.
+      const beforeResult = await cli.run(["availability", "allocated-hours", "show", "-o", "json"]);
+      expect(beforeResult.exitCode).toBe(0);
+      const before = JSON.parse(beforeResult.stdout) as { allocatedHours?: number };
+      const baseline = before.allocatedHours;
+
+      // Pick a value DIFFERENT from the baseline so any leaked apply
+      // path would be detectable. Use 1 (or 2 if baseline is 1).
+      const dryRunValue = baseline === 1 ? 2 : 1;
+
+      const dryRunResult = await cli.run([
+        "--dry-run",
+        "availability",
+        "allocated-hours",
+        "set",
+        "--hours",
+        String(dryRunValue),
+        "-o",
+        "json",
+      ]);
+      expect(dryRunResult.exitCode).toBe(0);
+      const payload = JSON.parse(dryRunResult.stdout) as {
+        dryRun?: boolean;
+        ok?: boolean;
+        operation?: string;
+        preview?: { operationName?: string; surface?: string; variables?: { hours?: number } };
+        updated?: unknown;
+      };
+      expect(payload.ok).toBe(true);
+      expect(payload.dryRun).toBe(true);
+      expect(payload.operation).toBe("availability.allocated-hours.set");
+      expect(payload.preview?.operationName).toBe("UpdateAllocatedHours");
+      expect(payload.preview?.surface).toBe("mobile-gateway");
+      expect(payload.preview?.variables?.hours).toBe(dryRunValue);
+      // Apply-path field MUST NOT appear in the dry-run payload.
+      expect(payload.updated).toBeUndefined();
+
+      // Verify the wire was untouched: post-state matches pre-state.
+      const afterResult = await cli.run(["availability", "allocated-hours", "show", "-o", "json"]);
+      expect(afterResult.exitCode).toBe(0);
+      const after = JSON.parse(afterResult.stdout) as { allocatedHours?: number };
+      expect(after.allocatedHours).toBe(baseline);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "working-hours set --dry-run: emits dry-run envelope, exit 0, no wire mutation (UpdateWorkingHours)",
+    async () => {
+      // Capture pre-state.
+      const beforeResult = await cli.run(["availability", "show", "-o", "json"]);
+      expect(beforeResult.exitCode).toBe(0);
+      const before = JSON.parse(beforeResult.stdout) as SnapshotShape;
+      const baselineFrom = before.workingTimeFrom;
+
+      // Pick an intentionally different working window so a leaked
+      // apply path would be detectable. The test uses a deliberately
+      // distinct time string ("04:00:00") that is unlikely to be the
+      // user's actual setting.
+      const dryRunResult = await cli.run([
+        "--dry-run",
+        "availability",
+        "working-hours",
+        "set",
+        "--start",
+        "04:00:00",
+        "-o",
+        "json",
+      ]);
+      expect(dryRunResult.exitCode).toBe(0);
+      const payload = JSON.parse(dryRunResult.stdout) as {
+        dryRun?: boolean;
+        ok?: boolean;
+        operation?: string;
+        preview?: {
+          operationName?: string;
+          surface?: string;
+          variables?: {
+            input?: { profileId?: string; profile?: Record<string, unknown> };
+          };
+        };
+        updated?: unknown;
+      };
+      expect(payload.ok).toBe(true);
+      expect(payload.dryRun).toBe(true);
+      expect(payload.operation).toBe("availability.working-hours.set");
+      expect(payload.preview?.operationName).toBe("UpdateWorkingHours");
+      expect(payload.preview?.surface).toBe("mobile-gateway");
+      // The placeholder profileId is present (no pre-fetch issued).
+      expect(payload.preview?.variables?.input?.profileId).toBe("<resolved at apply time>");
+      expect(payload.preview?.variables?.input?.profile).toEqual({ workingTimeFrom: "04:00:00" });
+      expect(payload.updated).toBeUndefined();
+
+      // Verify the wire was untouched.
+      const afterResult = await cli.run(["availability", "show", "-o", "json"]);
+      expect(afterResult.exitCode).toBe(0);
+      const after = JSON.parse(afterResult.stdout) as SnapshotShape;
+      expect(after.workingTimeFrom).toBe(baselineFrom);
+    },
+  );
 });

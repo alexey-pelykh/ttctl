@@ -136,8 +136,8 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
         if (args.workingTimeTo !== undefined) input.workingTimeTo = args.workingTimeTo;
         if (args.availableShiftRangeFrom !== undefined) input.availableShiftRangeFrom = args.availableShiftRangeFrom;
         if (args.availableShiftRangeTo !== undefined) input.availableShiftRangeTo = args.availableShiftRangeTo;
-        const updated = await availability.workingHours.set(auth.token, input);
-        return successResponse(updated);
+        const outcome = await availability.workingHours.set(auth.token, input);
+        return successResponse(unwrapAvailabilityOutcome(outcome));
       } catch (err) {
         return mapAvailabilityError(err);
       }
@@ -197,13 +197,31 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const updated = await availability.allocatedHours.set(auth.token, args.hours);
-        return successResponse(updated);
+        const outcome = await availability.allocatedHours.set(auth.token, args.hours);
+        return successResponse(unwrapAvailabilityOutcome(outcome));
       } catch (err) {
         return mapAvailabilityError(err);
       }
     },
   );
+}
+
+/**
+ * Narrow an availability mutation outcome to the payload that MCP tools
+ * surface to LLM clients (issue #164). The MCP layer currently never
+ * passes `dryRun: true` — so the apply path is always taken and
+ * `outcome.kind === "applied"` always holds. The `preview` branch is
+ * defensively rendered (returning the preview payload verbatim) for
+ * future-proofing against the companion MCP-wide `dryRun?` work tracked
+ * in #165.
+ *
+ * Mirrors `unwrapJobOutcome` in `tools/jobs.ts` — generic so each call
+ * site preserves its specific outcome variant's apply-path payload type.
+ */
+function unwrapAvailabilityOutcome<TApplied, TPreview>(
+  outcome: { kind: "applied"; result: TApplied } | { kind: "preview"; preview: TPreview },
+): TApplied | TPreview {
+  return outcome.kind === "applied" ? outcome.result : outcome.preview;
 }
 
 interface ToolSuccessResponse {

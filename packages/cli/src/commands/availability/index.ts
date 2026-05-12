@@ -3,6 +3,7 @@
 
 import { Command, InvalidArgumentError, Option } from "commander";
 
+import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { runAllocatedHoursSet, runAllocatedHoursShow } from "./allocated-hours.js";
@@ -71,37 +72,41 @@ export function buildAvailabilityCommand(): Command {
       await runWorkingHoursShow(options.output);
     });
 
-  workingHours
-    .command("set")
-    .description("Update working hours (at least one of the options below)")
-    .option("--start <HH:MM:SS>", "daily working-hours window start")
-    .option("--end <HH:MM:SS>", "daily working-hours window end")
-    .option("--time-zone <IANA>", "IANA time-zone identifier (e.g., Europe/Berlin)")
-    .option("--flex-start <HH:MM:SS>", "flexible shift-range start")
-    .option("--flex-end <HH:MM:SS>", "flexible shift-range end")
-    .addOption(
-      new Option("-o, --output <format>", "output format")
-        .choices(OUTPUT_FORMATS)
-        .default("pretty" satisfies OutputFormat),
-    )
-    .action(
-      async (options: {
-        start?: string;
-        end?: string;
-        timeZone?: string;
-        flexStart?: string;
-        flexEnd?: string;
-        output: OutputFormat;
-      }) => {
-        const setOpts: WorkingHoursSetOptions = { output: options.output };
-        if (options.start !== undefined) setOpts.start = options.start;
-        if (options.end !== undefined) setOpts.end = options.end;
-        if (options.timeZone !== undefined) setOpts.timeZone = options.timeZone;
-        if (options.flexStart !== undefined) setOpts.flexStart = options.flexStart;
-        if (options.flexEnd !== undefined) setOpts.flexEnd = options.flexEnd;
-        await runWorkingHoursSet(setOpts);
-      },
-    );
+  // Marked as a mutation (issue #164) so the global `--dry-run` flag
+  // routes through to `availability.workingHours.set()`'s `dryRun` option.
+  markMutation(
+    workingHours
+      .command("set")
+      .description("Update working hours (at least one of the options below)")
+      .option("--start <HH:MM:SS>", "daily working-hours window start")
+      .option("--end <HH:MM:SS>", "daily working-hours window end")
+      .option("--time-zone <IANA>", "IANA time-zone identifier (e.g., Europe/Berlin)")
+      .option("--flex-start <HH:MM:SS>", "flexible shift-range start")
+      .option("--flex-end <HH:MM:SS>", "flexible shift-range end")
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(
+        async (options: {
+          start?: string;
+          end?: string;
+          timeZone?: string;
+          flexStart?: string;
+          flexEnd?: string;
+          output: OutputFormat;
+        }) => {
+          const setOpts: WorkingHoursSetOptions = { output: options.output };
+          if (options.start !== undefined) setOpts.start = options.start;
+          if (options.end !== undefined) setOpts.end = options.end;
+          if (options.timeZone !== undefined) setOpts.timeZone = options.timeZone;
+          if (options.flexStart !== undefined) setOpts.flexStart = options.flexStart;
+          if (options.flexEnd !== undefined) setOpts.flexEnd = options.flexEnd;
+          await runWorkingHoursSet(setOpts);
+        },
+      ),
+  );
 
   // ----- allocated-hours sub-group -------------------------------------
   const allocatedHours = cmd.command("allocated-hours").description("Manage viewer-scoped allocated hours per week");
@@ -118,18 +123,22 @@ export function buildAvailabilityCommand(): Command {
       await runAllocatedHoursShow(options.output);
     });
 
-  allocatedHours
-    .command("set")
-    .description("Set allocated hours (non-negative integer; portal caps at 80)")
-    .requiredOption("--hours <n>", "hours per week (non-negative integer)", parseHoursArg)
-    .addOption(
-      new Option("-o, --output <format>", "output format")
-        .choices(OUTPUT_FORMATS)
-        .default("pretty" satisfies OutputFormat),
-    )
-    .action(async (options: { hours: number; output: OutputFormat }) => {
-      await runAllocatedHoursSet({ hours: options.hours, output: options.output });
-    });
+  // Marked as a mutation (issue #164) so the global `--dry-run` flag
+  // routes through to `availability.allocatedHours.set()`'s `dryRun` option.
+  markMutation(
+    allocatedHours
+      .command("set")
+      .description("Set allocated hours (non-negative integer; portal caps at 80)")
+      .requiredOption("--hours <n>", "hours per week (non-negative integer)", parseHoursArg)
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (options: { hours: number; output: OutputFormat }) => {
+        await runAllocatedHoursSet({ hours: options.hours, output: options.output });
+      }),
+  );
 
   return cmd;
 }
