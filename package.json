@@ -13,6 +13,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e --concurrency=1",
+    "test:e2e:crash-recovery": "pnpm --filter @ttctl/e2e test:e2e:crash-recovery",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "typecheck": "turbo run typecheck",

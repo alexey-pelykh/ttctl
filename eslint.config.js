@@ -33,12 +33,14 @@ export default tseslint.config(
     // type-aware lint (these files are imported by tooling, not part of
     // compiled output). The header rule below still applies. Pattern
     // covers root config files (vitest.config.ts, codegen.config.ts),
-    // package-local config files (packages/e2e/vitest.config.ts), and
-    // root-level scripts (scripts/check-licenses.js,
+    // package-local config files (packages/e2e/vitest.config.ts), root-
+    // level scripts (scripts/check-licenses.js,
     // scripts/check-secret-leakage.ts — the latter is run via `tsx` and
     // imports from `packages/core/src/lib/redact.ts`, the single source
-    // of truth for redaction patterns per issue #139).
-    files: ["eslint.config.js", "**/*.config.ts", "scripts/**/*.{js,mjs,cjs,ts}"],
+    // of truth for redaction patterns per issue #139), and package-
+    // local scripts (e.g. `packages/e2e/scripts/run-crash-recovery.mjs`
+    // for the #171 crash-recovery harness).
+    files: ["eslint.config.js", "**/*.config.ts", "**/scripts/**/*.{js,mjs,cjs,ts}"],
     ...tseslint.configs.disableTypeChecked,
   },
   {
@@ -47,7 +49,7 @@ export default tseslint.config(
     // TS scripts (run via tsx) inherit the recommended config and DO
     // have @types/node visible through `tsx` resolution, so they stay
     // under `no-undef` discipline.
-    files: ["eslint.config.js", "scripts/**/*.{js,mjs,cjs}"],
+    files: ["eslint.config.js", "**/scripts/**/*.{js,mjs,cjs}"],
     rules: {
       "no-undef": "off",
     },

@@ -9,7 +9,11 @@
  * invocation, BEFORE any test file is loaded by a worker. Performs the
  * single live signin that shared-session test files (e.g. `01-auth-signin`,
  * `99-auth-signout`) consume via `getSharedSession()`. Returns a teardown
- * function that vitest invokes after all tests finish.
+ * function that vitest invokes after all tests finish — including after a
+ * worker exits abnormally (segfault, OOM, `process.exit()`, sync throw).
+ * The teardown function delegates to `runGlobalTeardown` (post-#171) so
+ * the asserted cleanup action lives outside any worker fork and can't be
+ * skipped by a worker crash; see `globalTeardown.ts`.
  *
  * Audited `packages/core/src/transport.ts` 2026-05-07 — no module-level
  * mutable state that adversarial tests could corrupt across files.
@@ -28,14 +32,16 @@
  * Lockfile ownership: globalSetup is THE lock holder for the entire test
  * run. `withFreshSession()` no longer acquires the lock — it relies on
  * globalSetup having already done so. This collapses N-file lockfile
- * acquire/release cycles into one.
+ * acquire/release cycles into one. The lock is released by
+ * `runGlobalTeardown` in the returned teardown function.
  */
 
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 
-import { clearAuthToken, resolveConfig, resolveCredentials, signIn } from "@ttctl/core";
+import { resolveConfig, resolveCredentials, signIn } from "@ttctl/core";
 
 import { printPreflightBanner } from "./banner.js";
+import { runGlobalTeardown } from "./globalTeardown.js";
 import { acquireLock, releaseLock } from "./lockfile.js";
 import {
   findRepoRoot,
@@ -45,13 +51,6 @@ import {
   resolveSharedSessionFilePath,
   writeSandboxConfig,
 } from "./paths.js";
-
-/**
- * Cool-off duration after the run, in milliseconds. AC E3 of #21 requires
- * ≥5s — preserved here so back-to-back `pnpm test:e2e` invocations are
- * spaced against Toptal's rate-limit / abuse heuristics.
- */
-const COOL_OFF_MS = 5_000;
 
 /**
  * Shared-session metadata persisted to `<sandbox>/.session.json`.
@@ -71,7 +70,9 @@ export default async function setup(): Promise<() => Promise<void>> {
   if (process.env["TTCTL_E2E"] !== "1") {
     // No-op teardown — symmetric with the no-op setup so vitest's
     // globalSetup contract holds (the returned function is always
-    // callable).
+    // callable). `runGlobalTeardown` env-gates internally on the same
+    // condition, but returning a fresh no-op closure here avoids any
+    // path-resolution work when the suite isn't opted in.
     return async (): Promise<void> => {
       /* no-op */
     };
@@ -131,29 +132,11 @@ export default async function setup(): Promise<() => Promise<void>> {
     throw err;
   }
 
+  // Delegate the asserted cleanup action to `runGlobalTeardown` so the
+  // exact same path runs whether vitest terminated normally or after a
+  // worker abnormal exit. The function env-gates internally and re-
+  // resolves paths from `findRepoRoot()` — symmetric with this setup.
   return async (): Promise<void> => {
-    // Defensive token clear — the `99-auth-signout` test removes the
-    // token field as its assertion. If that test was skipped or failed
-    // before the deletion, this branch cleans up. clearAuthToken is
-    // idempotent (no-op when the field is already absent).
-    try {
-      await clearAuthToken(sandboxConfigPath);
-    } catch {
-      // Ignore: any failure here is teardown noise, would mask the real
-      // test failure.
-    }
-    try {
-      await unlink(sessionFilePath);
-    } catch {
-      // Same posture.
-    }
-
-    // Cool-off — AC E3. Spaces back-to-back `pnpm test:e2e` invocations
-    // so Toptal's abuse heuristics don't flag the maintainer's account.
-    await new Promise<void>((resolveSleep) => {
-      setTimeout(resolveSleep, COOL_OFF_MS);
-    });
-
-    releaseLock(lockPath);
+    await runGlobalTeardown();
   };
 }
