@@ -7,7 +7,14 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
-import type { ToolRegistrationContext } from "./_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "./_shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the `ttctl_availability_*` MCP tools per the #146 amended
@@ -29,6 +36,14 @@ import type { ToolRegistrationContext } from "./_shared.js";
  * engagement-scoped and would only duplicate the engagements tools).
  * "Lead time" / "minimum scheduling notice" is for booking pages
  * (consultations), a separate surface not exposed in v1.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`.
+ * Read tools build the `GetAvailability` preview at the MCP layer
+ * (same query underlies show + the two `*_show` filters, which apply
+ * client-side narrowing). The two `*_set` tools passthrough-forward
+ * `{ dryRun: true }` to the core (#164 already wired it through) and
+ * reformat the `{ kind: "preview", preview }` outcome as the uniform
+ * envelope.
  */
 export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -48,11 +63,14 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
         '  - "Show me my working hours and time zone."',
         '  - "How many hours have I allocated for Toptal engagements?"',
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("GetAvailability", "mobile-gateway", {}, auth.token));
+      }
       try {
         const snap = await availability.show(auth.token);
         return successResponse(snap);
@@ -74,12 +92,17 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
         "Example user prompts:",
         '  - "What are my Toptal working hours?"',
         '  - "Show me my time-zone configuration."',
+        "",
+        "Dry-run note: the apply path issues `GetAvailability` (same query as `availability_show`) and narrows the result client-side — the preview reflects the wire call accordingly.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("GetAvailability", "mobile-gateway", {}, auth.token));
+      }
       try {
         const data = await availability.workingHours.show(auth.token);
         return successResponse(data);
@@ -124,6 +147,7 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
         workingTimeTo: z.string().optional().describe("Daily working-hours window end, `HH:MM:SS` (e.g., `17:00:00`)"),
         availableShiftRangeFrom: z.string().optional().describe("Flexible shift-range start, `HH:MM:SS`"),
         availableShiftRangeTo: z.string().optional().describe("Flexible shift-range end, `HH:MM:SS`"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
@@ -136,8 +160,9 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
         if (args.workingTimeTo !== undefined) input.workingTimeTo = args.workingTimeTo;
         if (args.availableShiftRangeFrom !== undefined) input.availableShiftRangeFrom = args.availableShiftRangeFrom;
         if (args.availableShiftRangeTo !== undefined) input.availableShiftRangeTo = args.availableShiftRangeTo;
-        const outcome = await availability.workingHours.set(auth.token, input);
-        return successResponse(unwrapAvailabilityOutcome(outcome));
+        const outcome = await availability.workingHours.set(auth.token, input, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapAvailabilityError(err);
       }
@@ -154,12 +179,17 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
         "Example user prompts:",
         '  - "How many hours have I allocated for Toptal work?"',
         '  - "Show my Toptal availability in hours per week."',
+        "",
+        "Dry-run note: the apply path issues `GetAvailability` and narrows the result client-side — the preview reflects the wire call accordingly.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("GetAvailability", "mobile-gateway", {}, auth.token));
+      }
       try {
         const data = await availability.allocatedHours.show(auth.token);
         return successResponse(data);
@@ -191,37 +221,21 @@ export function registerAvailabilityTools(server: McpServer, ctx: ToolRegistrati
       ].join("\n"),
       inputSchema: {
         hours: z.number().int().nonnegative().describe("Non-negative integer hours per week (portal UI caps at 80)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await availability.allocatedHours.set(auth.token, args.hours);
-        return successResponse(unwrapAvailabilityOutcome(outcome));
+        const outcome = await availability.allocatedHours.set(auth.token, args.hours, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapAvailabilityError(err);
       }
     },
   );
-}
-
-/**
- * Narrow an availability mutation outcome to the payload that MCP tools
- * surface to LLM clients (issue #164). The MCP layer currently never
- * passes `dryRun: true` — so the apply path is always taken and
- * `outcome.kind === "applied"` always holds. The `preview` branch is
- * defensively rendered (returning the preview payload verbatim) for
- * future-proofing against the companion MCP-wide `dryRun?` work tracked
- * in #165.
- *
- * Mirrors `unwrapJobOutcome` in `tools/jobs.ts` — generic so each call
- * site preserves its specific outcome variant's apply-path payload type.
- */
-function unwrapAvailabilityOutcome<TApplied, TPreview>(
-  outcome: { kind: "applied"; result: TApplied } | { kind: "preview"; preview: TPreview },
-): TApplied | TPreview {
-  return outcome.kind === "applied" ? outcome.result : outcome.preview;
 }
 
 interface ToolSuccessResponse {

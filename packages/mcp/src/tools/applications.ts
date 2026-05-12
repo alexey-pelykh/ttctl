@@ -3,11 +3,19 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { applications } from "@ttctl/core";
+import type { DryRunPreview } from "@ttctl/core";
 import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
-import type { ToolRegistrationContext } from "./_shared.js";
+import { buildMcpDryRunPreview, dryRunMultiResponse, dryRunResponse, type ToolRegistrationContext } from "./_shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the three `ttctl_applications_*` MCP tools per the #15 spec.
@@ -25,6 +33,12 @@ import type { ToolRegistrationContext } from "./_shared.js";
  * **Read-only** — per project non-goals (#15), no apply / withdraw /
  * edit tools are exposed. `applications` is intentionally a smaller
  * surface than the profile sub-domains.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`.
+ * `list` and `show` emit the singular `{ preview }` envelope (one
+ * operation per call); `stats` emits the plural `{ previews: [...] }`
+ * envelope because the apply path fires 5 parallel `JobActivityItems`
+ * calls (one per STATUS_GROUPS member) — see {@link dryRunMultiResponse}.
  */
 export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -53,15 +67,22 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
           .describe(
             "Restrict to one or more JobActivityItemStatusGroupEnum values: ACTIVE_ENGAGEMENT, ARCHIVED, CLOSED_ENGAGEMENT, ON_CLIENT_REVIEW, ON_RECRUITER_REVIEW",
           ),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const opts: applications.ListOptions = {};
+      if (args.keywords !== undefined) opts.keywords = args.keywords;
+      if (args.statusGroups !== undefined) opts.statusGroups = args.statusGroups;
+      if (args.dryRun === true) {
+        const variables: Record<string, unknown> = {};
+        if (opts.keywords !== undefined) variables["keywords"] = opts.keywords;
+        if (opts.statusGroups !== undefined) variables["onlyStatusGroupFilter"] = opts.statusGroups;
+        return dryRunResponse(buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", variables, auth.token));
+      }
       try {
-        const opts: applications.ListOptions = {};
-        if (args.keywords !== undefined) opts.keywords = args.keywords;
-        if (args.statusGroups !== undefined) opts.statusGroups = args.statusGroups;
         const items = await applications.list(auth.token, opts);
         return successResponse(items);
       } catch (err) {
@@ -85,11 +106,15 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       ].join("\n"),
       inputSchema: {
         id: z.string().describe("Activity item id (the TalentJobActivityItem id)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("JobActivityItem", "mobile-gateway", { id: args.id }, auth.token));
+      }
       try {
         const item = await applications.show(auth.token, args.id);
         return successResponse(item);
@@ -113,12 +138,20 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
         '  - "How many Toptal applications do I have in each status?"',
         '  - "Give me a breakdown of my Toptal activity by status group."',
         '  - "What\'s my total activity count on Toptal?"',
+        "",
+        "Dry-run note: returns `{ ok: true, dryRun: true, previews: [...] }` (plural `previews`) — one `JobActivityItems` preview per status group (5 total), matching the 5 parallel calls the apply path fires.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        const previews: DryRunPreview[] = applications.STATUS_GROUPS.map((group) =>
+          buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", { onlyStatusGroupFilter: [group] }, auth.token),
+        );
+        return dryRunMultiResponse(previews);
+      }
       try {
         const stats = await applications.stats(auth.token);
         return successResponse(stats);

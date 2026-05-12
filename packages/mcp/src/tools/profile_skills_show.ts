@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_skills_show";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 export function registerProfileSkillsShowTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -33,11 +42,18 @@ export function registerProfileSkillsShowTool(server: McpServer, ctx: ToolRegist
           .string()
           .min(1)
           .describe("ProfileSkillSet id (NOT the Skill catalog id). Obtain via `ttctl_profile_skills_list`."),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("GetSkillSetWithConnections", "talent-profile", { id: input.id }, auth.token),
+        );
+      }
 
       try {
         const payload = await profile.skills.show(auth.token, input.id);

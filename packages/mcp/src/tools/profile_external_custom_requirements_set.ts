@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_custom_requirements_set";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Note: the apply path merges with the current server state via a sibling read; the dry-run preview shows only the user-supplied diff in `customRequirements`, not the merged final shape. Default: false.",
+  );
 
 /**
  * Register the `ttctl_profile_external_custom_requirements_set` MCP tool.
@@ -51,6 +60,7 @@ export function registerProfileExternalCustomRequirementsSetTool(
           .boolean()
           .optional()
           .describe("Willing to use time-tracking tools (true|false). Optional."),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -61,6 +71,19 @@ export function registerProfileExternalCustomRequirementsSetTool(
       if (input.backgroundCheck !== undefined) changes.backgroundCheck = input.backgroundCheck;
       if (input.drugTest !== undefined) changes.drugTest = input.drugTest;
       if (input.timeTrackingTools !== undefined) changes.timeTrackingTools = input.timeTrackingTools;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "updateCustomRequirements",
+            "talent-profile",
+            {
+              input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, customRequirements: changes },
+            },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const result = await profile.external.customRequirementsSet(auth.token, changes);

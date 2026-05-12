@@ -8,16 +8,32 @@ import { z } from "zod";
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
 import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
-import type { ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
- * Register the seven `ttctl_profile_portfolio_*` MCP tools per the #75
+ * Register the eight `ttctl_profile_portfolio_*` MCP tools per the #75
  * spec. Tool names use the canonical sub-domain `portfolio` (NOT the CLI
  * alias `projects`) per project policy.
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields, with file-upload tools accepting the dual `filePath` /
  * `content` (base64) input per the spec.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. When
+ * `dryRun: true`, returns the uniform `{ ok: true, dryRun: true, preview }`
+ * envelope via MCP-layer preview building. For `upload_cover` /
+ * `upload_file`, the dry-run path emits the GraphQL operations envelope
+ * only (`file: null` placeholder) — the multipart binary body is NOT
+ * enumerated, mirroring the `profile.resume.upload` convention.
+ * `profileId` carries `DRY_RUN_PROFILE_ID_PLACEHOLDER` where the apply
+ * path resolves it via a sibling profile read.
  */
 export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -25,11 +41,21 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
     {
       title: "List portfolio items",
       description: "List the signed-in user's portfolio items (id, title, link, highlight, etc).",
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "getPortfolioItems",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
       try {
         const items = await profile.portfolio.list(auth.token);
         return successResponse(items);
@@ -56,13 +82,25 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
         toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const input = buildPortfolioInput(args);
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "createPortfolioItem",
+            "talent-profile",
+            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, portfolioItem: input } },
+            auth.token,
+          ),
+        );
+      }
       try {
-        const items = await profile.portfolio.add(auth.token, buildPortfolioInput(args));
+        const items = await profile.portfolio.add(auth.token, input);
         return successResponse(items);
       } catch (err) {
         return mapPortfolioError(err);
@@ -87,6 +125,7 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
         toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
@@ -94,6 +133,16 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       if (!auth.ok) return auth.response;
       const { id, ...rest } = args;
       const changes = buildPortfolioInput(rest);
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "updatePortfolioItem",
+            "talent-profile",
+            { input: { portfolioItemId: id, portfolioItem: changes } },
+            auth.token,
+          ),
+        );
+      }
       try {
         const items = await profile.portfolio.update(auth.token, id, changes);
         return successResponse(items);
@@ -110,11 +159,22 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       description: "Remove a portfolio item by id.",
       inputSchema: {
         id: z.string().describe("Id of the portfolio item to remove"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "removePortfolioItem",
+            "talent-profile",
+            { input: { portfolioItemId: args.id } },
+            auth.token,
+          ),
+        );
+      }
       try {
         const items = await profile.portfolio.remove(auth.token, args.id);
         return successResponse(items);
@@ -133,11 +193,22 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       inputSchema: {
         id: z.string().describe("Id of the portfolio item to move"),
         position: z.number().int().min(0).describe("Absolute 0-based position to move the item to"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "changePortfolioItemPosition",
+            "talent-profile",
+            { input: { portfolioItemId: args.id, position: args.position } },
+            auth.token,
+          ),
+        );
+      }
       try {
         const items = await profile.portfolio.reorder(auth.token, args.id, args.position);
         return successResponse(items);
@@ -155,11 +226,22 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       inputSchema: {
         id: z.string().describe("Id of the portfolio item"),
         highlight: z.boolean().default(true).describe("`true` to set highlight, `false` to clear"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "highlightPortfolioItem",
+            "talent-profile",
+            { id: args.id, highlight: args.highlight },
+            auth.token,
+          ),
+        );
+      }
       try {
         const result = await profile.portfolio.highlight(auth.token, args.id, args.highlight);
         return successResponse(result);
@@ -175,11 +257,21 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       title: "Upload a portfolio cover image",
       description:
         "Upload a cover image for the user's portfolio. Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `coverImageCacheName` and `coverImageUrl`; pass the cache name into a subsequent portfolio-add or portfolio-update call's `coverImage` field to bind the cover to a specific item.",
-      inputSchema: fileUploadInputSchema,
+      inputSchema: { ...fileUploadInputSchema, dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "uploadPortfolioCover",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, transformation: null, file: null },
+            auth.token,
+          ),
+        );
+      }
       const decoded = decodeFileUploadInput(args);
       if ("isError" in decoded) return decoded;
       try {
@@ -197,11 +289,21 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       title: "Upload a portfolio attachment file",
       description:
         "Upload an arbitrary attachment file for the user's portfolio. Supply EITHER `filePath` (preferred when the host has filesystem access) OR `content` (base64). Returns `fileCacheName` and `fileUrl`.",
-      inputSchema: fileUploadInputSchema,
+      inputSchema: { ...fileUploadInputSchema, dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "uploadPortfolioFile",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, file: null },
+            auth.token,
+          ),
+        );
+      }
       const decoded = decodeFileUploadInput(args);
       if ("isError" in decoded) return decoded;
       try {

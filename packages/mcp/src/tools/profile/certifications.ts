@@ -5,8 +5,15 @@ import { parseDateInput, profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
 import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the five `profile.certifications.*` MCP tools on `server`.
@@ -14,6 +21,13 @@ import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.
  * MCP tool names use ONLY the canonical `certifications` form — the CLI
  * alias `certs` (per #72) is CLI-only and never appears in the MCP
  * catalog.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. When
+ * `dryRun: true`, returns `{ ok: true, dryRun: true, preview }` via
+ * MCP-layer preview building. `show` previews `GET_CERTIFICATION` (the
+ * apply path lists then filters client-side; no per-id selector exists).
+ * `profileId` carries `DRY_RUN_PROFILE_ID_PLACEHOLDER` where the apply
+ * path resolves it via a sibling profile read.
  */
 export function registerCertificationsTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -29,6 +43,7 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
         expires: dateInput.optional().describe("expiration date — ISO-8601 or year"),
         link: z.url().optional().describe("credential URL"),
         number: z.string().optional().describe("credential ID / certificate number"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -56,6 +71,17 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
       if (input.link !== undefined) fields.link = input.link;
       if (input.number !== undefined) fields.number = input.number;
 
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "CREATE_CERTIFICATION",
+            "talent-profile",
+            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, certification: fields } },
+            auth.token,
+          ),
+        );
+      }
+
       try {
         const created = await profile.certifications.add(auth.token, fields);
         return jsonSuccess(created);
@@ -79,6 +105,7 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
         link: z.url().optional(),
         number: z.string().optional(),
         highlight: z.boolean().optional(),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -106,6 +133,17 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
       if (input.number !== undefined) fields.number = input.number;
       if (input.highlight !== undefined) fields.highlight = input.highlight;
 
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "UPDATE_CERTIFICATION",
+            "talent-profile",
+            { input: { certificationId: input.id, certification: fields } },
+            auth.token,
+          ),
+        );
+      }
+
       try {
         const updated = await profile.certifications.update(auth.token, input.id, fields);
         return jsonSuccess(updated);
@@ -120,11 +158,21 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
     {
       title: "Remove certification entry",
       description: "Remove a certification entry by id.",
-      inputSchema: { id: z.string().min(1).describe("certification id") },
+      inputSchema: { id: z.string().min(1).describe("certification id"), dryRun: DRY_RUN_FIELD },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.certifications.remove");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "REMOVE_CERTIFICATION",
+            "talent-profile",
+            { input: { certificationId: input.id } },
+            auth.token,
+          ),
+        );
+      }
       try {
         const id = await profile.certifications.remove(auth.token, input.id);
         return textSuccess(`Certification ${id} removed.`);
@@ -138,12 +186,23 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
     "ttctl_profile_certifications_show",
     {
       title: "Show certification entry",
-      description: "Show a single certification entry by id (returns the row as JSON).",
-      inputSchema: { id: z.string().min(1).describe("certification id") },
+      description:
+        "Show a single certification entry by id (returns the row as JSON). Note: the underlying wire call lists all rows and filters client-side; the dry-run preview emits `GET_CERTIFICATION` (the list query) accordingly.",
+      inputSchema: { id: z.string().min(1).describe("certification id"), dryRun: DRY_RUN_FIELD },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.certifications.show");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_CERTIFICATION",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
       try {
         const row = await profile.certifications.show(auth.token, input.id);
         return jsonSuccess(row);
@@ -161,11 +220,22 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
       inputSchema: {
         id: z.string().min(1).describe("certification id"),
         highlight: z.boolean().default(true),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.certifications.highlight");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "highlightCertification",
+            "talent-profile",
+            { id: input.id, highlight: input.highlight },
+            auth.token,
+          ),
+        );
+      }
       try {
         const result = await profile.certifications.highlight(auth.token, input.id, input.highlight);
         return jsonSuccess(result);

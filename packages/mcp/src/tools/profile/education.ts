@@ -5,8 +5,15 @@ import { parseDateInput, profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
 import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the five `profile.education.*` MCP tools on `server`. Mirrors
@@ -19,6 +26,13 @@ import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.
  *   - ttctl_profile_education_remove
  *   - ttctl_profile_education_show
  *   - ttctl_profile_education_highlight
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. When
+ * `dryRun: true`, returns `{ ok: true, dryRun: true, preview }` via
+ * MCP-layer preview building. `show` previews `GET_EDUCATION` (the
+ * apply path lists then filters client-side; no per-id selector exists).
+ * `profileId` carries `DRY_RUN_PROFILE_ID_PLACEHOLDER` where the apply
+ * path resolves it via a sibling profile read.
  */
 export function registerEducationTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -35,6 +49,7 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         fieldOfStudy: z.string().optional(),
         location: z.string().optional(),
         title: z.string().optional(),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -54,6 +69,17 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       if (input.fieldOfStudy !== undefined) fields.fieldOfStudy = input.fieldOfStudy;
       if (input.location !== undefined) fields.location = input.location;
       if (input.title !== undefined) fields.title = input.title;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "CREATE_EDUCATION",
+            "talent-profile",
+            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, education: fields } },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const created = await profile.education.add(auth.token, fields);
@@ -79,6 +105,7 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         location: z.string().optional(),
         title: z.string().optional(),
         highlight: z.boolean().optional(),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -99,6 +126,17 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       if (input.title !== undefined) fields.title = input.title;
       if (input.highlight !== undefined) fields.highlight = input.highlight;
 
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "UPDATE_EDUCATION",
+            "talent-profile",
+            { input: { educationId: input.id, education: fields } },
+            auth.token,
+          ),
+        );
+      }
+
       try {
         const updated = await profile.education.update(auth.token, input.id, fields);
         return jsonSuccess(updated);
@@ -113,11 +151,16 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
     {
       title: "Remove education entry",
       description: "Remove an education entry by id.",
-      inputSchema: { id: z.string().min(1).describe("education id") },
+      inputSchema: { id: z.string().min(1).describe("education id"), dryRun: DRY_RUN_FIELD },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.education.remove");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("REMOVE_EDUCATION", "talent-profile", { input: { educationId: input.id } }, auth.token),
+        );
+      }
       try {
         const id = await profile.education.remove(auth.token, input.id);
         return textSuccess(`Education ${id} removed.`);
@@ -131,12 +174,23 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
     "ttctl_profile_education_show",
     {
       title: "Show education entry",
-      description: "Show a single education entry by id (returns the row as JSON).",
-      inputSchema: { id: z.string().min(1).describe("education id") },
+      description:
+        "Show a single education entry by id (returns the row as JSON). Note: the underlying wire call lists all rows and filters client-side; the dry-run preview emits `GET_EDUCATION` (the list query) accordingly.",
+      inputSchema: { id: z.string().min(1).describe("education id"), dryRun: DRY_RUN_FIELD },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.education.show");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_EDUCATION",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
       try {
         const row = await profile.education.show(auth.token, input.id);
         return jsonSuccess(row);
@@ -154,11 +208,22 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       inputSchema: {
         id: z.string().min(1).describe("education id"),
         highlight: z.boolean().default(true).describe("true to highlight, false to un-highlight"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.education.highlight");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "highlightEducation",
+            "talent-profile",
+            { id: input.id, highlight: input.highlight },
+            auth.token,
+          ),
+        );
+      }
       try {
         const result = await profile.education.highlight(auth.token, input.id, input.highlight);
         return jsonSuccess(result);

@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_skills_autocomplete";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 export function registerProfileSkillsAutocompleteTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -44,11 +53,28 @@ export function registerProfileSkillsAutocompleteTool(server: McpServer, ctx: To
           .describe(
             "Skill catalog ids to exclude from the results — typically the talent's existing skill catalog ids so the dropdown doesn't suggest skills already on the profile.",
           ),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_SKILLS_FOR_AUTOCOMPLETE",
+            "talent-profile",
+            {
+              profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER,
+              search: input.query.trim(),
+              limit: input.limit ?? 10,
+              withoutIds: input.withoutIds ?? [],
+            },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const profilePayload = await profile.basic.show(auth.token);

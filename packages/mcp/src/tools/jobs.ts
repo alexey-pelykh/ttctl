@@ -7,7 +7,40 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
-import type { ToolRegistrationContext } from "./_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "./_shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
+
+/**
+ * Build the variables payload `core.jobs` (`buildListVariables` in
+ * `core/services/jobs/index.ts`) sends to `JobsList` so a dry-run
+ * preview from the MCP layer matches the apply path's wire shape.
+ * Mirrors the apply-path "empty/undefined → null" coercion so listed
+ * filters render the same way as the actual wire call.
+ */
+function buildJobsListVariables(
+  opts: jobs.ListOptions,
+  extras: { saved?: boolean; notInterested?: boolean },
+): Record<string, unknown> {
+  const variables: Record<string, unknown> = {
+    skills: opts.skills && opts.skills.length > 0 ? opts.skills : null,
+    keywords: opts.keywords && opts.keywords.length > 0 ? opts.keywords : null,
+    excludeSkills: opts.excludeSkills && opts.excludeSkills.length > 0 ? opts.excludeSkills : null,
+    excludeKeywords: opts.excludeKeywords && opts.excludeKeywords.length > 0 ? opts.excludeKeywords : null,
+    commitments: opts.commitments && opts.commitments.length > 0 ? opts.commitments : null,
+    workTypes: opts.workTypes && opts.workTypes.length > 0 ? opts.workTypes : null,
+    estimatedLengths: opts.estimatedLengths && opts.estimatedLengths.length > 0 ? opts.estimatedLengths : null,
+    sortTarget: opts.sortTarget ?? null,
+    saved: extras.saved !== undefined ? { eq: extras.saved } : null,
+    notInterested: extras.notInterested !== undefined ? { eq: extras.notInterested } : null,
+  };
+  return variables;
+}
 
 /**
  * Register the `ttctl_jobs_*` MCP tools per #148. Tool names use the
@@ -34,6 +67,13 @@ import type { ToolRegistrationContext } from "./_shared.js";
  * **Wire-shape notes** (R1 / R2): `jobs_viewed` is scoped to the first
  * page (≤20 jobs, client-side filter); `jobs_search_*` operates on a
  * single subscription per user. The tool descriptions surface these.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. Read
+ * tools build the preview at the MCP layer; the 7 mutations (save,
+ * unsave, mark_viewed, not_interested, clear_interest, search_save,
+ * search_remove) passthrough-forward `{ dryRun: true }` to the core
+ * (which already supports dryRun per #162) and reformat the
+ * `{ kind: "preview", preview }` outcome as the uniform envelope.
  */
 export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContext): void {
   // -------- list ---------------------------------------------------------
@@ -66,21 +106,27 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         workTypes: z.array(z.string()).optional().describe("JobWorkTypeSlug values"),
         estimatedLengths: z.array(z.string()).optional().describe("EstimatedLengthFilterEnum values"),
         sortTarget: z.string().optional().describe("Sort target (e.g. visible_at, posted_at)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const opts: jobs.ListOptions = {};
+      if (args.skills !== undefined) opts.skills = args.skills;
+      if (args.keywords !== undefined) opts.keywords = args.keywords;
+      if (args.excludeSkills !== undefined) opts.excludeSkills = args.excludeSkills;
+      if (args.excludeKeywords !== undefined) opts.excludeKeywords = args.excludeKeywords;
+      if (args.commitments !== undefined) opts.commitments = args.commitments;
+      if (args.workTypes !== undefined) opts.workTypes = args.workTypes;
+      if (args.estimatedLengths !== undefined) opts.estimatedLengths = args.estimatedLengths;
+      if (args.sortTarget !== undefined) opts.sortTarget = args.sortTarget;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables(opts, {}), auth.token),
+        );
+      }
       try {
-        const opts: jobs.ListOptions = {};
-        if (args.skills !== undefined) opts.skills = args.skills;
-        if (args.keywords !== undefined) opts.keywords = args.keywords;
-        if (args.excludeSkills !== undefined) opts.excludeSkills = args.excludeSkills;
-        if (args.excludeKeywords !== undefined) opts.excludeKeywords = args.excludeKeywords;
-        if (args.commitments !== undefined) opts.commitments = args.commitments;
-        if (args.workTypes !== undefined) opts.workTypes = args.workTypes;
-        if (args.estimatedLengths !== undefined) opts.estimatedLengths = args.estimatedLengths;
-        if (args.sortTarget !== undefined) opts.sortTarget = args.sortTarget;
         const items = await jobs.list(auth.token, opts);
         return successResponse(items);
       } catch (err) {
@@ -104,11 +150,15 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       ].join("\n"),
       inputSchema: {
         id: z.string().describe("Job id (from `ttctl_jobs_list`)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("JobShow", "mobile-gateway", { id: args.id }, auth.token));
+      }
       try {
         const item = await jobs.show(auth.token, args.id);
         return successResponse(item);
@@ -128,14 +178,15 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "",
         "If the job was previously marked not-interested, this mutation clears that flag (the wire's interest-status model is one-of-three: saved / not-interested / cleared).",
       ].join("\n"),
-      inputSchema: { id: z.string().describe("Job id") },
+      inputSchema: { id: z.string().describe("Job id"), dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await jobs.save(auth.token, args.id);
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.save(auth.token, args.id, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -151,14 +202,15 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "Clear interest flags on a Toptal job — the wire's only 'remove saved' path.",
         "Note that this ALSO clears `not-interested` (single wire mutation covers both signals).",
       ].join("\n"),
-      inputSchema: { id: z.string().describe("Job id") },
+      inputSchema: { id: z.string().describe("Job id"), dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await jobs.unsave(auth.token, args.id);
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.unsave(auth.token, args.id, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -171,11 +223,16 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
     {
       title: "List saved jobs",
       description: "List the user's saved (bookmarked) Toptal jobs.",
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables({}, { saved: true }), auth.token),
+        );
+      }
       try {
         const items = await jobs.saved(auth.token);
         return successResponse(items);
@@ -197,12 +254,19 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "This tool fetches the first page of eligible jobs (≤20) and filters",
         "client-side on the `viewed` boolean. Jobs viewed but on subsequent",
         "pages will not appear.",
+        "",
+        "Dry-run note: the apply path issues `JobsList` (the same query used by `ttctl_jobs_list`) and filters client-side on `viewed` — the preview reflects the wire call accordingly.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables({}, {}), auth.token),
+        );
+      }
       try {
         const items = await jobs.viewedList(auth.token);
         return successResponse(items);
@@ -221,14 +285,15 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "Mark a Toptal job as viewed.",
         "The web UI normally auto-marks on detail-page open — this tool exposes the mutation for completeness.",
       ].join("\n"),
-      inputSchema: { id: z.string().describe("Job id") },
+      inputSchema: { id: z.string().describe("Job id"), dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await jobs.markViewed(auth.token, args.id);
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.markViewed(auth.token, args.id, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -249,14 +314,21 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       inputSchema: {
         id: z.string().describe("Job id"),
         reason: z.string().min(1).describe("Reason for dismissing (free-text)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await jobs.notInterested(auth.token, args.id, { reason: args.reason });
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.notInterested(
+          auth.token,
+          args.id,
+          { reason: args.reason },
+          { dryRun: args.dryRun ?? false },
+        );
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -269,11 +341,21 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
     {
       title: "List jobs marked as not-interested",
       description: "List Toptal jobs the user marked as not-interested.",
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "JobsList",
+            "mobile-gateway",
+            buildJobsListVariables({}, { notInterested: true }),
+            auth.token,
+          ),
+        );
+      }
       try {
         const items = await jobs.notInterestedList(auth.token);
         return successResponse(items);
@@ -292,14 +374,15 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "Clear interest flags (both `saved` and `not-interested`) on a job.",
         "Use this to undo a previous `not-interested` mark, or to remove a job from saved.",
       ].join("\n"),
-      inputSchema: { id: z.string().describe("Job id") },
+      inputSchema: { id: z.string().describe("Job id"), dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await jobs.clearInterest(auth.token, args.id);
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.clearInterest(auth.token, args.id, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -317,11 +400,14 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "**Cardinality note (R2)**: the platform supports a SINGLE subscription per user — there is no list of named subscriptions.",
         "Returns `{ active: false, filters: null }` when no subscription is active, or the active subscription filters when one is.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("JobSearchSubscriptionShow", "mobile-gateway", {}, auth.token));
+      }
       try {
         const state = await jobs.searchSubscriptionShow(auth.token);
         return successResponse(state);
@@ -351,6 +437,7 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         workTypes: z.array(z.string()).optional(),
         estimatedLengths: z.array(z.string()).optional(),
         excludeUnspecifiedBudget: z.boolean().optional(),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
@@ -368,8 +455,9 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         if (args.excludeUnspecifiedBudget !== undefined) {
           filters.excludeUnspecifiedBudget = args.excludeUnspecifiedBudget;
         }
-        const outcome = await jobs.searchSubscriptionSave(auth.token, filters);
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.searchSubscriptionSave(auth.token, filters, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -385,40 +473,20 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "Terminate the user's active job-search subscription.",
         "Idempotent — terminating a non-active subscription returns success.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await jobs.searchSubscriptionRemove(auth.token);
-        return successResponse(unwrapJobOutcome(outcome));
+        const outcome = await jobs.searchSubscriptionRemove(auth.token, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapJobsError(err);
       }
     },
   );
-}
-
-/**
- * Narrow a jobs mutation outcome to the payload that MCP tools surface
- * to LLM clients (issue #162). The MCP layer currently never passes
- * `dryRun: true` — so the apply path is always taken and
- * `outcome.kind === "applied"` always holds. The `preview` branch is
- * defensively rendered (returning the preview payload verbatim) for
- * future-proofing against the companion MCP-wide `dryRun?` work
- * tracked in #165.
- *
- * Kept as a single helper so all 7 MCP jobs mutations share one
- * narrowing rule. Generic over the union type so each call site
- * preserves its specific outcome variant's apply-path payload type
- * (e.g. `JobInterestState` vs `SearchSubscriptionState` vs
- * `{ terminated: true }`).
- */
-function unwrapJobOutcome<TApplied, TPreview>(
-  outcome: { kind: "applied"; result: TApplied } | { kind: "preview"; preview: TPreview },
-): TApplied | TPreview {
-  return outcome.kind === "applied" ? outcome.result : outcome.preview;
 }
 
 interface ToolSuccessResponse {

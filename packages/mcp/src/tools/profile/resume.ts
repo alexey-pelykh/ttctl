@@ -3,17 +3,31 @@
 
 import { profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
 import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
-import type { ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the two `ttctl_profile_resume_*` MCP tools.
  *
  * Tool names use the canonical sub-domain `resume` (NOT the CLI alias
  * `cv`) per project policy.
+ *
+ * Dry-run path (issue #165): both tools accept `dryRun?: boolean`. On
+ * `dryRun: true` they return the uniform `{ ok, dryRun, preview }`
+ * envelope describing the GraphQL operations envelope (multipart binary
+ * body is not enumerated for `upload` — only the operations envelope
+ * with `input.file = null` per the wire shape that core sends).
  */
 export function registerResumeTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -21,12 +35,17 @@ export function registerResumeTools(server: McpServer, ctx: ToolRegistrationCont
     {
       title: "Upload a resume file",
       description:
-        "Upload the user's resume (PDF or DOCX). Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `{ success: true }` on a server-confirmed success.",
-      inputSchema: fileUploadInputSchema,
+        "Upload the user's resume (PDF or DOCX). Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `{ success: true }` on a server-confirmed success. Pass `dryRun: true` to preview the GraphQL operations envelope without firing.",
+      inputSchema: { ...fileUploadInputSchema, dryRun: DRY_RUN_FIELD },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("uploadResume", "talent-profile", { input: { file: null } }, auth.token),
+        );
+      }
       const decoded = decodeFileUploadInput(args);
       if ("isError" in decoded) return decoded;
       try {
@@ -43,12 +62,15 @@ export function registerResumeTools(server: McpServer, ctx: ToolRegistrationCont
     {
       title: "Cancel an in-flight resume upload",
       description:
-        "Cancel any in-flight resume upload, clearing half-uploaded server-side state. Idempotent — returns success even when no upload is in flight.",
-      inputSchema: {},
+        "Cancel any in-flight resume upload, clearing half-uploaded server-side state. Idempotent — returns success even when no upload is in flight. Pass `dryRun: true` to preview the request without firing.",
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("cancelResumeUpload", "talent-profile", { input: {} }, auth.token));
+      }
       try {
         const result = await profile.resume.cancelUpload(auth.token);
         return successResponse(result);
