@@ -5,7 +5,13 @@ import Table from "cli-table3";
 import { engagements } from "@ttctl/core";
 
 import { getCliDryRun } from "../../lib/dry-run.js";
-import { emitAddSuccess, emitDryRunSuccess, emitRemoveSuccess, wrapListEnvelope } from "../../lib/envelopes.js";
+import {
+  emitAddSuccess,
+  emitDryRunSuccess,
+  emitRemoveSuccess,
+  emitUpdateSuccess,
+  wrapListEnvelope,
+} from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { formatDate } from "./list.js";
@@ -141,6 +147,61 @@ export async function runEngagementsBreaksRemove(breakId: string, output: Output
     format: output,
     id: breakId,
     prettySummary: `engagement break ${breakId}`,
+  });
+}
+
+/**
+ * Action handler for `ttctl engagements breaks reschedule <break-id>
+ * --from <date> --to <date>` (#155). Moves an existing break to a new
+ * date window. The break's `comment` and `reasonIdentifier` are
+ * preserved server-side — the wire mutation
+ * (`RescheduleEngagementBreak`) only carries `startDate` + `endDate`.
+ *
+ * Uses `emitUpdateSuccess` (envelope `updated: ...`) because the
+ * reschedule modifies an existing record; neither `created` nor
+ * `removed` would carry the right semantics.
+ */
+export interface EngagementsBreaksRescheduleOptions {
+  from: string;
+  to: string;
+  output: OutputFormat;
+}
+
+export async function runEngagementsBreaksReschedule(
+  breakId: string,
+  opts: EngagementsBreaksRescheduleOptions,
+): Promise<void> {
+  const token = await loadAuthTokenOrExit("engagements breaks reschedule", opts.output);
+  const dryRun = getCliDryRun();
+
+  let outcome: engagements.RescheduleBreakOutcome;
+  try {
+    outcome = await engagements.breaks.reschedule(
+      token,
+      breakId,
+      { startDate: opts.from, endDate: opts.to },
+      { dryRun },
+    );
+  } catch (err) {
+    handleEngagementsError("engagements breaks reschedule", err, opts.output);
+  }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "engagements.breaks.reschedule",
+      format: opts.output,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const { result: updated } = outcome;
+  emitUpdateSuccess({
+    operation: "engagements.breaks.reschedule",
+    format: opts.output,
+    updated,
+    prettySummary: `engagement break ${updated.id} (${formatDate(updated.startDate)} → ${formatDate(updated.endDate)})`,
+    prettyEntity: (br) => formatBreakEntity(br),
   });
 }
 

@@ -19,6 +19,7 @@
  * | `breaks.list`             | `EngagementBreaks(jobActivityItemId)`                 |
  * | `breaks.add`              | `CreateEngagementBreak(engagementId, ...)`            |
  * | `breaks.remove`           | `CancelEngagementBreak(engagementBreakId)`            |
+ * | `breaks.reschedule`       | `RescheduleEngagementBreak(engagementBreakId, ...)`   |
  *
  * **Routing**: All ops talk to the **mobile-gateway** surface
  * (`https://www.toptal.com/gateway/graphql/talent/graphql`) via
@@ -33,15 +34,16 @@
  *   - `EngagementBreaks.graphql` — used verbatim
  *   - `CreateEngagementBreak.graphql` — used verbatim
  *   - `CancelEngagementBreak.graphql` — used verbatim
+ *   - `RescheduleEngagementBreak.graphql` — used verbatim (#155)
  *   - `JobActivityItems.graphql` — derived (extended engagement projection)
  *   - `JobActivityItem.graphql` — derived (extended engagement projection)
  *
  * **CLAUDE.md schema/contract validation rule**: the operations here
  * are **[INFERRED — UNVERIFIED]** until the gated `*.e2e.test.ts` files
  * pass against a live session. Engagement break mutations
- * (`CreateEngagementBreak`, `CancelEngagementBreak`) trigger the rule
- * specifically — pre-merge requirement is the live E2E run, not the
- * unit tests.
+ * (`CreateEngagementBreak`, `CancelEngagementBreak`,
+ * `RescheduleEngagementBreak`) trigger the rule specifically —
+ * pre-merge requirement is the live E2E run, not the unit tests.
  *
  * **Engagement-id semantics**: there are TWO IDs in this domain:
  *   - `jobActivityItem.id` — the row id from `engagements list`
@@ -65,9 +67,6 @@
  * **Out of scope for v1**:
  *   - Engagement creation / acceptance / rejection (lives in
  *     `applications` group as part of the activity-item lifecycle).
- *   - Reschedule break (`RescheduleEngagementBreak` exists but isn't
- *     surfaced in v1; user can `remove` + `add` to achieve the same
- *     effect).
  *   - Engagement payments / earnings detail (would require
  *     `GetEngagementPayments` from the portal surface, which is
  *     Cloudflare-protected — separate work).
@@ -357,6 +356,32 @@ export interface EngagementBreakRemoveAppliedOutcome {
 }
 
 /**
+ * Input for {@link breaks.reschedule} (#155). The wire mutation
+ * (`RescheduleEngagementBreak`) accepts only `startDate` + `endDate` in
+ * its input block — there is NO `comment` field, NO `reasonIdentifier`
+ * field. The server preserves the existing break's reason and comment
+ * across the reschedule; callers wanting to also change those fields
+ * must `remove` + `add` instead.
+ */
+export interface RescheduleBreakOptions {
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * Apply-path outcome for {@link breaks.reschedule}. Wraps the
+ * server-confirmed {@link EngagementBreak} (with refreshed dates) in a
+ * discriminated union so callers branch deterministically on apply vs
+ * dry-run. The "result" is the FULL break record (post-reschedule), not
+ * just the diff — matches the apply-path semantics of
+ * {@link breaks.add}, NOT {@link breaks.remove}.
+ */
+export interface EngagementBreakRescheduleAppliedOutcome {
+  kind: "applied";
+  result: EngagementBreak;
+}
+
+/**
  * Dry-run outcome shared by every engagement-breaks mutation. Carries a
  * {@link DryRunPreview} (operation name, surface, transport, endpoint,
  * variables payload, redacted headers) — emitted verbatim by the CLI's
@@ -387,6 +412,14 @@ export type AddBreakOutcome = EngagementBreakAddAppliedOutcome | EngagementBreak
  * Discriminated-union return type for {@link breaks.remove}.
  */
 export type RemoveBreakOutcome = EngagementBreakRemoveAppliedOutcome | EngagementBreaksDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link breaks.reschedule}. The
+ * apply path returns the post-mutation {@link EngagementBreak} wrapped
+ * in `{ kind: "applied", result }`; the dry-run path returns a
+ * {@link DryRunPreview} wrapped in `{ kind: "preview", preview }`.
+ */
+export type RescheduleBreakOutcome = EngagementBreakRescheduleAppliedOutcome | EngagementBreaksDryRunPreviewOutcome;
 
 // ---------------------------------------------------------------------
 // GraphQL operation strings
@@ -513,6 +546,9 @@ const CREATE_ENGAGEMENT_BREAK_MUTATION = `mutation CreateEngagementBreak($engage
 // Verbatim from `../research/graphql/gateway/operations/mobile/CancelEngagementBreak.graphql`.
 const CANCEL_ENGAGEMENT_BREAK_MUTATION = `mutation CancelEngagementBreak($engagementBreakId: ID!) { engagementBreak(id: $engagementBreakId) { __typename cancel(input: {  } ) { __typename ...mutationResultFields break { __typename id engagement { __typename id engagementBreaks { __typename id } } } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }`;
 
+// Verbatim from `../research/graphql/gateway/operations/mobile/RescheduleEngagementBreak.graphql` (#155).
+const RESCHEDULE_ENGAGEMENT_BREAK_MUTATION = `mutation RescheduleEngagementBreak($engagementBreakId: ID!, $startDate: Date!, $endDate: Date!) { engagementBreak(id: $engagementBreakId) { __typename reschedule(input: { startDate: $startDate endDate: $endDate } ) { __typename ...mutationResultFields break { __typename ...engagementBreakData } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
+
 interface GraphQLErrorEntry {
   message?: string | null;
   extensions?: { code?: string | null } | null;
@@ -614,6 +650,16 @@ interface CancelEngagementBreakResponse {
     cancel:
       | (MutationResult & {
           break: { id: string } | null;
+        })
+      | null;
+  } | null;
+}
+
+interface RescheduleEngagementBreakResponse {
+  engagementBreak: {
+    reschedule:
+      | (MutationResult & {
+          break: EngagementBreak | null;
         })
       | null;
   } | null;
@@ -875,8 +921,8 @@ function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | n
 
 /**
  * Engagement breaks management. Sub-namespace under the service so the
- * public surface stays `engagements.breaks.{list, add, remove}` —
- * matches the CLI verb path `engagements breaks {list, add, remove}`.
+ * public surface stays `engagements.breaks.{list, add, remove, reschedule}` —
+ * matches the CLI verb path `engagements breaks {list, add, remove, reschedule}`.
  */
 export const breaks = {
   /**
@@ -1027,5 +1073,90 @@ export const breaks = {
       throw new EngagementsError("MUTATION_ERROR", formatMutationErrors("CancelEngagementBreak failed", result.errors));
     }
     return { kind: "applied", result: { id: engagementBreakId } };
+  },
+
+  /**
+   * Reschedule an existing break to a new date window by
+   * `engagementBreak.id` (#155). The id is what `breaks.list` returns
+   * (and what `breaks.add` returns after creating one); users can pass
+   * it directly without any translation. The mutation root is
+   * `engagementBreak(id: $engagementBreakId)` — same root as
+   * {@link breaks.remove}, NOT
+   * `engagement(id: ...).rescheduleBreak(...)` — so no engagement-id
+   * prefetch is needed (unlike {@link breaks.add}).
+   *
+   * The wire input has only `startDate` + `endDate`. There is NO
+   * `comment` or `reasonIdentifier` field on the mutation input — the
+   * server preserves the existing break's reason and comment across the
+   * reschedule. Callers wanting to change those fields must
+   * `remove` + `add` instead.
+   *
+   * Returns the FULL post-mutation {@link EngagementBreak} (with
+   * refreshed dates + preserved comment/operations), wrapped in the
+   * apply outcome — mirroring {@link breaks.add}, not
+   * {@link breaks.remove} (which returns only `{ id }` because cancel
+   * has nothing meaningful to surface).
+   *
+   * Throws `EngagementsError("NOT_FOUND")` when the break id resolves
+   * to `null engagementBreak`; throws `EngagementsError("MUTATION_ERROR")`
+   * when the gateway returns `success: false` (overlapping windows,
+   * validation failures).
+   *
+   * Dry-run path: when invoked with `options.dryRun === true`, builds a
+   * {@link DryRunPreview} of the mutation without invoking the gateway
+   * transport. The single trio `{ engagementBreakId, startDate, endDate }`
+   * is preserved verbatim — no translation needed.
+   */
+  async reschedule(
+    token: string,
+    engagementBreakId: string,
+    opts: RescheduleBreakOptions,
+    options: DryRunOptions = {},
+  ): Promise<RescheduleBreakOutcome> {
+    const variables = {
+      engagementBreakId,
+      startDate: opts.startDate,
+      endDate: opts.endDate,
+    };
+    if (options.dryRun === true) {
+      return {
+        kind: "preview",
+        preview: buildDryRunPreview({
+          surface: "mobile-gateway",
+          authToken: token,
+          body: {
+            operationName: "RescheduleEngagementBreak",
+            query: RESCHEDULE_ENGAGEMENT_BREAK_MUTATION,
+            variables,
+          },
+        }),
+      };
+    }
+    const data = await callGateway<RescheduleEngagementBreakResponse>(
+      token,
+      "RescheduleEngagementBreak",
+      RESCHEDULE_ENGAGEMENT_BREAK_MUTATION,
+      variables,
+    );
+    if (data.engagementBreak === null) {
+      throw new EngagementsError("NOT_FOUND", `Engagement break "${engagementBreakId}" not found.`);
+    }
+    const result = data.engagementBreak.reschedule;
+    if (result === null) {
+      throw new EngagementsError("UNKNOWN", "RescheduleEngagementBreak returned a null payload.");
+    }
+    if (!result.success) {
+      throw new EngagementsError(
+        "MUTATION_ERROR",
+        formatMutationErrors("RescheduleEngagementBreak failed", result.errors),
+      );
+    }
+    if (result.break === null) {
+      throw new EngagementsError(
+        "UNKNOWN",
+        "RescheduleEngagementBreak returned success but the `break` payload was null.",
+      );
+    }
+    return { kind: "applied", result: result.break };
   },
 };

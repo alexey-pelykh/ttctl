@@ -2,14 +2,15 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `ttctl engagements breaks {list, add, remove}` (#147).
+ * E2E coverage for `ttctl engagements breaks {list, add, remove, reschedule}`
+ * (#147 + #155).
  *
  * **Mandatory per the project's schema/contract validation rule** —
  * specifically the rule's "live integration test" trigger for
  * mutations whose input shape was inferred from the captured operation
- * pattern. `CreateEngagementBreak` and `CancelEngagementBreak` are the
- * mutation paths; this file is the live verification of their wire
- * contract.
+ * pattern. `CreateEngagementBreak`, `CancelEngagementBreak`, and
+ * `RescheduleEngagementBreak` are the mutation paths; this file is the
+ * live verification of their wire contracts.
  *
  * Coverage:
  *   - `breaks list` returns the v0.4 list envelope and per-row
@@ -17,6 +18,11 @@
  *   - `breaks add` round-trip: schedule a break with far-future dates,
  *     verify it appears in `breaks list`, then `breaks remove` it and
  *     verify it disappears.
+ *   - `breaks reschedule` round-trip (#155): schedule a break, move it
+ *     to a new far-future window, verify the new window is reflected
+ *     in `breaks list` and that the break id is preserved (in-place
+ *     update), then remove. Uses a SEPARATE far-future window from
+ *     the add+remove round-trip to avoid intra-run collisions.
  *   - Far-future dates (≈ 2 years out) ensure the test does NOT collide
  *     with real planned time-off in the test account. The break id is
  *     captured for cleanup so a partial run leaves no stale break.
@@ -49,6 +55,26 @@ function farFutureWindow(): { startDate: string; endDate: string } {
   const today = new Date();
   const start = new Date(today.getTime());
   start.setFullYear(start.getFullYear() + 2);
+  const end = new Date(start.getTime());
+  end.setDate(end.getDate() + 7);
+  return {
+    startDate: formatYmd(start),
+    endDate: formatYmd(end),
+  };
+}
+
+/**
+ * Second far-future window for the reschedule round-trip (#155). Offset
+ * by ~6 months from {@link farFutureWindow} so the add-then-reschedule
+ * sequence never overlaps within a single test run (the reschedule
+ * target must NOT overlap any existing break — including the freshly-
+ * added one being moved, which the server treats as the source side).
+ */
+function farFutureRescheduleWindow(): { startDate: string; endDate: string } {
+  const today = new Date();
+  const start = new Date(today.getTime());
+  start.setFullYear(start.getFullYear() + 2);
+  start.setMonth(start.getMonth() + 6);
   const end = new Date(start.getTime());
   end.setDate(end.getDate() + 7);
   return {
@@ -293,6 +319,167 @@ describe("engagements breaks (live mobile-gateway)", () => {
       const payload = JSON.parse(result.stdout) as DryRunEnvelope;
       assertDryRunEnvelope(payload, "engagements.breaks.remove", "CancelEngagementBreak");
       expect(payload.preview?.variables).toEqual({ engagementBreakId: "br-fake-break-id" });
+      // Stderr should be silent (no read-no-op note — leaf was markMutation'd).
+      expect(result.stderr).not.toContain("no-op for read commands");
+    },
+  );
+
+  // -------------------------------------------------------------------
+  // Reschedule round-trip (#155)
+  //
+  // Mandatory live coverage per CLAUDE.md § Schema/contract validation
+  // rule — `RescheduleEngagementBreak` is an INFERRED mutation (the
+  // input shape `{ startDate, endDate }` is the captured operation's
+  // verbatim payload but until live-verified, the wire contract is
+  // best-effort). Mocked unit tests cannot catch a contract mismatch;
+  // the live API is the only authority.
+  //
+  // Flow: add → reschedule → list/verify the break id is preserved
+  // AND the dates are the new window AND the original window is gone
+  // → remove (cleanup, try/finally so a partial run does not leave
+  // stale state). Uses a SEPARATE far-future window for the
+  // reschedule target so the source and target never overlap within
+  // the run.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)(
+    "round-trips breaks add → reschedule → remove and verifies the new window is reflected (#155)",
+    async () => {
+      // Step 1: find an active engagement.
+      const listResult = await cli.run(["engagements", "list", "--status", "active", "-o", "json"]);
+      expect(listResult.exitCode).toBe(0);
+      const engagementsList = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+      const engagementId = engagementsList.items[0]?.id;
+      if (engagementId === undefined) {
+        process.stderr.write("warning: no active engagements in test account — reschedule round-trip skipped\n");
+        return;
+      }
+
+      const initial = farFutureWindow();
+      const target = farFutureRescheduleWindow();
+
+      // Step 2: collision guard against BOTH the initial and target
+      // windows. If any existing break in the test account overlaps
+      // either, skip rather than create a doomed mutation.
+      const preBreaksResult = await cli.run(["engagements", "breaks", "list", engagementId, "-o", "json"]);
+      expect(preBreaksResult.exitCode).toBe(0);
+      const preBreaks = JSON.parse(preBreaksResult.stdout) as { items: Array<{ id?: string }> };
+      function overlaps(start: string, end: string): boolean {
+        return preBreaks.items.some((b) => {
+          const bStart = (b as Record<string, unknown>)["startDate"];
+          const bEnd = (b as Record<string, unknown>)["endDate"];
+          if (typeof bStart !== "string" || typeof bEnd !== "string") return false;
+          return bStart <= end && bEnd >= start;
+        });
+      }
+      if (overlaps(initial.startDate, initial.endDate) || overlaps(target.startDate, target.endDate)) {
+        process.stderr.write(
+          `warning: existing break overlaps reschedule windows (${initial.startDate}..${initial.endDate} or ${target.startDate}..${target.endDate}) — round-trip skipped\n`,
+        );
+        return;
+      }
+
+      // Step 3: add a break in the initial window.
+      const addResult = await cli.run([
+        "engagements",
+        "breaks",
+        "add",
+        engagementId,
+        "--from",
+        initial.startDate,
+        "--to",
+        initial.endDate,
+        "--reason-id",
+        "other",
+        "--comment",
+        "ttctl e2e reschedule test (auto-cleanup attempted)",
+        "-o",
+        "json",
+      ]);
+      expect(addResult.exitCode).toBe(0);
+      const addPayload = JSON.parse(addResult.stdout) as { created?: { id?: string } };
+      const newBreakId = addPayload.created?.id;
+      expect(typeof newBreakId).toBe("string");
+      if (typeof newBreakId !== "string") return;
+
+      try {
+        // Step 4: reschedule the break to the target window.
+        const rescheduleResult = await cli.run([
+          "engagements",
+          "breaks",
+          "reschedule",
+          newBreakId,
+          "--from",
+          target.startDate,
+          "--to",
+          target.endDate,
+          "-o",
+          "json",
+        ]);
+        expect(rescheduleResult.exitCode).toBe(0);
+        const reschedulePayload = JSON.parse(rescheduleResult.stdout) as {
+          ok?: boolean;
+          operation?: string;
+          updated?: { id?: string; startDate?: string; endDate?: string; comment?: string | null };
+        };
+        expect(reschedulePayload.ok).toBe(true);
+        expect(reschedulePayload.operation).toBe("engagements.breaks.reschedule");
+        // CRITICAL contract checks:
+        //   1. Break id is preserved (in-place update, not delete-then-create).
+        //   2. Dates reflect the target window.
+        //   3. Comment is preserved server-side (wire mutation does not carry comment).
+        expect(reschedulePayload.updated?.id).toBe(newBreakId);
+        expect(reschedulePayload.updated?.startDate).toBe(target.startDate);
+        expect(reschedulePayload.updated?.endDate).toBe(target.endDate);
+        expect(reschedulePayload.updated?.comment).toBe("ttctl e2e reschedule test (auto-cleanup attempted)");
+
+        // Step 5: verify via `breaks list` that the new window is
+        // reflected for the same break id (the source window is gone).
+        const postRescheduleResult = await cli.run(["engagements", "breaks", "list", engagementId, "-o", "json"]);
+        expect(postRescheduleResult.exitCode).toBe(0);
+        const postReschedule = JSON.parse(postRescheduleResult.stdout) as {
+          items: Array<{ id?: string; startDate?: string; endDate?: string }>;
+        };
+        const movedBreak = postReschedule.items.find((b) => b.id === newBreakId);
+        expect(movedBreak).toBeDefined();
+        expect(movedBreak?.startDate).toBe(target.startDate);
+        expect(movedBreak?.endDate).toBe(target.endDate);
+      } finally {
+        // Step 6 (always-runs): clean up the break regardless of whether
+        // the reschedule + list assertions passed. The break may be at
+        // either window depending on which assertion failed — `remove`
+        // takes the id, so it works either way.
+        const removeResult = await cli.run(["engagements", "breaks", "remove", newBreakId, "-o", "json"]);
+        expect(removeResult.exitCode).toBe(0);
+      }
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "engagements breaks reschedule --dry-run emits the dry-run envelope without server side effects (#155)",
+    async () => {
+      // Use a synthetic break id — no live break is needed since the
+      // mutation is never sent on dry-run.
+      const result = await cli.run([
+        "--dry-run",
+        "engagements",
+        "breaks",
+        "reschedule",
+        "br-fake-break-id",
+        "--from",
+        "2030-02-01",
+        "--to",
+        "2030-02-08",
+        "-o",
+        "json",
+      ]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as DryRunEnvelope;
+      assertDryRunEnvelope(payload, "engagements.breaks.reschedule", "RescheduleEngagementBreak");
+      expect(payload.preview?.variables).toEqual({
+        engagementBreakId: "br-fake-break-id",
+        startDate: "2030-02-01",
+        endDate: "2030-02-08",
+      });
       // Stderr should be silent (no read-no-op note — leaf was markMutation'd).
       expect(result.stderr).not.toContain("no-op for read commands");
     },

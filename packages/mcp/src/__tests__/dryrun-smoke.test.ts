@@ -118,7 +118,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_availability_show: {},
   ttctl_availability_working_hours_set: { timeZone: "Europe/Berlin" },
   ttctl_availability_working_hours_show: {},
-  // engagements (6)
+  // engagements (7 — #147 + #155)
   ttctl_engagements_breaks_add: {
     id: "act_123",
     startDate: "2026-06-01",
@@ -127,6 +127,11 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   },
   ttctl_engagements_breaks_list: { id: "act_123" },
   ttctl_engagements_breaks_remove: { breakId: "br_abc" },
+  ttctl_engagements_breaks_reschedule: {
+    breakId: "br_abc",
+    startDate: "2026-07-01",
+    endDate: "2026-07-08",
+  },
   ttctl_engagements_list: {},
   ttctl_engagements_show: { id: "act_123" },
   ttctl_engagements_stats: {},
@@ -239,8 +244,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 86 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(86);
+  it("registers exactly 87 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(87);
   });
 
   it("every registered tool has a fixture", () => {
