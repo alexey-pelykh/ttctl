@@ -3,9 +3,10 @@
 
 import { availability } from "@ttctl/core";
 
+import { getCliDryRun } from "../../lib/dry-run.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { emitUpdateSuccess } from "../../lib/envelopes.js";
+import { emitDryRunSuccess, emitUpdateSuccess } from "../../lib/envelopes.js";
 import { handleAvailabilityError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
@@ -93,6 +94,7 @@ const HHMMSS_PATTERN = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
  */
 export async function runWorkingHoursSet(opts: WorkingHoursSetOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("availability working-hours set", opts.output);
+  const dryRun = getCliDryRun();
 
   const input: availability.UpdateWorkingHoursInput = {};
   try {
@@ -130,13 +132,23 @@ export async function runWorkingHoursSet(opts: WorkingHoursSetOptions): Promise<
     );
   }
 
-  let updated: Awaited<ReturnType<typeof availability.workingHours.set>>;
+  let outcome: availability.WorkingHoursSetOutcome;
   try {
-    updated = await availability.workingHours.set(token, input);
+    outcome = await availability.workingHours.set(token, input, { dryRun });
   } catch (err) {
     handleAvailabilityError("availability working-hours set", err, opts.output);
   }
 
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "availability.working-hours.set",
+      format: opts.output,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const updated = outcome.result;
   const summaryParts: string[] = [];
   if (updated.timeZone !== null) summaryParts.push(`tz=${updated.timeZone.value}`);
   if (updated.workingTimeFrom !== null) summaryParts.push(`from=${updated.workingTimeFrom}`);
@@ -152,7 +164,7 @@ export async function runWorkingHoursSet(opts: WorkingHoursSetOptions): Promise<
   });
 }
 
-type WorkingHoursSetResult = Awaited<ReturnType<typeof availability.workingHours.set>>;
+type WorkingHoursSetResult = Extract<availability.WorkingHoursSetOutcome, { kind: "applied" }>["result"];
 
 /**
  * Render the post-update working-hours payload as the indented entity

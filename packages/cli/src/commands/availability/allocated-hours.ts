@@ -3,9 +3,10 @@
 
 import { availability } from "@ttctl/core";
 
+import { getCliDryRun } from "../../lib/dry-run.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { emitUpdateSuccess } from "../../lib/envelopes.js";
+import { emitDryRunSuccess, emitUpdateSuccess } from "../../lib/envelopes.js";
 import { handleAvailabilityError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
@@ -49,14 +50,25 @@ export interface AllocatedHoursSetOptions {
 
 export async function runAllocatedHoursSet(opts: AllocatedHoursSetOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("availability allocated-hours set", opts.output);
+  const dryRun = getCliDryRun();
 
-  let updated: Awaited<ReturnType<typeof availability.allocatedHours.set>>;
+  let outcome: availability.AllocatedHoursSetOutcome;
   try {
-    updated = await availability.allocatedHours.set(token, opts.hours);
+    outcome = await availability.allocatedHours.set(token, opts.hours, { dryRun });
   } catch (err) {
     handleAvailabilityError("availability allocated-hours set", err, opts.output);
   }
 
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "availability.allocated-hours.set",
+      format: opts.output,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const updated = outcome.result;
   emitUpdateSuccess({
     operation: "availability.allocated-hours.set",
     format: opts.output,

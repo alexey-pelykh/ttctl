@@ -75,8 +75,8 @@
  */
 
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { stockTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
+import { buildDryRunPreview, stockTransport } from "../../transport.js";
+import type { DryRunPreview, TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
 
 /**
@@ -175,6 +175,87 @@ export interface UpdateWorkingHoursInput {
   /** Flexible shift-range end, `"HH:MM:SS"`. */
   availableShiftRangeTo?: string;
 }
+
+/**
+ * Per-mutation option object for the dry-run short-circuit (issue #164,
+ * mirroring the #52 / #162 / #163 reference pattern). When `dryRun ===
+ * true`, the mutation builds a {@link DryRunPreview} and returns
+ * `{ kind: "preview", preview }` WITHOUT invoking the gateway transport
+ * — including any pre-fetch the apply path would normally issue (per the
+ * AC's "no GraphQL request is sent (mock transport assertion)"
+ * requirement). Default `false` — the apply path runs and a
+ * `{ kind: "applied", result }` outcome is returned.
+ *
+ * Stand-alone interface (not a discriminated-union option) so future
+ * per-mutation options (e.g. hypothetical idempotency-key parameter)
+ * can extend additively. Uniform across the 2 availability mutations.
+ */
+export interface DryRunOptions {
+  /**
+   * When `true`, short-circuit before any transport call and return a
+   * {@link DryRunPreview}-bearing outcome instead of executing the
+   * mutation. Default: `false` — normal apply path.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * Apply-path outcome for {@link workingHours.set}. Wraps the
+ * post-mutation working-hours fields in a discriminated union so
+ * callers can branch deterministically between apply
+ * (`kind: "applied"`) and dry-run (`kind: "preview"`,
+ * see {@link AvailabilityDryRunPreviewOutcome}).
+ */
+export interface WorkingHoursAppliedOutcome {
+  kind: "applied";
+  result: {
+    timeZone: AvailabilityTimeZone | null;
+    workingTimeFrom: string | null;
+    workingTimeTo: string | null;
+    availableShiftRangeFrom: string | null;
+    availableShiftRangeTo: string | null;
+    notice: string | null;
+  };
+}
+
+/**
+ * Dry-run outcome shared by every availability mutation. Carries a
+ * {@link DryRunPreview} (operation name, surface, transport, endpoint,
+ * variables payload, redacted headers) — emitted verbatim by the CLI's
+ * dry-run envelope (`emitDryRunSuccess` in
+ * `packages/cli/src/lib/envelopes.ts`).
+ */
+export interface AvailabilityDryRunPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link workingHours.set}. Pre-1.0
+ * breaking change vs the pre-#164 return type (the raw result object) —
+ * callers must branch on `outcome.kind` to access either
+ * `outcome.result` or `outcome.preview`.
+ */
+export type WorkingHoursSetOutcome = WorkingHoursAppliedOutcome | AvailabilityDryRunPreviewOutcome;
+
+/**
+ * Apply-path outcome for {@link allocatedHours.set}.
+ */
+export interface AllocatedHoursAppliedOutcome {
+  kind: "applied";
+  result: {
+    allocatedHours: number;
+    hiredHours: number | null;
+    notice: string | null;
+  };
+}
+
+/**
+ * Discriminated-union return type for {@link allocatedHours.set}.
+ * Pre-1.0 breaking change vs the pre-#164 return type — callers must
+ * branch on `outcome.kind`.
+ */
+export type AllocatedHoursSetOutcome = AllocatedHoursAppliedOutcome | AvailabilityDryRunPreviewOutcome;
 
 // ---------------------------------------------------------------------
 // GraphQL operation strings
@@ -432,19 +513,24 @@ export const workingHours = {
    * returns `success: false` (validation failures, malformed time
    * strings, unknown time-zone identifiers).
    *
-   * Returns the post-update working-hours shape.
+   * Returns the post-update working-hours shape wrapped in
+   * {@link WorkingHoursAppliedOutcome}.
+   *
+   * Dry-run path (issue #164): when invoked with `options.dryRun ===
+   * true`, builds a {@link DryRunPreview} of the mutation WITHOUT
+   * invoking the gateway transport — including the `show()` pre-fetch
+   * the apply path uses to resolve `profileId` (per the AC's "no
+   * GraphQL request is sent" requirement). The preview's
+   * `variables.input.profileId` is populated with the placeholder
+   * string `"<resolved at apply time>"`; the wire SHAPE (field names,
+   * operation, surface, redacted headers) is verbatim. Mirrors the
+   * skipped-prefetch pattern from `engagements.breaks.add` (issue #163).
    */
   async set(
     token: string,
     input: UpdateWorkingHoursInput,
-  ): Promise<{
-    timeZone: AvailabilityTimeZone | null;
-    workingTimeFrom: string | null;
-    workingTimeTo: string | null;
-    availableShiftRangeFrom: string | null;
-    availableShiftRangeTo: string | null;
-    notice: string | null;
-  }> {
+    options: DryRunOptions = {},
+  ): Promise<WorkingHoursSetOutcome> {
     const profileFields: Record<string, string> = {};
     if (input.timeZone !== undefined) profileFields["timeZone"] = input.timeZone;
     if (input.workingTimeFrom !== undefined) profileFields["workingTimeFrom"] = input.workingTimeFrom;
@@ -458,6 +544,26 @@ export const workingHours = {
         "MUTATION_ERROR",
         "UpdateWorkingHours requires at least one field (timeZone, workingTimeFrom, workingTimeTo, availableShiftRangeFrom, availableShiftRangeTo).",
       );
+    }
+
+    if (options.dryRun === true) {
+      // Skip the `show()` pre-fetch entirely — the AC mandates zero
+      // transport calls in dry-run mode. The placeholder string stands
+      // in for `profileId` so the preview's `variables.input` matches
+      // the wire shape; the actual id resolves at apply time. Same
+      // pattern as `engagements.breaks.add` (issue #163).
+      return {
+        kind: "preview",
+        preview: buildDryRunPreview({
+          surface: "mobile-gateway",
+          authToken: token,
+          body: {
+            operationName: "UpdateWorkingHours",
+            query: UPDATE_WORKING_HOURS_MUTATION,
+            variables: { input: { profileId: "<resolved at apply time>", profile: profileFields } },
+          },
+        }),
+      };
     }
 
     // The mutation's `UpdateWorkingHoursInput` requires `profileId: ID!` and
@@ -490,12 +596,15 @@ export const workingHours = {
       throw new AvailabilityError("UNKNOWN", "UpdateWorkingHours returned success but the `profile` payload was null.");
     }
     return {
-      timeZone: result.profile.timeZone,
-      workingTimeFrom: result.profile.workingTimeFrom,
-      workingTimeTo: result.profile.workingTimeTo,
-      availableShiftRangeFrom: result.profile.availableShiftRangeFrom,
-      availableShiftRangeTo: result.profile.availableShiftRangeTo,
-      notice: result.notice ?? null,
+      kind: "applied",
+      result: {
+        timeZone: result.profile.timeZone,
+        workingTimeFrom: result.profile.workingTimeFrom,
+        workingTimeTo: result.profile.workingTimeTo,
+        availableShiftRangeFrom: result.profile.availableShiftRangeFrom,
+        availableShiftRangeTo: result.profile.availableShiftRangeTo,
+        notice: result.notice ?? null,
+      },
     };
   },
 };
@@ -529,21 +638,36 @@ export const allocatedHours = {
    * mutation will return `success: false` with a validation error).
    *
    * Returns the post-update `{ allocatedHours, hiredHours, notice }`
-   * triple.
+   * triple wrapped in {@link AllocatedHoursAppliedOutcome}.
+   *
+   * Dry-run path (issue #164): when invoked with `options.dryRun ===
+   * true`, builds a {@link DryRunPreview} of the mutation without
+   * invoking the gateway transport and returns it wrapped in
+   * {@link AvailabilityDryRunPreviewOutcome}. The integer-range
+   * validation runs BEFORE the dry-run short-circuit — invalid input
+   * still throws `AvailabilityError("MUTATION_ERROR")` rather than
+   * emitting a preview that would be rejected at apply time.
    */
-  async set(
-    token: string,
-    hours: number,
-  ): Promise<{
-    allocatedHours: number;
-    hiredHours: number | null;
-    notice: string | null;
-  }> {
+  async set(token: string, hours: number, options: DryRunOptions = {}): Promise<AllocatedHoursSetOutcome> {
     if (!Number.isInteger(hours) || hours < 0) {
       throw new AvailabilityError(
         "MUTATION_ERROR",
         `UpdateAllocatedHours: hours must be a non-negative integer (got ${String(hours)}).`,
       );
+    }
+    if (options.dryRun === true) {
+      return {
+        kind: "preview",
+        preview: buildDryRunPreview({
+          surface: "mobile-gateway",
+          authToken: token,
+          body: {
+            operationName: "UpdateAllocatedHours",
+            query: UPDATE_ALLOCATED_HOURS_MUTATION,
+            variables: { hours },
+          },
+        }),
+      };
     }
     const data = await callGateway<UpdateAllocatedHoursResponse>(
       token,
@@ -568,9 +692,12 @@ export const allocatedHours = {
       );
     }
     return {
-      allocatedHours: result.viewer.viewerRole.allocatedHours,
-      hiredHours: result.viewer.viewerRole.hiredHours ?? null,
-      notice: result.notice ?? null,
+      kind: "applied",
+      result: {
+        allocatedHours: result.viewer.viewerRole.allocatedHours,
+        hiredHours: result.viewer.viewerRole.hiredHours ?? null,
+        notice: result.notice ?? null,
+      },
     };
   },
 };
