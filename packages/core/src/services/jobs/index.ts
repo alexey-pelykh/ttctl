@@ -13,7 +13,7 @@
  *
  * | Leaf                          | Operation                                   |
  * |-------------------------------|---------------------------------------------|
- * | `list`                        | `eligibleJobs` (page 0, default scope)      |
+ * | `list`                        | `eligibleJobs` (paginated; default scope)   |
  * | `show <id>`                   | `Job(id)`                                   |
  * | `save <id>`                   | `MarkJobAsSaved`                            |
  * | `unsave <id>`                 | `ClearJobInterestStatus` (clears all)       |
@@ -66,14 +66,21 @@
  *   (cosmetic, no wire field) and an optional `<id>` on remove (ignored,
  *   only one subscription exists).
  *
+ * **Pagination (#138)**: `list` / `saved` / `notInterestedList` /
+ * `viewedList` accept optional `{ page?, perPage? }` in {@link
+ * ListOptions} (1-indexed user-facing; translated to 0-indexed wire
+ * `eligibleJobs.page` inside {@link buildListVariables}). Defaults are
+ * `page: 1, perPage: 20` — matching the pre-#138 hardcoded values. The
+ * service returns {@link JobListPage} carrying `{items, totalCount,
+ * page, perPage}` so the CLI layer can render the offset-style
+ * `pageInfo` block in the list envelope.
+ *
  * **Out of scope for v1**:
  * - Application funnel (`jobs apply` etc.) — lives in `applications`
  *   group (#15) as the funnel-crossing verb.
  * - Bulk save / bulk dismiss — single-id verbs only per the issue's
  *   safety boundary.
  * - Recommendation tuning / preference editing — deferred to post-v1.
- * - Pagination — wire supports `page` / `pageSize` but v1 keeps the
- *   default first-page surface. Will land via the global #138 work.
  */
 
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
@@ -269,7 +276,55 @@ export interface ListOptions {
    * Defaults to whatever the server picks when omitted.
    */
   sortTarget?: string;
+  /**
+   * 1-indexed page number (issue #138). Translated to the wire's
+   * 0-indexed `eligibleJobs.page` argument by {@link buildListVariables}.
+   * Default `1` when omitted (the wire's `page: 0`).
+   */
+  page?: number;
+  /**
+   * Items per page (issue #138). Forwarded verbatim to the wire's
+   * `eligibleJobs.pageSize` argument. Default `20` when omitted,
+   * matching the pre-#138 hardcoded value.
+   */
+  perPage?: number;
 }
+
+/**
+ * Page wrapper returned by {@link list}, {@link saved}, and {@link
+ * notInterestedList}. Carries the projected items plus the
+ * server-reported `totalCount` and the resolved `page` / `perPage`
+ * (i.e., the effective values used in the query, after defaults).
+ *
+ * The CLI layer (`packages/cli/src/commands/jobs/list.ts`) uses
+ * `totalCount` to derive `pageInfo.totalPages` and
+ * `pageInfo.hasNextPage` for the offset-style envelope (issue #138).
+ *
+ * Why not return `JobListItem[]` directly: pre-#138 the caller could
+ * not present pagination metadata because the operation hardcoded
+ * `page: 0, pageSize: 20`; with the wiring change, callers MUST have
+ * access to `totalCount` to render the "Page X of Y" footer and to
+ * populate the JSON envelope's `pageInfo`. Returning a structured
+ * value is cheaper than threading the metadata through a side channel.
+ */
+export interface JobListPage {
+  items: JobListItem[];
+  totalCount: number;
+  /** 1-indexed page number actually requested. */
+  page: number;
+  /** Items per page actually requested. */
+  perPage: number;
+}
+
+/**
+ * Default values for {@link ListOptions} pagination fields when the
+ * caller does not specify them. Mirrors the pre-#138 hardcoded values
+ * in `JOBS_LIST_QUERY` (`page: 0, pageSize: 20` on the wire — `page:
+ * 1, perPage: 20` user-facing). Exposed so tests can assert against
+ * the same constants the production code uses.
+ */
+export const DEFAULT_PAGE = 1 as const;
+export const DEFAULT_PER_PAGE = 20 as const;
 
 /**
  * Single-row projection for jobs listings (browse + saved-list +
@@ -379,13 +434,30 @@ export interface SearchSubscriptionState {
 // `InitialJobs` selects fragments unrelated to this service's contract).
 // ---------------------------------------------------------------------
 
-const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!], $excludeSkills: [String!], $excludeKeywords: [String!], $commitments: [JobCommitmentFilterEnum!], $workTypes: [JobWorkTypeSlug!], $estimatedLengths: [EstimatedLengthFilterEnum!], $notInterested: BooleanFilter, $saved: BooleanFilter, $sortTarget: String) {
+// Pagination variable types (issue #138):
+//
+// - `$page: Int` — nullable Int; server defaults to 0 when omitted.
+//   Verified empirically: BlogPosts, GetJobsForDashboard, and
+//   GetTalentReferralTrackers (in
+//   `research/graphql/gateway/operations/`) all declare `$page: Int`.
+//
+// - `$pageSize: PageSize` — CUSTOM SCALAR, NOT `Int`. Captured operations
+//   use the named `PageSize` scalar. The pre-#138 hardcoded literal
+//   `pageSize: 20` worked because GraphQL accepts integer literals for
+//   custom scalars without type-checking; once we extracted the value
+//   to a variable, the server validated and (correctly) rejected
+//   `Int` in a `PageSize`-typed position. The fix is to declare the
+//   variable with the actual server type. Verified empirically: live
+//   API returned HTTP 400 `Variable "$pageSize" of type "Int!" used
+//   in position expecting type "PageSize"` during E2E pre-merge
+//   verification — schema/contract validation rule caught it.
+const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!], $excludeSkills: [String!], $excludeKeywords: [String!], $commitments: [JobCommitmentFilterEnum!], $workTypes: [JobWorkTypeSlug!], $estimatedLengths: [EstimatedLengthFilterEnum!], $notInterested: BooleanFilter, $saved: BooleanFilter, $sortTarget: String, $page: Int, $pageSize: PageSize) {
   viewer {
     __typename
     id
     eligibleJobs(
-      page: 0
-      pageSize: 20
+      page: $page
+      pageSize: $pageSize
       sortTarget: $sortTarget
       skills: $skills
       keywords: $keywords
@@ -878,6 +950,18 @@ function buildListVariables(
   opts: ListOptions,
   extras: { saved?: boolean; notInterested?: boolean },
 ): Record<string, unknown> {
+  // Pagination defaults: `page: 1, perPage: 20` map to the wire's
+  // 1-indexed `page: 1` (= first page). The captured `InitialJobs`
+  // operation hardcoded `page: 0` literally, but empirical E2E
+  // testing during #138 verification revealed the wire's `page` field
+  // is **1-indexed** — `page: 0` and `page: 1` both return the same
+  // first slice (the gateway treats 0 as a default-to-first alias).
+  // Pages 2, 3, … navigate normally. The pre-#138 hardcoded `page: 0`
+  // worked because of this aliasing, NOT because the wire is
+  // 0-indexed. The user-facing `--page` is 1-indexed and threads
+  // through verbatim; no subtraction.
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
   const variables: Record<string, unknown> = {
     skills: opts.skills && opts.skills.length > 0 ? opts.skills : null,
     keywords: opts.keywords && opts.keywords.length > 0 ? opts.keywords : null,
@@ -887,6 +971,8 @@ function buildListVariables(
     workTypes: opts.workTypes && opts.workTypes.length > 0 ? opts.workTypes : null,
     estimatedLengths: opts.estimatedLengths && opts.estimatedLengths.length > 0 ? opts.estimatedLengths : null,
     sortTarget: opts.sortTarget ?? null,
+    page,
+    pageSize: perPage,
   };
   variables["saved"] = extras.saved !== undefined ? { eq: extras.saved } : null;
   variables["notInterested"] = extras.notInterested !== undefined ? { eq: extras.notInterested } : null;
@@ -898,21 +984,32 @@ function buildListVariables(
 // ---------------------------------------------------------------------
 
 /**
- * Browse current job opportunities (page 0, default sort).
+ * Browse current job opportunities (default sort, paginated).
  *
- * Filters fold straight through to the wire (`eligibleJobs` arguments).
- * Empty arrays / undefined values pass as `null`, letting the server
- * apply its defaults.
+ * Filters fold straight through to the wire (`eligibleJobs`
+ * arguments). Empty arrays / undefined values pass as `null`, letting
+ * the server apply its defaults.
+ *
+ * Pagination (#138): `opts.page` (1-indexed) and `opts.perPage` are
+ * forwarded to the wire's 1-indexed `eligibleJobs.page` and
+ * `pageSize`. Defaults: `page: 1, perPage: 20`. The wire's `page` is
+ * 1-indexed — see {@link buildListVariables} for the empirical
+ * findings from #138 E2E verification. Returns a {@link
+ * JobListPage} carrying `totalCount` so callers can render
+ * offset-style pagination metadata.
  */
-export async function list(token: string, opts: ListOptions = {}): Promise<JobListItem[]> {
+export async function list(token: string, opts: ListOptions = {}): Promise<JobListPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
   const data = await callGateway<JobsListResponse>(token, "JobsList", JOBS_LIST_QUERY, buildListVariables(opts, {}));
   if (data.viewer === null) {
     throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
   }
   if (data.viewer.eligibleJobs === null) {
-    return [];
+    return { items: [], totalCount: 0, page, perPage };
   }
-  return (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
+  const items = (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
+  return { items, totalCount: data.viewer.eligibleJobs.totalCount, page, perPage };
 }
 
 /**
@@ -947,41 +1044,53 @@ export async function show(token: string, id: string): Promise<JobDetail> {
  * Implementation: `eligibleJobs` with `filter: { saved: { eq: true } }`
  * — the same projection as {@link list} so the CLI can reuse the table
  * renderer.
+ *
+ * Pagination (#138): accepts `opts.page` / `opts.perPage`; returns
+ * a {@link JobListPage} for offset-style envelope rendering.
  */
-export async function saved(token: string): Promise<JobListItem[]> {
+export async function saved(token: string, opts: ListOptions = {}): Promise<JobListPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
   const data = await callGateway<JobsListResponse>(
     token,
     "JobsList",
     JOBS_LIST_QUERY,
-    buildListVariables({}, { saved: true }),
+    buildListVariables(opts, { saved: true }),
   );
   if (data.viewer === null) {
     throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
   }
   if (data.viewer.eligibleJobs === null) {
-    return [];
+    return { items: [], totalCount: 0, page, perPage };
   }
-  return (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
+  const items = (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
+  return { items, totalCount: data.viewer.eligibleJobs.totalCount, page, perPage };
 }
 
 /**
  * List jobs marked as not-interested. Implementation: `eligibleJobs`
  * with `filter: { notInterested: { eq: true } }`.
+ *
+ * Pagination (#138): accepts `opts.page` / `opts.perPage`; returns
+ * a {@link JobListPage} for offset-style envelope rendering.
  */
-export async function notInterestedList(token: string): Promise<JobListItem[]> {
+export async function notInterestedList(token: string, opts: ListOptions = {}): Promise<JobListPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
   const data = await callGateway<JobsListResponse>(
     token,
     "JobsList",
     JOBS_LIST_QUERY,
-    buildListVariables({}, { notInterested: true }),
+    buildListVariables(opts, { notInterested: true }),
   );
   if (data.viewer === null) {
     throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
   }
   if (data.viewer.eligibleJobs === null) {
-    return [];
+    return { items: [], totalCount: 0, page, perPage };
   }
-  return (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
+  const items = (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
+  return { items, totalCount: data.viewer.eligibleJobs.totalCount, page, perPage };
 }
 
 /**
@@ -989,17 +1098,22 @@ export async function notInterestedList(token: string): Promise<JobListItem[]> {
  *
  * **R1 — Wire-shape gap**: the `eligibleJobs` query exposes filters
  * only for `saved` and `notInterested`, not `viewed`. This function
- * fetches the first page of jobs ({@link list}) and applies a
+ * fetches the requested page of jobs ({@link list}) and applies a
  * client-side filter on the `viewed` boolean. The result is scoped to
- * the first 20 jobs the server returned — jobs the user has viewed but
- * are on subsequent pages will not appear.
+ * the items the server returned on that page — pagination shifts the
+ * underlying fetch window, but the client-side filter on `viewed`
+ * still happens AFTER the page is returned, so the resulting list can
+ * be shorter than `perPage`. A wire-level filter would be the right
+ * long-term fix and is tracked as a follow-up.
  *
- * The CLI / MCP help text surfaces this caveat. A wire-level filter
- * would be the right long-term fix and is tracked as a follow-up.
+ * Pagination (#138): accepts `opts.page` / `opts.perPage`. The
+ * returned {@link JobListPage} carries the `totalCount` of the
+ * underlying paginated fetch (pre-filter) — `items.length` reflects
+ * the post-filter shape and can be smaller.
  */
-export async function viewedList(token: string): Promise<JobListItem[]> {
-  const items = await list(token);
-  return items.filter((it) => it.viewed === true);
+export async function viewedList(token: string, opts: ListOptions = {}): Promise<JobListPage> {
+  const page = await list(token, opts);
+  return { ...page, items: page.items.filter((it) => it.viewed === true) };
 }
 
 /**

@@ -127,8 +127,13 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         );
       }
       try {
-        const items = await jobs.list(auth.token, opts);
-        return successResponse(items);
+        // MCP unwraps the JobListPage to items only (issue #138 wires
+        // pagination on the CLI surface; MCP pagination is a separate
+        // follow-up). The wire still returns totalCount + page/perPage
+        // — those are discarded here to preserve the MCP output
+        // contract (`JobListItem[]`).
+        const page = await jobs.list(auth.token, opts);
+        return successResponse(page.items);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -234,8 +239,10 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         );
       }
       try {
-        const items = await jobs.saved(auth.token);
-        return successResponse(items);
+        // MCP unwraps the JobListPage to items only (issue #138; see
+        // jobs_list for rationale).
+        const page = await jobs.saved(auth.token);
+        return successResponse(page.items);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -268,8 +275,12 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         );
       }
       try {
-        const items = await jobs.viewedList(auth.token);
-        return successResponse(items);
+        // MCP unwraps the JobListPage to items only (issue #138; see
+        // jobs_list for rationale). totalCount here reflects the
+        // underlying eligibleJobs fetch (pre-`viewed` filter), not the
+        // returned items.length.
+        const page = await jobs.viewedList(auth.token);
+        return successResponse(page.items);
       } catch (err) {
         return mapJobsError(err);
       }
@@ -357,8 +368,10 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         );
       }
       try {
-        const items = await jobs.notInterestedList(auth.token);
-        return successResponse(items);
+        // MCP unwraps the JobListPage to items only (issue #138; see
+        // jobs_list for rationale).
+        const page = await jobs.notInterestedList(auth.token);
+        return successResponse(page.items);
       } catch (err) {
         return mapJobsError(err);
       }

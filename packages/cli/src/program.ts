@@ -18,6 +18,13 @@ import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
 import { DRY_RUN_NO_OP_STDERR_NOTE, isMutationCommand, setCliDryRun } from "./lib/dry-run.js";
 import type { OutputFormat } from "./lib/output.js";
+import {
+  formatPaginationRefusal,
+  isPaginatedCommand,
+  parsePaginationFlag,
+  setCliPagination,
+} from "./lib/pagination.js";
+import type { PaginationOptions } from "./lib/pagination.js";
 
 /**
  * Build the root TTCtl Commander program. Sub-commands are registered as they
@@ -88,6 +95,32 @@ import type { OutputFormat } from "./lib/output.js";
  *   `user_<24hex>_<20alnum>` bearer pattern) is applied by the
  *   `redact` module BEFORE serialization, so verbatim bearers /
  *   cookies cannot appear in either log tier.
+ *
+ *   `--page <number>` / `--per-page <number>` (issue #138) — offset-
+ *   style pagination flags for `list` verbs. Both are 1-indexed
+ *   positive integers; either may be passed without the other (the
+ *   server fills the missing one with its default). Each flag's
+ *   value is parsed via `parsePaginationFlag` (rejects empty,
+ *   non-integer, zero, and negative values via Commander's
+ *   `InvalidArgumentError`).
+ *
+ *   Captured into a module-scoped holder via `setCliPagination` in
+ *   the preAction hook so list-bearing action handlers can read the
+ *   values through `getCliPagination()` and thread them into the
+ *   service-layer `list({page?, perPage?})` adapter. Per-service
+ *   translation handles wire-shape heterogeneity (page-based
+ *   `eligibleJobs(page, pageSize)`, offset wrapped
+ *   `gigs(pagination: {limit, offset})`, cursor
+ *   `payments(pagination: {limit, after})`).
+ *
+ *   Mutual exclusion with non-paginating leaves: list commands whose
+ *   wire op accepts no pagination args MUST be tagged via
+ *   `markPaginated(cmd)` in their `build*Command` factory to opt
+ *   into the flags. Untagged leaves REFUSE the flags with a
+ *   non-zero-exit error from this hook — preferred over silent no-op
+ *   so users can't be misled into thinking pagination took effect.
+ *   The refusal text is locked by `formatPaginationRefusal` so the
+ *   hook and unit tests share the same source of truth.
  */
 export function buildProgram(): Command {
   const program = new Command();
@@ -107,6 +140,16 @@ export function buildProgram(): Command {
         false,
       ),
     )
+    .addOption(
+      new Option("--page <number>", "page number (1-indexed) for list commands (issue #138)").argParser((raw) =>
+        parsePaginationFlag("--page", raw),
+      ),
+    )
+    .addOption(
+      new Option("--per-page <number>", "items per page for list commands (issue #138)").argParser((raw) =>
+        parsePaginationFlag("--per-page", raw),
+      ),
+    )
     .hook("preAction", (thisCommand, actionCommand) => {
       // `thisCommand` is the root program where the hook is registered;
       // global options are read off it directly. The hook fires before
@@ -120,6 +163,8 @@ export function buildProgram(): Command {
         dryRun?: boolean;
         verbose?: boolean;
         debug?: boolean;
+        page?: number;
+        perPage?: number;
       }>();
       const configPath = opts.config;
 
@@ -235,6 +280,32 @@ export function buildProgram(): Command {
       if (dryRun && !isMutationCommand(actionCommand)) {
         process.stderr.write(DRY_RUN_NO_OP_STDERR_NOTE);
       }
+
+      // Pagination flags (issue #138). When either `--page` or
+      // `--per-page` is set, the leaf MUST be tagged via
+      // `markPaginated()`. Untagged leaves REFUSE the flags with a
+      // non-zero exit — preferred over silent no-op because the user-
+      // facing wire support is heterogeneous (page-based, offset
+      // wrapped, cursor) and silently dropping the flags would mislead
+      // users into thinking the request paginated.
+      //
+      // Captured for paginated leaves via `setCliPagination` so action
+      // handlers can read through `getCliPagination()` and thread into
+      // the service-layer `list({page?, perPage?})` adapter.
+      const pagination: PaginationOptions = {};
+      if (opts.page !== undefined) pagination.page = opts.page;
+      if (opts.perPage !== undefined) pagination.perPage = opts.perPage;
+      const hasPagination = pagination.page !== undefined || pagination.perPage !== undefined;
+      if (hasPagination && !isPaginatedCommand(actionCommand)) {
+        // `name()` returns the full hyphenated leaf name (e.g.,
+        // `list`); walking up the parent chain composes the full
+        // command path (`applications list`) so the user can correlate
+        // with `ttctl --help`.
+        const commandPath = composeCommandPath(actionCommand);
+        process.stderr.write(formatPaginationRefusal(commandPath));
+        process.exit(1);
+      }
+      setCliPagination(pagination);
     });
 
   registerAuthCommand(program);
@@ -261,4 +332,28 @@ function isAuthInitCommand(actionCommand: CommanderCommand): boolean {
   if (actionCommand.name() !== "init") return false;
   const parent = actionCommand.parent;
   return parent !== null && parent.name() === "auth";
+}
+
+/**
+ * Compose the full hyphenated command path for `cmd` by walking up the
+ * parent chain and concatenating names with single spaces. The root
+ * program's own name (`ttctl`) is omitted — the caller's surface only
+ * needs the path *after* `ttctl` (e.g., `applications list`, `profile
+ * portfolio list`). Used by the pagination-refusal message in the
+ * preAction hook so the user can correlate with `ttctl --help`.
+ */
+function composeCommandPath(cmd: CommanderCommand): string {
+  const parts: string[] = [];
+  // Commander's `parent` is `CommanderCommand | null` (root has
+  // `parent === null`). The loop walks from leaf up, stopping when
+  // the next step would expose the root, so the root program's name
+  // is excluded from the path (the user-facing command-path under
+  // `ttctl` is what we want — `applications list`, not
+  // `ttctl applications list`).
+  let cur: CommanderCommand = cmd;
+  while (cur.parent !== null) {
+    parts.unshift(cur.name());
+    cur = cur.parent;
+  }
+  return parts.join(" ");
 }
