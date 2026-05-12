@@ -70,3 +70,24 @@ export { DateInputError, parseDateInput } from "./lib/date.js";
 export type { DateInputErrorCode, ParsedDate } from "./lib/date.js";
 
 export { splitParagraphs } from "./lib/text.js";
+
+export {
+  getDiagnosticLogger,
+  logTransportRequest,
+  logTransportResponse,
+  resetDiagnosticLogger,
+  setDiagnosticLogger,
+} from "./lib/diagnostic-log.js";
+export type { DiagnosticLevel, RequestLogInfo, ResponseLogInfo } from "./lib/diagnostic-log.js";
+
+export {
+  BEARER_PATTERN,
+  BEARER_PATTERN_SOURCE,
+  REDACTED,
+  SECRET_BODY_FIELD_NAMES,
+  SECRET_HEADER_NAMES,
+  containsBearerToken,
+  redactBody,
+  redactCookieHeader,
+  redactHeaders,
+} from "./lib/redact.js";

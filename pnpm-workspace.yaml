@@ -29,3 +29,4 @@ catalog:
   msw: "^2.10.5"
   "proper-lockfile": "^4.1.2"
   "@types/proper-lockfile": "^4.1.4"
+  tsx: "^4.21.0"

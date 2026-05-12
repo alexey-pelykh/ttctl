@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
@@ -17,53 +17,73 @@
  * file, which never survived round-tripping through tests). This script
  * is the CI gate that catches the regression.
  *
+ * Authored as a `.ts` script run via `tsx` (issue #139 AC #6) so the
+ * canonical bearer-pattern regex lives ONCE — in
+ * `packages/core/src/lib/redact.ts`'s `BEARER_PATTERN_SOURCE` — and is
+ * consumed by BOTH this lint-time check and the runtime debug-log
+ * redaction path. Any future addition to either side (new secret shape,
+ * new redaction field) extends `redact.ts`; this script picks it up
+ * automatically.
+ *
  * Scope:
  *   - Scans tracked files (`git ls-files`) — untracked or gitignored
  *     files are not the concern (they're already excluded from PR diffs).
  *   - Excludes everything under `.tmp/` (where the E2E harness deliberately
  *     writes captured bearers — that's the safe location).
- *   - Excludes binary files, lockfiles (`pnpm-lock.yaml`), and this
- *     script itself (which contains the regex for the pattern).
- *   - Excludes `**` /node_modules/** (defensive — git ls-files shouldn't
- *     return them anyway).
+ *   - Excludes binary files, lockfiles (`pnpm-lock.yaml`), this script
+ *     itself (which imports the pattern), the source-of-truth module
+ *     `packages/core/src/lib/redact.ts` (which defines the pattern
+ *     literal), AND the two test suites that exercise the redact /
+ *     diagnostic-log modules (which require fixture bearers that match
+ *     the canonical shape to verify the redaction logic). All four
+ *     would self-match without the exclusion.
+ *   - Excludes `node_modules/` (defensive — git ls-files shouldn't return
+ *     them anyway).
  *
  * Exit codes:
  *   0 — no bearer-pattern matches in tracked source (clean)
  *   1 — one or more matches found; each is reported with file + line
  *
- * Wired into the `lint` Turbo task via `turbo.json` so PR CI runs it on
- * every push.
+ * Wired into the root `lint` script via `package.json` so PR CI runs it
+ * on every push.
  */
 
 import { execSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-/**
- * Exact bearer pattern. Anchored to character class boundaries so the
- * match is precise:
- *   - `user_` literal prefix (TTCtl-specific; no false positive on Linux
- *     `/etc/passwd` entries or unrelated `user_` prefixes in test data)
- *   - `[0-9a-f]{24}` — 24 lowercase hex chars (the bearer's first segment)
- *   - `_` literal separator
- *   - `[A-Za-z0-9]{20}` — 20 mixed-case alphanumeric chars (second segment)
- */
-const BEARER_PATTERN = /user_[0-9a-f]{24}_[A-Za-z0-9]{20}/g;
+// Single source of truth for the bearer pattern. `redact.ts` is the
+// authoritative module — see its doc-comment for the canonical
+// definition and the rationale for the wire shape. The relative path
+// reaches into the core package source (NOT the built `dist/`) so this
+// script does not depend on `pnpm build` having run first; `tsx`
+// resolves the TypeScript directly via esbuild.
+import { BEARER_PATTERN_SOURCE } from "../packages/core/src/lib/redact.js";
 
 /**
  * Files / directories excluded from the scan. Everything under `.tmp/`
  * is implicitly excluded because git ls-files honors .gitignore and
- * `.tmp/` is gitignored — but we keep the explicit prefix check as a
- * defense-in-depth.
+ * `.tmp/` is gitignored — but we keep the explicit prefix check as
+ * defense-in-depth. The paths after `node_modules/` are the source-of-
+ * truth module, this script, and the two co-located test suites that
+ * exercise redaction — all four contain canonical-shape bearer fixtures
+ * by design and would self-match without the exclusion.
  */
-const EXCLUDED_PATH_PREFIXES = [".tmp/", "node_modules/", "scripts/check-secret-leakage.js"];
+const EXCLUDED_PATH_PREFIXES = [
+  ".tmp/",
+  "node_modules/",
+  "scripts/check-secret-leakage.ts",
+  "packages/core/src/lib/redact.ts",
+  "packages/core/src/lib/__tests__/redact.test.ts",
+  "packages/core/src/lib/__tests__/diagnostic-log.test.ts",
+];
 
 /**
  * File extensions excluded from the scan. Binary / encoded / minified
  * files won't have human-readable bearer tokens; the false-positive
  * surface from random alpha-numeric noise is too high.
  */
-const EXCLUDED_EXTENSIONS = new Set([
+const EXCLUDED_EXTENSIONS = new Set<string>([
   ".png",
   ".jpg",
   ".jpeg",
@@ -81,9 +101,9 @@ const EXCLUDED_EXTENSIONS = new Set([
 ]);
 
 /** Excluded specific filenames (regardless of path). */
-const EXCLUDED_FILENAMES = new Set(["pnpm-lock.yaml", "package-lock.json", "yarn.lock"]);
+const EXCLUDED_FILENAMES = new Set<string>(["pnpm-lock.yaml", "package-lock.json", "yarn.lock"]);
 
-function shouldSkipPath(relativePath) {
+function shouldSkipPath(relativePath: string): boolean {
   for (const prefix of EXCLUDED_PATH_PREFIXES) {
     if (relativePath === prefix || relativePath.startsWith(prefix)) return true;
   }
@@ -98,7 +118,7 @@ function shouldSkipPath(relativePath) {
   return false;
 }
 
-function listTrackedFiles(repoRoot) {
+function listTrackedFiles(repoRoot: string): string[] {
   const stdout = execSync("git ls-files", {
     cwd: repoRoot,
     encoding: "utf8",
@@ -110,8 +130,13 @@ function listTrackedFiles(repoRoot) {
     .filter((line) => line.length > 0);
 }
 
-function scanFile(filePath) {
-  let content;
+interface Finding {
+  line: number;
+  match: string;
+}
+
+function scanFile(filePath: string): Finding[] {
+  let content: string;
   try {
     const stat = statSync(filePath);
     // Skip files larger than 1 MiB — scanning gigabytes of tracked binary
@@ -124,20 +149,25 @@ function scanFile(filePath) {
     return [];
   }
 
-  const findings = [];
+  // Construct a fresh `g`-flagged regex per file so the cursor
+  // (`lastIndex`) state from one file's scan never leaks into the
+  // next. The pattern source comes from the single source of truth
+  // in `packages/core/src/lib/redact.ts`.
+  const pattern = new RegExp(BEARER_PATTERN_SOURCE, "g");
+  const findings: Finding[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    BEARER_PATTERN.lastIndex = 0;
-    let match;
-    while ((match = BEARER_PATTERN.exec(line)) !== null) {
+    const line = lines[i] ?? "";
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(line)) !== null) {
       findings.push({ line: i + 1, match: match[0] });
     }
   }
   return findings;
 }
 
-function main() {
+function main(): void {
   const repoRoot = process.cwd();
   const tracked = listTrackedFiles(repoRoot);
 
