@@ -12,7 +12,7 @@ vi.mock("../../../transport.js", async () => {
   };
 });
 
-import { ENGAGEMENT_STATUS_GROUPS, breaks, list, show, stats } from "../index.js";
+import { ENGAGEMENT_STATUS_GROUPS, breaks, contracts, list, show, stats } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
@@ -689,5 +689,175 @@ describe("engagements.breaks dry-run path (issue #163)", () => {
     const outcome = await breaks.remove(TOKEN, "br-1");
     expect(mockedStock).toHaveBeenCalledOnce();
     expect(outcome.kind).toBe("applied");
+  });
+});
+
+// ---------------------------------------------------------------------
+// contracts (#157)
+//
+// `EngagementContracts` is a derived/hand-authored op against the
+// mobile-gateway — wire shape exercised end-to-end by
+// `packages/e2e/src/30-engagements-contracts.e2e.test.ts` per
+// CLAUDE.md § Schema/contract validation rule. The unit tests below
+// pin the projection, list-of-one envelope behavior, and error
+// mapping (NOT_FOUND / NO_ENGAGEMENT / UNKNOWN).
+// ---------------------------------------------------------------------
+
+const CONTRACT_WIRE_FIXTURE = {
+  __typename: "EngagementAgreement",
+  applicationRate: "120.00",
+  talentRate: "100.00",
+  talentHourlyRate: "100.00",
+  marketplaceMargin: "20.00",
+  timePeriod: "monthly",
+  commitment: { __typename: "JobCommitment", slug: "full_time" },
+};
+
+function contractsViewerPayload(currentAgreement: unknown): unknown {
+  return {
+    data: {
+      viewer: {
+        id: "v1",
+        jobActivityItem: {
+          id: "act-eng-1",
+          engagement: {
+            id: "eng-1",
+            currentAgreement,
+          },
+        },
+      },
+    },
+  };
+}
+
+describe("engagements.contracts.list", () => {
+  it("returns array-of-one with the full agreement projection", async () => {
+    reply({ body: contractsViewerPayload(CONTRACT_WIRE_FIXTURE) });
+    const items = await contracts.list(TOKEN, "act-eng-1");
+    expect(items).toHaveLength(1);
+    const c = items[0];
+    expect(c?.jobActivityItemId).toBe("act-eng-1");
+    expect(c?.engagementId).toBe("eng-1");
+    expect(c?.applicationRate).toBe("120.00");
+    expect(c?.talentRate).toBe("100.00");
+    expect(c?.talentHourlyRate).toBe("100.00");
+    expect(c?.marketplaceMargin).toBe("20.00");
+    expect(c?.timePeriod).toBe("monthly");
+    expect(c?.commitment?.slug).toBe("full_time");
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "EngagementContracts",
+      variables: { jobActivityItemId: "act-eng-1" },
+    });
+  });
+
+  it("returns [] when currentAgreement is null (defensive against schema drift)", async () => {
+    reply({ body: contractsViewerPayload(null) });
+    const items = await contracts.list(TOKEN, "act-eng-1");
+    expect(items).toEqual([]);
+  });
+
+  it("throws NOT_FOUND when jobActivityItem is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobActivityItem: null } } } });
+    await expect(contracts.list(TOKEN, "missing")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it('translates the gateway "Record not found" GraphQL error into NOT_FOUND', async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(contracts.list(TOKEN, "missing")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws NO_ENGAGEMENT when engagement is null", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityItem: { id: "act-eng-1", engagement: null },
+          },
+        },
+      },
+    });
+    await expect(contracts.list(TOKEN, "act-eng-1")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NO_ENGAGEMENT",
+    });
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(contracts.list(TOKEN, "act-eng-1")).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
+describe("engagements.contracts.show", () => {
+  it("returns the single contract bare (not wrapped in an array)", async () => {
+    reply({ body: contractsViewerPayload(CONTRACT_WIRE_FIXTURE) });
+    const c = await contracts.show(TOKEN, "act-eng-1");
+    expect(c.jobActivityItemId).toBe("act-eng-1");
+    expect(c.engagementId).toBe("eng-1");
+    expect(c.applicationRate).toBe("120.00");
+    expect(c.marketplaceMargin).toBe("20.00");
+    expect(c.timePeriod).toBe("monthly");
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "EngagementContracts",
+      variables: { jobActivityItemId: "act-eng-1" },
+    });
+  });
+
+  it("throws UNKNOWN when currentAgreement is null (defensive against schema drift)", async () => {
+    reply({ body: contractsViewerPayload(null) });
+    await expect(contracts.show(TOKEN, "act-eng-1")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "UNKNOWN",
+    });
+  });
+
+  it("throws NOT_FOUND when jobActivityItem is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobActivityItem: null } } } });
+    await expect(contracts.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws NO_ENGAGEMENT when engagement is null", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityItem: { id: "act-eng-1", engagement: null },
+          },
+        },
+      },
+    });
+    await expect(contracts.show(TOKEN, "act-eng-1")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NO_ENGAGEMENT",
+    });
+  });
+
+  it("preserves null on optional rate fields (defensive)", async () => {
+    reply({
+      body: contractsViewerPayload({
+        ...CONTRACT_WIRE_FIXTURE,
+        applicationRate: null,
+        marketplaceMargin: null,
+        timePeriod: null,
+      }),
+    });
+    const c = await contracts.show(TOKEN, "act-eng-1");
+    expect(c.applicationRate).toBeNull();
+    expect(c.marketplaceMargin).toBeNull();
+    expect(c.timePeriod).toBeNull();
+    expect(c.talentHourlyRate).toBe("100.00");
   });
 });

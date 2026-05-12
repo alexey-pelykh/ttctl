@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { engagements } from "@ttctl/core";
 
 import { formatBreakEntity, formatBreaksTable } from "../breaks.js";
+import { formatContractEntity, formatContractsTable } from "../contracts.js";
 import { formatDate, formatEngagementsTable, shortenEngagementStatus } from "../list.js";
 import { formatEngagementDetail } from "../show.js";
 import { formatStatsPretty } from "../stats.js";
@@ -220,5 +221,89 @@ describe("formatBreakEntity", () => {
     expect(out1).not.toContain("Comment:");
     const out2 = formatBreakEntity({ ...BREAK_FIXTURE, comment: "" });
     expect(out2).not.toContain("Comment:");
+  });
+});
+
+// ---------------------------------------------------------------------
+// contracts (#157)
+// ---------------------------------------------------------------------
+
+const CONTRACT_FIXTURE: engagements.EngagementContract = {
+  jobActivityItemId: "act-eng-1",
+  engagementId: "eng-1",
+  applicationRate: "120.00",
+  talentRate: "100.00",
+  talentHourlyRate: "100.00",
+  marketplaceMargin: "20.00",
+  timePeriod: "monthly",
+  commitment: { slug: "full_time" },
+};
+
+describe("formatContractsTable", () => {
+  it("renders an empty table when items is empty", () => {
+    const out = formatContractsTable([]);
+    expect(out).toContain("engagement");
+    expect(out).toContain("commitment");
+    expect(out).toContain("hourly");
+    expect(out).toContain("talent-rate");
+    expect(out).toContain("period");
+  });
+
+  it("renders a single contract row with all fields", () => {
+    const out = formatContractsTable([CONTRACT_FIXTURE]);
+    expect(out).toContain("act-eng-1");
+    expect(out).toContain("full_time");
+    expect(out).toContain("100.00");
+    expect(out).toContain("monthly");
+  });
+
+  it("renders empty-state markers when commitment/rate fields are null", () => {
+    const partial: engagements.EngagementContract = {
+      ...CONTRACT_FIXTURE,
+      commitment: null,
+      talentHourlyRate: null,
+      talentRate: null,
+      timePeriod: null,
+    };
+    const out = formatContractsTable([partial]);
+    expect(out).toContain("act-eng-1");
+    expect(out).toContain("—");
+  });
+});
+
+describe("formatContractEntity", () => {
+  it("renders the contract identity, commitment, period, and all rates", () => {
+    const out = formatContractEntity(CONTRACT_FIXTURE);
+    expect(out).toContain("Contract for engagement act-eng-1");
+    expect(out).toContain("Engagement-ID: eng-1");
+    expect(out).toContain("Commitment: full_time");
+    expect(out).toContain("Period: monthly");
+    expect(out).toContain("Rates");
+    expect(out).toContain("Application rate: 120.00");
+    expect(out).toContain("Talent rate: 100.00");
+    expect(out).toContain("Hourly rate: 100.00");
+    expect(out).toContain("Marketplace margin: 20.00");
+  });
+
+  it("omits optional lines when fields are null", () => {
+    const minimal: engagements.EngagementContract = {
+      jobActivityItemId: "act-eng-1",
+      engagementId: "eng-1",
+      applicationRate: null,
+      talentRate: null,
+      talentHourlyRate: "75.00",
+      marketplaceMargin: null,
+      timePeriod: null,
+      commitment: null,
+    };
+    const out = formatContractEntity(minimal);
+    expect(out).toContain("Contract for engagement act-eng-1");
+    expect(out).toContain("Engagement-ID: eng-1");
+    expect(out).not.toContain("Commitment:");
+    expect(out).not.toContain("Period:");
+    expect(out).not.toContain("Application rate:");
+    expect(out).not.toContain("Talent rate:");
+    expect(out).toContain("Hourly rate: 75.00");
+    expect(out).not.toContain("Marketplace margin:");
   });
 });

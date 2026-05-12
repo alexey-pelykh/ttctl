@@ -18,9 +18,9 @@ const DRY_RUN_FIELD = z
   );
 
 /**
- * Register the `ttctl_engagements_*` MCP tools per the #147 spec. Tool
- * names use the `ttctl_` prefix and the canonical CLI path joined with
- * `_`:
+ * Register the `ttctl_engagements_*` MCP tools per the #147 + #157
+ * specs. Tool names use the `ttctl_` prefix and the canonical CLI path
+ * joined with `_`:
  *
  *   - `ttctl_engagements_list`
  *   - `ttctl_engagements_show`
@@ -28,6 +28,8 @@ const DRY_RUN_FIELD = z
  *   - `ttctl_engagements_breaks_list`
  *   - `ttctl_engagements_breaks_add`
  *   - `ttctl_engagements_breaks_remove`
+ *   - `ttctl_engagements_contracts_list` (#157)
+ *   - `ttctl_engagements_contracts_show` (#157)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The `<id>` argument is the `jobActivityItem.id` (the row
@@ -38,6 +40,13 @@ const DRY_RUN_FIELD = z
  * surfaced here — that scope moved to `availability` (#146) since the
  * underlying mutation (`UpdateAllocatedHours`) operates on
  * `viewerRole`, not per-engagement.
+ *
+ * **Contracts (#157)**: `EngagementAgreement` has no separate identity
+ * in the gateway schema. Both contracts tools take the
+ * `jobActivityItem.id` (the engagement id used everywhere else in this
+ * group) — there is no separate "contract-id". `list` returns
+ * array-of-one (forward-compat shape); `show` returns the same data
+ * bare.
  *
  * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. The
  * three read-only tools and `breaks_list` use MCP-layer preview building;
@@ -309,6 +318,97 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
         const outcome = await engagements.breaks.remove(auth.token, args.breakId, { dryRun: args.dryRun ?? false });
         if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
         return successResponse(outcome.result);
+      } catch (err) {
+        return mapEngagementsError(err);
+      }
+    },
+  );
+
+  // --- Contracts (#157) -------------------------------------------------
+
+  server.registerTool(
+    "ttctl_engagements_contracts_list",
+    {
+      title: "List contracts for an engagement",
+      description: [
+        "List the contract data for a specific engagement (full `EngagementAgreement`",
+        "projection: applicationRate, talentRate, talentHourlyRate, marketplaceMargin,",
+        "timePeriod, commitment).",
+        "",
+        "**Wire reality**: today returns array-of-one — the engagement's",
+        "`currentAgreement`. The Toptal gateway schema models",
+        "`TalentEngagement.currentAgreement` as a singular, embedded",
+        "`EngagementAgreement` with no id and no history connection. The list",
+        "shape is preserved for forward compatibility.",
+        "",
+        "The `id` parameter is the engagement id (TalentJobActivityItem id), the",
+        "same id used by `ttctl_engagements_show`.",
+        "",
+        "Example user prompts:",
+        '  - "Show the contract data for engagement act_xyz."',
+        '  - "What is my marketplace margin on my current Toptal engagement?"',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Engagement id (the TalentJobActivityItem id from `engagements_list`)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("EngagementContracts", "mobile-gateway", { jobActivityItemId: args.id }, auth.token),
+        );
+      }
+      try {
+        const items = await engagements.contracts.list(auth.token, args.id);
+        return successResponse(items);
+      } catch (err) {
+        return mapEngagementsError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_engagements_contracts_show",
+    {
+      title: "Show one contract on an engagement",
+      description: [
+        "Fetch a single contract's full detail by engagement id.",
+        "",
+        "**Wire reality**: `EngagementAgreement` has no separate identity in the",
+        "Toptal gateway schema; the contract-id is unified with the engagement-id.",
+        "Both `ttctl_engagements_contracts_list` and `_contracts_show` take the same",
+        "`id` (the TalentJobActivityItem id used by `ttctl_engagements_show`).",
+        "",
+        "Returns the full agreement projection (applicationRate, talentRate,",
+        "talentHourlyRate, marketplaceMargin, timePeriod, commitment).",
+        "",
+        "Example user prompts:",
+        '  - "Show me the contract details for engagement act_xyz."',
+        '  - "What is the application rate on my engagement?"',
+      ].join("\n"),
+      inputSchema: {
+        id: z
+          .string()
+          .describe(
+            "Engagement id (the TalentJobActivityItem id from `engagements_list`; contract-id is unified with engagement-id)",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("EngagementContracts", "mobile-gateway", { jobActivityItemId: args.id }, auth.token),
+        );
+      }
+      try {
+        const contract = await engagements.contracts.show(auth.token, args.id);
+        return successResponse(contract);
       } catch (err) {
         return mapEngagementsError(err);
       }

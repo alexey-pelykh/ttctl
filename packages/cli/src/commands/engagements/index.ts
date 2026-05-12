@@ -9,13 +9,15 @@ import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { runEngagementsBreaksAdd, runEngagementsBreaksList, runEngagementsBreaksRemove } from "./breaks.js";
+import { runEngagementsContractsList, runEngagementsContractsShow } from "./contracts.js";
 import { runEngagementsList } from "./list.js";
 import { runEngagementsShow } from "./show.js";
 import { runEngagementsStats } from "./stats.js";
 
 /**
- * Build the `ttctl engagements` command tree (#147). Six leaves across
- * the top-level group and one nested sub-group (`breaks`):
+ * Build the `ttctl engagements` command tree (#147 + #157). Eight leaves
+ * across the top-level group and two nested sub-groups (`breaks`,
+ * `contracts`):
  *
  * | Leaf                                         | Description                                 |
  * |----------------------------------------------|---------------------------------------------|
@@ -25,10 +27,17 @@ import { runEngagementsStats } from "./stats.js";
  * | `breaks list <id>`                           | List breaks on an engagement                |
  * | `breaks add <id> --from <date> --to <date>`  | Schedule a break                            |
  * | `breaks remove <break-id>`                   | Cancel a break                              |
+ * | `contracts list <id>` (#157)                 | List contracts for an engagement            |
+ * | `contracts show <id>` (#157)                 | Show full contract detail                   |
  *
  * `<id>` is always the `jobActivityItem.id` (the row id from
  * `engagements list`); `<break-id>` is the `engagementBreak.id` (from
  * `breaks list`).
+ *
+ * **Contract id semantics (#157)**: `EngagementAgreement` has no
+ * separate identity in the gateway schema; the contracts verbs unify
+ * the contract-id with the engagement-id (`jobActivityItem.id`). Both
+ * `contracts list` and `contracts show` take the same id.
  *
  * **Out of scope for v1** (per #147 spec):
  *   - Engagement creation / acceptance / rejection (lives in
@@ -166,6 +175,45 @@ export function buildEngagementsCommand(): Command {
         await runEngagementsBreaksRemove(breakId, options.output);
       }),
   );
+
+  // ----- Contracts sub-group (#157) -------------------------------------
+  // Read-only group surfacing the engagement's contract data (full
+  // `EngagementAgreement` projection). Both leaves take the
+  // jobActivityItem.id — since EngagementAgreement has no separate id in
+  // the schema, contract-id and engagement-id are unified.
+  const contractsGroup = cmd
+    .command("contracts")
+    .description("View engagement contract data (full agreement projection)");
+
+  contractsGroup
+    .command("list")
+    .description("List contracts for an engagement (currently returns array-of-one)")
+    .argument("<id>", "engagement id (the row id from `engagements list`)", parseIdArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runEngagementsContractsList(id, options.output);
+    });
+
+  contractsGroup
+    .command("show")
+    .description("Show a single contract detail (full agreement projection)")
+    .argument(
+      "<id>",
+      "engagement id (the row id from `engagements list`); contract-id is unified with engagement-id",
+      parseIdArg,
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runEngagementsContractsShow(id, options.output);
+    });
 
   return cmd;
 }

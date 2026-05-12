@@ -19,6 +19,8 @@
  * | `breaks.list`             | `EngagementBreaks(jobActivityItemId)`                 |
  * | `breaks.add`              | `CreateEngagementBreak(engagementId, ...)`            |
  * | `breaks.remove`           | `CancelEngagementBreak(engagementBreakId)`            |
+ * | `contracts.list`          | `EngagementContracts(jobActivityItemId)` — array-of-1 |
+ * | `contracts.show`          | `EngagementContracts(jobActivityItemId)` — single item |
  *
  * **Routing**: All ops talk to the **mobile-gateway** surface
  * (`https://www.toptal.com/gateway/graphql/talent/graphql`) via
@@ -1027,5 +1029,257 @@ export const breaks = {
       throw new EngagementsError("MUTATION_ERROR", formatMutationErrors("CancelEngagementBreak failed", result.errors));
     }
     return { kind: "applied", result: { id: engagementBreakId } };
+  },
+};
+
+// ---------------------------------------------------------------------
+// Contracts (#157)
+//
+// The Toptal gateway schema models contracts at the VIEWER level
+// (`viewer.contracts` via the portal `GetContracts` op) — those are
+// talent-wide legal contracts (Toptal Direct, Toptal Self-Manager), not
+// engagement-scoped. At the engagement level, the only contract-shaped
+// data is `TalentEngagement.currentAgreement: EngagementAgreement!` —
+// a SINGULAR embedded object with NO `id` field and NO history
+// connection (cf. `research/graphql/gateway/schema.graphql` § type
+// EngagementAgreement, type TalentEngagement).
+//
+// The `engagements contracts` command group surfaces this engagement's
+// currentAgreement with the FULL projection (the existing
+// `engagements show` exposes only a subset — applicationRate,
+// talentHourlyRate, talentRate, commitment; the contracts projection
+// adds `marketplaceMargin` and `timePeriod`).
+//
+// **List semantics**: today returns array-of-one. The list shape is
+// preserved for forward compatibility — if/when the gateway ever
+// exposes an engagement-scoped agreement history connection, the same
+// type and shape work additively.
+//
+// **Show semantics**: takes the `jobActivityItem.id` (same id used by
+// `engagements show`). Since EngagementAgreement has no separate
+// identity in the schema, the contract id is the engagement id.
+// `EngagementContract.engagementId` (a separate field) carries the
+// underlying `TalentEngagement.id` for transparency.
+//
+// Both list and show use the same GraphQL operation
+// (`EngagementContracts`) — list wraps the result in a single-element
+// array; show returns it bare.
+// ---------------------------------------------------------------------
+
+/**
+ * Wire/public type for a single engagement contract — the full
+ * projection of `TalentEngagement.currentAgreement: EngagementAgreement`.
+ *
+ * - `jobActivityItemId` echoes the caller's input id (the row id from
+ *   `engagements list`) so the JSON shape is self-identifying.
+ * - `engagementId` is the underlying `TalentEngagement.id` for
+ *   transparency (matches `EngagementListItem.engagementId`).
+ * - `applicationRate` — the rate originally applied with (USD/hour as
+ *   a decimal string).
+ * - `talentRate` — the talent's current rate at the talent-marketplace
+ *   margin boundary.
+ * - `talentHourlyRate` — the talent's effective hourly rate (post-margin).
+ * - `marketplaceMargin` — the marketplace margin slice; `null` when the
+ *   server doesn't surface it (schema marks it `Unknown` ⇒ defensively
+ *   treated as nullable).
+ * - `timePeriod` — agreement period descriptor (e.g., `"monthly"`).
+ * - `commitment` — the contract's committed-commitment slug (which can
+ *   differ from the engagement's commitment if a rate-change adjusted
+ *   the commitment level).
+ */
+export interface EngagementContract {
+  jobActivityItemId: string;
+  engagementId: string;
+  applicationRate: string | null;
+  talentRate: string | null;
+  talentHourlyRate: string | null;
+  marketplaceMargin: string | null;
+  timePeriod: string | null;
+  commitment: { slug: string } | null;
+}
+
+// Derived from `JobActivityItem.graphql`'s `currentAgreementRateData`
+// fragment + the `commitment` sub-selection on `currentAgreement`. The
+// surface is the same mobile-gateway as the rest of the engagements
+// service (no Cloudflare, no impersonation). Per CLAUDE.md § Schema/
+// contract validation rule, the live wire shape is exercised by
+// `30-engagements-contracts.e2e.test.ts`.
+const ENGAGEMENT_CONTRACTS_QUERY = `query EngagementContracts($jobActivityItemId: ID!) {
+  viewer {
+    __typename
+    id
+    jobActivityItem(id: $jobActivityItemId) {
+      __typename
+      id
+      engagement {
+        __typename
+        id
+        currentAgreement {
+          __typename
+          applicationRate
+          talentRate
+          talentHourlyRate
+          marketplaceMargin
+          timePeriod
+          commitment { __typename slug }
+        }
+      }
+    }
+  }
+}`;
+
+interface EngagementContractsResponse {
+  viewer: {
+    id: string;
+    jobActivityItem: {
+      id: string;
+      engagement: {
+        id: string;
+        currentAgreement: EngagementContractWireProjection | null;
+      } | null;
+    } | null;
+  } | null;
+}
+
+interface EngagementContractWireProjection {
+  applicationRate: string | null;
+  talentRate: string | null;
+  talentHourlyRate: string | null;
+  marketplaceMargin: string | null;
+  timePeriod: string | null;
+  commitment: { slug: string } | null;
+}
+
+/**
+ * Fetch the engagement's contract data and project it into the public
+ * shape. Shared by {@link contracts.list} and {@link contracts.show};
+ * they differ only in whether they wrap the result in a single-element
+ * array.
+ *
+ * Throws `EngagementsError("NOT_FOUND")` when the id doesn't resolve
+ * (matches `show()` semantics — both "Record not found" GraphQL error
+ * and `viewer.jobActivityItem === null`).
+ *
+ * Throws `EngagementsError("NO_ENGAGEMENT")` when the activity row
+ * exists but has no engagement (e.g., interview-only row).
+ *
+ * Returns `null` for the contract when the engagement exists but
+ * `currentAgreement` is somehow absent — schema says non-null, but
+ * defensive against future schema drift. Callers translate `null` into
+ * `EngagementsError("UNKNOWN")` themselves.
+ */
+async function fetchEngagementContract(
+  token: string,
+  jobActivityItemId: string,
+): Promise<{ engagementId: string; contract: EngagementContract | null }> {
+  let data: EngagementContractsResponse;
+  try {
+    data = await callGateway<EngagementContractsResponse>(token, "EngagementContracts", ENGAGEMENT_CONTRACTS_QUERY, {
+      jobActivityItemId,
+    });
+  } catch (err) {
+    if (
+      err instanceof EngagementsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new EngagementsError(
+        "NOT_FOUND",
+        `No engagement found with id "${jobActivityItemId}" (or you don't have access to it).`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new EngagementsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.jobActivityItem === null) {
+    throw new EngagementsError(
+      "NOT_FOUND",
+      `No engagement found with id "${jobActivityItemId}" (or you don't have access to it).`,
+    );
+  }
+  if (data.viewer.jobActivityItem.engagement === null) {
+    throw new EngagementsError(
+      "NO_ENGAGEMENT",
+      `Activity item "${jobActivityItemId}" exists but has no engagement (likely an application or interview that never became an engagement).`,
+    );
+  }
+  const engagement = data.viewer.jobActivityItem.engagement;
+  const wire = engagement.currentAgreement;
+  if (wire === null) {
+    return { engagementId: engagement.id, contract: null };
+  }
+  return {
+    engagementId: engagement.id,
+    contract: {
+      jobActivityItemId,
+      engagementId: engagement.id,
+      applicationRate: wire.applicationRate,
+      talentRate: wire.talentRate,
+      talentHourlyRate: wire.talentHourlyRate,
+      marketplaceMargin: wire.marketplaceMargin,
+      timePeriod: wire.timePeriod,
+      commitment: wire.commitment,
+    },
+  };
+}
+
+/**
+ * Engagement contracts management. Sub-namespace under the service so
+ * the public surface stays `engagements.contracts.{list, show}` —
+ * matches the CLI verb path `engagements contracts {list, show}`.
+ *
+ * **API note**: `EngagementAgreement` is singular and has no id in the
+ * Toptal gateway schema today. The `list` verb returns an array-of-one
+ * for forward compatibility; `show` returns the same data bare. Both
+ * functions take the `jobActivityItem.id` (the public engagement id
+ * users get from `engagements list`) — there is no separate
+ * "contract-id" concept at the wire level.
+ */
+export const contracts = {
+  /**
+   * List the contracts for an engagement (today: array of one — the
+   * engagement's `currentAgreement`).
+   *
+   * The list shape is preserved for forward compatibility — if/when
+   * the gateway exposes a per-engagement agreement-history connection,
+   * the same type and verb apply additively.
+   */
+  async list(token: string, jobActivityItemId: string): Promise<EngagementContract[]> {
+    const { contract } = await fetchEngagementContract(token, jobActivityItemId);
+    if (contract === null) {
+      // Schema says `currentAgreement: EngagementAgreement!` (non-null)
+      // but defensively return an empty list rather than fabricating
+      // a partial contract entry.
+      return [];
+    }
+    return [contract];
+  },
+
+  /**
+   * Show a single contract by id. Since `EngagementAgreement` has no
+   * separate identity in the schema, the contract id is unified with
+   * the engagement id (`jobActivityItem.id`) — both list and show take
+   * the same id.
+   *
+   * Throws `EngagementsError("NOT_FOUND")` when the id doesn't resolve
+   * (matches `show()` semantics — both "Record not found" GraphQL
+   * error and the data-shape sentinel).
+   *
+   * Throws `EngagementsError("UNKNOWN")` when the engagement exists
+   * but its `currentAgreement` is absent (schema invariant violation
+   * — defensive).
+   */
+  async show(token: string, jobActivityItemId: string): Promise<EngagementContract> {
+    const { contract } = await fetchEngagementContract(token, jobActivityItemId);
+    if (contract === null) {
+      throw new EngagementsError(
+        "UNKNOWN",
+        `Engagement "${jobActivityItemId}" exists but has no current agreement (schema invariant violation).`,
+      );
+    }
+    return contract;
   },
 };

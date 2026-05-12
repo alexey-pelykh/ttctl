@@ -24,6 +24,8 @@ import { registerAllTools } from "../tools/index.js";
  *
  * Post-#148: + 13 jobs tools (browse + interest + search subscription)
  * = 83 tools total.
+ * Post-#13: + 3 timesheet tools = 86 tools total.
+ * Post-#157: + 2 engagement contracts tools = 88 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -38,7 +40,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (86 tools = 56 wave-3 profile + 3 #15 applications + 6 #147 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
+  it("registers exactly the cumulative tool set (88 tools = 56 wave-3 profile + 3 #15 applications + 8 engagements (#147 + #157) + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -54,10 +56,12 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_availability_show",
       "ttctl_availability_working_hours_set",
       "ttctl_availability_working_hours_show",
-      // #147 — engagements (6, list/show/stats + breaks list/add/remove)
+      // #147 + #157 — engagements (8, list/show/stats + breaks list/add/remove + contracts list/show)
       "ttctl_engagements_breaks_add",
       "ttctl_engagements_breaks_list",
       "ttctl_engagements_breaks_remove",
+      "ttctl_engagements_contracts_list",
+      "ttctl_engagements_contracts_show",
       "ttctl_engagements_list",
       "ttctl_engagements_show",
       "ttctl_engagements_stats",
