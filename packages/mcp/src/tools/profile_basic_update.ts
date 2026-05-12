@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -27,18 +28,27 @@ const TOOL_NAME = "ttctl_profile_basic_update";
  * optional; at least one must be supplied (the core layer validates
  * this and raises a `VALIDATION_ERROR` if both are omitted).
  *
- * Dry-run path (issue #10 closes #52 spec item 5 — "MCP tool integration
- * when #10 lands"): when `dryRun: true` is supplied, the tool routes
- * through `profile.basic.set(token, changes, { dryRun: true })` which
- * returns a `SetOutcomePreview` carrying a `DryRunPreview` of the
- * `UPDATE_BASIC_INFO` request that WOULD have been sent — no transport
- * (read or write) is invoked. The tool result JSON is the
- * discriminated `SetOutcome` shape verbatim — `{ kind: "preview",
- * preview: { surface, transport, endpoint, operationName, variables,
- * headers } }` for dry-run, `{ kind: "applied", result: {...} }` for
- * the apply path. MCP callers branch on `kind`. Bearer token redaction
- * in `headers.authorization` is honored by `buildDryRunPreview` in
- * core; the MCP tool is a thin pass-through.
+ * Dry-run path (issue #10, harmonised under #165): when `dryRun: true`
+ * is supplied, the tool routes through
+ * `profile.basic.set(token, changes, { dryRun: true })` which returns a
+ * `SetOutcomePreview`. The MCP layer projects that to the uniform
+ * `{ ok: true, dryRun: true, preview }` envelope shared by every #165
+ * dry-run path. The apply path returns the `UpdateProfileResult`
+ * payload directly (the prior `{ kind: "applied", result }` wrapper is
+ * dropped — see "Breaking change" note below).
+ *
+ * **Breaking change vs #10's original wire format (pre-1.0, acceptable):**
+ *
+ *   - Old apply: `{ kind: "applied", result: { profile, notice } }`
+ *   - New apply: `{ profile, notice }`
+ *   - Old dry-run: `{ kind: "preview", preview: { ... } }`
+ *   - New dry-run: `{ ok: true, dryRun: true, preview: { ... } }`
+ *
+ * The new envelopes match the rest of the MCP surface — every tool's
+ * dry-run path emits `{ ok: true, dryRun: true, preview }` uniformly
+ * (issue #165), and apply paths emit the domain payload directly.
+ * Bearer token redaction in `headers.authorization` is honored by
+ * `buildDryRunPreview` in core; the MCP tool is a thin pass-through.
  */
 export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -72,7 +82,7 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
           .boolean()
           .optional()
           .describe(
-            'When true, return a structured `DryRunPreview` of the GraphQL request that WOULD have been sent without invoking any transport (read or write). The bearer token is redacted in the preview headers. The result envelope shape is the discriminated `SetOutcome` — `{ kind: "preview", preview: ... }` for dry-run, `{ kind: "applied", result: ... }` for the apply path. Default: false.',
+            "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview: DryRunPreview }` carrying the `UPDATE_BASIC_INFO` operation + redacted bearer header. No transport (read or write) is invoked. Default: false.",
           ),
       },
     },
@@ -86,7 +96,10 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
 
       try {
         const outcome = await profile.basic.set(auth.token, changes, { dryRun: input.dryRun ?? false });
-        return jsonResponse(outcome);
+        if (outcome.kind === "preview") {
+          return dryRunResponse(outcome.preview);
+        }
+        return jsonResponse(outcome.result);
       } catch (err) {
         const typed = ttctlErrorToToolResponseOrNull(err);
         if (typed !== null) return typed;

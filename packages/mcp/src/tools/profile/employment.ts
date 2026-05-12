@@ -5,8 +5,15 @@ import { parseDateInput, profile, splitParagraphs } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
 import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the six `profile.employment.*` MCP tools on `server`.
@@ -19,6 +26,13 @@ import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.
  * — it returns suggestions from the known-employer database, useful
  * for resolving free-text employer names to canonical Toptal IDs
  * before adding a new employment row.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. When
+ * `dryRun: true`, returns `{ ok: true, dryRun: true, preview }` via
+ * MCP-layer preview building. `show` previews `GET_WORK_EXPERIENCE` (the
+ * apply path lists then filters client-side; no per-id selector exists).
+ * `profileId` carries `DRY_RUN_PROFILE_ID_PLACEHOLDER` where the apply
+ * path resolves it via a sibling profile read.
  */
 export function registerEmploymentTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -38,6 +52,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .string()
           .optional()
           .describe("multi-paragraph description; split on blank lines into experienceItems"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -61,6 +76,17 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       }
       if (input.description !== undefined) {
         fields.experienceItems = splitParagraphs(input.description);
+      }
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "CreateEmployment",
+            "talent-profile",
+            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, employment: fields } },
+            auth.token,
+          ),
+        );
       }
 
       try {
@@ -88,6 +114,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         website: z.url().optional(),
         description: z.string().optional(),
         highlight: z.boolean().optional(),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -113,6 +140,17 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       }
       if (input.highlight !== undefined) fields.highlight = input.highlight;
 
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "UpdateEmployment",
+            "talent-profile",
+            { input: { employmentId: input.id, employment: fields } },
+            auth.token,
+          ),
+        );
+      }
+
       try {
         const updated = await profile.employment.update(auth.token, input.id, fields);
         return jsonSuccess(updated);
@@ -127,11 +165,21 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
     {
       title: "Remove employment entry",
       description: "Remove an employment entry by id.",
-      inputSchema: { id: z.string().min(1).describe("employment id") },
+      inputSchema: { id: z.string().min(1).describe("employment id"), dryRun: DRY_RUN_FIELD },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.remove");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "RemoveEmployment",
+            "talent-profile",
+            { input: { employmentId: input.id } },
+            auth.token,
+          ),
+        );
+      }
       try {
         const id = await profile.employment.remove(auth.token, input.id);
         return textSuccess(`Employment ${id} removed.`);
@@ -145,12 +193,23 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
     "ttctl_profile_employment_show",
     {
       title: "Show employment entry",
-      description: "Show a single employment entry by id (returns the row as JSON).",
-      inputSchema: { id: z.string().min(1).describe("employment id") },
+      description:
+        "Show a single employment entry by id (returns the row as JSON). Note: the underlying wire call lists all rows and filters client-side; the dry-run preview emits `GET_WORK_EXPERIENCE` (the list query) accordingly.",
+      inputSchema: { id: z.string().min(1).describe("employment id"), dryRun: DRY_RUN_FIELD },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.show");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_WORK_EXPERIENCE",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
       try {
         const row = await profile.employment.show(auth.token, input.id);
         return jsonSuccess(row);
@@ -168,11 +227,22 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       inputSchema: {
         id: z.string().min(1).describe("employment id"),
         highlight: z.boolean().default(true),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.highlight");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "highlightEmployment",
+            "talent-profile",
+            { id: input.id, highlight: input.highlight },
+            auth.token,
+          ),
+        );
+      }
       try {
         const result = await profile.employment.highlight(auth.token, input.id, input.highlight);
         return jsonSuccess(result);
@@ -191,11 +261,22 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       inputSchema: {
         query: z.string().min(1).describe("search term"),
         limit: z.number().int().min(1).max(50).default(10).describe("max results"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.employer_autocomplete");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_EMPLOYERS_AUTOCOMPLETE",
+            "talent-profile",
+            { search: input.query, limit: input.limit },
+            auth.token,
+          ),
+        );
+      }
       try {
         const suggestions = await profile.employment.employerAutocomplete(auth.token, input.query, input.limit);
         return jsonSuccess(suggestions);

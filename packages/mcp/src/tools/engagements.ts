@@ -3,11 +3,19 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { engagements } from "@ttctl/core";
+import type { DryRunPreview } from "@ttctl/core";
 import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
-import type { ToolRegistrationContext } from "./_shared.js";
+import { buildMcpDryRunPreview, dryRunMultiResponse, dryRunResponse, type ToolRegistrationContext } from "./_shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the `ttctl_engagements_*` MCP tools per the #147 spec. Tool
@@ -30,6 +38,15 @@ import type { ToolRegistrationContext } from "./_shared.js";
  * surfaced here — that scope moved to `availability` (#146) since the
  * underlying mutation (`UpdateAllocatedHours`) operates on
  * `viewerRole`, not per-engagement.
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. The
+ * three read-only tools and `breaks_list` use MCP-layer preview building;
+ * the two break mutations are passthrough — `core.engagements.breaks.{add,remove}`
+ * already support `{ dryRun: true }` (#163), so the MCP layer forwards
+ * the flag and reformats the resulting `{ kind: "preview", preview }`
+ * outcome as the uniform `{ ok, dryRun, preview }` envelope. `stats`
+ * uses the plural `{ previews: [...] }` envelope (2 parallel
+ * `JobActivityItems` calls — one per status group).
  */
 export function registerEngagementsTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -59,15 +76,34 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
           .optional()
           .describe("Filter by engagement status: active (default), past, or all"),
         keywords: z.array(z.string()).optional().describe("Free-text keyword filter (AND across multiple)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const opts: engagements.ListOptions = {};
+      if (args.status !== undefined) opts.status = args.status;
+      if (args.keywords !== undefined) opts.keywords = args.keywords;
+      if (args.dryRun === true) {
+        // Mirror the apply-path mapping from `--status` to
+        // JobActivityItemStatusGroupEnum so the preview's
+        // `onlyStatusGroupFilter` matches what the wire call would send.
+        // Apply path: core/services/engagements/index.ts `listStatusToGroups`.
+        const status = opts.status ?? "active";
+        const statusGroups =
+          status === "active"
+            ? ["ACTIVE_ENGAGEMENT"]
+            : status === "past"
+              ? ["CLOSED_ENGAGEMENT"]
+              : ["ACTIVE_ENGAGEMENT", "CLOSED_ENGAGEMENT"];
+        const variables: Record<string, unknown> = {
+          keywords: opts.keywords !== undefined && opts.keywords.length > 0 ? opts.keywords : null,
+          onlyStatusGroupFilter: statusGroups,
+        };
+        return dryRunResponse(buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", variables, auth.token));
+      }
       try {
-        const opts: engagements.ListOptions = {};
-        if (args.status !== undefined) opts.status = args.status;
-        if (args.keywords !== undefined) opts.keywords = args.keywords;
         const items = await engagements.list(auth.token, opts);
         return successResponse(items);
       } catch (err) {
@@ -95,11 +131,15 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
       ].join("\n"),
       inputSchema: {
         id: z.string().describe("Engagement id (the TalentJobActivityItem id from `engagements_list`)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("JobActivityItem", "mobile-gateway", { id: args.id }, auth.token));
+      }
       try {
         const item = await engagements.show(auth.token, args.id);
         return successResponse(item);
@@ -124,12 +164,25 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
         "Example user prompts:",
         '  - "How many Toptal engagements have I had in total?"',
         '  - "Show me a breakdown of my Toptal engagements by status."',
+        "",
+        "Dry-run note: returns `{ ok: true, dryRun: true, previews: [...] }` (plural `previews`) — one `JobActivityItems` preview per engagement status group (2 total: ACTIVE_ENGAGEMENT, CLOSED_ENGAGEMENT), matching the 2 parallel calls the apply path fires.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        const previews: DryRunPreview[] = engagements.ENGAGEMENT_STATUS_GROUPS.map((group) =>
+          buildMcpDryRunPreview(
+            "JobActivityItems",
+            "mobile-gateway",
+            { keywords: null, onlyStatusGroupFilter: [group] },
+            auth.token,
+          ),
+        );
+        return dryRunMultiResponse(previews);
+      }
       try {
         const stats = await engagements.stats(auth.token);
         return successResponse(stats);
@@ -157,11 +210,17 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
       ].join("\n"),
       inputSchema: {
         id: z.string().describe("Engagement id (the TalentJobActivityItem id from `engagements_list`)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("EngagementBreaks", "mobile-gateway", { jobActivityItemId: args.id }, auth.token),
+        );
+      }
       try {
         const items = await engagements.breaks.list(auth.token, args.id);
         return successResponse(items);
@@ -201,6 +260,7 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
             "Server-side reason key (known: talent_on_vacation, client_needs_preparation, client_on_vacation, other)",
           ),
         comment: z.string().optional().describe("Optional free-text comment"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
@@ -213,8 +273,9 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
           reasonIdentifier: args.reasonIdentifier,
         };
         if (args.comment !== undefined) opts.comment = args.comment;
-        const outcome = await engagements.breaks.add(auth.token, args.id, opts);
-        return successResponse(unwrapEngagementOutcome(outcome));
+        const outcome = await engagements.breaks.add(auth.token, args.id, opts, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapEngagementsError(err);
       }
@@ -238,40 +299,21 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
       ].join("\n"),
       inputSchema: {
         breakId: z.string().describe("Engagement break id (the engagementBreak id from `engagements_breaks_list`)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
       try {
-        const outcome = await engagements.breaks.remove(auth.token, args.breakId);
-        return successResponse(unwrapEngagementOutcome(outcome));
+        const outcome = await engagements.breaks.remove(auth.token, args.breakId, { dryRun: args.dryRun ?? false });
+        if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
+        return successResponse(outcome.result);
       } catch (err) {
         return mapEngagementsError(err);
       }
     },
   );
-}
-
-/**
- * Narrow an engagement-breaks mutation outcome to the payload that MCP
- * tools surface to LLM clients (issue #163). The MCP layer currently
- * never passes `dryRun: true` — so the apply path is always taken and
- * `outcome.kind === "applied"` always holds. The `preview` branch is
- * defensively rendered (returning the preview payload verbatim) for
- * future-proofing against the companion MCP-wide `dryRun?` work
- * tracked in #165.
- *
- * Kept as a single helper so both MCP engagement-breaks mutations
- * share one narrowing rule. Generic over the union type so each call
- * site preserves its specific outcome variant's apply-path payload
- * type (e.g. `EngagementBreak` for `add`, `{ id: string }` for
- * `remove`).
- */
-function unwrapEngagementOutcome<TApplied, TPreview>(
-  outcome: { kind: "applied"; result: TApplied } | { kind: "preview"; preview: TPreview },
-): TApplied | TPreview {
-  return outcome.kind === "applied" ? outcome.result : outcome.preview;
 }
 
 interface ToolSuccessResponse {

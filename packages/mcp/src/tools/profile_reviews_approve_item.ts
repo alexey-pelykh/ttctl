@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_reviews_approve_item";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Useful for inspecting destructive approval shape before firing. Default: false.",
+  );
 
 /**
  * Register the `ttctl_profile_reviews_approve_item` MCP tool. Mirrors the
@@ -55,11 +64,23 @@ export function registerProfileReviewsApproveItemTool(server: McpServer, ctx: To
           .string()
           .min(1)
           .describe("ItemReviewKind enum value as a string (e.g. EDUCATION, EMPLOYMENT, CERTIFICATION)."),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "ApproveItemReview",
+            "talent-profile",
+            { input: { reviewId: input.reviewId, itemId: input.itemId, itemKind: input.kind } },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const result = await profile.reviews.approveItem(auth.token, {

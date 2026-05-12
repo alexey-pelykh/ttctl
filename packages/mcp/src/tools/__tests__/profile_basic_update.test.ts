@@ -31,14 +31,18 @@ import { registerProfileBasicUpdateTool } from "../profile_basic_update.js";
 
 /**
  * Pin the MCP integration of the dry-run path (closes #52 spec item 5
- * — "MCP tool integration when #10 lands"). The CLI side is covered in
- * `packages/cli/.../basic/__tests__/set.test.ts`. These tests verify
- * that the MCP `ttctl_profile_basic_update` tool:
+ * — "MCP tool integration when #10 lands", harmonised under #165). The
+ * CLI side is covered in `packages/cli/.../basic/__tests__/set.test.ts`.
+ * These tests verify that the MCP `ttctl_profile_basic_update` tool:
  *
  *   1. accepts a `dryRun?: boolean` input,
  *   2. forwards it to `profile.basic.set(token, changes, { dryRun })`,
- *   3. returns the discriminated `SetOutcome` shape verbatim — callers
- *      branch on `kind: "applied" | "preview"`.
+ *   3. emits the uniform #165 dry-run envelope on the preview branch:
+ *      `{ ok: true, dryRun: true, preview: DryRunPreview }` — every #165
+ *      tool emits this same shape,
+ *   4. emits the bare `UpdateProfileResult` on the apply branch (the
+ *      pre-#165 `{ kind: "applied", result }` wrapper is dropped — see
+ *      the tool's JSDoc for the breaking-change rationale).
  *
  * Bearer token redaction in the preview's `headers.authorization`
  * is the responsibility of `buildDryRunPreview` in core (verified in
@@ -114,7 +118,7 @@ interface ToolSuccessShape {
   content: { type: string; text: string }[];
 }
 
-describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 closes #52 item 5)", () => {
+describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 closes #52 item 5; envelope harmonised under #165)", () => {
   let server: McpServer;
 
   beforeEach(() => {
@@ -144,7 +148,7 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(inputSchema?.shape["headline"]).toBeDefined();
   });
 
-  it("forwards `dryRun: true` to profile.basic.set() and returns the preview outcome verbatim", async () => {
+  it("forwards `dryRun: true` to profile.basic.set() and emits the uniform #165 dry-run envelope", async () => {
     const ctx = buildTokenSuccessCtx("user_dryrun_token");
     registerProfileBasicUpdateTool(server, ctx);
     MOCKED_SET.mockResolvedValueOnce({ kind: "preview", preview: PREVIEW_FIXTURE });
@@ -159,16 +163,18 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(args?.[1]).toEqual({ bio: "test bio" });
     expect(args?.[2]).toEqual({ dryRun: true });
 
-    // Tool result is the JSON-serialised SetOutcome envelope.
+    // Tool result is the uniform #165 envelope:
+    //   { ok: true, dryRun: true, preview: DryRunPreview }
     const text = result.content[0]?.text ?? "";
-    const parsed = JSON.parse(text) as { kind: string; preview?: DryRunPreview };
-    expect(parsed.kind).toBe("preview");
+    const parsed = JSON.parse(text) as { ok: boolean; dryRun: boolean; preview?: DryRunPreview };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.dryRun).toBe(true);
     expect(parsed.preview?.operationName).toBe("UPDATE_BASIC_INFO");
     expect(parsed.preview?.headers["authorization"]).toBe("Token token=<redacted>");
     expect(parsed.preview?.variables).toEqual(PREVIEW_FIXTURE.variables);
   });
 
-  it("forwards `dryRun: false` (the default when omitted) and returns the apply outcome verbatim", async () => {
+  it("forwards `dryRun: false` (the default when omitted) and emits the apply payload directly (no `kind` wrapper)", async () => {
     const ctx = buildTokenSuccessCtx();
     registerProfileBasicUpdateTool(server, ctx);
     MOCKED_SET.mockResolvedValueOnce({ kind: "applied", result: APPLIED_FIXTURE });
@@ -179,11 +185,13 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(MOCKED_SET).toHaveBeenCalledTimes(1);
     expect(MOCKED_SET.mock.calls[0]?.[2]).toEqual({ dryRun: false });
 
+    // Apply path returns `outcome.result` directly — the pre-#165
+    // `{ kind: "applied", result }` wrapper is dropped (breaking change
+    // documented on the tool's JSDoc).
     const text = result.content[0]?.text ?? "";
-    const parsed = JSON.parse(text) as { kind: string; result?: profile.basic.UpdateProfileResult };
-    expect(parsed.kind).toBe("applied");
-    expect(parsed.result?.profile.id).toBe("p1");
-    expect(parsed.result?.profile.about).toBe("test bio");
+    const parsed = JSON.parse(text) as profile.basic.UpdateProfileResult;
+    expect(parsed.profile.id).toBe("p1");
+    expect(parsed.profile.about).toBe("test bio");
   });
 
   it("forwards explicit `dryRun: false` the same way as omitted", async () => {

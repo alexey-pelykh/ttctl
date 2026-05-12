@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_reviews_approve_section";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Useful for inspecting destructive approval shape before firing. Default: false.",
+  );
 
 /**
  * Register the `ttctl_profile_reviews_approve_section` MCP tool. Mirrors
@@ -49,11 +58,23 @@ export function registerProfileReviewsApproveSectionTool(server: McpServer, ctx:
           .string()
           .min(1)
           .describe("ReviewSection enum value as a string (e.g. EDUCATION, EMPLOYMENT, SKILLS)."),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "ApproveSectionReview",
+            "talent-profile",
+            { input: { reviewId: input.reviewId, section: input.section } },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const result = await profile.reviews.approveSection(auth.token, {

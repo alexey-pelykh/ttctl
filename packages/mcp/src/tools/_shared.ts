@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, resolveConfig } from "@ttctl/core";
+import { ConfigError, TtctlError, buildDryRunPreview, resolveConfig } from "@ttctl/core";
+import type { DryRunPreview, ToptalSurface } from "@ttctl/core";
 
 import type { AuthResult } from "../auth.js";
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
@@ -62,6 +63,79 @@ export function jsonResponse(payload: unknown): ToolSuccessResponse {
  */
 export function textResponse(text: string): ToolSuccessResponse {
   return { content: [{ type: "text", text }] };
+}
+
+/**
+ * Uniform MCP dry-run response envelope (issue #165). Every tool's
+ * `dryRun: true` branch renders through this so MCP clients can treat
+ * `dryRun` as a universal "preview" affordance without per-tool envelope
+ * knowledge. The shape is `{ ok: true, dryRun: true, preview }` where
+ * `preview` is the canonical {@link DryRunPreview} carrying surface,
+ * transport, endpoint, operationName, variables, and (bearer-redacted)
+ * headers. The same envelope is emitted whether the preview was
+ * constructed at the MCP layer (via {@link buildMcpDryRunPreview}) or
+ * received from a core service whose `dryRun` option is supported
+ * (`profile.basic.set`, `jobs.*`, `engagements.breaks.*`,
+ * `availability.*Set`).
+ */
+export function dryRunResponse(preview: DryRunPreview): ToolSuccessResponse {
+  return jsonResponse({ ok: true, dryRun: true, preview });
+}
+
+/**
+ * Sibling envelope for multi-mutation tools (issue #165). Some tools fire
+ * MORE than one wire operation per invocation — `profile.skills.update`
+ * fires one mutation per supplied field (rating, experience, publicity).
+ * Single-preview envelope would lie: a caller previewing
+ * `update({id, rating, experience})` with the singular envelope would see
+ * one mutation while the apply path would actually fire two.
+ *
+ * The plural form preserves honesty without diverging from the dry-run
+ * contract: same `{ ok: true, dryRun: true, ... }` shape, but the `preview`
+ * key is replaced by `previews` (array). Tools using this helper MUST
+ * document the plural form on the tool description so MCP clients can
+ * branch on shape. The cross-cutting dry-run smoke test (#165 AC)
+ * accepts EITHER `preview` (single) OR `previews` (array).
+ */
+export function dryRunMultiResponse(previews: DryRunPreview[]): ToolSuccessResponse {
+  return jsonResponse({ ok: true, dryRun: true, previews });
+}
+
+/**
+ * Build a {@link DryRunPreview} at the MCP layer for tools whose core
+ * service does NOT carry its own `dryRun` option — i.e. read-only tools
+ * across every group and the profile sub-domains beyond `profile.basic`
+ * (`skills`, `industries`, `education`, `certifications`, `employment`,
+ * `portfolio`, `visas`, `resume`, `external`, `reviews`). The MCP tool
+ * supplies the operation's metadata + would-be variables; the helper
+ * constructs the preview via the public {@link buildDryRunPreview}
+ * primitive without invoking any transport (read or write).
+ *
+ * For mutating tools whose core supports `dryRun` (the four exceptions
+ * listed above), prefer passing `{ dryRun: true }` through to the core
+ * call and branching on the returned `{ kind: "preview", preview }`
+ * outcome — that path reuses the canonical variable-construction
+ * (including placeholder substitution for fields like `profileId` that
+ * would otherwise be resolved via a sibling read) and avoids drift
+ * between MCP-built variables and what core would actually send.
+ *
+ * The `token` is forwarded as `authToken` on the synthesised
+ * {@link TransportRequest} so {@link buildDryRunPreview} sets the
+ * `authorization` header to {@link DRY_RUN_REDACTED_AUTHORIZATION}
+ * (i.e. `Token token=<redacted>`) without ever placing the live bearer
+ * in the preview payload.
+ */
+export function buildMcpDryRunPreview(
+  operationName: string,
+  surface: ToptalSurface,
+  variables: Record<string, unknown>,
+  token: string,
+): DryRunPreview {
+  return buildDryRunPreview({
+    surface,
+    body: { operationName, variables },
+    authToken: token,
+  });
 }
 
 /**

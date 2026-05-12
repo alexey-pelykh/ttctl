@@ -3,10 +3,13 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { profile } from "@ttctl/core";
+import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -14,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_recommendations";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the `ttctl_profile_external_recommendations` MCP tool. Mirrors
@@ -39,11 +49,22 @@ export function registerProfileExternalRecommendationsTool(server: McpServer, ct
         '  - "What\'s next on my profile checklist?"',
         '  - "Show me the recommendations for my profile."',
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "getProfileRecommendations",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const result = await profile.external.recommendations(auth.token);

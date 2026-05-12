@@ -5,8 +5,15 @@ import { profile } from "@ttctl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
 import { jsonSuccess, presentToolError, textSuccess } from "./shared.js";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the five `profile.industries.*` MCP tools on `server`.
@@ -19,6 +26,12 @@ import { jsonSuccess, presentToolError, textSuccess } from "./shared.js";
  *   - ttctl_profile_industries_autocomplete  (catalog lookup, distinct
  *     from add — the autocomplete leaf returns suggestions from the
  *     known-industry database; add does NOT consult the catalog)
+ *
+ * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`.
+ * When `dryRun: true`, returns `{ ok: true, dryRun: true, preview }` via
+ * MCP-layer preview building. `profileId` carries
+ * `DRY_RUN_PROFILE_ID_PLACEHOLDER` where the apply path resolves it via
+ * a sibling profile read (`extractProfileId`).
  */
 export function registerIndustriesTools(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -31,6 +44,7 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
         name: z.string().min(1).describe("industry name (mapped to title)"),
         connection: z.string().optional().describe("connection / role within the industry"),
         about: z.string().optional().describe("longer-form description"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -40,6 +54,17 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
       const fields: profile.industries.IndustryProfileFields = { title: input.name };
       if (input.connection !== undefined) fields.domainArea = input.connection;
       if (input.about !== undefined) fields.about = input.about;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "CreateIndustryProfile",
+            "talent-profile",
+            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, industryProfile: fields } },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const created = await profile.industries.add(auth.token, fields);
@@ -60,6 +85,7 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
         name: z.string().optional(),
         connection: z.string().optional(),
         about: z.string().optional(),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -70,6 +96,17 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
       if (input.name !== undefined) fields.title = input.name;
       if (input.connection !== undefined) fields.domainArea = input.connection;
       if (input.about !== undefined) fields.about = input.about;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "UpdateIndustryProfile",
+            "talent-profile",
+            { input: { industryProfileId: input.id, industryProfile: fields } },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const updated = await profile.industries.update(auth.token, input.id, fields);
@@ -85,11 +122,24 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
     {
       title: "Remove industry-profile entry",
       description: "Remove an industry-profile entry by id.",
-      inputSchema: { id: z.string().min(1).describe("industry profile id") },
+      inputSchema: {
+        id: z.string().min(1).describe("industry profile id"),
+        dryRun: DRY_RUN_FIELD,
+      },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.industries.remove");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "RemoveIndustryProfile",
+            "talent-profile",
+            { input: { industryProfileId: input.id } },
+            auth.token,
+          ),
+        );
+      }
       try {
         const id = await profile.industries.remove(auth.token, input.id);
         return textSuccess(`Industry ${id} removed.`);
@@ -104,11 +154,21 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
     {
       title: "List industry-profile entries",
       description: "List the user's industry-profile entries (returns an array of rows as JSON).",
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.industries.list");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "ListIndustryProfiles",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
       try {
         const rows = await profile.industries.list(auth.token);
         return jsonSuccess(rows);
@@ -131,11 +191,19 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
           .array(z.string())
           .optional()
           .describe("exclude these industry IDs from the result (e.g. industries already on the profile)"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.industries.autocomplete");
       if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        const variables: Record<string, unknown> = { search: input.query, limit: input.limit };
+        if (input.withoutIds !== undefined) variables["withoutIds"] = input.withoutIds;
+        return dryRunResponse(
+          buildMcpDryRunPreview("GET_INDUSTRIES_FOR_AUTOCOMPLETE", "talent-profile", variables, auth.token),
+        );
+      }
       try {
         const opts: { limit: number; withoutIds?: string[] } = { limit: input.limit };
         if (input.withoutIds !== undefined) opts.withoutIds = input.withoutIds;

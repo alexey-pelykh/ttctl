@@ -3,10 +3,13 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { profile } from "@ttctl/core";
+import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,11 +18,24 @@ import {
 
 const TOOL_NAME = "ttctl_profile_skills_list";
 
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
+
 /**
  * Register `ttctl_profile_skills_list`. Returns every skill on the
  * signed-in user's profile, with rating / experience / visibility /
  * connection-count summary. Resolves the user's `profileId` internally
  * via `profile.basic.show()` — no input required from the caller.
+ *
+ * Dry-run path (issue #165): accepts `dryRun?: boolean`; emits the
+ * uniform envelope previewing
+ * `getSkillSetsWithConnectionsWithConnectionsCount` against the
+ * talent-profile surface. `profileId` carries the placeholder because
+ * the apply path resolves it via a sibling profile read.
  */
 export function registerProfileSkillsListTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -33,11 +49,22 @@ export function registerProfileSkillsListTool(server: McpServer, ctx: ToolRegist
         '  - "What skills do I have on my Toptal profile?"',
         '  - "List my Toptal skills with their ratings."',
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: { dryRun: DRY_RUN_FIELD },
     },
-    async () => {
+    async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "getSkillSetsWithConnectionsWithConnectionsCount",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const profilePayload = await profile.basic.show(auth.token);

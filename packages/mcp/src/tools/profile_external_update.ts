@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_external_update";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 /**
  * Register the `ttctl_profile_external_update` MCP tool. Mirrors the
@@ -46,6 +55,7 @@ export function registerProfileExternalUpdateTool(server: McpServer, ctx: ToolRe
         twitter: z.url().optional().describe("Twitter / X profile URL"),
         behance: z.url().optional().describe("Behance profile URL"),
         dribbble: z.url().optional().describe("Dribbble profile URL"),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
@@ -59,6 +69,19 @@ export function registerProfileExternalUpdateTool(server: McpServer, ctx: ToolRe
       if (input.twitter !== undefined) changes.twitter = input.twitter;
       if (input.behance !== undefined) changes.behance = input.behance;
       if (input.dribbble !== undefined) changes.dribbble = input.dribbble;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "UpdateExternalProfiles",
+            "talent-profile",
+            {
+              input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, externalProfiles: changes },
+            },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const result = await profile.external.update(auth.token, changes);

@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import {
+  buildMcpDryRunPreview,
   domainErrorResponse,
+  dryRunResponse,
   genericErrorResponse,
   isToolErrorResponse,
   jsonResponse,
@@ -15,6 +17,13 @@ import {
 } from "./_shared.js";
 
 const TOOL_NAME = "ttctl_profile_skills_add";
+
+const DRY_RUN_FIELD = z
+  .boolean()
+  .optional()
+  .describe(
+    "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` with operationName + variables + redacted bearer header. Default: false.",
+  );
 
 export function registerProfileSkillsAddTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -36,11 +45,23 @@ export function registerProfileSkillsAddTool(server: McpServer, ctx: ToolRegistr
           .describe(
             'Skill catalog name to add. The server resolves the name to a Skill id; if the name is ambiguous (e.g., "Postgres" vs "PostgreSQL"), use `ttctl_profile_skills_autocomplete` first to disambiguate.',
           ),
+        dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "ADD_PROFILE_SKILL_SET",
+            "talent-profile",
+            { input: { name: input.name.trim() } },
+            auth.token,
+          ),
+        );
+      }
 
       try {
         const result = await profile.skills.add(auth.token, input.name);
