@@ -20,9 +20,13 @@ import { handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
  * (one of the five `JobActivityItemStatusGroupEnum` values, repeatable
  * — server-side AND across instances).
  *
- * **Pagination & date filters not exposed in v1** — see #15 § Open
- * Questions (RESOLVED) in `.tmp/workitem-15.md`. The captured operation
- * accepts neither.
+ * **Pagination & date filters not exposed** — the captured
+ * `JobActivityItems` operation accepts neither. Per #138 the global
+ * `--page` / `--per-page` flags are REFUSED on this leaf (it is NOT
+ * `markPaginated()`-tagged); users who pass either flag see a
+ * non-zero-exit error from the preAction hook. Date filters remain
+ * out of scope per #15 § Open Questions (RESOLVED) in
+ * `.tmp/workitem-15.md`.
  */
 export interface ApplicationsListOptions {
   keywords?: string[];

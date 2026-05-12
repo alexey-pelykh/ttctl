@@ -127,3 +127,53 @@ export function formatFlags(state: {
   if (state.viewed === true) parts.push("V");
   return parts.join("");
 }
+
+/**
+ * Render the pretty-format pagination footer "Page X of Y (per_page=Z)"
+ * appended below the table for paginated list outputs (#138). The
+ * footer is appended ONLY when the server returned `totalCount > 0` —
+ * empty pages route through the existing empty-state CTA wrapper
+ * BEFORE per-format dispatch, so this helper never fires on
+ * `items.length === 0`.
+ *
+ * `totalPages` is derived as `Math.max(1, Math.ceil(totalCount /
+ * perPage))` so a single-page result with `totalCount > 0` renders
+ * "Page 1 of 1". When `currentPage > totalPages` (user overshot — the
+ * server returned an empty entities array on a non-existent page), the
+ * caller's `items.length === 0` triggers empty-state before we reach
+ * here; no special handling needed.
+ *
+ * Pure — directly unit-testable.
+ */
+export function formatPageFooter(currentPage: number, perPage: number, totalCount: number): string {
+  const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+  return `Page ${currentPage.toString()} of ${totalPages.toString()} (per_page=${perPage.toString()})`;
+}
+
+/**
+ * Build the offset-style `pageInfo` block for the list envelope (#138)
+ * from the service-layer's {@link jobs.JobListPage}. Wraps the
+ * arithmetic for `totalPages` and `hasNextPage` derivation so the
+ * action handler and the unit tests share one source of truth.
+ *
+ * - `currentPage`, `perPage`: passed through verbatim (the service
+ *   returns the values actually used in the query).
+ * - `totalPages`: `Math.max(1, Math.ceil(totalCount / perPage))`.
+ * - `hasNextPage`: `currentPage < totalPages`.
+ *
+ * Pure — directly unit-testable.
+ */
+export function buildJobsPageInfo(page: jobs.JobListPage): {
+  currentPage: number;
+  perPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+} {
+  const totalPages = Math.max(1, Math.ceil(page.totalCount / page.perPage));
+  return {
+    currentPage: page.page,
+    perPage: page.perPage,
+    totalPages,
+    hasNextPage: page.page < totalPages,
+  };
+}

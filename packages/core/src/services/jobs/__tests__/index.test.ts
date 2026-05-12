@@ -123,7 +123,7 @@ beforeEach(() => {
 });
 
 describe("jobs.list", () => {
-  it("returns the projected entities", async () => {
+  it("returns the projected entities in a JobListPage", async () => {
     reply({
       body: {
         data: {
@@ -131,14 +131,17 @@ describe("jobs.list", () => {
         },
       },
     });
-    const items = await list(TOKEN);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
+    const page = await list(TOKEN);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
       id: "job-1",
       title: "Senior React Engineer",
       saved: false,
       notInterested: false,
     });
+    expect(page.totalCount).toBe(1);
+    expect(page.page).toBe(1);
+    expect(page.perPage).toBe(20);
   });
 
   it("passes filter variables through to the wire", async () => {
@@ -157,37 +160,80 @@ describe("jobs.list", () => {
     }
   });
 
-  it("returns [] when eligibleJobs is null", async () => {
+  it("returns empty JobListPage when eligibleJobs is null", async () => {
     reply({ body: { data: { viewer: { id: "v1", eligibleJobs: null } } } });
-    const items = await list(TOKEN);
-    expect(items).toEqual([]);
+    const page = await list(TOKEN);
+    expect(page).toEqual({ items: [], totalCount: 0, page: 1, perPage: 20 });
+  });
+
+  // ----- Pagination (issue #138) ------------------------------------
+
+  it("no pagination opts: wire receives page=1, pageSize=20 (wire is 1-indexed)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [], totalCount: 0 } } } },
+    });
+    await list(TOKEN);
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(1);
+    expect(body.variables["pageSize"]).toBe(20);
+  });
+
+  it("page=2 threads to wire page=2 (wire is 1-indexed; no translation needed)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [JOB_LIST_ENTITY], totalCount: 50 } } } },
+    });
+    const page = await list(TOKEN, { page: 2, perPage: 10 });
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(2);
+    expect(body.variables["pageSize"]).toBe(10);
+    expect(page.page).toBe(2);
+    expect(page.perPage).toBe(10);
+    expect(page.totalCount).toBe(50);
+  });
+
+  it("perPage=5 with no page: page defaults to 1 (wire 1), perPage threads", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [], totalCount: 0 } } } },
+    });
+    const page = await list(TOKEN, { perPage: 5 });
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(1);
+    expect(body.variables["pageSize"]).toBe(5);
+    expect(page.page).toBe(1);
+    expect(page.perPage).toBe(5);
   });
 });
 
 describe("jobs.saved / notInterestedList", () => {
-  it("saved() sets filter.saved = {eq: true}", async () => {
+  it("saved() sets filter.saved = {eq: true} and threads pagination", async () => {
     reply({
       body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [JOB_LIST_ENTITY], totalCount: 1 } } } },
     });
-    await saved(TOKEN);
+    const page = await saved(TOKEN, { page: 2, perPage: 5 });
     const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
     expect(body.variables["saved"]).toEqual({ eq: true });
     expect(body.variables["notInterested"]).toBeNull();
+    expect(body.variables["page"]).toBe(2);
+    expect(body.variables["pageSize"]).toBe(5);
+    expect(page.page).toBe(2);
+    expect(page.perPage).toBe(5);
   });
 
   it("notInterestedList() sets filter.notInterested = {eq: true}", async () => {
     reply({
       body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [], totalCount: 0 } } } },
     });
-    await notInterestedList(TOKEN);
+    const page = await notInterestedList(TOKEN);
     const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
     expect(body.variables["notInterested"]).toEqual({ eq: true });
     expect(body.variables["saved"]).toBeNull();
+    expect(page.items).toEqual([]);
+    expect(page.totalCount).toBe(0);
   });
 });
 
 describe("jobs.viewedList", () => {
-  it("client-side filters on viewed=true", async () => {
+  it("client-side filters on viewed=true; pagination metadata reflects underlying fetch", async () => {
     const viewedEntity = { ...JOB_LIST_ENTITY, id: "job-2", viewed: true };
     reply({
       body: {
@@ -199,9 +245,23 @@ describe("jobs.viewedList", () => {
         },
       },
     });
-    const items = await viewedList(TOKEN);
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe("job-2");
+    const page = await viewedList(TOKEN);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.id).toBe("job-2");
+    // totalCount reflects the UNDERLYING fetch (pre-filter), not the post-filter count.
+    expect(page.totalCount).toBe(2);
+    expect(page.page).toBe(1);
+    expect(page.perPage).toBe(20);
+  });
+
+  it("threads --page / --per-page through to the underlying list() call", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [], totalCount: 0 } } } },
+    });
+    await viewedList(TOKEN, { page: 3, perPage: 7 });
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(3);
+    expect(body.variables["pageSize"]).toBe(7);
   });
 });
 

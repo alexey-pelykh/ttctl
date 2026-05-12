@@ -7,7 +7,14 @@ import type { jobs } from "@ttctl/core";
 
 import { formatInterestEntity } from "../interest.js";
 import { formatJobDetail } from "../show.js";
-import { formatDate, formatFlags, formatJobsTable, formatRate } from "../shared.js";
+import {
+  buildJobsPageInfo,
+  formatDate,
+  formatFlags,
+  formatJobsTable,
+  formatPageFooter,
+  formatRate,
+} from "../shared.js";
 
 const LIST_ITEM_FIXTURE: jobs.JobListItem = {
   id: "job-1",
@@ -117,6 +124,83 @@ describe("formatJobsTable", () => {
   it("renders untitled placeholder when title is null", () => {
     const output = formatJobsTable([{ ...LIST_ITEM_FIXTURE, title: null }], 100);
     expect(output).toContain("(untitled)");
+  });
+});
+
+// =======================================================================
+// formatPageFooter — pretty-mode pagination footer (issue #138)
+// =======================================================================
+
+describe("formatPageFooter", () => {
+  it('renders "Page X of Y (per_page=Z)" for a typical mid-list page', () => {
+    expect(formatPageFooter(2, 20, 100)).toBe("Page 2 of 5 (per_page=20)");
+  });
+
+  it("rounds totalPages UP via Math.ceil (partial last page)", () => {
+    // 47 / 20 = 2.35 → ceil → 3 pages
+    expect(formatPageFooter(1, 20, 47)).toBe("Page 1 of 3 (per_page=20)");
+  });
+
+  it("renders 'Page 1 of 1' for a single-page result (totalCount > 0)", () => {
+    expect(formatPageFooter(1, 20, 5)).toBe("Page 1 of 1 (per_page=20)");
+  });
+
+  it("floors totalPages to 1 when totalCount is 0 (defensive; caller routes via empty-state)", () => {
+    expect(formatPageFooter(1, 20, 0)).toBe("Page 1 of 1 (per_page=20)");
+  });
+});
+
+// =======================================================================
+// buildJobsPageInfo — envelope pageInfo derivation (issue #138)
+// =======================================================================
+
+describe("buildJobsPageInfo", () => {
+  it("derives currentPage/perPage/totalPages/hasNextPage from a JobListPage", () => {
+    const pageInfo = buildJobsPageInfo({
+      items: [],
+      totalCount: 100,
+      page: 2,
+      perPage: 20,
+    });
+    expect(pageInfo).toEqual({
+      currentPage: 2,
+      perPage: 20,
+      totalPages: 5,
+      hasNextPage: true,
+    });
+  });
+
+  it("hasNextPage=false on the last page", () => {
+    const pageInfo = buildJobsPageInfo({
+      items: [],
+      totalCount: 100,
+      page: 5,
+      perPage: 20,
+    });
+    expect(pageInfo.hasNextPage).toBe(false);
+    expect(pageInfo.totalPages).toBe(5);
+  });
+
+  it("hasNextPage=false when current page exceeds totalPages (user overshot)", () => {
+    const pageInfo = buildJobsPageInfo({
+      items: [],
+      totalCount: 100,
+      page: 10,
+      perPage: 20,
+    });
+    expect(pageInfo.hasNextPage).toBe(false);
+    expect(pageInfo.totalPages).toBe(5);
+  });
+
+  it("totalPages=1 when totalCount=0 (defensive minimum)", () => {
+    const pageInfo = buildJobsPageInfo({
+      items: [],
+      totalCount: 0,
+      page: 1,
+      perPage: 20,
+    });
+    expect(pageInfo.totalPages).toBe(1);
+    expect(pageInfo.hasNextPage).toBe(false);
   });
 });
 

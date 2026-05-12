@@ -232,7 +232,7 @@ describe("wrapListEnvelope", () => {
     expect(wrapped).toEqual({ version: "1.0", items: [] });
   });
 
-  it("does NOT include pageInfo by default (reserved for future)", () => {
+  it("does NOT include pageInfo when not supplied (commands whose wire op has no pagination)", () => {
     const wrapped = wrapListEnvelope([{ id: "1" }]);
     expect("pageInfo" in wrapped).toBe(false);
   });
@@ -240,6 +240,49 @@ describe("wrapListEnvelope", () => {
   it("emits version BEFORE items in iteration order (AC: version is first key)", () => {
     const wrapped = wrapListEnvelope([{ id: "1" }]);
     expect(Object.keys(wrapped)).toEqual(["version", "items"]);
+  });
+
+  // ------------------------------------------------------------------
+  // #138 — offset-style pageInfo overload
+  // ------------------------------------------------------------------
+
+  it("includes offset-style pageInfo when supplied (issue #138)", () => {
+    const wrapped = wrapListEnvelope([{ id: "1" }], {
+      currentPage: 2,
+      perPage: 5,
+      totalPages: 7,
+      hasNextPage: true,
+    });
+    expect(wrapped).toEqual({
+      version: "1.0",
+      items: [{ id: "1" }],
+      pageInfo: { currentPage: 2, perPage: 5, totalPages: 7, hasNextPage: true },
+    });
+  });
+
+  it("emits pageInfo AFTER items in iteration order (predictable JSON shape)", () => {
+    const wrapped = wrapListEnvelope([{ id: "1" }], { currentPage: 1, perPage: 20 });
+    expect(Object.keys(wrapped)).toEqual(["version", "items", "pageInfo"]);
+  });
+
+  it("preserves partial pageInfo (e.g. totalPages omitted) without padding undefined", () => {
+    const wrapped = wrapListEnvelope([{ id: "1" }], { currentPage: 1, perPage: 20 });
+    expect(wrapped.pageInfo).toEqual({ currentPage: 1, perPage: 20 });
+    expect("totalPages" in (wrapped.pageInfo ?? {})).toBe(false);
+    expect("hasNextPage" in (wrapped.pageInfo ?? {})).toBe(false);
+  });
+
+  it("does NOT add pageInfo when undefined is passed explicitly (exactOptionalPropertyTypes)", () => {
+    const wrapped = wrapListEnvelope([{ id: "1" }], undefined);
+    expect("pageInfo" in wrapped).toBe(false);
+  });
+
+  it("post-#138 reshape: pageInfo no longer carries the legacy endCursor field", () => {
+    // The pre-#138 reservation was cursor-style ({hasNextPage?, endCursor?}).
+    // Post-#138 the shape is offset-style; endCursor is dropped because
+    // no consumer ever read it (reservation was never populated in v0.4).
+    const wrapped = wrapListEnvelope([{ id: "1" }], { currentPage: 1, perPage: 20, hasNextPage: false });
+    expect("endCursor" in (wrapped.pageInfo ?? {})).toBe(false);
   });
 });
 

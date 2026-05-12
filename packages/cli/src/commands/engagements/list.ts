@@ -17,8 +17,13 @@ import { handleEngagementsError, loadAuthTokenOrExit } from "./shared.js";
  * Filters: `--status active|past|all` (default `active`) and
  * `--keywords` (free-text, repeatable; passed through to the gateway).
  *
- * **Pagination not exposed in v1** — captured operation has no
- * pagination args. Will land via #138.
+ * **Pagination not supported** — the captured `JobActivityItems`
+ * operation has no `page` / `pageSize` args. Per #138 the global
+ * `--page` / `--per-page` flags are REFUSED on this leaf (the
+ * `engagements list` leaf is NOT marked via `markPaginated()`); users
+ * who pass either flag see a non-zero-exit error from the preAction
+ * hook. If the wire ever gains pagination args, mark the leaf and
+ * extend `engagements.list()` to accept `{page?, perPage?}`.
  */
 export interface EngagementsListOptions {
   status?: engagements.EngagementListStatus;

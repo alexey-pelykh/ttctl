@@ -296,4 +296,134 @@ describe("jobs (live mobile-gateway)", () => {
       expect(result.stderr).not.toContain("no-op for read commands");
     },
   );
+
+  // -------------------------------------------------------------------
+  // Pagination E2E coverage (issue #138)
+  //
+  // Mandatory per CLAUDE.md § Schema/contract validation rule — the
+  // pre-#138 `JOBS_LIST_QUERY` operation hardcoded `page: 0, pageSize:
+  // 20`; this PR converts to `$page: Int!, $pageSize: Int!` variables.
+  // The new wire-shape claim ("eligibleJobs accepts these as
+  // variables") needs live verification. Unit tests with mocks confirm
+  // the variable-substitution AT OUR SIDE only.
+  //
+  // Two assertions:
+  //   1. Different pages return DIFFERENT entities — proves the server
+  //      honored the `page` variable rather than ignoring it and
+  //      returning a single fixed slice.
+  //   2. `--per-page 5` limits the result set to ≤ 5 items AND the
+  //      `pageInfo.perPage` envelope field reflects the request.
+  //
+  // Skip conditions: test account has < 6 eligible jobs (insufficient
+  // to fill 2 pages of size 5) — the test prints a stderr warning and
+  // returns.
+  // -------------------------------------------------------------------
+
+  interface ListEnvelope {
+    version?: string;
+    items?: Array<{ id?: string }>;
+    pageInfo?: {
+      currentPage?: number;
+      perPage?: number;
+      totalPages?: number;
+      hasNextPage?: boolean;
+    };
+  }
+
+  it.skipIf(!e2eEnabled)("jobs list --per-page 5 surfaces offset-style pageInfo and limits items (#138)", async () => {
+    const result = await cli.run(["--page", "1", "--per-page", "5", "jobs", "list", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as ListEnvelope;
+    expect(payload.version).toBe("1.0");
+    expect(Array.isArray(payload.items)).toBe(true);
+
+    // Server may return fewer than --per-page items if the test
+    // account has < 5 eligible jobs total. In either case items must
+    // not exceed perPage.
+    if (Array.isArray(payload.items)) {
+      expect(payload.items.length).toBeLessThanOrEqual(5);
+    }
+
+    // pageInfo MUST be present when --page/--per-page were passed —
+    // even if the result set is empty, the envelope reflects the
+    // request.
+    expect(payload.pageInfo).toBeDefined();
+    expect(payload.pageInfo?.currentPage).toBe(1);
+    expect(payload.pageInfo?.perPage).toBe(5);
+    // totalPages and hasNextPage derived from totalCount; both
+    // present as the server always returns totalCount.
+    expect(typeof payload.pageInfo?.totalPages).toBe("number");
+    expect(typeof payload.pageInfo?.hasNextPage).toBe("boolean");
+  });
+
+  it.skipIf(!e2eEnabled)(
+    "jobs list with --page 1 vs --page 2 returns DIFFERENT entities (server honors page variable; #138)",
+    async () => {
+      // Use the default sort; eligibleJobs' default surface is stable
+      // enough across consecutive paged fetches for the "at least one
+      // different" assertion below. (--sort posted_at also works but
+      // adds no value here.)
+      const sharedArgs = ["--per-page", "5", "jobs", "list", "-o", "json"];
+      const page1Result = await cli.run(["--page", "1", ...sharedArgs]);
+      expect(page1Result.exitCode).toBe(0);
+      const page1 = JSON.parse(page1Result.stdout) as ListEnvelope;
+
+      // Need ≥ 6 jobs to fill 2 pages of size 5 with distinguishable
+      // content. If there's only one page worth of data, the test
+      // can't prove pagination — skip with a stderr warning.
+      if (!page1.pageInfo?.hasNextPage) {
+        process.stderr.write(
+          `warning: test account has only one page of eligible jobs (totalCount fits in one --per-page=5 slice); pagination diff assertion skipped\n`,
+        );
+        return;
+      }
+
+      const page2Result = await cli.run(["--page", "2", ...sharedArgs]);
+      expect(page2Result.exitCode).toBe(0);
+      const page2 = JSON.parse(page2Result.stdout) as ListEnvelope;
+      expect(page2.pageInfo?.currentPage).toBe(2);
+
+      const page1Ids = new Set(
+        (page1.items ?? []).map((j) => j.id).filter((id): id is string => typeof id === "string"),
+      );
+      const page2Ids = new Set(
+        (page2.items ?? []).map((j) => j.id).filter((id): id is string => typeof id === "string"),
+      );
+      expect(page1Ids.size).toBeGreaterThan(0);
+      expect(page2Ids.size).toBeGreaterThan(0);
+      // At least one id on page 2 must NOT be on page 1 — proves the
+      // server honored the page variable and returned a different
+      // slice. We don't require strict partitioning (zero overlap)
+      // because eligibleJobs' sort surfaces can still have ties even
+      // under a stable sortTarget, and the same id can occasionally
+      // appear on adjacent pages near the partition boundary. The
+      // contract we're proving is "navigation", not "strict
+      // partition".
+      const distinct = [...page2Ids].filter((id) => !page1Ids.has(id));
+      expect(distinct.length).toBeGreaterThan(0);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)("jobs list pretty footer renders 'Page X of Y' when paginated (#138)", async () => {
+    const result = await cli.run(["--page", "1", "--per-page", "5", "jobs", "list"]);
+    expect(result.exitCode).toBe(0);
+    // Pretty output: the table is followed by the footer line.
+    // When items is empty (no eligible jobs), the empty-state CTA
+    // wrapper fires before the footer renderer — skip the assertion
+    // in that case.
+    if (result.stdout.includes("No jobs") || result.stdout.includes("(no")) {
+      process.stderr.write("warning: test account has no eligible jobs; pretty-footer assertion skipped\n");
+      return;
+    }
+    expect(result.stdout).toMatch(/Page 1 of \d+ \(per_page=5\)/);
+  });
+
+  it.skipIf(!e2eEnabled)(
+    "--page on a non-paginated leaf (`applications list`) refuses with exit 1 (#138)",
+    async () => {
+      const result = await cli.run(["--page", "1", "applications", "list"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("--page / --per-page not supported by 'applications list'");
+    },
+  );
 });

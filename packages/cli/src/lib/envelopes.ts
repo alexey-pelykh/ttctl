@@ -74,15 +74,43 @@ export interface EnvelopeError {
 }
 
 /**
- * Reserved cursor-pagination metadata block (#128 reserves the shape;
- * actual server-side pagination is post-epic work). The fields are
- * deliberately optional so the v0.4 helper can omit `pageInfo`
- * entirely; consumers that branch on its presence keep working when
- * pagination ships.
+ * Offset-style pagination metadata block for the top-level list
+ * envelope. Activated by #138 (the wiring issue for the reservation
+ * #128 introduced).
+ *
+ * Shape decision (#138 user decision 2026-05-12): the CLI's
+ * `--page` / `--per-page` flags are 1-indexed offset-style; the wire
+ * across Toptal surfaces is heterogeneous (page-based
+ * `eligibleJobs(page, pageSize)`, offset wrapped
+ * `gigs(pagination: {limit, offset})`, cursor
+ * `payments(pagination: {limit, after})`), but the user-facing
+ * envelope normalises to offset-style metadata for predictable
+ * scripting.
+ *
+ * All fields are optional so commands whose wire ops report only a
+ * subset (e.g., a cursor-style backend that doesn't expose
+ * `totalCount`) can populate the fields they have without padding the
+ * rest. A list response with `pageInfo` omitted entirely signals "no
+ * pagination metadata available" (e.g., a wire op that returns all
+ * entities in one go).
+ *
+ * Pre-#138 the reservation was cursor-style (`{hasNextPage?,
+ * endCursor?}`) — never populated in v0.4. The reshape is
+ * forward-evolution under `ENVELOPE_VERSION = "1.0"` (pre-1.0 the
+ * envelope explicitly signals "expect breaking changes").
  */
 export interface EnvelopePageInfo {
+  /** 1-indexed page number the server returned. */
+  currentPage?: number;
+  /** Items per page the server actually applied. May differ from the
+   * client request when the server enforces a cap. */
+  perPage?: number;
+  /** Total pages, derived from `totalCount / perPage` (rounded up).
+   * Omitted when the server doesn't expose `totalCount`. */
+  totalPages?: number;
+  /** True when at least one more page is available after the current
+   * page; false when the current page is the last (or the only) one. */
   hasNextPage?: boolean;
-  endCursor?: string;
 }
 
 /**
@@ -140,8 +168,10 @@ export interface ErrorEnvelope {
 
 /**
  * Top-level list envelope for `list` verbs. The `items` field carries
- * the array; `pageInfo?` is reserved for cursor pagination wiring (not
- * implemented in v0.4 — see `EnvelopePageInfo`).
+ * the array; `pageInfo?` carries offset-style pagination metadata when
+ * the underlying wire op supplied any (activated in #138). Commands
+ * whose wire op has no pagination args still emit `{version, items}`
+ * with no `pageInfo` field.
  */
 export interface ListEnvelope<T> {
   version: typeof ENVELOPE_VERSION;
@@ -150,12 +180,17 @@ export interface ListEnvelope<T> {
 }
 
 /**
- * Wrap an array as the v0.4 list envelope (`{version, items}`). The
- * `version` field is required (locked at `"1.0"` for v0.4) so wire
- * consumers can branch on the envelope shape uniformly across
- * success / error / list payloads. `pageInfo` is intentionally
- * omitted by default and reserved for a future cursor pagination
- * ABI.
+ * Wrap an array as the v0.4+ list envelope (`{version, items,
+ * pageInfo?}`). The `version` field is required (locked at `"1.0"`)
+ * so wire consumers can branch on the envelope shape uniformly across
+ * success / error / list payloads.
+ *
+ * When `pageInfo` is supplied (by a paginated command's action
+ * handler after threading `--page` / `--per-page` through to the
+ * service layer), it's included verbatim. When omitted (by a list
+ * command whose wire op has no pagination args, OR when the user
+ * passes no flags and the server returns no metadata), the envelope
+ * surfaces `{version, items}` only.
  *
  * The empty-state wrapper from #122 (`isEmptyCollection` in
  * `lib/empty-state-cta.ts`) detects both raw `[]` AND `{items: []}` —
@@ -164,8 +199,10 @@ export interface ListEnvelope<T> {
  *
  * Pure — no I/O.
  */
-export function wrapListEnvelope<T>(items: T[]): ListEnvelope<T> {
-  return { version: ENVELOPE_VERSION, items };
+export function wrapListEnvelope<T>(items: T[], pageInfo?: EnvelopePageInfo): ListEnvelope<T> {
+  const env: ListEnvelope<T> = { version: ENVELOPE_VERSION, items };
+  if (pageInfo !== undefined) env.pageInfo = pageInfo;
+  return env;
 }
 
 /**
