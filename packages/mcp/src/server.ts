@@ -7,21 +7,40 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { resolveConfig } from "@ttctl/core";
 
 import { createToolAuthResolver } from "./auth.js";
+import {
+  type McpDiagnosticLogger,
+  setMcpDiagnosticLogger,
+  wrapToolHandler,
+} from "./diagnostic.js";
 import { createTokenLoader } from "./tools/_shared.js";
 import { createTokenResolver } from "./tools/profile/shared.js";
 import { registerAllTools } from "./tools/index.js";
 
 /**
- * Options accepted by `buildServer` and `runMcpStdio`. The single knob
- * here is `configPath` — the explicit config-file path captured by the
- * CLI's `--config <path>` flag (or any future SSE/HTTP transport entry).
+ * Options accepted by `buildServer` and `runMcpStdio`.
  *
- * When `configPath` is undefined, `resolveConfig` falls through to the
- * `TTCTL_CONFIG_FILE` env var, then to `~/.ttctl.yaml` (the canonical
- * 3-step chain documented in CLAUDE.md § Config File Resolution).
+ * - `configPath` — explicit config-file path captured by the CLI's
+ *   `--config <path>` flag (or any future SSE/HTTP transport entry).
+ *   When undefined, `resolveConfig` falls through to the
+ *   `TTCTL_CONFIG_FILE` env var, then to `~/.ttctl.yaml` (the canonical
+ *   3-step chain documented in CLAUDE.md § Config File Resolution).
+ * - `logger` — optional MCP diagnostic logger override (issue #224).
+ *   When supplied to `runMcpStdio`, the logger is installed BEFORE
+ *   `buildServer` runs, so every tool-registration instrumentation +
+ *   every per-call emission routes through the injected logger.
+ *   Production callers omit this field; tests inject a capturing
+ *   logger to assert emission shape without manipulating
+ *   `process.env`. When `runMcpStdio` is called with no `logger`, the
+ *   module-default env-gated stderr emitter (`TTCTL_DEBUG_MCP=1`) is
+ *   used. `buildServer` itself does NOT install the logger — it
+ *   only consumes the currently-installed one when wrapping tool
+ *   handlers — so callers that bypass `runMcpStdio` (e.g. tests
+ *   building a server directly) must call
+ *   `setMcpDiagnosticLogger` themselves if they want custom emission.
  */
 export interface BuildServerOptions {
   configPath?: string;
+  logger?: McpDiagnosticLogger;
 }
 
 /**
@@ -47,6 +66,17 @@ export interface BuildServerOptions {
  * (e.g., parent shell re-exporting `TTCTL_CONFIG_FILE`) are intentionally
  * ignored — long-running MCP sessions need read/write symmetry.
  *
+ * Diagnostic instrumentation (#224): every tool registered through this
+ * server has its callback wrapped with `wrapToolHandler` so the active
+ * MCP diagnostic logger sees `mcp_tool_invoke_start` BEFORE the callback
+ * runs, `mcp_tool_invoke_end` AFTER it resolves (or throws), and
+ * `mcp_transport_error` when the throw is a transport-class error
+ * (`Cf403Error`, `Cf403PersistentError`, `SchedulerBearerExpired`). The
+ * wrap is applied transparently by monkey-patching `server.registerTool`
+ * BEFORE `registerAllTools` runs, so per-tool files (~30+ registrars)
+ * are not aware of the instrumentation — the wiring lives in this one
+ * place.
+ *
  * Fail-fast: any `ConfigError` thrown by the startup-time `resolveConfig`
  * (e.g., `NO_CREDS` when no candidate file exists) propagates verbatim —
  * the server does NOT start in a half-initialized state.
@@ -62,6 +92,41 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     name: "ttctl",
     version: "0.0.0",
   });
+
+  // Monkey-patch `server.registerTool` BEFORE `registerAllTools` runs so
+  // every per-tool registrar's callback is transparently wrapped with the
+  // diagnostic-instrumentation contract. The patch:
+  //   1. Captures `originalRegisterTool` bound to the McpServer instance
+  //      so the SDK's internal `_registeredTools` bookkeeping fires normally.
+  //   2. Replaces `server.registerTool` with a wrapper that passes through
+  //      name + config verbatim and wraps the callback with
+  //      `wrapToolHandler(name, cb)`. The wrapper's return is the same
+  //      `RegisteredTool` handle as the original — `.enable()` /
+  //      `.disable()` / `.update()` work unchanged on the registered tool.
+  //   3. Uses an `unknown` cast on the patch because `registerTool`'s
+  //      generic signature (with `ZodRawShapeCompat | AnySchema` + the
+  //      output schema variant) is hostile to a single typed override.
+  //      The wrapper preserves runtime behavior; type safety at the
+  //      callsites (each registrar) is unaffected.
+  // The signature of McpServer.registerTool is an overload set that
+  // resolves to `never` under `Parameters<...>`, so we type the patch
+  // as a permissive `(...args: unknown[]) => unknown` and lean on the
+  // outer cast to restore the McpServer's view. Runtime semantics are
+  // unchanged — name is always args[0]: string, config args[1]: object,
+  // cb args[2]: function — and the original registerTool reapplies the
+  // overload-correct type check on its side.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const originalRegisterTool = server.registerTool.bind(server) as (...args: any[]) => unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const patchedRegisterTool = (...args: any[]): unknown => {
+    const name = args[0] as string;
+    const config = args[1] as unknown;
+    const cb = args[2] as Parameters<typeof wrapToolHandler>[1];
+    const wrappedCb = wrapToolHandler(name, cb);
+    return originalRegisterTool(name, config, wrappedCb);
+  };
+  (server as unknown as { registerTool: typeof patchedRegisterTool }).registerTool = patchedRegisterTool;
+
   registerAllTools(server, {
     resolveToolAuth: createToolAuthResolver(capturedPath),
     loadTokenForTool: createTokenLoader(capturedPath),
@@ -79,8 +144,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
  * through here keeps the umbrella `ttctl mcp [--config <path>]` entry
  * surface as the single point of CLI-flag parsing, with no per-tool
  * config knowledge needed inside the server module.
+ *
+ * Diagnostic logger wiring (issue #224): when `opts.logger` is supplied,
+ * `setMcpDiagnosticLogger(opts.logger)` is called BEFORE `buildServer`
+ * so the tool-registration wrapping in `buildServer` already routes
+ * through the injected logger. When omitted, the module-scoped default
+ * (env-gated stderr emitter for `TTCTL_DEBUG_MCP=1`) remains active.
+ * Tests calling `runMcpStdio` with a fake logger thus get full
+ * tool-start / tool-end / transport-error visibility without needing
+ * to manipulate `process.env`.
  */
 export async function runMcpStdio(opts: BuildServerOptions = {}): Promise<void> {
+  if (opts.logger !== undefined) {
+    setMcpDiagnosticLogger(opts.logger);
+  }
   const server = buildServer(opts);
   const transport = new StdioServerTransport();
   await server.connect(transport);

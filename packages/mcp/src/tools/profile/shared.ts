@@ -4,6 +4,7 @@
 import { ConfigError, DateInputError, TtctlError, profile, resolveConfig } from "@ttctl/core";
 import { z } from "zod";
 
+import { emitMcpAuthResolve } from "../../diagnostic.js";
 import { ttctlErrorToToolResponse } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
 
@@ -136,6 +137,7 @@ export function createTokenResolver(configPath: string): CommandLabelTokenResolv
       token = config.auth.token;
     } catch (err) {
       if (err instanceof ConfigError) {
+        emitMcpAuthResolve(configPath, "config_error", false);
         return {
           error: {
             isError: true,
@@ -146,6 +148,7 @@ export function createTokenResolver(configPath: string): CommandLabelTokenResolv
       throw err;
     }
     if (token === undefined) {
+      emitMcpAuthResolve(configPath, "unauthenticated", false);
       return {
         error: {
           isError: true,
@@ -158,6 +161,7 @@ export function createTokenResolver(configPath: string): CommandLabelTokenResolv
         },
       };
     }
+    emitMcpAuthResolve(configPath, "ok", true);
     return Promise.resolve({ token });
   };
 }
