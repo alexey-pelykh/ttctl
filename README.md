@@ -29,11 +29,15 @@ Architectural friction in the codebase (sequential rate limits, single-credentia
 
 TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.io)) programmatic access to your own Toptal Talent profile:
 
-- **Profile** — view and update your talent profile, skills, availability, rates
-- **Timesheets** — list, view, and manage your timesheet entries
-- **Applications** — review your application history and status (no batch creation)
-- **Stats** — your earnings, utilization, ranking metrics
-- **Scheduler** — view your interview schedule
+- **Profile** — view and update your talent profile (basic info, skills, employment, education, certifications, industries, portfolio, visas, resume, external links, reviews, photo)
+- **Applications** — review your activity items (applications, availability requests, interviews, engagement signals); per-status-group counts via `applications stats`
+- **Engagements** — view current and past engagements; manage engagement breaks; per-status counts via `engagements stats`
+- **Jobs** — browse opportunities; manage saved / viewed / not-interested signals; configure search subscription
+- **Timesheets** — list, view, and submit timesheet billing cycles
+- **Availability** — view and update working hours and allocated weekly hours
+- **Contracts** — view talent-level contracts (Toptal Direct, MSA, etc.)
+- **Payments** — view payout history and payment methods; submit rate-change requests
+- **Auth** — bootstrap config, sign in, check status, sign out
 
 Surfaces are gated to read-heavy / personal use. Operations that would enable mass automation against the platform are deliberately not exposed.
 
