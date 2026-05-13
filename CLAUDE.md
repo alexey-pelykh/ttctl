@@ -554,12 +554,12 @@ keeps the path silent) emits one JSON object per line to **stderr** —
 the stdout data channel is owned by the MCP JSON-RPC protocol and is
 never touched. Four event types ship in v1:
 
-| Event                      | Fired                                              | Fields                                                                          |
-| -------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `mcp_tool_invoke_start`    | BEFORE each tool callback runs                     | `tool`, `args_redacted`                                                         |
-| `mcp_tool_invoke_end`      | AFTER each tool callback resolves OR throws        | `tool`, `duration_ms` (monotonic), `status: "ok" \| "error" \| "throw"`         |
-| `mcp_auth_resolve`         | On each auth-resolver invocation (per tool call)   | `mtime_ms` (config file mtime, or `null` on stat fail), `token_fresh`, `outcome: "ok" \| "unauthenticated" \| "config_error"` |
-| `mcp_transport_error`      | When a transport-class throw bubbles out of a tool | `tool`, `surface`, `error_class`, `status: number \| null`                      |
+| Event                   | Fired                                              | Fields                                                                                                                        |
+| ----------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `mcp_tool_invoke_start` | BEFORE each tool callback runs                     | `tool`, `args_redacted`                                                                                                       |
+| `mcp_tool_invoke_end`   | AFTER each tool callback resolves OR throws        | `tool`, `duration_ms` (monotonic), `status: "ok" \| "error" \| "throw"`                                                       |
+| `mcp_auth_resolve`      | On each auth-resolver invocation (per tool call)   | `mtime_ms` (config file mtime, or `null` on stat fail), `token_fresh`, `outcome: "ok" \| "unauthenticated" \| "config_error"` |
+| `mcp_transport_error`   | When a transport-class throw bubbles out of a tool | `tool`, `surface`, `error_class`, `status: number \| null`                                                                    |
 
 Every record carries the common base fields `ts` (ISO-8601) and `event`
 (the discriminator). The bearer is **never** in any allowlisted shape —

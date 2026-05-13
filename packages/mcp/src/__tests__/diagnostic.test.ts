@@ -91,9 +91,7 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
   describe("wrapToolHandler — start/end events", () => {
     it("emits mcp_tool_invoke_start BEFORE the handler runs and mcp_tool_invoke_end AFTER", async () => {
       const callOrder: string[] = [];
-      const handler = async (
-        input: { foo: string },
-      ): Promise<{ content: [{ type: "text"; text: string }] }> => {
+      const handler = async (input: { foo: string }): Promise<{ content: [{ type: "text"; text: string }] }> => {
         callOrder.push("handler");
         await Promise.resolve();
         return { content: [{ type: "text", text: `got ${input.foo}` }] };
@@ -410,12 +408,10 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
       const mod = await import("../diagnostic.js");
 
       const writes: string[] = [];
-      const spy = vi
-        .spyOn(process.stderr, "write")
-        .mockImplementation(((chunk: unknown): boolean => {
-          if (typeof chunk === "string") writes.push(chunk);
-          return true;
-        }) as never);
+      const spy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown): boolean => {
+        if (typeof chunk === "string") writes.push(chunk);
+        return true;
+      }) as never);
       try {
         // Use the freshly-imported module's emit so the env capture is
         // re-evaluated. The default logger is in effect.
@@ -439,13 +435,11 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
       const mod = await import("../diagnostic.js");
 
       const writes: string[] = [];
-      const spy = vi
-        .spyOn(process.stderr, "write")
-        .mockImplementation(((chunk: unknown): boolean => {
-          if (typeof chunk === "string") writes.push(chunk);
-          else if (chunk instanceof Uint8Array) writes.push(Buffer.from(chunk).toString("utf8"));
-          return true;
-        }) as never);
+      const spy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown): boolean => {
+        if (typeof chunk === "string") writes.push(chunk);
+        else if (chunk instanceof Uint8Array) writes.push(Buffer.from(chunk).toString("utf8"));
+        return true;
+      }) as never);
       try {
         mod.emitMcpDebug(
           (): McpToolInvokeStartRecord => ({
@@ -470,12 +464,10 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
       const mod = await import("../diagnostic.js");
 
       const writes: string[] = [];
-      const spy = vi
-        .spyOn(process.stderr, "write")
-        .mockImplementation(((chunk: unknown): boolean => {
-          if (typeof chunk === "string") writes.push(chunk);
-          return true;
-        }) as never);
+      const spy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown): boolean => {
+        if (typeof chunk === "string") writes.push(chunk);
+        return true;
+      }) as never);
       try {
         mod.emitMcpDebug(
           (): McpToolInvokeStartRecord => ({

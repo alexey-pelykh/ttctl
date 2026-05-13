@@ -331,8 +331,7 @@ export function emitMcpAuthResolve(
   // - mtime moved forward: true if hasToken.
   // - mtime unchanged: false (same file, no rotation since last call).
   // - mtime null: false (cannot prove freshness).
-  const token_fresh =
-    mtime_ms !== null && hasToken && (prior === undefined || mtime_ms !== prior);
+  const token_fresh = mtime_ms !== null && hasToken && (prior === undefined || mtime_ms !== prior);
   if (mtime_ms !== null) lastSeenMtime.set(configPath, mtime_ms);
   currentLogger({
     ts: new Date().toISOString(),

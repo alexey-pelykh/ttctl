@@ -7,11 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { resolveConfig } from "@ttctl/core";
 
 import { createToolAuthResolver } from "./auth.js";
-import {
-  type McpDiagnosticLogger,
-  setMcpDiagnosticLogger,
-  wrapToolHandler,
-} from "./diagnostic.js";
+import { type McpDiagnosticLogger, setMcpDiagnosticLogger, wrapToolHandler } from "./diagnostic.js";
 import { createTokenLoader } from "./tools/_shared.js";
 import { createTokenResolver } from "./tools/profile/shared.js";
 import { registerAllTools } from "./tools/index.js";
