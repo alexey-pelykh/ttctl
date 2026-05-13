@@ -112,6 +112,7 @@ export const SECRET_BODY_FIELD_NAMES: ReadonlySet<string> = new Set([
   "refreshtoken",
   "refresh_token",
   "authorization",
+  "email",
 ]);
 
 /**
