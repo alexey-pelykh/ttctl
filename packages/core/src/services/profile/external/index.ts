@@ -336,11 +336,19 @@ export async function update(token: string, changes: ExternalProfilesUpdate): Pr
 
   const profileId = await getProfileId(token);
 
+  // No safe round-trip: the service has no read endpoint exposing
+  // linkedin/github/website/twitter/behance/dribbble (basic profile show
+  // does not include them; the mutation response gives POST-state only),
+  // so a sentinel value cannot be reverted without a captured pre-state.
+  // Overwriting the maintainer's real URLs is destructive. Wire shape
+  // inferred from research/notes/10 Pattern 1 (wrapper key
+  // `externalProfiles`); see packages/e2e/src/38-profile-external.e2e.test.ts.
   const res = await withNetworkErrorMapping("External profile update", () =>
     impersonatedTransport({
       surface: "talent-profile",
       authToken: token,
       body: {
+        // e2e-exempt: destructive — see comment above the withNetworkErrorMapping call.
         operationName: "UpdateExternalProfiles",
         query: UPDATE_EXTERNAL_PROFILES_MUTATION,
         variables: { input: { profileId, externalProfiles: fields } satisfies UpdateExternalProfilesInput },

@@ -340,11 +340,17 @@ export async function approveItem(token: string, args: ApproveItemReviewArgs): P
     );
   }
 
+  // Destructive — approval is final per platform review semantics; once
+  // approved, the change is published and cannot be reverted from this
+  // surface. No safe round-trip on a live maintainer profile. Wire shape
+  // inferred from research/notes/10. The read-side sectionReviews query
+  // is covered in packages/e2e/src/40-profile-reviews.e2e.test.ts.
   const res = await withNetworkErrorMapping("Approve item review", () =>
     impersonatedTransport({
       surface: "talent-profile",
       authToken: token,
       body: {
+        // e2e-exempt: destructive — see comment above the withNetworkErrorMapping call.
         operationName: "ApproveItemReview",
         query: APPROVE_ITEM_REVIEW_MUTATION,
         variables: {
@@ -455,11 +461,17 @@ export async function approveSection(
     throw new ProfileError("VALIDATION_ERROR", "Approve-section review requires non-empty reviewId and section.");
   }
 
+  // Destructive — section-level approval is final per platform review
+  // semantics; the entire section's pending items are published in one
+  // call. No safe round-trip on a live maintainer profile. Wire shape
+  // inferred from research/notes/10. The read-side sectionReviews query
+  // is covered in packages/e2e/src/40-profile-reviews.e2e.test.ts.
   const res = await withNetworkErrorMapping("Approve section review", () =>
     impersonatedTransport({
       surface: "talent-profile",
       authToken: token,
       body: {
+        // e2e-exempt: destructive — see comment above the withNetworkErrorMapping call.
         operationName: "ApproveSectionReview",
         query: APPROVE_SECTION_REVIEW_MUTATION,
         variables: {
@@ -561,11 +573,17 @@ interface SubmitForReviewPayload {
 export async function submitForReview(token: string): Promise<SubmitForReviewResult> {
   const profileId = await getProfileId(token);
 
+  // Triggers an actual platform-side re-review against the maintainer's
+  // profile when called on a submittable state. No safe reverse-trip.
+  // Wire shape inferred from research/notes/10 Pattern 2
+  // (`{ profileId: ID! }`). The read-side sectionReviews query is covered
+  // in packages/e2e/src/40-profile-reviews.e2e.test.ts.
   const res = await withNetworkErrorMapping("Submit for review", () =>
     impersonatedTransport({
       surface: "talent-profile",
       authToken: token,
       body: {
+        // e2e-exempt: destructive — see comment above the withNetworkErrorMapping call.
         operationName: "submitForReview",
         query: SUBMIT_FOR_REVIEW_MUTATION,
         variables: { input: { profileId } satisfies SubmitForReviewInput },
