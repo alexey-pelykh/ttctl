@@ -47,11 +47,11 @@
     "@types/node": "catalog:",
     "@types/proper-lockfile": "catalog:",
     "eslint": "catalog:",
+    "graphql": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "dependencies": {
-    "graphql": "catalog:",
     "node-wreq": "catalog:",
     "proper-lockfile": "catalog:",
     "undici": "catalog:",
