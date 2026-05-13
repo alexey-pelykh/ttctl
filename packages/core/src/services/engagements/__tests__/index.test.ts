@@ -88,6 +88,8 @@ const ENGAGEMENT_DETAIL_ITEM = {
       applicationRate: "120.00",
       talentHourlyRate: "100.00",
       talentRate: "100.00",
+      marketplaceMargin: "20.00",
+      timePeriod: "Monthly",
       commitment: { __typename: "JobCommitment", slug: "full_time" },
     },
     earning: {
@@ -218,6 +220,8 @@ describe("engagements.show", () => {
     expect(item.id).toBe("act-eng-1");
     expect(item.engagementId).toBe("eng-1");
     expect(item.currentAgreement?.talentHourlyRate).toBe("100.00");
+    expect(item.currentAgreement?.marketplaceMargin).toBe("20.00");
+    expect(item.currentAgreement?.timePeriod).toBe("Monthly");
     expect(item.billCycle?.verbose).toBe("Monthly");
     expect(item.earning?.paid?.decimal).toBe("5000.00");
     expect(item.earning?.paid?.currency?.code).toBe("USD");
