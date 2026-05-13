@@ -169,11 +169,20 @@ export interface UploadResumeResult {
  */
 export async function upload(token: string, source: FileSource): Promise<UploadResumeResult> {
   const file = await resolveFileSource(source);
+  // Destructive — overwrites the maintainer's published resume file with no
+  // safe rollback path. The cancelResumeUpload semantic only clears
+  // half-uploaded server-side state; if the upload commits before cancel
+  // arrives, the file is replaced. The impersonatedMultipartTransport wire
+  // path is covered transitively by uploadPortfolioCover / uploadPortfolioFile
+  // in packages/e2e/src/36-profile-portfolio.e2e.test.ts; the talent-profile
+  // JSON mutation wire shape is covered for this sub-domain by
+  // cancelResumeUpload in packages/e2e/src/39-profile-resume.e2e.test.ts.
   const res = await withTransportErrors("uploadResume", async () =>
     impersonatedMultipartTransport({
       surface: "talent-profile",
       authToken: token,
       body: {
+        // e2e-exempt: destructive — see comment above the withTransportErrors call.
         operationName: "uploadResume",
         query: UPLOAD_RESUME_MUTATION,
         variables: {
