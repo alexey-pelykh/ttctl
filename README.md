@@ -284,6 +284,8 @@ The maintainer disclaims any warranty and accepts no liability for use that viol
 
 "Toptal" is a trademark of Toptal LLC. Use of the name in this project's description is **nominative fair use** only — to identify the third-party platform that TTCtl interacts with.
 
+For a longer write-up of the project's posture on trademark use, Terms of Service, the AGPL choice, and the fair-use tradition this kind of tool sits in, see [`docs/legitimacy.md`](docs/legitimacy.md).
+
 ## Code of Conduct
 
 This project adopts the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md) (version 3.0). The Code applies to all project spaces and to anyone interacting with the project — issue tracker, pull requests, MCP server interactions, and any other channel.
