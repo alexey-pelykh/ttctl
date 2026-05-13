@@ -164,6 +164,28 @@ refactors without altering wire format, or otherwise does not introduce
 an inferred contract), state that explicitly. Silence is not
 satisfaction.
 
+### E2E coverage gate
+
+`scripts/check-e2e-coverage.ts` (wired into `pnpm lint`) is the
+structural CI-time mirror of the review-time rule above. It walks
+`packages/core/src/**` for literal `operationName: "X"` invocations
+against `talent-profile` or `scheduler` surfaces and cross-references
+against `// e2e-covers: X` directives in `packages/e2e/src/**/*.e2e.test.ts`.
+
+- **Cover** an operation by adding `// e2e-covers: <OpName>` (or a
+  comma-separated list) to the e2e file that exercises it.
+- **Exempt** an operation by placing `// e2e-exempt: <reason>` within
+  five lines preceding the `operationName:` literal.
+- **Default mode** is warn-only (exit 0). Set
+  `E2E_COVERAGE_STRICT=1` (or pass `--strict`) to fail on uncovered
+  in-scope operations once the existing gap is paid down.
+
+Helper-wrapped invocations that pass `operationName` as a parameter
+(e.g. `callTalentProfile(token, "X", ...)`) are NOT detected by the v1
+gate. Either refactor the helper to take an object literal containing
+`operationName: "X"`, or add an exemption marker. See the script header
+for the full protocol.
+
 ## Auth Model
 
 TTCtl uses a session bearer **token** (no cookies, no API keys), stored
