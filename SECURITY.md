@@ -137,6 +137,45 @@ attacks:
    prompt contexts as dangerous**; defense-in-depth gates at the MCP layer
    for this variant are tracked as remediation work and not yet shipped.
 
+### User-install supply-chain hardening
+
+The Toptal Talent platform has no public API; TTCtl is built from a
+hand-curated dep tree resolved through pnpm with `--frozen-lockfile`
+during build and publish. The defenses that exist at build/publish time
+are:
+
+| Defense                                    | Where                              | What it stops                                          |
+| ------------------------------------------ | ---------------------------------- | ------------------------------------------------------ |
+| `--frozen-lockfile`                        | `.github/actions/setup/action.yml` | Lockfile drift / unauthorized version bumps in CI      |
+| `--ignore-scripts` at CI install           | `.github/actions/setup/action.yml` | Postinstall RCE in transitive deps reaching CI runners |
+| `pnpm audit --audit-level=high`            | `.github/workflows/release.yml`    | Publishing a release while a high/critical CVE exists  |
+| Workspace dep-confusion guard              | `scripts/check-dep-confusion.ts`   | `@ttctl/*` dep accidentally resolving to public npm    |
+| Pinned action SHAs (with version comments) | `.github/workflows/*.yml`          | Mutable-tag substitution in GitHub Actions             |
+
+For the end user installing `ttctl` on their own laptop, the
+recommended posture is to install with postinstall hooks disabled:
+
+```sh
+npm install -g --ignore-scripts ttctl
+```
+
+This blocks `preinstall` / `postinstall` / `prepare` hooks across the
+entire dependency tree at install time. PhantomRaven (126 packages,
+86,000 installs) and Shai-Hulud (500+ auto-propagated packages) — both
+2025 incidents — demonstrate that a compromised transitive dep can
+execute arbitrary code on the installing machine during `npm install`,
+exposing the user's unlocked 1Password session, SSH agent, and shell
+history. `--ignore-scripts` closes that window.
+
+TTCtl itself ships no install-time hooks; the `package.json` of every
+published workspace package has no `preinstall` / `postinstall` /
+`prepare` script that requires execution. Disabling install scripts is
+therefore zero-cost for TTCtl users and a meaningful defense against
+behavior in dependencies the maintainer does not directly control.
+
+See [README § Hardened install](README.md#hardened-install-recommended)
+for the user-facing install snippet.
+
 ### Recommendations
 
 - Store credentials via 1Password references (Form A) rather than literal

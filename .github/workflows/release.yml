@@ -34,6 +34,29 @@ jobs:
       - run: pnpm license-check
       - run: pnpm test
 
+  # Supply-chain audit gate (#206). Runs BEFORE publish-npm to block release
+  # if any direct or transitive dependency has a known high/critical CVE.
+  # Single-OS (ubuntu-latest) because the audit is lockfile-deterministic —
+  # the 3-OS validate matrix sanity-checks build portability, not deps.
+  #
+  # NOTE: `pnpm audit signatures` is NOT a real pnpm subcommand (it exists
+  # in npm 9+ only). pnpm silently ignores the `signatures` arg and runs the
+  # standard vulnerability audit. Registry signature verification therefore
+  # is not provided here; the supply-chain defenses we DO have are:
+  #   - `--frozen-lockfile --ignore-scripts` at install (in setup action)
+  #   - `pnpm-lock.yaml` integrity hashes per package
+  #   - `--audit-level=high` failing the build on known CVEs (this step)
+  #   - Workspace dep-confusion guard at lint time (scripts/check-dep-confusion.ts)
+  audit:
+    name: Audit dependencies
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./.github/actions/setup
+      - name: pnpm audit (fail on high/critical)
+        run: pnpm audit --audit-level=high
+
   # NOTE: The npm-publish environment requires the following protection rules
   # configured in GitHub Settings → Environments → npm-publish:
   #   1. Deployment branches — restricted to "main" branch and "v*" tags
@@ -42,7 +65,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     timeout-minutes: 10
-    needs: validate
+    needs: [validate, audit]
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:

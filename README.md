@@ -61,6 +61,24 @@ Or run directly with npx:
 npx ttctl --help
 ```
 
+### Hardened install (recommended)
+
+For maximum supply-chain safety, install with `postinstall` hooks disabled:
+
+```sh
+npm install -g --ignore-scripts ttctl
+```
+
+`--ignore-scripts` blocks `preinstall` / `postinstall` / `prepare` hooks
+across the entire dependency tree at install time. This prevents a
+compromised transitive dep (PhantomRaven, Shai-Hulud, etc.) from
+executing code on your machine during install — closing the
+most-exploited supply-chain attack vector against package-manager users.
+
+TTCtl itself ships no install-time hooks. Disabling them is purely a
+defense against malicious behavior in dependencies you don't directly
+control. See [SECURITY § User-install supply-chain hardening](SECURITY.md#user-install-supply-chain-hardening).
+
 ## Quick Start
 
 ```sh
