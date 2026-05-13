@@ -5,6 +5,10 @@ inputs:
   registry-url:
     description: Registry URL for publishing
     required: false
+  node-version:
+    description: Node.js version to install
+    required: false
+    default: "24"
 
 runs:
   using: composite
@@ -13,7 +17,7 @@ runs:
 
     - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
       with:
-        node-version: 24
+        node-version: ${{ inputs.node-version }}
         cache: pnpm
         registry-url: ${{ inputs.registry-url }}
 
@@ -23,6 +27,6 @@ runs:
     - uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
       with:
         path: .turbo
-        key: turbo-${{ runner.os }}-node24-${{ hashFiles('turbo.json', '**/pnpm-lock.yaml') }}
+        key: turbo-${{ runner.os }}-node${{ inputs.node-version }}-${{ hashFiles('turbo.json', '**/pnpm-lock.yaml') }}
         restore-keys: |
-          turbo-${{ runner.os }}-node24-
+          turbo-${{ runner.os }}-node${{ inputs.node-version }}-

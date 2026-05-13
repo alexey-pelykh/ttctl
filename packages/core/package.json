@@ -4,7 +4,7 @@
   "description": "Core library for Toptal Talent platform integration: API client, auth, services",
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=22.19.0"
   },
   "license": "AGPL-3.0-only",
   "author": "Alexey Pelykh (https://github.com/alexey-pelykh)",

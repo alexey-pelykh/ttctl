@@ -15,26 +15,33 @@ concurrency:
 
 jobs:
   ci:
-    name: Build, Lint & Test (${{ matrix.os }})
+    name: Build, Lint & Test (${{ matrix.os }}, node ${{ matrix.node-version }})
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # Test against the declared engines.node minimum (22) and the current
+        # supported version (24). Loosening engines.node later is safe; tightening
+        # is a breaking change for consumers — keep this matrix in sync with the
+        # value declared in every package.json's "engines.node" field.
+        node-version: ["22", "24"]
     runs-on: ${{ matrix.os }}
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: ./.github/actions/setup
+        with:
+          node-version: ${{ matrix.node-version }}
       - run: pnpm format:check
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm license-check
-      - run: pnpm test ${{ matrix.os == 'ubuntu-latest' && '-- -- --coverage' || '' }}
+      - run: pnpm test ${{ matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && '-- -- --coverage' || '' }}
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && env.CODECOV_TOKEN != ''
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         with:
           token: ${{ env.CODECOV_TOKEN }}

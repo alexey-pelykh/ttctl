@@ -10,7 +10,7 @@ use policy and disclaimer (the README is authoritative; do not duplicate the
 disclaimer enumeration in other files — link to it).
 
 - **License**: AGPL-3.0-only
-- **Runtime**: Node.js >= 24, ESM only
+- **Runtime**: Node.js >= 22.19.0, ESM only
 - **Language**: TypeScript (strict mode, ES2024 target, NodeNext modules)
 
 ## Repository Structure
@@ -688,9 +688,9 @@ without research-repo access can build and consume the types; re-running
 
 ## CI/CD
 
-- **CI**: Runs on push/PR to `main`; 3-OS matrix (ubuntu, macos, windows); builds, lints, license-checks, tests
+- **CI**: Runs on push/PR to `main`; 3-OS × 2-Node matrix (ubuntu/macos/windows × Node 22/24); builds, lints, license-checks, tests. Node 22 is the declared `engines.node` minimum; Node 24 is the current LTS the release action defaults to. Both must pass before merge.
 - **Release**: Triggered by GitHub Release publish; validates, stamps version from git tag, publishes to npm with provenance
-- **Setup**: Composite action at `.github/actions/setup/` (pnpm + Node.js 24 + frozen lockfile + Turbo cache)
+- **Setup**: Composite action at `.github/actions/setup/` accepts a `node-version` input (default `24`); installs pnpm + Node.js + frozen lockfile + Turbo cache (cache key scoped by Node major).
 
 ### Branch Protection
 
