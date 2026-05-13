@@ -543,6 +543,51 @@ short-lived and continues to resolve config per-invocation via
 There are NO profiles. TTCtl operates against the user's own Toptal Talent
 profile, period.
 
+### MCP-side diagnostic logging (`TTCTL_DEBUG_MCP`)
+
+The MCP server (issue #224) ships a structured-event debug taxonomy
+mirroring the config-write taxonomy (`TTCTL_DEBUG_CONFIG`) but scoped
+to per-session activity inside the long-lived MCP process.
+
+Setting `TTCTL_DEBUG_MCP=1` (any other value, including empty string,
+keeps the path silent) emits one JSON object per line to **stderr** —
+the stdout data channel is owned by the MCP JSON-RPC protocol and is
+never touched. Four event types ship in v1:
+
+| Event                      | Fired                                              | Fields                                                                          |
+| -------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `mcp_tool_invoke_start`    | BEFORE each tool callback runs                     | `tool`, `args_redacted`                                                         |
+| `mcp_tool_invoke_end`      | AFTER each tool callback resolves OR throws        | `tool`, `duration_ms` (monotonic), `status: "ok" \| "error" \| "throw"`         |
+| `mcp_auth_resolve`         | On each auth-resolver invocation (per tool call)   | `mtime_ms` (config file mtime, or `null` on stat fail), `token_fresh`, `outcome: "ok" \| "unauthenticated" \| "config_error"` |
+| `mcp_transport_error`      | When a transport-class throw bubbles out of a tool | `tool`, `surface`, `error_class`, `status: number \| null`                      |
+
+Every record carries the common base fields `ts` (ISO-8601) and `event`
+(the discriminator). The bearer is **never** in any allowlisted shape —
+type-system enforcement at the union variants + runtime substring
+assertion in `packages/mcp/src/__tests__/diagnostic.test.ts` + a
+two-pass redaction on `args_redacted` (`redactBody` field-name pass +
+`scrubBearerPatternInStrings` value-pattern pass per
+`packages/mcp/src/diagnostic.ts`). The pattern is the same as the
+config-write taxonomy (R-7 mitigation).
+
+Inspect a trace with `jq`:
+
+```sh
+TTCTL_DEBUG_MCP=1 ttctl mcp 2> >(tee mcp-debug.log >&2)
+# In another terminal, drive tool calls through your MCP client.
+# Latency breakdown:
+jq -c 'select(.event == "mcp_tool_invoke_end") | {tool, duration_ms, status}' mcp-debug.log
+# Auth-resolver cache misses (token rotation detection):
+jq -c 'select(.event == "mcp_auth_resolve" and .token_fresh == true)' mcp-debug.log
+# Cloudflare 403 / transport-class regressions:
+jq -c 'select(.event == "mcp_transport_error")' mcp-debug.log
+```
+
+The logger is also injectable for tests via `setMcpDiagnosticLogger`
+(exported from `@ttctl/mcp`) — production callers omit the parameter
+to `runMcpStdio`; tests pass a capturing function. Either path keeps
+the four-event surface stable.
+
 ### Config File Resolution
 
 `resolveConfig()` in `packages/core/src/config.ts` selects ONE config-file

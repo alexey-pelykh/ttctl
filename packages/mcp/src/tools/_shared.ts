@@ -5,6 +5,7 @@ import { ConfigError, TtctlError, buildDryRunPreview, resolveConfig } from "@ttc
 import type { DryRunPreview, ToptalSurface } from "@ttctl/core";
 
 import type { AuthResult } from "../auth.js";
+import { emitMcpAuthResolve } from "../diagnostic.js";
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
 import type { ToolErrorResponse } from "../errors.js";
 
@@ -231,14 +232,24 @@ export function createTokenLoader(configPath: string): TokenLoader {
       const { config } = resolveConfig({ path: configPath });
       token = config.auth.token;
     } catch (err) {
-      if (err instanceof ConfigError) return configErrorResponse(toolName, err);
+      if (err instanceof ConfigError) {
+        emitMcpAuthResolve(configPath, "config_error", false);
+        return configErrorResponse(toolName, err);
+      }
       if (err instanceof TtctlError) {
         const typed = ttctlErrorToToolResponseOrNull(err);
-        if (typed !== null) return typed;
+        if (typed !== null) {
+          emitMcpAuthResolve(configPath, "config_error", false);
+          return typed;
+        }
       }
       throw err;
     }
-    if (token === undefined) return unauthenticatedResponse(toolName);
+    if (token === undefined) {
+      emitMcpAuthResolve(configPath, "unauthenticated", false);
+      return unauthenticatedResponse(toolName);
+    }
+    emitMcpAuthResolve(configPath, "ok", true);
     return Promise.resolve({ token });
   };
 }

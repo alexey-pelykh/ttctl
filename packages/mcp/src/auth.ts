@@ -3,6 +3,7 @@
 
 import { ConfigError, resolveConfig } from "@ttctl/core";
 
+import { emitMcpAuthResolve } from "./diagnostic.js";
 import type { ToolErrorResponse } from "./errors.js";
 
 /**
@@ -45,6 +46,7 @@ export function createToolAuthResolver(configPath: string): () => Promise<AuthRe
       token = config.auth.token;
     } catch (err) {
       if (err instanceof ConfigError) {
+        emitMcpAuthResolve(configPath, "config_error", false);
         return Promise.resolve({
           ok: false,
           response: {
@@ -67,6 +69,7 @@ export function createToolAuthResolver(configPath: string): () => Promise<AuthRe
       throw err;
     }
     if (token === undefined) {
+      emitMcpAuthResolve(configPath, "unauthenticated", false);
       return Promise.resolve({
         ok: false,
         response: {
@@ -86,6 +89,7 @@ export function createToolAuthResolver(configPath: string): () => Promise<AuthRe
         },
       });
     }
+    emitMcpAuthResolve(configPath, "ok", true);
     return Promise.resolve({ ok: true, token });
   };
 }
