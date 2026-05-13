@@ -678,9 +678,7 @@ const config: CodegenConfig = {
       documents: [
         "../research/graphql/gateway/operations/mobile/*.graphql",
         "../research/graphql/gateway/operations/portal/*.graphql",
-        ...GATEWAY_PORTAL_COLLISIONS.map(
-          (name) => `!../research/graphql/gateway/operations/portal/${name}.graphql`,
-        ),
+        ...GATEWAY_PORTAL_COLLISIONS.map((name) => `!../research/graphql/gateway/operations/portal/${name}.graphql`),
         ...GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS.map(
           (name) => `!../research/graphql/gateway/operations/mobile/${name}.graphql`,
         ),
