@@ -3,7 +3,7 @@
 
 import { fetch as wreqFetch } from "node-wreq";
 
-import type { ProfileShowQuery } from "../../../__generated__/graphql.js";
+import type { ProfileShowQuery } from "../../../__generated__/gateway.js";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { logTransportRequest, logTransportResponse } from "../../../lib/diagnostic-log.js";
 import {
