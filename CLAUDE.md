@@ -396,7 +396,7 @@ reason captured in `serverLogOutError`. The local clear
 `config.auth.token` directly from the parsed config — no separate file
 load. Every subsequent GraphQL request authenticates by replaying
 `Authorization: Token token=<X>`. See
-`research/docs/decisions/ADR-005-token-auth.md` for the canonical
+`hq/engineering/adr/ADR-005-auth-model.md` for the canonical
 cross-surface auth-model decision and `research/notes/02-auth-and-clients.md`
 for the empirical evidence.
 

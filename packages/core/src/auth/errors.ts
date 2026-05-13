@@ -29,7 +29,7 @@
  *                  surfacing the error (e.g. scheduler-bearer re-mint via
  *                  `GetTopSchedulerToken` post-v1). Defaults to `false`.
  *
- * See `research/docs/decisions/ADR-005-token-auth.md` for the cross-surface
+ * See `hq/engineering/adr/ADR-005-auth-model.md` for the cross-surface
  * auth model. See issue #77 for the full failure-mode table.
  */
 export abstract class TtctlError extends Error {
