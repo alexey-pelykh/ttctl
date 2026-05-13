@@ -627,8 +627,10 @@ rather than being collapsed into a generic "request failed" string.
 The Toptal Talent platform has no public API. TTCtl is built from artifacts in
 the **private** `ttctl/research` repository — APK decompilation, GraphQL
 operation extraction, schema synthesis, ADRs covering TLS impersonation
-(ADR-001), cookie-jar auth (ADR-002), safe-mode mutation interceptor (ADR-003),
-operation extraction strategy (ADR-004).
+(ADR-001), cookie-jar auth (ADR-002, superseded by ADR-005 post-#107),
+safe-mode mutation interceptor (ADR-003), operation extraction strategy
+(ADR-004), and the canonical bearer-token auth model (ADR-005 — see
+`hq/engineering/adr/ADR-005-auth-model.md`).
 
 The `research/` repo's artifacts are the source for `pnpm codegen` —
 `graphql-codegen` reads `research/graphql/gateway/schema.graphql` (synthesized SDL) and
