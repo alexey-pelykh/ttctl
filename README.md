@@ -21,6 +21,8 @@ This tool is built for **fair use** and shared in case it's useful to other Topt
 - Operating against profiles that aren't your own
 - Any behavior that violates [Toptal's Terms of Service](https://www.toptal.com/tos) or burdens the platform
 
+If you encounter misuse of TTCtl, please see [Abuse reporting in SECURITY.md](SECURITY.md#abuse-reporting).
+
 Architectural friction in the codebase (sequential rate limits, single-credential design, no batch parallelism on automation-prone endpoints) is intentional. Don't remove it.
 
 "Toptal" is a trademark of Toptal LLC. The name appears in this project's description as **nominative fair use** only — TTCtl is not a Toptal brand.
