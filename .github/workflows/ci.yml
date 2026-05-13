@@ -39,17 +39,114 @@ jobs:
         with:
           token: ${{ env.CODECOV_TOKEN }}
 
+  doc-surface:
+    name: Doc Surface Attestation
+    # PR-only gate: fails if the PR diff touches any of the doc-surface-tracked
+    # files (auth.ts, config*.ts, transport.ts, services/profile/**, codegen
+    # config, synthesized schema) without an attestation line in the PR body.
+    # Rationale: #225 / prevents recurrence of #107-class doc drift.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v9.0.0
+        with:
+          script: |
+            // Doc-surface-tracked paths (per #225). Exact paths AND directory
+            // prefixes (anything under the prefix triggers the gate).
+            const exactPaths = [
+              'packages/core/src/auth.ts',
+              'packages/core/src/config.ts',
+              'packages/core/src/configWriter.ts',
+              'packages/core/src/configLock.ts',
+              'packages/core/src/onepassword.ts',
+              'packages/core/src/transport.ts',
+              'codegen.config.ts',
+              'research/graphql/gateway/schema.graphql',
+            ];
+            const dirPrefixes = [
+              'packages/core/src/auth/',
+              'packages/core/src/services/profile/',
+            ];
+
+            const isTracked = (filename) =>
+              exactPaths.includes(filename) ||
+              dirPrefixes.some((p) => filename.startsWith(p));
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const touched = files
+              .map((f) => f.filename)
+              .filter(isTracked);
+
+            if (touched.length === 0) {
+              core.info('No doc-surface-tracked files touched. Attestation not required.');
+              return;
+            }
+
+            core.info(`Doc-surface-tracked files touched (${touched.length}):`);
+            for (const f of touched) core.info(`  - ${f}`);
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            // Strip Markdown emphasis (asterisks, backticks) so the regex
+            // tolerates **Doc surface**, `Doc surface`, etc.
+            const body = (pr.body || '').replace(/[*`]+/g, '');
+            const hasNoDoc = /doc surface\s*:\s*no doc surface affected/i.test(body);
+            const hasUpdated = /doc surface\s*:\s*updated\b/i.test(body);
+
+            if (hasNoDoc || hasUpdated) {
+              core.info(
+                `Doc-surface attestation found ` +
+                  `(no-doc=${hasNoDoc}, updated=${hasUpdated}).`,
+              );
+              return;
+            }
+
+            const message = [
+              'Doc-surface attestation missing from PR description.',
+              '',
+              'This PR touches files tracked by the doc-surface gate (see #225):',
+              ...touched.map((f) => `  - ${f}`),
+              '',
+              'Add ONE of the following lines to the PR description:',
+              '  **Doc surface**: no doc surface affected by this change',
+              '  **Doc surface**: updated <list of doc files>',
+              '',
+              'Then push a new commit (or use the "Re-run failed jobs" button)',
+              'to re-run this check.',
+            ].join('\n');
+            core.setFailed(message);
+
   ci-gate:
     name: CI
     if: always()
     permissions: {}
     needs:
       - ci
+      - doc-surface
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - run: |
           if [[ "${{ needs.ci.result }}" != "success" ]]; then
             echo "CI failed: ${{ needs.ci.result }}"
+            exit 1
+          fi
+          # doc-surface is PR-only; on push to main it is skipped (acceptable).
+          if [[ "${{ needs.doc-surface.result }}" != "success" && "${{ needs.doc-surface.result }}" != "skipped" ]]; then
+            echo "doc-surface failed: ${{ needs.doc-surface.result }}"
             exit 1
           fi

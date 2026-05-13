@@ -36,6 +36,25 @@ CLAUDE.md.
       verify; the gate is wired into `pnpm lint` and runs on every CI
       build. See [`scripts/check-e2e-coverage.ts`](../scripts/check-e2e-coverage.ts)
       for the marker protocol.
+- [ ] **Doc surface** — If this PR touches `packages/core/src/auth.ts`,
+      `packages/core/src/auth/**`, `packages/core/src/config.ts`,
+      `packages/core/src/configWriter.ts`,
+      `packages/core/src/configLock.ts`,
+      `packages/core/src/onepassword.ts`,
+      `packages/core/src/transport.ts`,
+      `packages/core/src/services/profile/**`, `codegen.config.ts`, or
+      `research/graphql/gateway/schema.graphql`, the PR description
+      contains EITHER of:
+
+      - `**Doc surface**: no doc surface affected by this change`, OR
+      - `**Doc surface**: updated <list of doc files>` (e.g. SECURITY.md,
+        README, CLAUDE.md, ADR-005, server.json).
+
+      The `doc-surface` job in
+      [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) enforces
+      this attestation. See
+      [#225](https://github.com/alexey-pelykh/ttctl/issues/225) for the
+      rationale (prevents recurrence of #107-class doc-drift).
 
 ## Test plan
 
