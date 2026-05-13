@@ -6,7 +6,17 @@ import type { BrowserProfile } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
 import { TtctlError } from "./auth/errors.js";
-import { logTransportRequest, logTransportResponse } from "./lib/diagnostic-log.js";
+import { logTransportRequest, logTransportResponse, logTransportRetry } from "./lib/diagnostic-log.js";
+import {
+  classifyTransportError,
+  combineSignals,
+  computeBackoffDelay,
+  isRetryableStatus,
+  parseRetryAfter,
+  readTransportConfig,
+  sleepUnlessAborted,
+  TransportError,
+} from "./transport-resilience.js";
 import { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 import type { GraphQLRequest, ToptalSurface } from "./types.js";
 
@@ -161,6 +171,19 @@ export interface TransportRequest {
    * `hq/engineering/adr/ADR-005-auth-model.md`).
    */
   authToken?: string;
+  /**
+   * Caller-supplied abort signal. When the signal aborts, an in-flight
+   * request is cancelled and any pending retry backoff sleep returns
+   * immediately. Wired through to the MCP server's per-tool-call
+   * cancellation so a client that revokes a tool invocation actually
+   * tears down the upstream socket (issue #229).
+   *
+   * The transport composes this signal with a per-attempt internal
+   * timeout (default 30 s, overridable via `TTCTL_TRANSPORT_TIMEOUT_MS`)
+   * via `AbortSignal.any`, so a wedged Cloudflare connection times out
+   * even when no caller signal is supplied.
+   */
+  signal?: AbortSignal;
 }
 
 export interface TransportResponse {
@@ -288,6 +311,12 @@ export async function callSurface(req: TransportRequest): Promise<TransportRespo
 /**
  * Stock HTTP via undici. Used for the mobile gateway endpoint, which doesn't
  * gate on TLS fingerprint.
+ *
+ * Resilience (#229): wraps the network call in a retry loop that handles
+ * HTTP 429 (with `Retry-After` honoring) and 5xx with bounded exponential
+ * backoff, applies a per-attempt timeout, and propagates the caller's
+ * `AbortSignal` so an MCP client cancel actually tears down the in-flight
+ * request. Final failures surface as a typed {@link TransportError}.
  */
 export async function stockTransport(req: TransportRequest): Promise<TransportResponse> {
   const url = SURFACE_ENDPOINTS[req.surface];
@@ -307,38 +336,34 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
     headers,
     body: req.body,
   });
-  const startMs = performance.now();
+  const body = JSON.stringify(req.body);
 
-  const res = await undiciRequest(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(req.body),
-  });
-  const text = await res.body.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = text;
-  }
-  const responseHeaders: Record<string, string> = {};
-  for (const [k, v] of Object.entries(res.headers)) {
-    if (Array.isArray(v)) {
-      responseHeaders[k] = v.join(", ");
-    } else if (typeof v === "string") {
-      responseHeaders[k] = v;
+  return executeWithResilience(req, url, async (signal) => {
+    const res = await undiciRequest(url, {
+      method: "POST",
+      headers,
+      body,
+      signal,
+      headersTimeout: readTransportConfig().timeoutMs,
+      bodyTimeout: readTransportConfig().timeoutMs,
+    });
+    const text = await res.body.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
     }
-  }
-  logTransportResponse({
-    surface: req.surface,
-    endpoint: url,
-    operationName: req.body.operationName,
-    status: res.statusCode,
-    headers: responseHeaders,
-    body: parsed,
-    elapsedMs: performance.now() - startMs,
+    const responseHeaders: Record<string, string> = {};
+    for (const [k, v] of Object.entries(res.headers)) {
+      if (Array.isArray(v)) {
+        responseHeaders[k] = v.join(", ");
+      } else if (typeof v === "string") {
+        responseHeaders[k] = v;
+      }
+    }
+    return { status: res.statusCode, headers: responseHeaders, body: parsed };
   });
-  return { status: res.statusCode, headers: responseHeaders, body: parsed };
 }
 
 /**
@@ -355,6 +380,11 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
  * two transports stay symmetric. JA4H header-name ordering is a secondary
  * detection vector relative to JA4 / Akamai HTTP/2; revisit if empirical
  * blocks indicate it matters.
+ *
+ * Resilience (#229): wraps the network call in the same retry / timeout /
+ * abort loop as {@link stockTransport}. `Cf403Error` propagates as a
+ * non-retryable typed error — the 403 is signalled to Cloudflare's
+ * bot-management WAF, not a transient condition.
  */
 export async function impersonatedTransport(req: TransportRequest): Promise<TransportResponse> {
   const url = SURFACE_ENDPOINTS[req.surface];
@@ -372,56 +402,51 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
     headers,
     body: req.body,
   });
-  const startMs = performance.now();
+  const body = JSON.stringify(req.body);
 
-  const res = await wreqFetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(req.body),
-    browser: IMPERSONATE_PROFILE,
-  });
-
-  // Capture response headers/status BEFORE the Cf403 throw so the
-  // diagnostic trace still records the 403 response when --debug is
-  // active — the caller's exception handler does not see those wire
-  // details, so dropping them on the floor here would leak the
-  // failure mode the operator is trying to diagnose.
-  const responseHeaders = res.headers.toObject();
-
-  if (res.status === 403) {
-    logTransportResponse({
-      surface: req.surface,
-      endpoint: url,
-      operationName: req.body.operationName,
-      status: 403,
-      headers: responseHeaders,
-      body: null,
-      elapsedMs: performance.now() - startMs,
+  return executeWithResilience(req, url, async (signal, startMs) => {
+    const res = await wreqFetch(url, {
+      method: "POST",
+      headers,
+      body,
+      browser: IMPERSONATE_PROFILE,
+      signal,
+      timeout: readTransportConfig().timeoutMs,
+      connectTimeout: readTransportConfig().connectMs,
     });
-    throw new Cf403Error(req.surface, url);
-  }
 
-  const text = await res.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = text;
-  }
-  logTransportResponse({
-    surface: req.surface,
-    endpoint: url,
-    operationName: req.body.operationName,
-    status: res.status,
-    headers: responseHeaders,
-    body: parsed,
-    elapsedMs: performance.now() - startMs,
+    const responseHeaders = res.headers.toObject();
+
+    if (res.status === 403) {
+      // Capture the 403 response shape in the diagnostic trace BEFORE
+      // throwing — the caller's exception handler does not see the wire
+      // details and operators investigating a Cloudflare block need the
+      // headers (cf-ray, cf-mitigated) to paste into a triage issue.
+      logTransportResponse({
+        surface: req.surface,
+        endpoint: url,
+        operationName: req.body.operationName,
+        status: 403,
+        headers: responseHeaders,
+        body: null,
+        elapsedMs: performance.now() - startMs,
+      });
+      throw new Cf403Error(req.surface, url);
+    }
+
+    const text = await res.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+    return {
+      status: res.status,
+      headers: responseHeaders,
+      body: parsed,
+    };
   });
-  return {
-    status: res.status,
-    headers: responseHeaders,
-    body: parsed,
-  };
 }
 
 /**
@@ -468,6 +493,12 @@ export interface MultipartTransportRequest {
    * services use a 1:1 mapping today.
    */
   map: Record<string, string[]>;
+  /**
+   * Caller-supplied abort signal. See {@link TransportRequest.signal} for
+   * full semantics — wired identically into the multipart upload path so
+   * an MCP `cancel` request actually tears down the file upload mid-flight.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -550,8 +581,6 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
   delete headers["content-type"];
   if (req.authToken) headers["authorization"] = `Token token=${req.authToken}`;
 
-  const formData = buildGraphQLMultipart(req.body, req.files, req.map);
-
   // Diagnostic log hook (issue #139). Multipart binary payloads are
   // intentionally NOT logged — only the file slot labels + map are
   // surfaced, which is enough to understand what was uploaded without
@@ -566,49 +595,187 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
     body: req.body,
     multipart: { files: Object.keys(req.files), map: req.map },
   });
-  const startMs = performance.now();
 
-  const res = await wreqFetch(url, {
-    method: "POST",
-    headers,
-    body: formData,
-    browser: IMPERSONATE_PROFILE,
+  return executeWithResilience(req, url, async (signal, startMs) => {
+    // FormData is rebuilt per attempt — the underlying `Blob` slices read
+    // a fresh stream each time, so a retry of an aborted upload does not
+    // attempt to replay an already-consumed body.
+    const formData = buildGraphQLMultipart(req.body, req.files, req.map);
+    const res = await wreqFetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
+      browser: IMPERSONATE_PROFILE,
+      signal,
+      timeout: readTransportConfig().timeoutMs,
+      connectTimeout: readTransportConfig().connectMs,
+    });
+
+    const responseHeaders = res.headers.toObject();
+
+    if (res.status === 403) {
+      logTransportResponse({
+        surface: req.surface,
+        endpoint: url,
+        operationName: req.body.operationName,
+        status: 403,
+        headers: responseHeaders,
+        body: null,
+        elapsedMs: performance.now() - startMs,
+      });
+      throw new Cf403Error(req.surface, url);
+    }
+
+    const text = await res.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+    return {
+      status: res.status,
+      headers: responseHeaders,
+      body: parsed,
+    };
   });
+}
 
-  const responseHeaders = res.headers.toObject();
+/**
+ * Shared retry / timeout / abort loop used by all three transport entry
+ * points ({@link stockTransport}, {@link impersonatedTransport},
+ * {@link impersonatedMultipartTransport}).
+ *
+ * `attemptFn` performs a single network attempt against the supplied
+ * combined signal and returns the parsed {@link TransportResponse}. The
+ * loop:
+ *
+ * 1. Composes the caller's signal with a per-attempt timeout signal.
+ * 2. Calls `attemptFn`.
+ * 3. On retryable status (429, 5xx), backs off per the issue #229 policy
+ *    and re-attempts up to the configured `maxRetries`.
+ * 4. On per-attempt timeout, surfaces as a {@link TransportError} with
+ *    code `TIMEOUT` (no retry — the wedge is likely persistent).
+ * 5. On caller abort, surfaces as a {@link TransportError} with code
+ *    `ABORTED`.
+ * 6. On non-retryable errors ({@link Cf403Error}, network failure),
+ *    re-throws.
+ *
+ * Every successful attempt invokes the response logger; the final attempt
+ * also logs the surfaced status code so an operator inspecting a stderr
+ * trace can correlate retry events with the eventual outcome.
+ */
+async function executeWithResilience(
+  req: TransportRequest | MultipartTransportRequest,
+  url: string,
+  attemptFn: (signal: AbortSignal, startMs: number) => Promise<TransportResponse>,
+): Promise<TransportResponse> {
+  const config = readTransportConfig();
+  let attempt = 0;
+  let lastStatus: number | undefined;
+  let lastRetryAfterMs: number | undefined;
 
-  if (res.status === 403) {
+  for (;;) {
+    const { signal, dispose } = combineSignals(req.signal, config.timeoutMs);
+    const startMs = performance.now();
+    let res: TransportResponse | undefined;
+    try {
+      res = await attemptFn(signal, startMs);
+    } catch (err) {
+      dispose();
+      const classification = classifyTransportError(err, req.signal);
+      if (classification === "aborted-by-caller") {
+        throw new TransportError(
+          "ABORTED",
+          req.surface,
+          url,
+          attempt + 1,
+          `Request to ${req.surface} cancelled by caller.`,
+          lastStatus,
+          lastRetryAfterMs,
+          { cause: err },
+        );
+      }
+      if (classification === "timeout") {
+        throw new TransportError(
+          "TIMEOUT",
+          req.surface,
+          url,
+          attempt + 1,
+          `Request to ${req.surface} timed out after ${config.timeoutMs.toString()}ms.`,
+          lastStatus,
+          lastRetryAfterMs,
+          { cause: err },
+        );
+      }
+      // Cf403Error, TtctlError subclasses, and arbitrary network errors
+      // propagate as-is — they are caller-visible failures, not transient
+      // conditions the retry loop should silently swallow.
+      throw err;
+    }
+    dispose();
+
     logTransportResponse({
       surface: req.surface,
       endpoint: url,
       operationName: req.body.operationName,
-      status: 403,
-      headers: responseHeaders,
-      body: null,
+      status: res.status,
+      headers: res.headers,
+      body: res.body,
       elapsedMs: performance.now() - startMs,
     });
-    throw new Cf403Error(req.surface, url);
-  }
 
-  const text = await res.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = text;
+    if (!isRetryableStatus(res.status)) {
+      return res;
+    }
+
+    // Retryable status — decide whether to retry or surface.
+    lastStatus = res.status;
+    if (attempt >= config.maxRetries) {
+      const code: "RATE_LIMITED" | "SERVER_ERROR" = res.status === 429 ? "RATE_LIMITED" : "SERVER_ERROR";
+      throw new TransportError(
+        code,
+        req.surface,
+        url,
+        attempt + 1,
+        `Transport ${req.surface} returned HTTP ${res.status.toString()} after ${(attempt + 1).toString()} attempts.`,
+        lastStatus,
+        lastRetryAfterMs,
+      );
+    }
+
+    const reason: "rate-limit" | "server-error" = res.status === 429 ? "rate-limit" : "server-error";
+    const retryAfterRaw = res.headers["retry-after"];
+    const retryAfterMs = parseRetryAfter(retryAfterRaw);
+    lastRetryAfterMs = retryAfterMs;
+    const delayMs = retryAfterMs ?? computeBackoffDelay(reason, attempt);
+    logTransportRetry({
+      surface: req.surface,
+      endpoint: url,
+      operationName: req.body.operationName,
+      attempt: attempt + 1,
+      reason,
+      status: res.status,
+      delayMs,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    });
+
+    try {
+      await sleepUnlessAborted(delayMs, req.signal);
+    } catch (err) {
+      // Caller aborted during backoff sleep.
+      throw new TransportError(
+        "ABORTED",
+        req.surface,
+        url,
+        attempt + 1,
+        `Request to ${req.surface} cancelled by caller during backoff.`,
+        lastStatus,
+        lastRetryAfterMs,
+        { cause: err },
+      );
+    }
+
+    attempt += 1;
   }
-  logTransportResponse({
-    surface: req.surface,
-    endpoint: url,
-    operationName: req.body.operationName,
-    status: res.status,
-    headers: responseHeaders,
-    body: parsed,
-    elapsedMs: performance.now() - startMs,
-  });
-  return {
-    status: res.status,
-    headers: responseHeaders,
-    body: parsed,
-  };
 }

@@ -7,6 +7,7 @@ import {
   getDiagnosticLogger,
   logTransportRequest,
   logTransportResponse,
+  logTransportRetry,
   resetDiagnosticLogger,
   setDiagnosticLogger,
 } from "../diagnostic-log.js";
@@ -324,6 +325,108 @@ describe("logTransportResponse with level='debug'", () => {
     const all = streams.stderr.join("");
     expect(all).not.toContain(BEARER);
     expect(all).not.toContain("newvalue"); // set-cookie value
+  });
+});
+
+describe("logTransportRetry (issue #229)", () => {
+  it("is a no-op when level is 'none'", () => {
+    const streams = captureStreams();
+    logTransportRetry({
+      surface: "mobile-gateway",
+      endpoint: "https://x.example/y",
+      operationName: "X",
+      attempt: 1,
+      reason: "rate-limit",
+      status: 429,
+      delayMs: 250,
+    });
+    expect(streams.stderr).toEqual([]);
+    expect(streams.stdout).toEqual([]);
+  });
+
+  it("verbose mode: emits a single line with retry metadata", () => {
+    setDiagnosticLogger("verbose");
+    const streams = captureStreams();
+    logTransportRetry({
+      surface: "mobile-gateway",
+      endpoint: "https://x.example/y",
+      operationName: "Op",
+      attempt: 2,
+      reason: "rate-limit",
+      status: 429,
+      delayMs: 500,
+      retryAfterMs: 1000,
+    });
+    expect(streams.stdout).toEqual([]);
+    expect(streams.stderr.length).toBe(1);
+    const line = streams.stderr[0] ?? "";
+    expect(line).toContain("retry attempt=2");
+    expect(line).toContain("reason=rate-limit");
+    expect(line).toContain("status=429");
+    expect(line).toContain("delayMs=500");
+    expect(line).toContain("retryAfterMs=1000");
+    expect(line).toContain("operation=Op");
+  });
+
+  it("debug mode: emits a JSON record with the retry envelope", () => {
+    setDiagnosticLogger("debug");
+    const streams = captureStreams();
+    logTransportRetry({
+      surface: "talent-profile",
+      endpoint: "https://www.toptal.com/api/talent_profile/graphql",
+      operationName: "GET_BASIC_INFO",
+      attempt: 1,
+      reason: "server-error",
+      status: 502,
+      delayMs: 100,
+    });
+    expect(streams.stdout).toEqual([]);
+    expect(streams.stderr.length).toBe(1);
+    const record = JSON.parse((streams.stderr[0] ?? "").trim()) as Record<string, unknown>;
+    expect(record).toMatchObject({
+      kind: "retry",
+      surface: "talent-profile",
+      endpoint: "https://www.toptal.com/api/talent_profile/graphql",
+      operationName: "GET_BASIC_INFO",
+      attempt: 1,
+      reason: "server-error",
+      status: 502,
+      delayMs: 100,
+    });
+    // retryAfterMs omitted when undefined
+    expect(record).not.toHaveProperty("retryAfterMs");
+  });
+
+  it("debug mode: includes retryAfterMs when supplied", () => {
+    setDiagnosticLogger("debug");
+    const streams = captureStreams();
+    logTransportRetry({
+      surface: "mobile-gateway",
+      endpoint: "https://x.example/y",
+      operationName: "Op",
+      attempt: 1,
+      reason: "rate-limit",
+      status: 429,
+      delayMs: 2_000,
+      retryAfterMs: 2_000,
+    });
+    const record = JSON.parse((streams.stderr[0] ?? "").trim()) as Record<string, unknown>;
+    expect(record["retryAfterMs"]).toBe(2_000);
+  });
+
+  it("retry events go to stderr exclusively (AC #5 invariant)", () => {
+    setDiagnosticLogger("verbose");
+    const streams = captureStreams();
+    logTransportRetry({
+      surface: "mobile-gateway",
+      endpoint: "https://x.example/y",
+      operationName: "X",
+      attempt: 1,
+      reason: "rate-limit",
+      delayMs: 250,
+    });
+    expect(streams.stdout).toEqual([]);
+    expect(streams.stderr.length).toBe(1);
   });
 });
 
