@@ -8,7 +8,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: release
+  # Per-ref grouping so distinct tag publishes do not serialize against each
+  # other (a v0.1.0 publish must not block a separate v0.1.1 publish if they
+  # somehow race). Within a single ref the publish still serializes — and
+  # cancel-in-progress stays false because npm publishes are permanent.
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -95,6 +99,48 @@ jobs:
           # MCP registry manifest: stamp both top-level .version (server) and .packages[0].version (npm package)
           jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
           mv server.json.tmp server.json
+          # Smithery MCP registry manifest: stamp the npx coordinate inside the
+          # YAML block scalar (#144). Portable -i.bak form for GNU/BSD sed parity.
+          sed -i.bak "s|'ttctl@[^']*'|'ttctl@$VERSION'|" smithery.yaml
+          rm smithery.yaml.bak
+          # Export VERSION for downstream verification + provenance steps.
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Verify stamped versions
+        env:
+          EXPECTED: ${{ env.VERSION }}
+        run: |
+          # Defense-in-depth: confirm every stamping target landed on the tag-derived
+          # version BEFORE the publish step takes any irreversible action on npm.
+          # Catches silent failures in `pnpm -r exec npm version`, jq, or sed.
+          FAIL=0
+          for pkg_json in \
+            packages/core/package.json \
+            packages/cli/package.json \
+            packages/mcp/package.json \
+            packages/ttctl/package.json; do
+            v=$(jq -r '.version' "$pkg_json")
+            if [ "$v" != "$EXPECTED" ]; then
+              echo "::error file=$pkg_json::version=$v, expected $EXPECTED"
+              FAIL=1
+            fi
+          done
+          v=$(jq -r '.version' server.json)
+          v_pkg=$(jq -r '.packages[0].version' server.json)
+          if [ "$v" != "$EXPECTED" ]; then
+            echo "::error file=server.json::.version=$v, expected $EXPECTED"
+            FAIL=1
+          fi
+          if [ "$v_pkg" != "$EXPECTED" ]; then
+            echo "::error file=server.json::.packages[0].version=$v_pkg, expected $EXPECTED"
+            FAIL=1
+          fi
+          if ! grep -qE "'ttctl@$EXPECTED'" smithery.yaml; then
+            echo "::error file=smithery.yaml::'ttctl@$EXPECTED' not present"
+            grep -nE "'ttctl@[^']*'" smithery.yaml || true
+            FAIL=1
+          fi
+          if [ $FAIL -ne 0 ]; then exit 1; fi
 
       - run: pnpm build
 
@@ -103,3 +149,23 @@ jobs:
 
       - name: Publish packages
         run: pnpm -r publish --access public --no-git-checks --report-summary --provenance
+
+      - name: Verify provenance attestations
+        env:
+          EXPECTED: ${{ env.VERSION }}
+        run: |
+          # Catch silent OIDC misconfiguration where publish succeeds but
+          # Sigstore provenance is absent. Every published package must carry
+          # a provenance predicate or this gate fails the run.
+          FAIL=0
+          for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
+            ATTEST=$(npm view "${pkg}@${EXPECTED}" --json \
+              | jq -r '.dist.attestations.provenance.predicateType // empty')
+            if [ -z "$ATTEST" ]; then
+              echo "::error::${pkg}@${EXPECTED} published without provenance attestation"
+              FAIL=1
+            else
+              echo "${pkg}@${EXPECTED}: provenance=$ATTEST"
+            fi
+          done
+          if [ $FAIL -ne 0 ]; then exit 1; fi
