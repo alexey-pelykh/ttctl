@@ -23,29 +23,63 @@ export const dateInput = z
  * (which is inferred from a `z.core.$loose` schema and therefore carries
  * an `[x: string]: unknown` index signature) — kept loose so the helper
  * return type composes cleanly with the SDK's `ToolCallback`.
+ *
+ * `structuredContent` is populated by {@link jsonSuccess} so tools that
+ * declare an `outputSchema` (#226) get SDK-validated structured payload
+ * alongside the `text` slot.
  */
 export interface ToolSuccessResponse {
   [x: string]: unknown;
   content: [{ type: "text"; text: string }];
+  structuredContent?: Record<string, unknown>;
 }
 
 /**
  * Render a JSON-serialized success response. Tools return structured data
  * as JSON in the `text` content field — MCP-aware LLM clients can parse
- * it; non-aware clients see human-readable JSON.
+ * it; non-aware clients see human-readable JSON. The same payload is
+ * mirrored into `structuredContent` so tools declaring an `outputSchema`
+ * (#226) get SDK-validated structured output without per-tool plumbing.
+ *
+ * `structuredContent` is populated only when `payload` is an object —
+ * the MCP SDK's `structuredContent` slot expects an object shape, and
+ * array / primitive payloads stay in the `text` slot only.
  */
 export function jsonSuccess(payload: unknown): ToolSuccessResponse {
-  return {
+  const response: ToolSuccessResponse = {
     content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
   };
+  if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+    response.structuredContent = payload as Record<string, unknown>;
+  }
+  return response;
 }
 
 /**
  * Render a plain-text success response (useful for verbs like `remove` /
- * `highlight` whose output is a confirmation, not structured data).
+ * `highlight` whose output is a confirmation, not structured data). Use
+ * {@link textWithStructuredSuccess} when the tool also declares an
+ * `outputSchema` requiring a typed acknowledgment.
  */
 export function textSuccess(text: string): ToolSuccessResponse {
   return { content: [{ type: "text", text }] };
+}
+
+/**
+ * Render a confirmation line as the `text` content slot while also
+ * publishing a typed acknowledgment via `structuredContent`. Used by
+ * `*_remove` tools (#226) where the human-readable text stays for
+ * compatibility and the structured payload matches the tool's declared
+ * `outputSchema`.
+ */
+export function textWithStructuredSuccess(
+  text: string,
+  structuredContent: Record<string, unknown>,
+): ToolSuccessResponse {
+  return {
+    content: [{ type: "text", text }],
+    structuredContent,
+  };
 }
 
 /**

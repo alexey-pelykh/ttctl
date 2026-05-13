@@ -2,9 +2,11 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { ToolRegistrationContext } from "../_shared.js";
 import { registerAllTools } from "../index.js";
+import { TOOLS_WITH_OUTPUT_SCHEMA } from "../output-schemas.js";
 
 /**
  * Verify the wave-3 tool registration:
@@ -168,10 +170,28 @@ function getRegisteredToolNames(server: McpServer): string[] {
   return Object.keys(internal._registeredTools);
 }
 
+interface RegisteredToolInternal {
+  outputSchema?: unknown;
+}
+
+function getRegisteredTools(server: McpServer): Record<string, RegisteredToolInternal> {
+  const internal = server as unknown as { _registeredTools: Record<string, RegisteredToolInternal> };
+  return internal._registeredTools;
+}
+
+function buildStubCtx(): ToolRegistrationContext {
+  const stubToken = { token: "stub" };
+  return {
+    loadTokenForTool: vi.fn().mockResolvedValue(stubToken),
+    resolveToolAuth: vi.fn().mockResolvedValue({ ok: true, ...stubToken }),
+    resolveTokenForTool: vi.fn().mockResolvedValue(stubToken),
+  };
+}
+
 describe("registerAllTools", () => {
   it("registers exactly the EXPECTED_TOOLS set (97 tools = 56 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
-    registerAllTools(server);
+    registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);
     expect(registered.sort()).toEqual([...EXPECTED_TOOLS].sort());
   });
@@ -179,7 +199,7 @@ describe("registerAllTools", () => {
   it("registers each expected tool name without throwing", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     expect(() => {
-      registerAllTools(server);
+      registerAllTools(server, buildStubCtx());
     }).not.toThrow();
   });
 
@@ -187,9 +207,40 @@ describe("registerAllTools", () => {
     // Verify against the actual server registry — not just the EXPECTED_TOOLS
     // constant — so a stray `ttctl_profile_certs_*` registration would fail.
     const server = new McpServer({ name: "test", version: "0.0.0" });
-    registerAllTools(server);
+    registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);
     const aliasNames = registered.filter((n) => /(_certs_|_experience_)/.test(n));
     expect(aliasNames).toEqual([]);
+  });
+
+  /**
+   * #226 AC #4 — assert every write-capable MCP tool tracked in
+   * `TOOLS_WITH_OUTPUT_SCHEMA` carries a populated `outputSchema` field
+   * on the SDK's registered-tool record. This is a structural-presence
+   * check, not a wire-shape assertion — the schema contents are
+   * exercised by per-tool runtime tests (e.g. `profile_basic_dryrun`,
+   * `profile_basic_update`).
+   *
+   * LLM clients reading the tool registry use this field to validate
+   * tool responses; a missing `outputSchema` means they have to fall
+   * back to ad-hoc parsing, which the audit finding (API-DX-002 +
+   * F-D1-M1) flagged as a gap.
+   */
+  it("declares outputSchema on every write-capable tool listed in TOOLS_WITH_OUTPUT_SCHEMA (#226)", () => {
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    registerAllTools(server, buildStubCtx());
+    const tools = getRegisteredTools(server);
+    const missing: string[] = [];
+    for (const name of TOOLS_WITH_OUTPUT_SCHEMA) {
+      const tool = tools[name];
+      if (!tool) {
+        missing.push(`${name} (not registered)`);
+        continue;
+      }
+      if (!tool.outputSchema) {
+        missing.push(`${name} (no outputSchema)`);
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });

@@ -14,6 +14,7 @@ import {
   jsonResponse,
   type ToolRegistrationContext,
 } from "./_shared.js";
+import { profileBasicUpdateOutputSchema } from "./output-schemas.js";
 
 const TOOL_NAME = "ttctl_profile_basic_update";
 
@@ -85,6 +86,7 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
             "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview: DryRunPreview }` carrying the `UPDATE_BASIC_INFO` operation + redacted bearer header. No transport (read or write) is invoked. Default: false.",
           ),
       },
+      outputSchema: profileBasicUpdateOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);

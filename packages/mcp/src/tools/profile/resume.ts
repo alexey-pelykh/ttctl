@@ -8,7 +8,8 @@ import { z } from "zod";
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
 import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
-import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
+import { buildMcpDryRunPreview, dryRunResponse, jsonResponse, type ToolRegistrationContext } from "../_shared.js";
+import { profileResumeUploadOutputSchema } from "../output-schemas.js";
 
 const DRY_RUN_FIELD = z
   .boolean()
@@ -37,6 +38,7 @@ export function registerResumeTools(server: McpServer, ctx: ToolRegistrationCont
       description:
         "Upload the user's resume (PDF or DOCX). Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `{ success: true }` on a server-confirmed success. Pass `dryRun: true` to preview the GraphQL operations envelope without firing.",
       inputSchema: { ...fileUploadInputSchema, dryRun: DRY_RUN_FIELD },
+      outputSchema: profileResumeUploadOutputSchema.shape,
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
@@ -50,7 +52,7 @@ export function registerResumeTools(server: McpServer, ctx: ToolRegistrationCont
       if ("isError" in decoded) return decoded;
       try {
         const result = await profile.resume.upload(auth.token, decoded);
-        return successResponse(result);
+        return jsonResponse(result);
       } catch (err) {
         return mapResumeError(err);
       }
@@ -73,23 +75,12 @@ export function registerResumeTools(server: McpServer, ctx: ToolRegistrationCont
       }
       try {
         const result = await profile.resume.cancelUpload(auth.token);
-        return successResponse(result);
+        return jsonResponse(result);
       } catch (err) {
         return mapResumeError(err);
       }
     },
   );
-}
-
-interface ToolSuccessResponse {
-  [x: string]: unknown;
-  content: [{ type: "text"; text: string }];
-}
-
-function successResponse(data: unknown): ToolSuccessResponse {
-  return {
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-  };
 }
 
 function mapResumeError(err: unknown): ToolErrorResponse {
