@@ -15,72 +15,138 @@ You should receive a response within 48 hours. Please include:
 
 ### Credential Handling
 
-TTCtl authenticates against the Toptal Talent platform using session cookies
-obtained via `EmailPasswordSignIn`. The user provides credentials in `.ttctl.yaml`
-via one of two forms:
+TTCtl authenticates against the Toptal Talent platform using a **bearer
+session token** issued by `EmailPasswordSignIn` (per
+`hq/engineering/adr/ADR-005-auth-model.md`). The token is replayed on every
+GraphQL request as `Authorization: Token token=<X>` — cookies are NOT used.
 
-| Form                | Example                                                   | Recommended           |
-| ------------------- | --------------------------------------------------------- | --------------------- |
-| 1Password reference | `auth: "op://Personal/ttctl"`                             | yes                   |
-| 1Password reference | `auth: "op://my-account/Personal/ttctl"` (3-segment form) | yes                   |
-| Literal             | `auth: { email: "...", password: "..." }`                 | no — dev/testing only |
+Credentials and the captured bearer live in a single config file
+(`~/.ttctl.yaml` by default). The `auth` block has four valid lifecycle
+shapes; see [README § Configuration](README.md#configuration) for the
+canonical reference.
 
-When the 1Password form is used, TTCtl shells out to `op item get` at runtime to
-resolve `username` and `password`. Credentials are not persisted by TTCtl.
+| Form | Shape                                                                        | Recommended      |
+| ---- | ---------------------------------------------------------------------------- | ---------------- |
+| A    | `auth.credentials: "op://VAULT/ITEM"` (1Password reference)                  | yes              |
+| B    | `auth.credentials: { username, password }` (literal)                         | dev/testing only |
+| C    | `auth.token: "user_<24hex>_<20alnum>"` (out-of-band bootstrap)               | E2E sandbox      |
+| D    | `auth.credentials: ... + auth.token: ...` (post-signin state of Form A or B) | typical          |
 
-After successful sign-in, session cookies are stored at:
+When the 1Password form is used, TTCtl shells out to `op item get` at signin
+time only to resolve `username` and `password`. Credentials are not persisted
+by TTCtl. After `ttctl auth signin` succeeds, the captured bearer is written
+atomically back into the **same** `~/.ttctl.yaml` under `auth.token`.
 
-| Location                                                               | Permissions | Purpose                   |
-| ---------------------------------------------------------------------- | ----------- | ------------------------- |
-| `~/.ttctl/session.cookies` (or `$XDG_DATA_HOME/ttctl/session.cookies`) | `0600`      | Mozilla-format cookie jar |
+### Enforced Security Gates
 
-**Threat model assumptions:**
+The following gates fire at runtime — they are documented here because the
+auditable surface area depends on them being known to security-conscious
+operators, not just resident in the code:
 
-| Assumption                            | Rationale                                                                      |
-| ------------------------------------- | ------------------------------------------------------------------------------ |
-| The local machine is trusted          | Cookie jar is plaintext on disk; protected only by file permissions            |
-| 1Password CLI is trusted              | When `auth: "op://..."` is configured, TTCtl trusts the `op` binary's response |
-| The Toptal Talent platform is trusted | All API calls are made over HTTPS to `*.toptal.com`                            |
+| Gate                                                     | Defends Against                                                        | Source                                    |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
+| File mode `0o600` on persist                             | Co-tenant read of bearer                                               | `packages/core/src/configWriter.ts`       |
+| Refuse-load on world-writable mode                       | TOCTOU credential swap                                                 | `packages/core/src/config.ts`             |
+| Refuse-write on symlink                                  | Swap-target attack                                                     | `packages/core/src/configWriter.ts`       |
+| Refuse-write under sync-root prefix                      | Bearer replicating to iCloud / Dropbox / OneDrive / Google Drive / Box | `packages/core/src/configWriter.ts`       |
+| Mtime drift detection                                    | Concurrent write or backup-restore racing the write window             | `packages/core/src/configWriter.ts`       |
+| Cross-process advisory lock (proper-lockfile)            | Two ttctl processes interleaving auth writes                           | `packages/core/src/configLock.ts`         |
+| Bearer rescue on persist failure                         | Silent loss of captured bearer on read-only FS / full disk             | `packages/core/src/configWriter.ts`       |
+| Bearer-pattern leakage scanner in CI                     | Accidental commit of `user_<24hex>_<20alnum>` strings                  | `scripts/check-secret-leakage.ts`         |
+| Single-source-of-truth redaction module                  | Drift between runtime debug logger and lint scanner                    | `packages/core/src/lib/redact.ts`         |
+| `--debug` bearer-absence enforcement at runtime AND test | Bearer ever appearing in any allowlisted debug record shape            | `packages/core/src/lib/redact.ts` + tests |
+| MCP path-capture-on-startup                              | Mid-session env-var shifts retargeting reads/writes                    | `packages/mcp/src/server.ts`              |
 
-The literal `auth: { email, password }` form stores plaintext credentials in
-the YAML config and is discouraged. Backups, sync clients, and accidental
-commits all expose plaintext config files; the 1Password form removes the
-plaintext-on-disk surface entirely.
+The sync-root list (iCloud Drive, Dropbox, OneDrive, Google Drive, Box) is
+documented in [README § Sync-root exclusion](README.md#sync-root-exclusion).
+Persisting a bearer to a sync-replicated directory is refused outright with
+a sibling-name guard preventing false positives (`~/DropboxOther/` is fine).
+
+### Bearer Revocation — Empirical Scope
+
+`ttctl auth signout` attempts the `LogOut` mutation against
+`talent_profile/graphql` and then unconditionally removes the local
+`auth.token` field. **Empirically** (#180, 2026-05-12), the server-side
+LogOut mutation acknowledges success (`data.logOut.success === true`) but
+does NOT invalidate the bearer for subsequent `mobile-gateway` requests
+across a 5-minute probe window. The **load-bearing revocation defense is the
+24-72h server-side aging-out** of the captured bearer; the `LogOut` call is
+defense-in-depth (audit signal + web-session cookie cleanup + a forward-
+compatible call site).
+
+Discriminants in TTCtl's source reflect this scope: the local-clear status
+is `logged-out`, never `revoked`.
+
+### Threat Model Assumptions
+
+| Assumption                            | Rationale                                                                                 |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| The local machine is trusted          | Bearer is mode-0o600 plaintext on disk; FS-level protection only                          |
+| 1Password CLI is trusted              | When `auth.credentials: "op://..."` is configured, TTCtl trusts the `op` binary           |
+| The Toptal Talent platform is trusted | All API calls are made over HTTPS to `*.toptal.com`                                       |
+| The host where MCP runs is trusted    | MCP stdio transport is process-level; anyone who spawns `ttctl mcp` gets full tool access |
+
+The literal `auth.credentials: { username, password }` form (Form B) stores
+plaintext credentials in the YAML config and is discouraged for daily use.
+Backups, sync clients, and accidental commits all expose plaintext config
+files; Form A (1Password reference) removes the plaintext-on-disk surface
+entirely.
 
 ### MCP Trust Model
 
 TTCtl exposes an MCP server (`ttctl mcp`) that gives MCP clients programmatic
-access to your Toptal Talent profile via your saved session.
+access to your Toptal Talent profile via the captured bearer.
 
 #### Transport
 
-The MCP server uses **stdio transport**. The MCP client (e.g., Claude Desktop)
-spawns `ttctl mcp` as a child process and communicates over stdin/stdout — no
-network listener, no authentication token. The trust boundary is
-**process-level**: any process that can spawn `ttctl mcp` gets full access to
-every registered tool, scoped to your own Toptal Talent profile.
+The MCP server uses **stdio transport**. The MCP client (e.g., Claude
+Desktop) spawns `ttctl mcp` as a child process and communicates over
+stdin/stdout — no network listener, no authentication token. The trust
+boundary is **process-level**: any process that can spawn `ttctl mcp` gets
+full access to every registered tool, scoped to your own Toptal Talent
+profile.
 
-#### Prompt Injection Risk
+#### Prompt Injection Risk — Two Variants
 
 When the MCP client is an AI agent, the agent processes data from various
 sources, some of which may be untrusted (incoming messages, third-party
-documents, web content). Adversarial input could contain instructions that
-influence the agent to invoke state-changing tools (profile updates, application
-state changes). This is a threat vector unique to the MCP interface.
+documents, web content). Adversarial input can attempt two distinct
+attacks:
+
+1. **State-change injection**: induce the agent to invoke profile updates,
+   application state changes, or other mutations the operator did not
+   intend. Mutating MCP tools support `dryRun` precisely so operator review
+   is the recovery path.
+2. **File-exfiltration injection**: induce the agent to call file-upload
+   tools (`ttctl_profile_basic_photo_upload`, `ttctl_profile_resume_upload`,
+   portfolio upload tools) with an arbitrary host path that reads sensitive
+   local files (`~/.ssh/id_rsa`, `~/.aws/credentials`, etc.) and uploads
+   them to Toptal under the operator's own bearer-trusted channel. **MCP
+   operators should treat file-upload tool invocations from untrusted
+   prompt contexts as dangerous**; defense-in-depth gates at the MCP layer
+   for this variant are tracked as remediation work and not yet shipped.
 
 ### Recommendations
 
-- Store credentials via 1Password references (`auth: "op://..."`) rather than
-  literal `email`/`password` in the YAML.
-- Restrict file permissions on `.ttctl.yaml` and `~/.ttctl/session.cookies` to
-  the owning user.
-- Do not commit `.ttctl.yaml` files to version control. Add them to `.gitignore`.
-- Do not grant MCP access to untrusted AI agents. Any MCP client that can spawn
-  `ttctl mcp` receives full access to all registered tools.
-- Review agent tool calls for state-changing operations when using an AI agent
-  as the MCP client.
-- Keep TTCtl up to date to benefit from security fixes — particularly the TLS
-  impersonation profile, which must track current Chrome stable.
+- Store credentials via 1Password references (Form A) rather than literal
+  `username` / `password` (Form B).
+- Restrict file permissions on `~/.ttctl.yaml` to the owning user
+  (`chmod 600 ~/.ttctl.yaml`). TTCtl writes at `0o600` on persist; ensure
+  the file is also at `0o600` after any manual edit.
+- Do not commit `.ttctl.yaml` files to version control. Add them to
+  `.gitignore`.
+- Do not place `~/.ttctl.yaml` under a cloud-sync directory. TTCtl refuses
+  to write captured bearers under iCloud / Dropbox / OneDrive / Google
+  Drive / Box prefixes; respecting this refusal is a load-bearing defense.
+- Do not grant MCP access to untrusted AI agents. Any MCP client that can
+  spawn `ttctl mcp` receives full access to all registered tools.
+- Review agent tool calls for state-changing operations when using an AI
+  agent as the MCP client; use `dryRun` to preview before applying.
+- Be vigilant about file-upload tool invocations from contexts where the
+  agent may have processed untrusted content (see "Prompt Injection Risk"
+  above).
+- Keep TTCtl up to date to benefit from security fixes — particularly the
+  TLS impersonation profile, which must track current Chrome stable.
 
 ## Supported Versions
 
