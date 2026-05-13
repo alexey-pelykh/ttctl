@@ -180,11 +180,15 @@ against `// e2e-covers: X` directives in `packages/e2e/src/**/*.e2e.test.ts`.
   `E2E_COVERAGE_STRICT=1` (or pass `--strict`) to fail on uncovered
   in-scope operations once the existing gap is paid down.
 
-Helper-wrapped invocations that pass `operationName` as a parameter
-(e.g. `callTalentProfile(token, "X", ...)`) are NOT detected by the v1
-gate. Either refactor the helper to take an object literal containing
-`operationName: "X"`, or add an exemption marker. See the script header
-for the full protocol.
+Helper-wrapped invocations that pass `operationName` as a positional
+parameter (e.g. `callTalentProfile(token, "X", ...)`, `callGateway(token, "X", ...)`)
+are detected via an allowlist of registered helper names + their
+hardcoded surface — see `HELPER_SIGNATURES` in
+`scripts/check-e2e-coverage.ts`. Adding a new helper that crosses a
+surface boundary requires registering its name + surface there; the
+script header documents the protocol. For one-off dynamic-dispatch
+sites the helper can't model, place an `// e2e-exempt: <reason>`
+marker at the call site.
 
 ## Auth Model
 
