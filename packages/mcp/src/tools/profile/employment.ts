@@ -6,7 +6,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
-import { dateInput, jsonSuccess, presentToolError, textSuccess } from "./shared.js";
+import { profileEmploymentRowOutputSchema, profileRowRemoveOutputSchema } from "../output-schemas.js";
+import { dateInput, jsonSuccess, presentToolError, textWithStructuredSuccess } from "./shared.js";
 
 const DRY_RUN_FIELD = z
   .boolean()
@@ -54,6 +55,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .describe("multi-paragraph description; split on blank lines into experienceItems"),
         dryRun: DRY_RUN_FIELD,
       },
+      outputSchema: profileEmploymentRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.add");
@@ -116,6 +118,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         highlight: z.boolean().optional(),
         dryRun: DRY_RUN_FIELD,
       },
+      outputSchema: profileEmploymentRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.update");
@@ -166,6 +169,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       title: "Remove employment entry",
       description: "Remove an employment entry by id.",
       inputSchema: { id: z.string().min(1).describe("employment id"), dryRun: DRY_RUN_FIELD },
+      outputSchema: profileRowRemoveOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.employment.remove");
@@ -182,7 +186,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       }
       try {
         const id = await profile.employment.remove(auth.token, input.id);
-        return textSuccess(`Employment ${id} removed.`);
+        return textWithStructuredSuccess(`Employment ${id} removed.`, { id, removed: true });
       } catch (err) {
         return presentToolError("profile.employment.remove", err);
       }

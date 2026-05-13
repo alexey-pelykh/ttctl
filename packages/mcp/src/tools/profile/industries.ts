@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
+import { profileIndustriesRowOutputSchema } from "../output-schemas.js";
 import { jsonSuccess, presentToolError, textSuccess } from "./shared.js";
 
 const DRY_RUN_FIELD = z
@@ -87,6 +88,7 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
         about: z.string().optional(),
         dryRun: DRY_RUN_FIELD,
       },
+      outputSchema: profileIndustriesRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.industries.update");
