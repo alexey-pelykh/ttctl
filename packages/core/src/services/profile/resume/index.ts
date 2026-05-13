@@ -39,8 +39,9 @@ interface GraphQLErrorEntry {
 }
 
 interface UserError {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 interface TalentProfileResponse<T> {
@@ -117,7 +118,7 @@ function unwrapResponse(res: TransportResponse, operationName: string): unknown 
 function rejectIfUserErrors(errors: UserError[] | null | undefined, operationName: string): void {
   if (Array.isArray(errors) && errors.length > 0) {
     const first = errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ResumeError("USER_ERROR", `${operationName} rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
   }
 }
@@ -148,8 +149,9 @@ const UPLOAD_RESUME_MUTATION = `mutation uploadResume($input: UploadResumeInput!
   uploadResume(input: $input) {
     success
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -209,8 +211,9 @@ const CANCEL_RESUME_UPLOAD_MUTATION = `mutation cancelResumeUpload($input: Cance
   cancelResumeUpload(input: $input) {
     success
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;

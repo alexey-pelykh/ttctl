@@ -201,7 +201,7 @@ describe("portfolio.add", () => {
           createPortfolioItem: {
             profile: null,
             success: false,
-            errors: [{ message: "title too long", field: "title" }],
+            errors: [{ message: "title too long", key: "title" }],
           },
         },
       },

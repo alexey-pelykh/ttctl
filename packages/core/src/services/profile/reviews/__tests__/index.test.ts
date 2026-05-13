@@ -211,7 +211,7 @@ describe("approveItem", () => {
           approveItemReview: {
             success: false,
             notice: null,
-            errors: [{ message: "Item already approved", field: "itemId" }],
+            errors: [{ message: "Item already approved", key: "itemId" }],
             sectionReviews: [],
           },
         },

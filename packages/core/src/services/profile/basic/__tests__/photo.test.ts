@@ -256,7 +256,7 @@ describe("profile.basic.photoUpload (Buffer input)", () => {
       data: {
         updatePhoto: {
           success: false,
-          errors: [{ message: "Resolution too low", field: "file" }],
+          errors: [{ message: "Resolution too low", key: "file" }],
           profile: null,
         },
       },

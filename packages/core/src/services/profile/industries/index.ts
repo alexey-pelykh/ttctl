@@ -60,7 +60,7 @@ const CREATE_INDUSTRY_PROFILE_MUTATION = `mutation CreateIndustryProfile($input:
   createIndustryProfile(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     industryProfile { ...IndustryProfile }
   }
 }
@@ -70,7 +70,7 @@ const UPDATE_INDUSTRY_PROFILE_MUTATION = `mutation UpdateIndustryProfile($input:
   updateIndustryProfile(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     industryProfile { ...IndustryProfile }
   }
 }
@@ -80,7 +80,7 @@ const REMOVE_INDUSTRY_PROFILE_MUTATION = `mutation RemoveIndustryProfile($input:
   removeIndustryProfile(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
   }
 }`;
 

@@ -69,7 +69,7 @@ const CREATE_CERTIFICATION_MUTATION = `mutation CREATE_CERTIFICATION($input: Cre
   createCertification(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id certifications { nodes { ...Certification } } }
   }
 }
@@ -79,7 +79,7 @@ const UPDATE_CERTIFICATION_MUTATION = `mutation UPDATE_CERTIFICATION($input: Upd
   updateCertification(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id certifications { nodes { ...Certification } } }
   }
 }
@@ -89,7 +89,7 @@ const REMOVE_CERTIFICATION_MUTATION = `mutation REMOVE_CERTIFICATION($input: Rem
   removeCertification(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id certifications { nodes { ...Certification } } }
   }
 }
@@ -99,7 +99,7 @@ const HIGHLIGHT_CERTIFICATION_MUTATION = `mutation highlightCertification($id: I
   highlightCertification(input: { certificationId: $id, highlight: $highlight }) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     certification { id highlight }
   }
 }`;

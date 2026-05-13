@@ -410,7 +410,7 @@ const UPDATE_OK = {
     updateBasicInfo: {
       success: true,
       notice: null as string | null,
-      errors: [] as { message: string; field?: string | null }[],
+      errors: [] as { code?: string | null; key?: string | null; message: string }[],
       profile: {
         id: "p1",
         about: "new bio",
@@ -551,7 +551,7 @@ describe("set", () => {
           updateBasicInfo: {
             success: false,
             notice: null,
-            errors: [{ message: "About is too long", field: "about" }],
+            errors: [{ message: "About is too long", key: "about" }],
             profile: null,
           },
         },
@@ -572,7 +572,7 @@ describe("set", () => {
         data: {
           updateBasicInfo: {
             success: false,
-            errors: [{ message: "is required", field: "quote" }],
+            errors: [{ message: "is required", key: "quote" }],
             profile: null,
           },
         },

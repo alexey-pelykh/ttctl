@@ -36,8 +36,9 @@ interface GraphQLErrorEntry {
 }
 
 interface UserError {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 /**
@@ -134,7 +135,7 @@ function unwrapResponse(res: TransportResponse, operationName: string): unknown 
 function rejectIfUserErrors(errors: UserError[] | null | undefined, operationName: string): void {
   if (Array.isArray(errors) && errors.length > 0) {
     const first = errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new VisasError("USER_ERROR", `${operationName} rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
   }
 }
@@ -224,8 +225,9 @@ const CREATE_TRAVEL_VISA_MUTATION = `mutation createTravelVisa($input: CreateTra
       }
     }
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -295,8 +297,9 @@ const UPDATE_TRAVEL_VISA_MUTATION = `mutation updateTravelVisa($input: UpdateTra
       }
     }
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -350,8 +353,9 @@ const REMOVE_TRAVEL_VISA_MUTATION = `mutation removeTravelVisa($input: RemoveTra
       }
     }
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
