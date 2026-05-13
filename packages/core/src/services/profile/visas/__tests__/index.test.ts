@@ -7,7 +7,6 @@ vi.mock("../../../../transport.js", async () => {
   const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
   return {
     ...actual,
-    stockTransport: vi.fn(),
     impersonatedTransport: vi.fn(),
   };
 });
@@ -17,12 +16,11 @@ vi.mock("../../basic/index.js", () => ({
 }));
 
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { impersonatedTransport, stockTransport } from "../../../../transport.js";
+import { impersonatedTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
 import { show as showBasic } from "../../basic/index.js";
 import { VisasError, add, list, remove, update } from "../index.js";
 
-const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);
 const mockedShowBasic = vi.mocked(showBasic);
 const TOKEN = "tok-visas";
@@ -30,16 +28,6 @@ const TOKEN = "tok-visas";
 interface MockResponse {
   status?: number;
   body: unknown;
-}
-
-function replyStock(...responses: MockResponse[]): void {
-  for (const r of responses) {
-    mockedStock.mockResolvedValueOnce({
-      status: r.status ?? 200,
-      headers: {},
-      body: r.body,
-    } satisfies TransportResponse);
-  }
 }
 
 function replyImpersonated(...responses: MockResponse[]): void {
@@ -67,18 +55,18 @@ const VISA_NODE = {
 
 describe("visas.list", () => {
   beforeEach(() => {
-    mockedStock.mockReset();
+    mockedImpersonated.mockReset();
     mockedShowBasic.mockReset();
   });
 
-  it("targets mobile-gateway with getTravelVisas", async () => {
+  it("targets talent-profile with getTravelVisas", async () => {
     stubProfileId("p1");
-    replyStock({ body: { data: { profile: { id: "p1", travelVisas: { nodes: [VISA_NODE] } } } } });
+    replyImpersonated({ body: { data: { profile: { id: "p1", travelVisas: { nodes: [VISA_NODE] } } } } });
 
     const visas = await list(TOKEN);
 
-    const call = mockedStock.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.surface).toBe("mobile-gateway");
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.surface).toBe("talent-profile");
     expect(call.body.operationName).toBe("getTravelVisas");
     expect(call.body.variables).toEqual({ profileId: "p1" });
     expect(visas).toHaveLength(1);
@@ -90,7 +78,7 @@ describe("visas.list", () => {
 
   it("returns [] for an empty list", async () => {
     stubProfileId("p1");
-    replyStock({ body: { data: { profile: { id: "p1", travelVisas: { nodes: [] } } } } });
+    replyImpersonated({ body: { data: { profile: { id: "p1", travelVisas: { nodes: [] } } } } });
 
     const visas = await list(TOKEN);
 
@@ -99,7 +87,7 @@ describe("visas.list", () => {
 
   it("translates 401 to AuthRevokedError", async () => {
     stubProfileId("p1");
-    replyStock({ status: 401, body: {} });
+    replyImpersonated({ status: 401, body: {} });
 
     await expect(list(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
   });

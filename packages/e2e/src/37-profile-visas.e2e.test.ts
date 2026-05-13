@@ -38,7 +38,7 @@
  * surfaces any leaked record.
  */
 
-// e2e-covers: createTravelVisa, updateTravelVisa, removeTravelVisa
+// e2e-covers: getTravelVisas, createTravelVisa, updateTravelVisa, removeTravelVisa
 
 import { beforeAll, describe, expect, it } from "vitest";
 
