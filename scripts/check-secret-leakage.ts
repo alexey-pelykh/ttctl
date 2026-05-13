@@ -65,8 +65,9 @@ import { BEARER_PATTERN_SOURCE } from "../packages/core/src/lib/redact.js";
  * is implicitly excluded because git ls-files honors .gitignore and
  * `.tmp/` is gitignored — but we keep the explicit prefix check as
  * defense-in-depth. The paths after `node_modules/` are the source-of-
- * truth module, this script, and the two co-located test suites that
- * exercise redaction — all four contain canonical-shape bearer fixtures
+ * truth module, this script, and the co-located test suites that
+ * exercise redaction (core `redact.ts` / `diagnostic-log.ts`, MCP
+ * `diagnostic.ts`) — all five contain canonical-shape bearer fixtures
  * by design and would self-match without the exclusion.
  */
 const EXCLUDED_PATH_PREFIXES = [
@@ -76,6 +77,10 @@ const EXCLUDED_PATH_PREFIXES = [
   "packages/core/src/lib/redact.ts",
   "packages/core/src/lib/__tests__/redact.test.ts",
   "packages/core/src/lib/__tests__/diagnostic-log.test.ts",
+  // MCP-side diagnostic taxonomy (#224) — co-located test asserts
+  // bearer-absence across every emission path and needs canonical-shape
+  // fixtures for the substring-absence check to be load-bearing.
+  "packages/mcp/src/__tests__/diagnostic.test.ts",
 ];
 
 /**
