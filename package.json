@@ -40,5 +40,13 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitest": "catalog:"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri": "^3.1.2"
+    },
+    "overridesComments": {
+      "fast-uri": "Close 2 transitive CVEs reaching us via MCP SDK: GHSA-q3j6-qgpj-74h6 (path traversal via percent-encoded dot segments, vulnerable <=3.1.0, patched >=3.1.1) and GHSA-v39h-62p7-jpjc (host confusion via percent-encoded authority delimiters, vulnerable <=3.1.1, patched >=3.1.2). Constraint is ^3.1.2 (not ^3.0.0) because pnpm overrides do not force re-resolution when the existing locked version satisfies the range — a looser ^3.0.0 would let the pre-existing 3.1.0 stay locked. Drop this override once the MCP SDK parent dep upgrades past the vulnerable range and pnpm naturally resolves to a non-vulnerable version. Tracked in #223."
+    }
   }
 }
