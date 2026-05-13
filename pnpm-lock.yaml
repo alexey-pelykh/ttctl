@@ -162,9 +162,6 @@ importers:
 
   packages/core:
     dependencies:
-      graphql:
-        specifier: 'catalog:'
-        version: 16.13.2
       node-wreq:
         specifier: 'catalog:'
         version: 2.2.1
@@ -190,6 +187,9 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 10.3.0(jiti@2.6.1)
+      graphql:
+        specifier: 'catalog:'
+        version: 16.13.2
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
