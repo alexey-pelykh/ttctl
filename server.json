@@ -6,12 +6,12 @@
     "url": "https://github.com/alexey-pelykh/ttctl",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "0.0.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "ttctl",
-      "version": "1.0.0",
+      "version": "0.0.0",
       "transport": {
         "type": "stdio"
       },
