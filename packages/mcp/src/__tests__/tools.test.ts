@@ -30,6 +30,9 @@ import { registerAllTools } from "../tools/index.js";
  * Post-#155: + 1 engagements.breaks.reschedule tool = 87 tools total.
  *
  * Post-#156: + 1 engagements.breaks.reasons.list tool = 88 tools total.
+ *
+ * Post-#149: + 7 payments tools (payouts list/show + methods list/show +
+ * rate show/questions/change) = 95 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -44,7 +47,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (88 tools = 56 wave-3 profile + 3 #15 applications + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
+  it("registers exactly the cumulative tool set (95 tools = 56 wave-3 profile + 3 #15 applications + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -83,6 +86,16 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_jobs_show",
       "ttctl_jobs_unsave",
       "ttctl_jobs_viewed",
+      // #149 — payments (7, payouts list/show + methods list/show +
+      // rate show/questions/change). rate_change is destructive
+      // (compliance flow); LLM clients must confirm with the user.
+      "ttctl_payments_methods_list",
+      "ttctl_payments_methods_show",
+      "ttctl_payments_payouts_list",
+      "ttctl_payments_payouts_show",
+      "ttctl_payments_rate_change",
+      "ttctl_payments_rate_questions",
+      "ttctl_payments_rate_show",
       // #73 — profile.basic (4)
       "ttctl_profile_basic_photo_show",
       "ttctl_profile_basic_photo_upload",

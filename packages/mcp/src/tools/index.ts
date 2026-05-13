@@ -8,6 +8,7 @@ import { registerApplicationsTools } from "./applications.js";
 import { registerAvailabilityTools } from "./availability.js";
 import { registerEngagementsTools } from "./engagements.js";
 import { registerJobsTools } from "./jobs.js";
+import { registerPaymentsTools } from "./payments.js";
 import { registerTimesheetTools } from "./timesheet.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerEducationTools } from "./profile/education.js";
@@ -126,6 +127,13 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // tool names use canonical `jobs_*` prefix only (no `opportunities_*`
   // aliasing).
   registerJobsTools(server, ctx);
+
+  // payments — 7 leaves (#149). Read-only payouts (list/show) and
+  // configured payment methods (list/show); rate sub-namespace mixes a
+  // unified read projection (`rate_show`), discovery (`rate_questions`),
+  // and a state-changing mutation (`rate_change`, INFERRED input, gated
+  // by `--confirm` at the CLI and the LLM-client confirmation at MCP).
+  registerPaymentsTools(server, ctx);
 
   // timesheet — 3 leaves (#13). list (viewer-wide pending OR scoped) +
   // show (BillingCycle.id detail) + submit (destructive: enters Toptal's
