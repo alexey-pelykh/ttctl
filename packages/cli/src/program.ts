@@ -12,6 +12,7 @@ import type { DiagnosticLevel } from "@ttctl/core";
 import { buildApplicationsCommand } from "./commands/applications/index.js";
 import { registerAuthCommand } from "./commands/auth/index.js";
 import { buildAvailabilityCommand } from "./commands/availability/index.js";
+import { buildContractsCommand } from "./commands/contracts/index.js";
 import { buildEngagementsCommand } from "./commands/engagements/index.js";
 import { buildJobsCommand } from "./commands/jobs/index.js";
 import { buildPaymentsCommand } from "./commands/payments/index.js";
@@ -250,6 +251,7 @@ export function buildProgram(): Command {
 
   program.addCommand(buildProfileCommand());
   program.addCommand(buildApplicationsCommand());
+  program.addCommand(buildContractsCommand());
   program.addCommand(buildEngagementsCommand());
   program.addCommand(buildAvailabilityCommand());
   program.addCommand(buildJobsCommand());

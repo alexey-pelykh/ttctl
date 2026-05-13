@@ -102,6 +102,11 @@ const EXPECTED_TOOLS = [
   "ttctl_applications_list",
   "ttctl_applications_show",
   "ttctl_applications_stats",
+  // contracts (#195) — 2 read-only tools at top-level (talent-level legal
+  // documents via `viewer.contracts` on the portal surface; distinct from
+  // the engagement-attached `EngagementAgreement` surfaced by engagements_show)
+  "ttctl_contracts_list",
+  "ttctl_contracts_show",
   // engagements (#147 + #155 + #156) — 8 tools (3 read + 5 break: list/add/remove/reschedule/reasons_list)
   "ttctl_engagements_list",
   "ttctl_engagements_show",
@@ -164,7 +169,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (95 tools = 56 wave-3 profile + 3 #15 applications + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (97 tools = 56 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);

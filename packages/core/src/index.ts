@@ -65,6 +65,7 @@ export type { Credentials, GraphQLRequest, ToptalSurface } from "./types.js";
 
 export * as profile from "./services/profile/index.js";
 export * as applications from "./services/applications/index.js";
+export * as contracts from "./services/contracts/index.js";
 export * as engagements from "./services/engagements/index.js";
 export * as availability from "./services/availability/index.js";
 export * as jobs from "./services/jobs/index.js";
