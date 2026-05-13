@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { AvailabilityDataFragment, ViewerQuery, ViewerQueryVariables } from "../__generated__/graphql.js";
+import type { AvailabilityDataFragment, ViewerQuery, ViewerQueryVariables } from "../__generated__/gateway.js";
 
 /**
  * Smoke test: verifies that `pnpm codegen` produces TypeScript types that are
