@@ -253,6 +253,8 @@ export interface EngagementDetail extends EngagementListItem {
     applicationRate: string | null;
     talentHourlyRate: string | null;
     talentRate: string | null;
+    marketplaceMargin: string | null;
+    timePeriod: string | null;
     commitment: { slug: string } | null;
   } | null;
   billCycle: { verbose: string } | null;
@@ -529,6 +531,8 @@ const ENGAGEMENT_SHOW_QUERY = `query JobActivityItem($id: ID!) {
           applicationRate
           talentHourlyRate
           talentRate
+          marketplaceMargin
+          timePeriod
           commitment { __typename slug }
         }
         earning {

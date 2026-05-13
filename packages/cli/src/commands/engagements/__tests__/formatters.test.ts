@@ -46,6 +46,8 @@ const DETAIL_FIXTURE: engagements.EngagementDetail = {
     applicationRate: "120.00",
     talentHourlyRate: "100.00",
     talentRate: "100.00",
+    marketplaceMargin: "20.00",
+    timePeriod: "Monthly",
     commitment: { slug: "full_time" },
   },
   billCycle: { verbose: "Monthly" },
@@ -141,6 +143,8 @@ describe("formatEngagementDetail", () => {
     expect(out).toContain("Bill cycle: Monthly");
     expect(out).toContain("Agreement");
     expect(out).toContain("Hourly rate: 100.00");
+    expect(out).toContain("Marketplace margin: 20.00");
+    expect(out).toContain("Time period: Monthly");
     expect(out).toContain("Earnings");
     expect(out).toContain("Paid: 5000.00 USD");
   });

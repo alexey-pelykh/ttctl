@@ -122,6 +122,12 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
     if (item.currentAgreement.talentRate !== null) {
       lines.push(`  Talent rate: ${item.currentAgreement.talentRate}`);
     }
+    if (item.currentAgreement.marketplaceMargin !== null) {
+      lines.push(`  Marketplace margin: ${item.currentAgreement.marketplaceMargin}`);
+    }
+    if (item.currentAgreement.timePeriod !== null) {
+      lines.push(`  Time period: ${item.currentAgreement.timePeriod}`);
+    }
     if (item.currentAgreement.commitment?.slug != null) {
       lines.push(`  Commitment: ${item.currentAgreement.commitment.slug}`);
     }
