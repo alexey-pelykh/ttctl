@@ -1,0 +1,519 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Oleksii PELYKH
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// All payments ops run against mobile-gateway via `stockTransport`.
+vi.mock("../../../transport.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../transport.js")>("../../../transport.js");
+  return {
+    ...actual,
+    stockTransport: vi.fn(),
+  };
+});
+
+import { PaymentsError, methods, payouts, rate } from "../index.js";
+import { AuthRevokedError } from "../../../auth/errors.js";
+import { stockTransport } from "../../../transport.js";
+import type { TransportResponse } from "../../../transport.js";
+
+const mockedStock = vi.mocked(stockTransport);
+const TOKEN = "tok-pmt-123";
+
+interface MockResponse {
+  status?: number;
+  body: unknown;
+}
+
+function reply(...responses: MockResponse[]): void {
+  for (const r of responses) {
+    mockedStock.mockResolvedValueOnce({
+      status: r.status ?? 200,
+      headers: {},
+      body: r.body,
+    } satisfies TransportResponse);
+  }
+}
+
+const PAYOUT_FIXTURE = {
+  __typename: "TalentPayment",
+  id: "pmt-1",
+  number: 42,
+  amount: "1234.56",
+  correctionAmount: "0",
+  description: "April payout",
+  status: "PAID",
+  kindCategory: "TALENT_PAYMENT",
+  paymentGroupId: "grp-1",
+  billingCycle: { __typename: "BillingCycle", id: "bc-1", startDate: "2026-04-01", endDate: "2026-04-30" },
+  dueDate: "2026-05-15",
+  paidAt: "2026-05-10T12:00:00Z",
+  createdAt: "2026-05-01T12:00:00Z",
+  updatedAt: "2026-05-10T12:00:00Z",
+  downloadPdfUrl: "https://example.com/payout.pdf",
+  job: {
+    __typename: "TalentJob",
+    id: "job-1",
+    title: "Senior Engineer",
+    client: { __typename: "Client", id: "cli-1", fullName: "Acme Inc." },
+  },
+  memorandums: {
+    __typename: "MemorandumsConnection",
+    nodes: [
+      {
+        __typename: "Memorandum",
+        id: "mem-1",
+        amount: "100.00",
+        balance: "1134.56",
+        downloadPdfUrl: null,
+        effectiveDate: "2026-04-15",
+      },
+    ],
+  },
+};
+
+const SUMMARY_FIXTURE = {
+  __typename: "PaymentsSummary",
+  totalDisputed: "0",
+  totalDue: "1234.56",
+  totalOnHold: "0",
+  totalOutstanding: "1234.56",
+  totalOverdue: "0",
+  totalPaid: "5000.00",
+};
+
+beforeEach(() => {
+  mockedStock.mockReset();
+});
+
+describe("payouts.list", () => {
+  it("returns projected items + summary on happy path", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            payments: {
+              __typename: "PaymentsConnection",
+              ids: ["pmt-1"],
+              nodes: [PAYOUT_FIXTURE],
+              summary: SUMMARY_FIXTURE,
+            },
+          },
+        },
+      },
+    });
+    const result = await payouts.list(TOKEN);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe("pmt-1");
+    expect(result.items[0]?.amount).toBe("1234.56");
+    expect(result.items[0]?.memorandums).toHaveLength(1);
+    expect(result.summary.totalPaid).toBe("5000.00");
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body.operationName).toBe("Payments");
+    expect(call?.body.variables?.["filters"]).toBeNull();
+  });
+
+  it("passes filters when fromDate/toDate provided", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", payments: { nodes: [], summary: SUMMARY_FIXTURE } } } },
+    });
+    await payouts.list(TOKEN, { fromDate: "2026-01-01", toDate: "2026-04-30" });
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body.variables?.["filters"]).toEqual({
+      createdOn: { from: "2026-01-01", to: "2026-04-30" },
+    });
+  });
+
+  it("returns empty result when viewer.payments is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", payments: null } } } });
+    const result = await payouts.list(TOKEN);
+    expect(result.items).toEqual([]);
+    expect(result.summary.totalPaid).toBe("0");
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(payouts.list(TOKEN)).rejects.toMatchObject({ code: "NO_VIEWER" });
+  });
+
+  it("throws AuthRevokedError on 401", async () => {
+    reply({ status: 401, body: { data: null } });
+    await expect(payouts.list(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
+describe("payouts.show", () => {
+  it("returns the projected payout on happy path", async () => {
+    reply({ body: { data: { node: PAYOUT_FIXTURE } } });
+    const p = await payouts.show(TOKEN, "pmt-1");
+    expect(p.id).toBe("pmt-1");
+    expect(p.status).toBe("PAID");
+  });
+
+  it("remaps the Relay 'Node id ... resolves to' error to NOT_FOUND", async () => {
+    reply({
+      body: {
+        data: null,
+        errors: [{ message: 'Node id "pmt-bad" resolves to NotFound' }],
+      },
+    });
+    await expect(payouts.show(TOKEN, "pmt-bad")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: expect.stringContaining("pmt-bad"),
+    });
+  });
+
+  it("throws NOT_FOUND when node is null", async () => {
+    reply({ body: { data: { node: null } } });
+    await expect(payouts.show(TOKEN, "pmt-nope")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("methods.list", () => {
+  it("returns projected payment methods on happy path", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            paymentOptions: [
+              {
+                __typename: "PaymentOption",
+                id: "pm-1",
+                paymentMethod: "PAYONEER",
+                preferredOption: true,
+                fullName: "Test Talent",
+                payoneerId: "pyn-123",
+                comment: null,
+                toptalPaymentsPending: false,
+              },
+            ],
+          },
+        },
+      },
+    });
+    const list = await methods.list(TOKEN);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe("pm-1");
+    expect(list[0]?.preferredOption).toBe(true);
+  });
+
+  it("filters out null wire entries", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            paymentOptions: [
+              null,
+              {
+                __typename: "PaymentOption",
+                id: "pm-2",
+                paymentMethod: "WIRE",
+                preferredOption: false,
+                fullName: null,
+                payoneerId: null,
+                comment: null,
+                toptalPaymentsPending: null,
+              },
+            ],
+          },
+        },
+      },
+    });
+    const list = await methods.list(TOKEN);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe("pm-2");
+  });
+});
+
+describe("methods.show", () => {
+  it("finds the requested method by id", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            paymentOptions: [
+              {
+                __typename: "PaymentOption",
+                id: "pm-1",
+                paymentMethod: "PAYONEER",
+                preferredOption: true,
+                fullName: "T",
+                payoneerId: "p",
+                comment: null,
+                toptalPaymentsPending: false,
+              },
+              {
+                __typename: "PaymentOption",
+                id: "pm-2",
+                paymentMethod: "WIRE",
+                preferredOption: false,
+                fullName: null,
+                payoneerId: null,
+                comment: null,
+                toptalPaymentsPending: null,
+              },
+            ],
+          },
+        },
+      },
+    });
+    const m = await methods.show(TOKEN, "pm-2");
+    expect(m.paymentMethod).toBe("WIRE");
+  });
+
+  it("throws NOT_FOUND when no method matches", async () => {
+    reply({ body: { data: { viewer: { id: "v1", paymentOptions: [] } } } });
+    await expect(methods.show(TOKEN, "pm-nope")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+const LAST_RATE_CHANGE_FIXTURE = {
+  __typename: "RateChangeRequest",
+  id: "rcr-1",
+  createdAt: "2026-04-01T12:00:00Z",
+  desiredRate: "100.0",
+  outcomeRate: "95.0",
+  requestType: "CURRENT_ENGAGEMENT",
+  status: "COMPLETED",
+  talentComment: "Cost of living adjustment",
+  engagement: {
+    __typename: "TalentEngagement",
+    id: "eng-1",
+    job: {
+      __typename: "TalentJob",
+      id: "job-1",
+      title: "Senior Engineer",
+      client: { __typename: "Client", id: "cli-1", fullName: "Acme Inc." },
+    },
+    currentAgreement: {
+      __typename: "EngagementAgreement",
+      commitment: { __typename: "JobCommitment", slug: "full_time" },
+    },
+  },
+};
+
+const ROLE_FIXTURE = {
+  __typename: "ViewerRole",
+  rates: { __typename: "Rates", hourly: "95.0" },
+  rateInsight: {
+    __typename: "RateInsight",
+    hourly: {
+      __typename: "TalentRateInsightForCommitment",
+      currentRateCompetitive: "Competitive",
+      recentApplicationRate: "98",
+      recommendedRate: "100",
+    },
+  },
+};
+
+describe("rate.show", () => {
+  it("composes lastChange + market + validation from two parallel queries", async () => {
+    reply(
+      {
+        body: {
+          data: {
+            viewer: {
+              id: "v1",
+              lastRateChangeRequest: LAST_RATE_CHANGE_FIXTURE,
+              viewerRole: ROLE_FIXTURE,
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            viewer: { id: "v1", viewerRole: ROLE_FIXTURE },
+            platformConfiguration: {
+              __typename: "PlatformConfiguration",
+              id: "cfg-1",
+              rateValidationRules: {
+                __typename: "RateValidationRules",
+                hourly: { __typename: "TalentRateValidationRule", minRate: "30", rateStep: "5" },
+              },
+            },
+          },
+        },
+      },
+    );
+    const p = await rate.show(TOKEN);
+    expect(p.lastChange?.id).toBe("rcr-1");
+    expect(p.ongoingChange).toBeNull(); // COMPLETED status → not ongoing
+    expect(p.marketInsight?.recommendedRate).toBe("100");
+    expect(p.validation?.minRate).toBe("30");
+    expect(p.currentRateDecimal).toBe("95.0");
+    expect(mockedStock).toHaveBeenCalledTimes(2);
+  });
+
+  it("classifies PENDING status as ongoing", async () => {
+    reply(
+      {
+        body: {
+          data: {
+            viewer: {
+              id: "v1",
+              lastRateChangeRequest: { ...LAST_RATE_CHANGE_FIXTURE, status: "PENDING" },
+              viewerRole: ROLE_FIXTURE,
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: { viewer: { id: "v1", viewerRole: ROLE_FIXTURE }, platformConfiguration: null },
+        },
+      },
+    );
+    const p = await rate.show(TOKEN);
+    expect(p.ongoingChange?.id).toBe("rcr-1");
+    expect(p.ongoingChange?.statusVerbose).toBe("Pending");
+  });
+});
+
+describe("rate.questions", () => {
+  it("returns the projected question form", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            rateChangeRequestQuestions: [
+              {
+                __typename: "RateChangeRequestQuestion",
+                id: "q1",
+                kind: "RADIO",
+                label: "Why are you requesting this rate change?",
+                options: [
+                  { __typename: "RateChangeRequestQuestionOption", label: "Cost of living", commentRequired: false },
+                  { __typename: "RateChangeRequestQuestionOption", label: "Other", commentRequired: true },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    const qs = await rate.questions(TOKEN);
+    expect(qs).toHaveLength(1);
+    expect(qs[0]?.kind).toBe("RADIO");
+    expect(qs[0]?.options).toHaveLength(2);
+    expect(qs[0]?.options[1]?.commentRequired).toBe(true);
+  });
+});
+
+describe("rate.change", () => {
+  it("rejects --kind=current-engagement without engagementId BEFORE any transport call", async () => {
+    await expect(
+      rate.change(TOKEN, { kind: "current-engagement", desiredRate: "100", answers: [] }),
+    ).rejects.toMatchObject({ code: "MISSING_INPUT" });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects engagementId on non-current-engagement kinds BEFORE transport", async () => {
+    await expect(
+      rate.change(TOKEN, {
+        kind: "future-engagements",
+        desiredRate: "100",
+        engagementId: "eng-1",
+        answers: [],
+      }),
+    ).rejects.toMatchObject({ code: "MISSING_INPUT" });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dry-run path builds preview WITHOUT calling transport", async () => {
+    const outcome = await rate.change(
+      TOKEN,
+      {
+        kind: "future-engagements",
+        desiredRate: "100",
+        answers: [{ questionId: "q1", value: "Cost of living" }],
+      },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind === "preview") {
+      expect(outcome.preview.operationName).toBe("CreateRateChangeRequest");
+      expect(outcome.preview.surface).toBe("mobile-gateway");
+      expect(outcome.preview.variables["requestType"]).toBe("FUTURE_ENGAGEMENTS");
+      expect(outcome.preview.headers["authorization"]).toMatch(/redacted/i);
+    }
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("applies on happy path and returns the new RateChangeRequest", async () => {
+    reply({
+      body: {
+        data: {
+          viewerRole: {
+            createRateChangeRequest: {
+              __typename: "CreateRateChangeRequestPayload",
+              success: true,
+              notice: "Your request was submitted for review.",
+              errors: null,
+              viewer: {
+                __typename: "Viewer",
+                id: "v1",
+                lastRateChangeRequest: { ...LAST_RATE_CHANGE_FIXTURE, status: "PENDING" },
+                viewerRole: ROLE_FIXTURE,
+              },
+            },
+          },
+        },
+      },
+    });
+    const outcome = await rate.change(TOKEN, {
+      kind: "current-engagement",
+      desiredRate: "120",
+      engagementId: "eng-1",
+      answers: [{ questionId: "q1", value: "Cost of living" }],
+    });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind === "applied") {
+      expect(outcome.result.id).toBe("rcr-1");
+      expect(outcome.result.status).toBe("PENDING");
+      expect(outcome.notice).toContain("submitted");
+    }
+  });
+
+  it("throws MUTATION_ERROR when success is false", async () => {
+    reply({
+      body: {
+        data: {
+          viewerRole: {
+            createRateChangeRequest: {
+              success: false,
+              notice: null,
+              errors: [{ code: "below_min", key: "desiredRate", message: "Rate must be at least 30" }],
+              viewer: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(
+      rate.change(TOKEN, {
+        kind: "future-engagements",
+        desiredRate: "10",
+        answers: [{ questionId: "q1", value: "Cost of living" }],
+      }),
+    ).rejects.toMatchObject({
+      code: "MUTATION_ERROR",
+      message: expect.stringContaining("Rate must be at least 30"),
+    });
+  });
+});
+
+describe("PaymentsError", () => {
+  it("has the expected name + code shape", () => {
+    const e = new PaymentsError("NOT_FOUND", "test");
+    expect(e.name).toBe("PaymentsError");
+    expect(e.code).toBe("NOT_FOUND");
+    expect(e.message).toBe("test");
+  });
+});

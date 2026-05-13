@@ -14,6 +14,7 @@ import { registerAuthCommand } from "./commands/auth/index.js";
 import { buildAvailabilityCommand } from "./commands/availability/index.js";
 import { buildEngagementsCommand } from "./commands/engagements/index.js";
 import { buildJobsCommand } from "./commands/jobs/index.js";
+import { buildPaymentsCommand } from "./commands/payments/index.js";
 import { buildTimesheetCommand } from "./commands/timesheet/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
@@ -252,6 +253,7 @@ export function buildProgram(): Command {
   program.addCommand(buildEngagementsCommand());
   program.addCommand(buildAvailabilityCommand());
   program.addCommand(buildJobsCommand());
+  program.addCommand(buildPaymentsCommand());
   program.addCommand(buildTimesheetCommand());
 
   return program;

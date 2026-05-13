@@ -139,6 +139,16 @@ const EXPECTED_TOOLS = [
   "ttctl_timesheet_list",
   "ttctl_timesheet_show",
   "ttctl_timesheet_submit",
+  // payments (#149) — 7 tools (payouts list/show + methods list/show + rate
+  // show/questions/change). rate_change is destructive (compliance flow);
+  // LLM clients must confirm with the user.
+  "ttctl_payments_payouts_list",
+  "ttctl_payments_payouts_show",
+  "ttctl_payments_methods_list",
+  "ttctl_payments_methods_show",
+  "ttctl_payments_rate_show",
+  "ttctl_payments_rate_questions",
+  "ttctl_payments_rate_change",
 ];
 
 /**
@@ -154,7 +164,7 @@ function getRegisteredToolNames(server: McpServer): string[] {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (88 tools = 56 wave-3 profile + 3 #15 applications + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (95 tools = 56 wave-3 profile + 3 #15 applications + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server);
     const registered = getRegisteredToolNames(server);

@@ -13,7 +13,7 @@ import { registerAllTools } from "../tools/index.js";
  * produces a structurally-valid preview envelope. This is the
  * cross-cutting safety net").
  *
- * For each of the 83 registered tools:
+ * For each of the 95 registered tools:
  *   1. Invoke the handler with `dryRun: true` (plus minimal fixture
  *      input satisfying the zod schema).
  *   2. Assert the response is the uniform dry-run envelope —
@@ -221,6 +221,18 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_timesheet_list: {},
   ttctl_timesheet_show: { id: "bc_123" },
   ttctl_timesheet_submit: { id: "bc_123" },
+  // payments (7 — #149)
+  ttctl_payments_methods_list: {},
+  ttctl_payments_methods_show: { id: "pm_123" },
+  ttctl_payments_payouts_list: {},
+  ttctl_payments_payouts_show: { id: "pmt_123" },
+  ttctl_payments_rate_change: {
+    kind: "future-engagements",
+    desiredRate: "100",
+    answers: [{ questionId: "q1", value: "smoke value" }],
+  },
+  ttctl_payments_rate_questions: {},
+  ttctl_payments_rate_show: {},
 };
 
 /**
@@ -233,6 +245,7 @@ const MULTI_PREVIEW_TOOLS = new Set([
   "ttctl_applications_stats", // 5 parallel JobActivityItems
   "ttctl_engagements_stats", // 2 parallel JobActivityItems
   "ttctl_profile_skills_update", // 1-3 sequential mutations based on fields
+  "ttctl_payments_rate_show", // 2 parallel queries (LastRateChangeRequest + RateChangeFormDetails)
 ]);
 
 describe("MCP tools — dryRun smoke test (#165)", () => {
@@ -245,8 +258,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 88 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(88);
+  it("registers exactly 95 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(95);
   });
 
   it("every registered tool has a fixture", () => {
