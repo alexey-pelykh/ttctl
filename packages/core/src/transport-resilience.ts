@@ -246,9 +246,7 @@ export function combineSignals(
   // Unref so a stray timer doesn't keep Node alive on early caller resolution.
   timer.unref();
   const signal =
-    callerSignal === undefined
-      ? timeoutController.signal
-      : AbortSignal.any([callerSignal, timeoutController.signal]);
+    callerSignal === undefined ? timeoutController.signal : AbortSignal.any([callerSignal, timeoutController.signal]);
   return {
     signal,
     dispose: (): void => {
