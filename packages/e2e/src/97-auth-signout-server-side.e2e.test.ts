@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+// e2e-covers: LogOut
+
 /**
  * Server-side LogOut wire-format E2E test (#180).
  *
