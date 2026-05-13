@@ -30,6 +30,7 @@ const ALLOWED_LICENSES = new Set([
   "CC0-1.0",
   "CC-BY-3.0",
   "CC-BY-4.0",
+  "MPL-2.0",
 ]);
 
 /**
