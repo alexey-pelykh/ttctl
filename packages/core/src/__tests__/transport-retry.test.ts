@@ -107,13 +107,12 @@ describe("stockTransport — 429 / 5xx retry behavior", () => {
 
   it("throws TransportError(RATE_LIMITED) after exhausting retries on persistent 429", async () => {
     // Every attempt returns 429 with retry-after=0 so backoff is instant.
-    mockedUndici.mockResolvedValue(
-      undiciOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never,
-    );
+    mockedUndici.mockResolvedValue(undiciOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never);
 
-    await expect(
-      stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } }),
-    ).rejects.toMatchObject({ code: "RATE_LIMITED", attempts: 4 });
+    await expect(stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } })).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      attempts: 4,
+    });
     // 1 initial + 3 retries = 4 total calls
     expect(mockedUndici).toHaveBeenCalledTimes(4);
   });
@@ -131,21 +130,21 @@ describe("stockTransport — 429 / 5xx retry behavior", () => {
   it("throws TransportError(SERVER_ERROR) after exhausting retries on persistent 500", async () => {
     mockedUndici.mockResolvedValue(undiciOk({ status: 500, headers: {}, body: "boom" }) as never);
 
-    await expect(
-      stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } }),
-    ).rejects.toMatchObject({ code: "SERVER_ERROR", attempts: 4 });
+    await expect(stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } })).rejects.toMatchObject({
+      code: "SERVER_ERROR",
+      attempts: 4,
+    });
   });
 
   it("respects TTCTL_TRANSPORT_MAX_RETRIES env override", async () => {
     process.env["TTCTL_TRANSPORT_MAX_RETRIES"] = "1";
     resetTransportConfigCache();
-    mockedUndici.mockResolvedValue(
-      undiciOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never,
-    );
+    mockedUndici.mockResolvedValue(undiciOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never);
 
-    await expect(
-      stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } }),
-    ).rejects.toMatchObject({ code: "RATE_LIMITED", attempts: 2 });
+    await expect(stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } })).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      attempts: 2,
+    });
     expect(mockedUndici).toHaveBeenCalledTimes(2);
   });
 
@@ -209,9 +208,7 @@ describe("stockTransport — 429 / 5xx retry behavior", () => {
 describe("impersonatedTransport — resilience behavior", () => {
   it("retries on 429 then returns the success", async () => {
     mockedFetch
-      .mockResolvedValueOnce(
-        wreqOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never,
-      )
+      .mockResolvedValueOnce(wreqOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never)
       .mockResolvedValueOnce(wreqOk({ status: 200, body: '{"ok":true}' }) as never);
 
     const res = await impersonatedTransport({ surface: "talent-profile", body: { operationName: "X" } });
@@ -290,9 +287,7 @@ describe("impersonatedTransport — resilience behavior", () => {
 describe("impersonatedMultipartTransport — resilience behavior", () => {
   it("retries on 429 and ultimately surfaces the success", async () => {
     mockedFetch
-      .mockResolvedValueOnce(
-        wreqOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never,
-      )
+      .mockResolvedValueOnce(wreqOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never)
       .mockResolvedValueOnce(wreqOk({ status: 200, body: '{"data":{"upload":true}}' }) as never);
 
     const res = await impersonatedMultipartTransport({
@@ -307,9 +302,7 @@ describe("impersonatedMultipartTransport — resilience behavior", () => {
 
   it("rebuilds the FormData on each retry attempt", async () => {
     mockedFetch
-      .mockResolvedValueOnce(
-        wreqOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never,
-      )
+      .mockResolvedValueOnce(wreqOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never)
       .mockResolvedValueOnce(wreqOk({ status: 200, body: "{}" }) as never);
 
     await impersonatedMultipartTransport({
@@ -342,9 +335,7 @@ describe("impersonatedMultipartTransport — resilience behavior", () => {
 
 describe("TransportError shape on retry-exhaustion", () => {
   it("carries surface, endpoint, attempts, lastStatus, lastRetryAfterMs", async () => {
-    mockedUndici.mockResolvedValue(
-      undiciOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never,
-    );
+    mockedUndici.mockResolvedValue(undiciOk({ status: 429, headers: { "retry-after": "0" }, body: "{}" }) as never);
 
     try {
       await stockTransport({ surface: "mobile-gateway", body: { operationName: "X" } });
