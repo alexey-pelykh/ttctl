@@ -43,7 +43,7 @@ Surfaces are gated to read-heavy / personal use. Operations that would enable ma
 
 ## Prerequisites
 
-- **Node.js** >= 24
+- **Node.js** >= 22.19.0
 - A **Toptal Talent** profile (you must be a Toptal talent to use this — it has no value to anyone else)
 - Recommended: **[1Password CLI](https://developer.1password.com/docs/cli/get-started/)** (`op`) for credential resolution
 

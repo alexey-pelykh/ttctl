@@ -30,7 +30,7 @@ You can add this automatically with `git commit -s`.
 
 ### Prerequisites
 
-- **Node.js** >= 24
+- **Node.js** >= 22.19.0
 - **pnpm** 9.15.4
 
 ### Setup
