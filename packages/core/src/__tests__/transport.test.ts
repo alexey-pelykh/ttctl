@@ -137,9 +137,11 @@ describe("impersonatedTransport", () => {
   });
 
   it("falls back to the raw text body when the response is not JSON", async () => {
+    // Use 400 (non-retryable) so the response surfaces immediately rather
+    // than triggering the issue-#229 5xx retry loop.
     mockedFetch.mockResolvedValueOnce(
       fakeResponse({
-        status: 503,
+        status: 400,
         headers: { "content-type": "text/html" },
         body: "<html>maintenance</html>",
       }) as never,
@@ -150,7 +152,7 @@ describe("impersonatedTransport", () => {
       body: { operationName: "X" },
     });
 
-    expect(result.status).toBe(503);
+    expect(result.status).toBe(400);
     expect(result.body).toBe("<html>maintenance</html>");
   });
 
@@ -248,14 +250,16 @@ describe("impersonatedTransport", () => {
   });
 
   it("does not throw Cf403Error for non-403 status codes from impersonated surfaces", async () => {
-    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 502, body: "<html>bad gateway</html>" }) as never);
+    // 401 is non-retryable by the issue-#229 policy and therefore surfaces
+    // immediately — exercising the "not a 403, not transient" path.
+    mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 401, body: '{"errors":[{"message":"x"}]}' }) as never);
 
     const result = await impersonatedTransport({
       surface: "talent-profile",
       body: { operationName: "X" },
     });
 
-    expect(result.status).toBe(502);
+    expect(result.status).toBe(401);
   });
 });
 
@@ -368,11 +372,13 @@ describe("stockTransport", () => {
   });
 
   it("falls back to raw text when the body is not JSON", async () => {
+    // Use a non-retryable status so the new resilience loop (issue #229)
+    // surfaces the response on the first attempt instead of looping.
     mockedUndici.mockResolvedValueOnce(
       fakeUndici({
-        status: 502,
+        status: 400,
         headers: { "content-type": "text/html" },
-        body: "<html>bad gateway</html>",
+        body: "<html>bad request</html>",
       }) as never,
     );
 
@@ -381,7 +387,7 @@ describe("stockTransport", () => {
       body: { operationName: "X" },
     });
 
-    expect(result.status).toBe(502);
-    expect(result.body).toBe("<html>bad gateway</html>");
+    expect(result.status).toBe(400);
+    expect(result.body).toBe("<html>bad request</html>");
   });
 });

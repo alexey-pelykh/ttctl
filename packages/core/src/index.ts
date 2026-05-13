@@ -60,6 +60,9 @@ export type {
   TransportResponse,
 } from "./transport.js";
 
+export { TransportError, readTransportConfig, resetTransportConfigCache } from "./transport-resilience.js";
+export type { TransportConfig } from "./transport-resilience.js";
+
 export { SURFACES_REQUIRING_IMPERSONATION, SURFACE_ENDPOINTS } from "./types.js";
 export type { Credentials, GraphQLRequest, ToptalSurface } from "./types.js";
 

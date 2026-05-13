@@ -189,6 +189,68 @@ export function logTransportResponse(info: ResponseLogInfo): void {
 }
 
 /**
+ * Information about a transport retry event, captured when the resilience
+ * loop decides to back off and re-issue the request. `reason` discriminates
+ * the trigger (429 rate-limit, 5xx transient server error, or a per-attempt
+ * timeout). `delayMs` is the wait the loop is about to sleep for; `attempt`
+ * is the 1-indexed retry counter (1 = first retry after the initial attempt).
+ *
+ * `retryAfterMs` is set only when the server's `Retry-After` header was
+ * parsed and honored — operators reading the trace can distinguish
+ * server-driven backoff from client-side exponential backoff.
+ */
+export interface RetryLogInfo {
+  surface: string;
+  endpoint: string;
+  operationName: string;
+  attempt: number;
+  reason: "rate-limit" | "server-error" | "timeout";
+  status?: number;
+  delayMs: number;
+  retryAfterMs?: number;
+}
+
+/**
+ * Emit a `--verbose` / `--debug` line for a transport RETRY event,
+ * fired by the resilience layer (issue #229) when it decides to back off
+ * and re-issue a request after a 429, retryable 5xx, or per-attempt
+ * timeout.
+ *
+ * - `"none"`: no-op.
+ * - `"verbose"`: emits one line summarising the retry decision.
+ * - `"debug"`: emits one JSON-encoded record with full retry context
+ *   (surface, endpoint, operation, attempt, reason, status, delays).
+ *
+ * Bearer-absence: this event shape carries NO authorization header and NO
+ * body payload — only retry metadata — so there is no redaction path
+ * needed.
+ */
+export function logTransportRetry(info: RetryLogInfo): void {
+  if (currentLevel === "none") return;
+  if (currentLevel === "verbose") {
+    const statusPart = info.status !== undefined ? ` status=${info.status.toString()}` : "";
+    const retryAfterPart = info.retryAfterMs !== undefined ? ` retryAfterMs=${info.retryAfterMs.toString()}` : "";
+    process.stderr.write(
+      `retry attempt=${info.attempt.toString()} reason=${info.reason}${statusPart} ` +
+        `delayMs=${info.delayMs.toString()}${retryAfterPart} operation=${info.operationName}\n`,
+    );
+    return;
+  }
+  const record: Record<string, unknown> = {
+    kind: "retry" as const,
+    surface: info.surface,
+    endpoint: info.endpoint,
+    operationName: info.operationName,
+    attempt: info.attempt,
+    reason: info.reason,
+    delayMs: info.delayMs,
+  };
+  if (info.status !== undefined) record["status"] = info.status;
+  if (info.retryAfterMs !== undefined) record["retryAfterMs"] = info.retryAfterMs;
+  process.stderr.write(`${JSON.stringify(record)}\n`);
+}
+
+/**
  * Minimal table of HTTP reason phrases used by the `"verbose"` log
  * line. Not exhaustive — covers the status codes TTCtl's transport
  * paths plausibly observe in production (mobile gateway, Cloudflare
