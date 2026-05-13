@@ -8,6 +8,9 @@
  * Uses `pnpm licenses list --prod --json` which natively handles pnpm workspaces
  * and excludes workspace packages.
  *
+ * Handles SPDX compound expressions: `(A OR B)` passes if ANY operand is allowed;
+ * `(A AND B)` passes only if ALL operands are allowed. Parentheses optional.
+ *
  * Exit codes:
  *   0 — all licenses are on the allow-list
  *   1 — one or more licenses are not on the allow-list
@@ -29,6 +32,28 @@ const ALLOWED_LICENSES = new Set([
   "CC-BY-4.0",
 ]);
 
+/**
+ * Evaluates a flat SPDX expression against the allow-list.
+ *
+ * Supports the two compound forms pnpm emits in practice:
+ *   - `(A OR B OR C)` — passes when ANY operand is allowed (consumer chooses)
+ *   - `(A AND B)` — passes only when ALL operands are allowed (compound license)
+ *
+ * Nested parentheses, WITH clauses, and exception identifiers are NOT supported;
+ * adding `spdx-expression-parse` is the right move once a real case appears.
+ */
+function isAllowed(license) {
+  if (ALLOWED_LICENSES.has(license)) return true;
+  const stripped = license.replace(/^\(|\)$/g, "").trim();
+  if (stripped.includes(" OR ")) {
+    return stripped.split(/\s+OR\s+/).some((operand) => ALLOWED_LICENSES.has(operand.trim()));
+  }
+  if (stripped.includes(" AND ")) {
+    return stripped.split(/\s+AND\s+/).every((operand) => ALLOWED_LICENSES.has(operand.trim()));
+  }
+  return false;
+}
+
 const output = execSync("pnpm licenses list --prod --json", {
   encoding: "utf-8",
 });
@@ -36,7 +61,7 @@ const licenseMap = JSON.parse(output);
 
 const violations = [];
 for (const [license, packages] of Object.entries(licenseMap)) {
-  if (!ALLOWED_LICENSES.has(license)) {
+  if (!isAllowed(license)) {
     for (const pkg of packages) {
       violations.push({ name: pkg.name, version: pkg.versions.join(", "), license });
     }
