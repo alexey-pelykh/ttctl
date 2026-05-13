@@ -577,8 +577,9 @@ const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBas
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
     profile {
       id
@@ -631,8 +632,9 @@ interface UpdateBasicInfoInput {
 }
 
 interface UpdateBasicInfoUserError {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 interface UpdateBasicInfoPayload {
@@ -867,7 +869,7 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
 
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError("USER_ERROR", `Profile update rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
   }
 
@@ -952,7 +954,7 @@ const UPLOAD_PROFILE_PHOTO_MUTATION = `mutation UploadProfilePhoto($input: Updat
   updatePhoto(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile {
       id
       photo {
@@ -995,8 +997,9 @@ interface GetPhotoData {
 }
 
 interface UploadPhotoUserError {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 interface UploadPhotoData {
@@ -1229,7 +1232,7 @@ export async function photoUpload(token: string, input: PhotoUploadInput): Promi
   }
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError("USER_ERROR", `Photo upload rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
   }
   if (payload.success === false) {

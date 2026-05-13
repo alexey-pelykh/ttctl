@@ -44,8 +44,9 @@ interface GraphQLErrorEntry {
 }
 
 interface UserError {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 /**
@@ -208,7 +209,7 @@ function unwrapResponse(res: TransportResponse, operationName: string): unknown 
 function rejectIfUserErrors(errors: UserError[] | null | undefined, operationName: string): void {
   if (Array.isArray(errors) && errors.length > 0) {
     const first = errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new PortfolioError(
       "USER_ERROR",
       `${operationName} rejected${fieldHint}: ${first?.message ?? "unknown error"}`,
@@ -325,8 +326,9 @@ const CREATE_PORTFOLIO_ITEM_MUTATION = `mutation createPortfolioItem($input: Cre
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -413,8 +415,9 @@ const UPDATE_PORTFOLIO_ITEM_MUTATION = `mutation updatePortfolioItem($input: Upd
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -485,8 +488,9 @@ const REMOVE_PORTFOLIO_ITEM_MUTATION = `mutation removePortfolioItem($input: Rem
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -541,8 +545,9 @@ const CHANGE_PORTFOLIO_ITEM_POSITION_MUTATION = `mutation changePortfolioItemPos
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -619,8 +624,9 @@ const HIGHLIGHT_PORTFOLIO_ITEM_MUTATION = `mutation highlightPortfolioItem($id: 
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -724,8 +730,9 @@ const UPLOAD_PORTFOLIO_COVER_MUTATION = `mutation uploadPortfolioCover(
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;
@@ -797,8 +804,9 @@ const UPLOAD_PORTFOLIO_FILE_MUTATION = `mutation uploadPortfolioFile($profileId:
     success
     notice
     errors {
+      code
+      key
       message
-      field
     }
   }
 }`;

@@ -145,7 +145,7 @@ describe("visas.add", () => {
         data: {
           createTravelVisa: {
             profile: null,
-            errors: [{ message: "unknown country", field: "countryId" }],
+            errors: [{ message: "unknown country", key: "countryId" }],
           },
         },
       },

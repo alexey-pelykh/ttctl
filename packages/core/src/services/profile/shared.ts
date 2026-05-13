@@ -18,14 +18,20 @@ export interface GraphQLErrorEntry {
 }
 
 /**
- * Mutation-payload `UserError` shape (`{ message, field }`). Same name on
- * the wire across `updateBasicInfo`, `createEducation`, `updateEducation`,
+ * Mutation-payload `UserError` shape (`{ code, key, message }`). Same name
+ * on the wire across `updateBasicInfo`, `createEducation`, `updateEducation`,
  * etc. — keeping the interface here lets every sub-domain surface the
  * same error fields uniformly.
+ *
+ * The canonical schema (`packages/core/src/__generated__/talent-profile.ts`)
+ * is the authority: `UserError { code, key, message }`. Selecting `field`
+ * (a stale name from earlier inferred drafts) returns a top-level GraphQL
+ * error from the server. See #248 for the wire-shape regression.
  */
 export interface UserError {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 /**
@@ -160,7 +166,7 @@ export function applyUserErrorsAndSuccess(
 ): void {
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError("USER_ERROR", `${verb} rejected${fieldHint}: ${first?.message ?? "unknown error"}`);
   }
   if (payload.success === false) {

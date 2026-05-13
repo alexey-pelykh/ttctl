@@ -172,7 +172,7 @@ describe("update", () => {
           updateExternalProfiles: {
             success: false,
             notice: null,
-            errors: [{ message: "URL must be https", field: "linkedin" }],
+            errors: [{ message: "URL must be https", key: "linkedin" }],
             profile: null,
           },
         },

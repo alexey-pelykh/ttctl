@@ -66,7 +66,7 @@ const CREATE_EDUCATION_MUTATION = `mutation CREATE_EDUCATION($input: CreateEduca
   createEducation(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id educations { nodes { ...Education } } }
   }
 }
@@ -76,7 +76,7 @@ const UPDATE_EDUCATION_MUTATION = `mutation UPDATE_EDUCATION($input: UpdateEduca
   updateEducation(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id educations { nodes { ...Education } } }
   }
 }
@@ -86,7 +86,7 @@ const REMOVE_EDUCATION_MUTATION = `mutation REMOVE_EDUCATION($input: RemoveEduca
   removeEducation(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id educations { nodes { ...Education } } }
   }
 }
@@ -96,7 +96,7 @@ const HIGHLIGHT_EDUCATION_MUTATION = `mutation highlightEducation($id: ID!, $hig
   highlightEducation(input: { educationId: $id, highlight: $highlight }) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     education { id highlight }
   }
 }`;

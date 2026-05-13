@@ -181,7 +181,7 @@ describe("add", () => {
     replyStock({ body: VIEWER_OK });
     replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [] } } } } });
     replyImpersonated({
-      body: { data: { createEducation: { success: false, errors: [{ message: "bad", field: "institution" }] } } },
+      body: { data: { createEducation: { success: false, errors: [{ message: "bad", key: "institution" }] } } },
     });
 
     await expect(add(TOKEN, { institution: "x", degree: "y" })).rejects.toMatchObject({

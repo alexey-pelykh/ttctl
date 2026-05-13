@@ -97,8 +97,9 @@ interface GraphQLErrorEntry {
 }
 
 interface UserErrorEntry {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 /**
@@ -266,8 +267,9 @@ const UPDATE_EXTERNAL_PROFILES_MUTATION = `mutation UpdateExternalProfiles($inpu
       dribbble
     }
     errors {
+      code
+      key
       message
-      field
     }
     notice
     success
@@ -365,7 +367,7 @@ export async function update(token: string, changes: ExternalProfilesUpdate): Pr
   }
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError(
       "USER_ERROR",
       `External profile update rejected${fieldHint}: ${first?.message ?? "unknown error"}`,
@@ -496,8 +498,9 @@ const UPDATE_CUSTOM_REQUIREMENTS_MUTATION = `mutation updateCustomRequirements($
       }
     }
     errors {
+      code
+      key
       message
-      field
     }
     notice
     success
@@ -605,7 +608,7 @@ export async function customRequirementsSet(
   }
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError(
       "USER_ERROR",
       `Custom requirements update rejected${fieldHint}: ${first?.message ?? "unknown error"}`,

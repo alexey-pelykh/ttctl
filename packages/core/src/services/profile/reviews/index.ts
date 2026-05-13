@@ -64,8 +64,9 @@ interface GraphQLErrorEntry {
 }
 
 interface UserErrorEntry {
+  code?: string | null;
+  key?: string | null;
   message?: string | null;
-  field?: string | null;
 }
 
 async function getProfileId(token: string): Promise<string> {
@@ -274,8 +275,9 @@ const APPROVE_ITEM_REVIEW_MUTATION = `mutation ApproveItemReview($input: Approve
       }
     }
     errors {
+      code
+      key
       message
-      field
     }
     notice
     success
@@ -373,7 +375,7 @@ export async function approveItem(token: string, args: ApproveItemReviewArgs): P
   }
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError(
       "USER_ERROR",
       `Approve item review rejected${fieldHint}: ${first?.message ?? "unknown error"}`,
@@ -425,8 +427,9 @@ const APPROVE_SECTION_REVIEW_MUTATION = `mutation ApproveSectionReview($input: A
       }
     }
     errors {
+      code
+      key
       message
-      field
     }
     notice
     success
@@ -493,7 +496,7 @@ export async function approveSection(
   }
   if (Array.isArray(payload.errors) && payload.errors.length > 0) {
     const first = payload.errors[0];
-    const fieldHint = first?.field ? ` (${first.field})` : "";
+    const fieldHint = first?.key ? ` (${first.key})` : "";
     throw new ProfileError(
       "USER_ERROR",
       `Approve section review rejected${fieldHint}: ${first?.message ?? "unknown error"}`,

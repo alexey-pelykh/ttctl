@@ -97,7 +97,7 @@ const CREATE_EMPLOYMENT_MUTATION = `mutation CreateEmployment($input: CreateEmpl
   createEmployment(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id employments { nodes { ...Employment } } }
   }
 }
@@ -107,7 +107,7 @@ const UPDATE_EMPLOYMENT_MUTATION = `mutation UpdateEmployment($input: UpdateEmpl
   updateEmployment(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id employments { nodes { ...Employment } } }
   }
 }
@@ -117,7 +117,7 @@ const REMOVE_EMPLOYMENT_MUTATION = `mutation RemoveEmployment($input: RemoveEmpl
   removeEmployment(input: $input) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     profile { id employments { nodes { ...Employment } } }
   }
 }
@@ -127,7 +127,7 @@ const HIGHLIGHT_EMPLOYMENT_MUTATION = `mutation highlightEmployment($id: ID!, $h
   highlightEmployment(input: { employmentId: $id, highlight: $highlight }) {
     success
     notice
-    errors { message field }
+    errors { code key message }
     employment { id highlight }
   }
 }`;
