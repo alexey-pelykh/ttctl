@@ -68,6 +68,16 @@ The repository is a pnpm monorepo with the following packages:
 
 Follow the project conventions documented in [CLAUDE.md](CLAUDE.md).
 
+### Branch protection
+
+The `main` branch is protected by a [GitHub ruleset][gh-rulesets]. The
+canonical definitions live in [`.github/rulesets/`](.github/rulesets/); see
+[`.github/rulesets/README.md`](.github/rulesets/README.md) for the manual
+`gh api` sync, verification, and disaster-recovery commands. The GitHub-side
+configuration must be kept in sync with the files in that directory.
+
+[gh-rulesets]: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
+
 ### Submitting Changes
 
 1. Fork and create a feature branch
