@@ -25,14 +25,19 @@
  *     calls are reported once at the end and otherwise ignored (per
  *     the AC's Out-of-Scope list).
  *   - Helper-wrapped invocations that pass `operationName` as a
- *     parameter (e.g. `callTalentProfile(token, "GetSkillSetWithConnections", ...)`
- *     in `services/profile/skills/index.ts`) are NOT detected by this
- *     v1 script — the literal does not match `operationName: "X"`. Two
- *     remediations: (a) refactor the helper to take a kwarg object
- *     `{ operationName: "X", query, variables }` so the literal becomes
- *     visible, or (b) place an `// e2e-exempt: <reason>` marker near the
- *     helper invocation. A v2 enhancement can extend detection to
- *     positional-arg helper signatures.
+ *     positional argument (e.g. `callTalentProfile(token, "GetSkillSetWithConnections", ...)`
+ *     in `services/profile/skills/index.ts`, or `callGateway(token, "Payments", ...)`
+ *     in `services/payments/index.ts`) are detected via an allowlist of
+ *     known helpers — see `HELPER_SIGNATURES`. Each helper declares its
+ *     hardcoded surface (`talent-profile` for `callTalentProfile`,
+ *     `mobile-gateway` for `callGateway`) so the surface walk-back is
+ *     unnecessary for helper-wrapped sites. The function DEFINITION
+ *     itself is skipped (the literal at arg-position 1 is the
+ *     `operationName: string` parameter, not a string literal). Adding
+ *     a new helper requires appending its name + surface to the
+ *     allowlist below — this is a feature, not a bug, since a new
+ *     helper crossing a surface boundary should force the maintainer
+ *     to register it.
  *
  * Coverage declaration:
  *
@@ -105,6 +110,46 @@ const SURFACE_SEARCH_WINDOW = 30;
 
 /** How far upward (in lines) to look for `// e2e-exempt:` from `operationName:`. */
 const EXEMPT_SEARCH_WINDOW = 5;
+
+/**
+ * Helpers in `packages/core/src/services/**` that wrap the transport
+ * layer and accept `operationName` as the second positional argument
+ * (index 1, after `token`). Each helper hardcodes the surface it talks
+ * to inside its body's `impersonatedTransport({ surface: ... })` or
+ * `stockTransport({ surface: ... })` call — that surface is reproduced
+ * here so call-site scans can attribute the invocation without walking
+ * into the helper body.
+ *
+ * The two helper names below cover the patterns currently shipped:
+ *
+ *   - `callTalentProfile` — three definitions in tree (`services/profile/shared.ts`
+ *     exported helper used by industries / employment / education / certifications;
+ *     local helpers in `services/profile/skills/index.ts` and
+ *     `services/contracts/index.ts`). All target `talent-profile`.
+ *   - `callGateway` — six local definitions across `services/payments`,
+ *     `services/jobs`, `services/applications`, `services/engagements`,
+ *     `services/availability`, `services/timesheet`. All target
+ *     `mobile-gateway`.
+ *
+ * A new helper requires appending an entry here. If the new helper
+ * targets a different surface than the one already registered under
+ * the same name, the scanner cannot distinguish call sites by file
+ * alone — refactor the helper name to be surface-specific (e.g.
+ * `callScheduler`) or fall back to inline `// e2e-exempt:` markers at
+ * the call site.
+ */
+const HELPER_SIGNATURES: ReadonlyMap<string, { surface: string }> = new Map([
+  ["callTalentProfile", { surface: "talent-profile" }],
+  ["callGateway", { surface: "mobile-gateway" }],
+]);
+
+/**
+ * How far forward (in lines) from a helper-name token to scan for the
+ * operationName string literal. Tuned for the longest multi-line call
+ * site in the codebase (~6 lines including generic + trailing args)
+ * with headroom.
+ */
+const HELPER_SNIPPET_WINDOW = 8;
 
 interface CalledOp {
   /** Operation name from the `operationName: "X"` literal. */
@@ -215,12 +260,68 @@ const SURFACE_RE = /\bsurface\s*:\s*["']([a-z-]+)["']/;
 const EXEMPT_RE = /^\s*\/\/\s*e2e-exempt:\s*(.+?)\s*$/;
 const COVERS_RE = /^\s*\/\/\s*e2e-covers:\s*(.+?)\s*$/;
 
+/**
+ * Escape a literal string for embedding in a `RegExp` source. Used
+ * once at module load to build {@link HELPER_NAME_RE} from
+ * {@link HELPER_SIGNATURES} keys.
+ */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Regex matching a single registered helper-name token. The alternation
+ * is rebuilt from the HELPER_SIGNATURES keys so adding a new helper
+ * automatically extends the pattern. Word-boundary on both sides
+ * prevents matches inside identifiers like `oldCallTalentProfile`.
+ *
+ * Used as the OUTER scan (per line). The actual operationName literal
+ * is extracted via {@link HELPER_INVOKE_RE} applied to the multi-line
+ * snippet starting at the helper-name token.
+ */
+const HELPER_NAME_RE = new RegExp(`\\b(${[...HELPER_SIGNATURES.keys()].map(escapeRegex).join("|")})\\b`, "g");
+
+/**
+ * Regex matching the structure of a helper invocation starting from
+ * immediately after the helper-name token:
+ *
+ *   `[<GenericArgs>] ( firstArg , "OperationName"`
+ *
+ *   - The optional generic argument list (`<...>`) tolerates any
+ *     characters except a closing `>` — sufficient for the call-site
+ *     generics shipped today (`<JobsListResponse>`,
+ *     `<JobActivityListResponse["data"] & object>`, etc.). Nested
+ *     generic arguments (e.g. `<Map<string, T>>`) are NOT supported by
+ *     v1 — none appear in the codebase. The function DEFINITION's
+ *     generic (e.g. `<T extends Foo<Bar>>`) is filtered out earlier
+ *     by the `function\s+$` guard.
+ *   - The first positional argument is matched as `[^,)]+` — any run
+ *     of characters that is not a comma or closing paren. Tolerates a
+ *     bare identifier like `token`, a property access like `ctx.token`,
+ *     or a short type-cast like `token as string`.
+ *   - The second positional argument MUST be a single-quoted or
+ *     double-quoted string literal whose contents follow the GraphQL
+ *     identifier shape (letter or underscore, then letters/digits/
+ *     underscores). A non-literal (variable, expression, template
+ *     literal) at arg-1 indicates a dynamic operation name — those are
+ *     intentionally skipped because the scanner cannot resolve them
+ *     statically.
+ *
+ * `\s*` between tokens matches whitespace INCLUDING newlines, so the
+ * regex spans multi-line helper invocations naturally when applied to
+ * the snippet returned by {@link buildHelperSnippet}.
+ */
+const HELPER_INVOKE_RE = /^\s*(?:<[^>]*>)?\s*\(\s*[^,)]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/;
+
 function scanCoreSrc(absPath: string, relPath: string): FileScanResult {
   const lines = readSourceLines(absPath);
   if (lines === null) return { ops: [] };
   const inComment = maskBlockComments(lines);
   const ops: CalledOp[] = [];
 
+  // Phase A — `operationName: "X"` literal sweep with `surface:` walk-back.
+  // Detects direct `impersonatedTransport({ ..., body: { operationName: "X",
+  // ... } })` / `stockTransport(...)` call sites.
   for (let i = 0; i < lines.length; i++) {
     if (inComment[i]) continue;
     const line = lines[i] ?? "";
@@ -246,20 +347,128 @@ function scanCoreSrc(absPath: string, relPath: string): FileScanResult {
     }
 
     // Walk back for an `// e2e-exempt:` marker within the tighter window.
-    let exempt: string | null = null;
-    const exemptLow = Math.max(0, i - EXEMPT_SEARCH_WINDOW);
-    for (let j = i - 1; j >= exemptLow; j--) {
-      const em = EXEMPT_RE.exec(lines[j] ?? "");
-      if (em !== null) {
-        exempt = em[1] ?? null;
-        break;
-      }
-    }
+    const exempt = findExemptMarker(lines, i);
 
     ops.push({ name: opName, surface, file: relPath, line: i + 1, exempt });
   }
 
+  // Phase B — helper-wrapped invocation sweep. Detects call sites of
+  // registered helpers (see {@link HELPER_SIGNATURES}) and extracts the
+  // operationName literal at positional argument index 1.
+  ops.push(...scanHelperInvocations(lines, inComment, relPath));
+
   return { ops };
+}
+
+/**
+ * Walk back from `lineIndex` looking for the nearest `// e2e-exempt:`
+ * marker within {@link EXEMPT_SEARCH_WINDOW} lines. Returns the reason
+ * string from the marker, or `null` if none found.
+ */
+function findExemptMarker(lines: readonly string[], lineIndex: number): string | null {
+  const exemptLow = Math.max(0, lineIndex - EXEMPT_SEARCH_WINDOW);
+  for (let j = lineIndex - 1; j >= exemptLow; j--) {
+    const em = EXEMPT_RE.exec(lines[j] ?? "");
+    if (em !== null) {
+      return em[1] ?? null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Detect helper-wrapped GraphQL invocations such as
+ *
+ *   ```
+ *   const data = await callTalentProfile<T>(
+ *     token,
+ *     "OperationName",
+ *     QUERY,
+ *     variables,
+ *   );
+ *   ```
+ *
+ * The scan is keyed on registered helper names from
+ * {@link HELPER_SIGNATURES}. Each detection records a `CalledOp`
+ * tagged with the helper's hardcoded surface (no `surface:`
+ * walk-back needed).
+ *
+ * Filters:
+ *
+ *   - Block-comment-masked lines are skipped (same as Phase A).
+ *   - Line comments are stripped per-line before scanning.
+ *   - Function DEFINITIONS — `async function callTalentProfile(...)`
+ *     and `function callGateway(...)` — are filtered by inspecting
+ *     the text immediately preceding the helper-name token. A
+ *     declaration's positional argument 1 is the bare identifier
+ *     `operationName`, not a string literal, so {@link HELPER_INVOKE_RE}
+ *     would not match anyway; the declaration filter is defense-in-
+ *     depth (and a small perf win).
+ *   - Dynamic operationName (variable / expression / template literal
+ *     at arg-1) is silently skipped because the scanner cannot resolve
+ *     it statically. If such a site arises, add an `// e2e-exempt:`
+ *     marker explaining the dynamic dispatch.
+ */
+function scanHelperInvocations(lines: readonly string[], inComment: readonly boolean[], relPath: string): CalledOp[] {
+  const ops: CalledOp[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (inComment[i]) continue;
+    const codeLine = stripLineComment(lines[i] ?? "");
+    HELPER_NAME_RE.lastIndex = 0;
+    let nameMatch: RegExpExecArray | null;
+    while ((nameMatch = HELPER_NAME_RE.exec(codeLine)) !== null) {
+      const helperName = nameMatch[1];
+      if (helperName === undefined) continue;
+      const sig = HELPER_SIGNATURES.get(helperName);
+      if (sig === undefined) continue;
+
+      // Skip function declarations — `async function callTalentProfile(...)`,
+      // `function callGateway(...)`. The trailing `\s+$` on `before` means
+      // we only match when `function` is the LAST non-whitespace token
+      // before the helper name (modifier keywords like `export`/`async`
+      // sit further left and don't matter).
+      const before = codeLine.slice(0, nameMatch.index);
+      if (/\bfunction\s+$/.test(before)) continue;
+
+      // Build a snippet from immediately AFTER the helper-name token,
+      // spanning up to HELPER_SNIPPET_WINDOW additional lines. Each
+      // subsequent line is stripped of line comments and joined with
+      // `\n` so HELPER_INVOKE_RE can match the multi-line call shape.
+      const snippet = buildHelperSnippet(lines, inComment, i, nameMatch.index + helperName.length);
+      const invokeMatch = HELPER_INVOKE_RE.exec(snippet);
+      if (invokeMatch === null) continue;
+      const opName = invokeMatch[1];
+      if (opName === undefined) continue;
+
+      const exempt = findExemptMarker(lines, i);
+      ops.push({ name: opName, surface: sig.surface, file: relPath, line: i + 1, exempt });
+    }
+  }
+
+  return ops;
+}
+
+/**
+ * Build a single newline-joined snippet starting from `startCol` on
+ * `startLine`, extending forward up to {@link HELPER_SNIPPET_WINDOW}
+ * additional non-comment lines. Each line is stripped of trailing
+ * line-comments BEFORE joining so a `//` mid-call doesn't bleed
+ * across lines.
+ */
+function buildHelperSnippet(
+  lines: readonly string[],
+  inComment: readonly boolean[],
+  startLine: number,
+  startCol: number,
+): string {
+  const firstLineCode = stripLineComment(lines[startLine] ?? "");
+  const pieces: string[] = [firstLineCode.slice(startCol)];
+  for (let j = 1; j <= HELPER_SNIPPET_WINDOW && startLine + j < lines.length; j++) {
+    if (inComment[startLine + j]) break;
+    pieces.push(stripLineComment(lines[startLine + j] ?? ""));
+  }
+  return pieces.join("\n");
 }
 
 function stripLineComment(line: string): string {
@@ -446,7 +655,7 @@ function formatReport(
       err.push(`  ${name}  (declared in ${file})`);
     }
     err.push(
-      `  These are either typos, renamed operations, or coverage declarations for ops only invoked via helper functions (not yet detected by this v1 gate — see script header).\n`,
+      `  These are typos, renamed operations, or coverage declared for an operation no longer invoked from packages/core/src/. Helper-wrapped invocations of registered helpers (see HELPER_SIGNATURES in this script) are detected.\n`,
     );
   }
 
