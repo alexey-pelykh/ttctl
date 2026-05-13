@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolRegistrationContext } from "./_shared.js";
 import { registerApplicationsTools } from "./applications.js";
 import { registerAvailabilityTools } from "./availability.js";
+import { registerContractsTools } from "./contracts.js";
 import { registerEngagementsTools } from "./engagements.js";
 import { registerJobsTools } from "./jobs.js";
 import { registerPaymentsTools } from "./payments.js";
@@ -109,6 +110,12 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // Toptal Talent Activity view (TalentJobActivityItem rows). Per
   // project non-goals, no apply / withdraw / edit tools are exposed.
   registerApplicationsTools(server, ctx);
+
+  // contracts — 2 leaves (#195). Read-only talent-level legal documents
+  // (Toptal Direct, MSA, etc.) via `viewer.contracts` on the portal
+  // surface. Engagement-attached commercial agreements stay in
+  // `engagements_show` (different surface, different domain type).
+  registerContractsTools(server, ctx);
 
   // engagements — 6 leaves (#147). View current and past engagements;
   // manage engagement breaks (list / add / remove). `allocated-hours`
