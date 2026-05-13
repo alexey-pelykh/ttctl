@@ -56,6 +56,79 @@ import type { DefinitionNode } from "graphql";
  * (`*.e2e.test.ts`, gated by `TTCTL_E2E=1`) are required before merge for
  * any operation whose wire format is best-effort.
  *
+ * ## TTCtl trusts only research-validated operations
+ *
+ * Generated TypeScript types are only as trustworthy as the research-repo
+ * source shapes they were synthesized from. The exclusion lists above are
+ * the **trust boundary**: an operation NOT in a `*_KNOWN_UNTRUSTED_OPS`
+ * array is one whose schema-side shape has been pinned by a live capture
+ * and validated against the synthesized SDL — its generated type is safe
+ * to consume at face value. Untrusted operations do NOT produce types
+ * (they are filtered out via per-document negation globs), so source code
+ * cannot accidentally couple to an unvalidated wire format through the
+ * generated bindings.
+ *
+ * Concretely, an operation lands in `*_KNOWN_UNTRUSTED_OPS` when any of
+ * the following research-side gaps blocks SDL validation:
+ *
+ *   - **`Unknown` scalar/type placeholder.** The synthesizer emits
+ *     `Unknown` in input/output positions where no live capture pinned a
+ *     concrete type. Operations that SELECT SUBFIELDS on an `Unknown`
+ *     position fail validation; operations that pass the position through
+ *     opaquely are fine.
+ *   - **`_UNKNOWN` enum values.** Enum positions where the synthesizer
+ *     observed a value that did not appear in any declared enum receive
+ *     a `_UNKNOWN` placeholder member. Operations exercising the
+ *     placeholder fail validation against the strict-enum SDL.
+ *   - **Pattern-N input-shape inferences** (per
+ *     `../research/notes/10-mutation-input-patterns.md`). Mutation inputs
+ *     observed at runtime but not pinned by a live capture are typed
+ *     best-effort via the Pattern-1/2/3 wrapper-key heuristics. The
+ *     synthesized input type compiles, but the wire format is inferred —
+ *     the operation stays untrusted until a live capture confirms.
+ *
+ * The `Unknown`/`_UNKNOWN`/Pattern-N taxonomy is internal to the
+ * synthesizer; the trust boundary surfaced HERE is the simple binary
+ * "is the operation in `*_KNOWN_UNTRUSTED_OPS`?". Reducing the lists is
+ * a research-side activity — see `../research/graphql/{gateway,talent_profile}/coverage.md`
+ * for the gap inventory and `../research/notes/04-schema-gaps.md` plus
+ * `../research/notes/11-uncovered-gaps.md` for the closure roadmap.
+ *
+ * Research-side schema closure is incremental: as `../research/` pins
+ * additional shapes via live captures and the synthesizer narrows
+ * `Unknown` positions, operations migrate OUT of `*_KNOWN_UNTRUSTED_OPS`
+ * and into the trusted catalog. The exclusion lists shrink monotonically;
+ * additions are rare and require a research-side regression (a previously
+ * pinned shape becomes uncertain).
+ *
+ * ## Adding a new operation
+ *
+ * 1. Confirm the operation document exists at the expected path in
+ *    `../research/graphql/{gateway,talent_profile}/operations/` (sibling
+ *    working copy required). The research repo is the single source of
+ *    truth for operation existence — never hand-author operations here.
+ * 2. Run `pnpm codegen`. If validation passes against the synthesized SDL,
+ *    the typed shape lands in the generated output and is safe to consume.
+ *    If validation fails (e.g., the operation selects subfields on an
+ *    `Unknown` position), add the operation name to the relevant
+ *    `*_KNOWN_UNTRUSTED_OPS` array and re-run codegen.
+ * 3. For operations now in `*_KNOWN_UNTRUSTED_OPS` (or otherwise touching
+ *    INFERRED / UNVERIFIED research-side regions), consuming source code
+ *    MUST ship a live E2E test (`*.e2e.test.ts`, gated by `TTCTL_E2E=1`)
+ *    that exercises the wire format before merge. See project CLAUDE.md
+ *    § "Schema/contract validation rule" for the full rule, including
+ *    the code-review checklist and the structural E2E coverage gate at
+ *    `scripts/check-e2e-coverage.ts`.
+ * 4. For operations in the trusted catalog (live-captured response,
+ *    research-confirmed input shape), the generated type is authoritative;
+ *    proceed normally.
+ *
+ * The asymmetry — trusted ops get types-without-E2E, untrusted ops need
+ * E2E-before-merge — is the contract that lets TTCtl track research's
+ * coverage curve safely: "X% schema coverage" on the research side
+ * corresponds to "X% of ops trusted by TTCtl" here. See
+ * `../research/CLAUDE.md` for the relationship from the research-repo side.
+ *
  * # Duplicate-emission handling
  *
  * Two graphql-codegen quirks would otherwise produce TypeScript duplicate-
