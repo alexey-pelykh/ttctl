@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { impersonatedTransport, stockTransport } from "../../../transport.js";
+import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 import { show as showBasic } from "../basic/index.js";
 import { isAuthRevokedExtensionCode } from "../shared.js";
@@ -155,7 +155,17 @@ async function withTransportErrors<T>(operationName: string, fn: () => Promise<T
 /*                                Operations                                  */
 /* -------------------------------------------------------------------------- */
 
-/** Full-document `getTravelVisas` query (mobile-gateway). */
+/**
+ * Full-document `getTravelVisas` query (talent-profile).
+ *
+ * The `Profile.travelVisas` field is only defined on the `talent-profile`
+ * schema — `mobile-gateway` does not expose it (verified against
+ * `research/graphql/talent_profile/operations/getTravelVisas.graphql` and
+ * the synthesized SDLs under `research/graphql/`). Sibling mutations
+ * (`createTravelVisa`, `updateTravelVisa`, `removeTravelVisa`) already
+ * route through `talent-profile` for the same reason; this read aligns
+ * with that surface choice.
+ */
 const GET_TRAVEL_VISAS_QUERY = `query getTravelVisas($profileId: ID!) {
   profile(id: $profileId) {
     id
@@ -180,8 +190,8 @@ const GET_TRAVEL_VISAS_QUERY = `query getTravelVisas($profileId: ID!) {
 export async function list(token: string): Promise<TravelVisa[]> {
   const profileId = await resolveProfileId(token);
   const res = await withTransportErrors("getTravelVisas", async () =>
-    stockTransport({
-      surface: "mobile-gateway",
+    impersonatedTransport({
+      surface: "talent-profile",
       authToken: token,
       body: {
         operationName: "getTravelVisas",
