@@ -6,3 +6,4 @@
 // cases live as `*.e2e.test.ts` files under this src/ tree and are gated
 // to local runs only via `TTCTL_E2E=1` (see vitest.e2e.config.ts).
 export * from "./harness/index.js";
+export * from "./wire-snapshots/index.js";
