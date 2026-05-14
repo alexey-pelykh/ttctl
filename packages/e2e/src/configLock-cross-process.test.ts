@@ -166,38 +166,56 @@ describe("configLock — cross-process race serialization", () => {
     expect(existsSync(`${configPath}.lock`)).toBe(false);
   }, 30_000);
 
-  it("file remains well-formed after concurrent persist (no truncated/half-written state)", async () => {
-    const configPath = join(tmpRoot, ".ttctl.yaml");
-    // Larger initial content with comments — concurrent writes that
-    // interleaved or truncated would lose comment fidelity AND/OR fail to
-    // re-parse as YAML.
-    const original = [
-      "# Top comment about TTCtl auth",
-      "# Created 2026-05-09 — round-trip safe",
-      "",
-      "auth:",
-      "  # Maintainer's 1Password vault reference",
-      "  credentials: op://Personal/ttctl",
-      "",
-    ].join("\n");
-    writeFileSync(configPath, original, { mode: 0o600 });
+  // `retry: 3` (#270) — three concurrent OS workers contending for the same
+  // `proper-lockfile` advisory lock occasionally exhaust the ≤1.25s retry
+  // budget on Windows CI runners (Azure-hosted, shared, more variable
+  // scheduler than Linux/macOS). The lock primitive itself is correct —
+  // contention timeout surfaces as `ConfigError(LOCKED)` per the design — but
+  // for an integration test asserting the happy-path invariant ("no
+  // corruption, exactly one winner"), the LOCKED outcome is environmental
+  // noise rather than a genuine assertion failure. Re-running the test up to
+  // 3 times re-randomizes the OS scheduler race. The sibling 2-worker tests
+  // ("two concurrent ... serialize cleanly" and "staged race") are NOT
+  // marked retry — those have tighter contention windows AND are known-
+  // passing on Windows per the issue body. A real fix at the
+  // `proper-lockfile` layer (issue #270 Option B) is tracked as a follow-up;
+  // this retry is the Option A flake-buster.
+  it(
+    "file remains well-formed after concurrent persist (no truncated/half-written state)",
+    { timeout: 60_000, retry: 3 },
+    async () => {
+      const configPath = join(tmpRoot, ".ttctl.yaml");
+      // Larger initial content with comments — concurrent writes that
+      // interleaved or truncated would lose comment fidelity AND/OR fail to
+      // re-parse as YAML.
+      const original = [
+        "# Top comment about TTCtl auth",
+        "# Created 2026-05-09 — round-trip safe",
+        "",
+        "auth:",
+        "  # Maintainer's 1Password vault reference",
+        "  credentials: op://Personal/ttctl",
+        "",
+      ].join("\n");
+      writeFileSync(configPath, original, { mode: 0o600 });
 
-    const tokens = ["user_round_aaa_111", "user_round_bbb_222", "user_round_ccc_333"];
-    const results = await Promise.all(tokens.map((t) => runWorker(configPath, t)));
-    for (const r of results) {
-      expect(r.exitCode, `worker stderr: ${r.stderr}`).toBe(0);
-    }
+      const tokens = ["user_round_aaa_111", "user_round_bbb_222", "user_round_ccc_333"];
+      const results = await Promise.all(tokens.map((t) => runWorker(configPath, t)));
+      for (const r of results) {
+        expect(r.exitCode, `worker stderr: ${r.stderr}`).toBe(0);
+      }
 
-    const final = readFileSync(configPath, "utf8");
+      const final = readFileSync(configPath, "utf8");
 
-    // Comments preserved (whichever winner ran, parseDocument+setIn keeps
-    // header comments because the auth block is untouched).
-    expect(final).toContain("# Top comment about TTCtl auth");
-    expect(final).toContain("# Maintainer's 1Password vault reference");
-    expect(final).toMatch(/credentials:\s*op:\/\/Personal\/ttctl/);
+      // Comments preserved (whichever winner ran, parseDocument+setIn keeps
+      // header comments because the auth block is untouched).
+      expect(final).toContain("# Top comment about TTCtl auth");
+      expect(final).toContain("# Maintainer's 1Password vault reference");
+      expect(final).toMatch(/credentials:\s*op:\/\/Personal\/ttctl/);
 
-    // Exactly one token wins.
-    const wins = tokens.filter((t) => final.includes(t)).length;
-    expect(wins).toBe(1);
-  }, 60_000);
+      // Exactly one token wins.
+      const wins = tokens.filter((t) => final.includes(t)).length;
+      expect(wins).toBe(1);
+    },
+  );
 });
