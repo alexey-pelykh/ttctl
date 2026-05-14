@@ -68,8 +68,10 @@ const DETAIL_WIRE_ITEM = {
   timesheetUrl: "https://www.toptal.com/timesheet/bc-1",
   timesheetComment: "Worked on auth refactor",
   timesheetRecords: [
-    { __typename: "TimesheetRecord", date: "2026-05-12", duration: 28800, note: "auth refactor", isDayOff: false },
-    { __typename: "TimesheetRecord", date: "2026-05-13", duration: 0, note: null, isDayOff: true },
+    // `duration` is a string-encoded decimal in MINUTES (wire-empirical
+    // 2026-05-14, see TimesheetRecord docstring). 480.0 minutes = 8h.
+    { __typename: "TimesheetRecord", date: "2026-05-12", duration: "480.0", note: "auth refactor", isDayOff: false },
+    { __typename: "TimesheetRecord", date: "2026-05-13", duration: "0.0", note: null, isDayOff: true },
   ],
   actualAgreement: {
     __typename: "EngagementAgreement",
@@ -215,7 +217,7 @@ describe("timesheet.show", () => {
     expect(detail.id).toBe("bc-1");
     expect(detail.timesheetUrl).toBe("https://www.toptal.com/timesheet/bc-1");
     expect(detail.timesheetRecords).toHaveLength(2);
-    expect(detail.timesheetRecords[0]?.duration).toBe(28800);
+    expect(detail.timesheetRecords[0]?.duration).toBe("480.0");
     expect(detail.actualAgreement?.talentHourlyRate).toBe("100.00");
     expect(detail.engagement.expectedHours).toBe(40);
     const call = mockedStock.mock.calls[0]?.[0];

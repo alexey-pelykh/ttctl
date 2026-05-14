@@ -33,8 +33,10 @@ const DETAIL_FIXTURE: timesheet.TimesheetDetail = {
   timesheetUrl: "https://www.toptal.com/timesheet/bc-1",
   timesheetComment: "Worked on auth refactor",
   timesheetRecords: [
-    { date: "2026-05-12", duration: 28800, note: "auth refactor", isDayOff: false },
-    { date: "2026-05-13", duration: 0, note: null, isDayOff: true },
+    // `duration` is a string-encoded decimal in MINUTES (wire-empirical
+    // 2026-05-14, see TimesheetRecord docstring). 480.0 minutes = 8h.
+    { date: "2026-05-12", duration: "480.0", note: "auth refactor", isDayOff: false },
+    { date: "2026-05-13", duration: "0.0", note: null, isDayOff: true },
   ],
   actualAgreement: { applicationRate: "120.00", talentHourlyRate: "100.00", marketplaceMargin: "20.00" },
   engagement: {
@@ -128,7 +130,7 @@ describe("formatTimesheetDetail", () => {
     expect(out).toContain("Marketplace margin: 20.00");
   });
 
-  it("renders the records section with hours (formatted from duration in seconds)", () => {
+  it("renders the records section with hours (formatted from duration in minutes)", () => {
     const out = formatTimesheetDetail(DETAIL_FIXTURE);
     expect(out).toContain("Records (2)");
     expect(out).toContain("2026-05-12: 8.00h");
