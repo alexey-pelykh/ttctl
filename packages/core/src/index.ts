@@ -102,4 +102,5 @@ export {
   containsBearerToken,
   redactBody,
   redactHeaders,
+  redactString,
 } from "./lib/redact.js";

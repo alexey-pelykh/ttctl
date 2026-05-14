@@ -3,6 +3,8 @@
 
 export { buildProgram } from "./program.js";
 export { exitCodeForTtctlError, formatTtctlErrorMessage, presentTtctlError } from "./errors.js";
+export { formatCrashLog, installCrashHandlers } from "./crash-handlers.js";
+export type { CrashKind } from "./crash-handlers.js";
 
 // Re-export the typed-error base so the umbrella package's top-level error
 // handler can `instanceof`-check without a direct `@ttctl/core` dependency.

@@ -54,24 +54,123 @@ The following gates fire at runtime — they are documented here because the
 auditable surface area depends on them being known to security-conscious
 operators, not just resident in the code:
 
-| Gate                                                     | Defends Against                                                        | Source                                    |
-| -------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
-| File mode `0o600` on persist                             | Co-tenant read of bearer                                               | `packages/core/src/configWriter.ts`       |
-| Refuse-load on world-writable mode                       | TOCTOU credential swap                                                 | `packages/core/src/config.ts`             |
-| Refuse-write on symlink                                  | Swap-target attack                                                     | `packages/core/src/configWriter.ts`       |
-| Refuse-write under sync-root prefix                      | Bearer replicating to iCloud / Dropbox / OneDrive / Google Drive / Box | `packages/core/src/configWriter.ts`       |
-| Mtime drift detection                                    | Concurrent write or backup-restore racing the write window             | `packages/core/src/configWriter.ts`       |
-| Cross-process advisory lock (proper-lockfile)            | Two ttctl processes interleaving auth writes                           | `packages/core/src/configLock.ts`         |
-| Bearer rescue on persist failure                         | Silent loss of captured bearer on read-only FS / full disk             | `packages/core/src/configWriter.ts`       |
-| Bearer-pattern leakage scanner in CI                     | Accidental commit of `user_<24hex>_<20alnum>` strings                  | `scripts/check-secret-leakage.ts`         |
-| Single-source-of-truth redaction module                  | Drift between runtime debug logger and lint scanner                    | `packages/core/src/lib/redact.ts`         |
-| `--debug` bearer-absence enforcement at runtime AND test | Bearer ever appearing in any allowlisted debug record shape            | `packages/core/src/lib/redact.ts` + tests |
-| MCP path-capture-on-startup                              | Mid-session env-var shifts retargeting reads/writes                    | `packages/mcp/src/server.ts`              |
+| Gate                                                             | Defends Against                                                           | Source                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------- |
+| File mode `0o600` on persist                                     | Co-tenant read of bearer                                                  | `packages/core/src/configWriter.ts`       |
+| Refuse-load on world-writable mode                               | TOCTOU credential swap                                                    | `packages/core/src/config.ts`             |
+| Refuse-write on symlink                                          | Swap-target attack                                                        | `packages/core/src/configWriter.ts`       |
+| Refuse-write under sync-root prefix                              | Bearer replicating to iCloud / Dropbox / OneDrive / Google Drive / Box    | `packages/core/src/configWriter.ts`       |
+| Mtime drift detection                                            | Concurrent write or backup-restore racing the write window                | `packages/core/src/configWriter.ts`       |
+| Cross-process advisory lock (proper-lockfile)                    | Two ttctl processes interleaving auth writes                              | `packages/core/src/configLock.ts`         |
+| Bearer rescue on persist failure                                 | Silent loss of captured bearer on read-only FS / full disk                | `packages/core/src/configWriter.ts`       |
+| Bearer-pattern leakage scanner in CI                             | Accidental commit of `user_<24hex>_<20alnum>` strings                     | `scripts/check-secret-leakage.ts`         |
+| Single-source-of-truth redaction module                          | Drift between runtime debug logger and lint scanner                       | `packages/core/src/lib/redact.ts`         |
+| `--debug` bearer-absence enforcement at runtime AND test         | Bearer ever appearing in any allowlisted debug record shape               | `packages/core/src/lib/redact.ts` + tests |
+| Crash-path bearer scrub (uncaughtException + unhandledRejection) | Captured bearer leaking through a crash log on the way out of the process | `packages/cli/src/crash-handlers.ts`      |
+| MCP path-capture-on-startup                                      | Mid-session env-var shifts retargeting reads/writes                       | `packages/mcp/src/server.ts`              |
 
 The sync-root list (iCloud Drive, Dropbox, OneDrive, Google Drive, Box) is
 documented in [README § Sync-root exclusion](README.md#sync-root-exclusion).
 Persisting a bearer to a sync-replicated directory is refused outright with
 a sibling-name guard preventing false positives (`~/DropboxOther/` is fine).
+
+### Crash-output secret invariant
+
+The CLI binary entry (`packages/ttctl/src/cli.ts`) installs global
+`uncaughtException` and `unhandledRejection` handlers via
+`installCrashHandlers()` from `@ttctl/cli` BEFORE any other code runs.
+The handlers ensure that **no captured Toptal session bearer can appear
+verbatim in any crash output** the process emits on its way out.
+
+Mechanism:
+
+- The crash log shape is fixed: `[<kind>] <ErrorName>: <message>` followed
+  by the stack (when present). Nothing else — `process.env`, `process.argv`,
+  CWD, and other ambient runtime state are intentionally omitted.
+- The assembled message + stack is passed through `redactString` from
+  `@ttctl/core` (single source of truth alongside `redactBody` /
+  `redactHeaders`), which replaces every `user_<24hex>_<20alnum>` match
+  with `***REDACTED***`.
+- Output goes to `process.stderr` only. The data channel `process.stdout`
+  (where `-o json` / `-o yaml` envelopes ship) is never touched by the
+  crash path — a partially-flushed JSON envelope is preferable to one
+  contaminated by an unrelated stack trace.
+- Exit code is `1` (non-zero) for both crash kinds.
+
+**Scope and limits:**
+
+- The scrub catches the **bearer pattern** because TTCtl knows what its
+  bearers look like. It does NOT catch literal 1Password-resolved
+  passwords interpolated into a thrown error's `.message` or `.stack` —
+  detecting those would require a runtime registry of known in-memory
+  secrets, which is out of scope (see § Future telemetry design rule).
+  The structural defense is that auth flows do not interpolate the
+  resolved password into thrown errors at all.
+- The crash handlers only fire for **process-level** unhandled throws.
+  Anything caught and rendered by command handlers goes through
+  `presentTtctlError` / per-command formatters; those paths separately
+  use `redactBody` and `redactHeaders` on structured envelopes.
+- `--inspect` is a separate channel — see § Inspector / heap-dump risk
+  below. The crash scrub does not protect heap contents exposed through
+  the V8 inspector port.
+
+The crash-handler scrub is **defense-in-depth**, not the load-bearing
+defense. Load-bearing defenses are: (1) credential resolution happens
+at signin time only and the password is not held in memory beyond the
+call; (2) the captured bearer is stored on disk at mode `0o600` and
+replayed on each request without being interpolated into log lines; (3)
+the existing redaction pipeline scrubs the bearer from `--verbose` /
+`--debug` output BEFORE any line reaches stderr.
+
+### Future telemetry design rule
+
+TTCtl does NOT currently ship telemetry, crash-reporting, or any
+analytics that emit data to a remote service. **If telemetry is ever
+added**, it MUST satisfy these invariants at design time:
+
+| Invariant                                            | What it requires                                                                                                                                                                                                                                   |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pass the redaction pipeline                          | Every outbound payload runs through `redactBody` / `redactHeaders` / `redactString` from `@ttctl/core` before serialization. The single-source-of-truth gate above forbids per-feature redaction.                                                  |
+| Bearer-absence at runtime AND test                   | Mirror the pattern from `--debug` (`packages/core/src/lib/diagnostic-log.ts` + tests): assert a fresh bearer cannot appear in any allowlisted record shape, enforced both at runtime via a typed schema and at test time via substring assertions. |
+| No `process.env`, `process.argv`, or CWD in payloads | The crash-output invariant extends here: env vars and argv carry shell-completion fragments, 1Password session tokens (`OP_SESSION_*`), and other secrets that the application side cannot pre-redact. Don't ship them.                            |
+| Opt-in only                                          | Telemetry must be off by default. Operators opt in via an explicit config setting or env var; opt-out semantics are inadequate because the first crash before opt-out could ship the leak.                                                         |
+| No PII without justification                         | Email, profile IDs, talent IDs, and proposal IDs are all PII in the Toptal Talent context. A telemetry channel that ships these must justify each field individually.                                                                              |
+
+This is a **design rule**, not implementation work — it gates any future
+PR that introduces telemetry, crash-reporting, error-aggregation, or
+similar outbound observability features. The same rule applies to any
+optional uploader hook the MCP layer might expose to its clients.
+
+### Inspector / heap-dump risk
+
+Running Node.js with `--inspect`, `--inspect-brk`, or `--inspect-port`
+opens a **V8 inspector port** that lets any local process connect over
+the Chrome DevTools Protocol and read arbitrary heap memory. Anything
+TTCtl resolves into memory — the captured bearer token, the
+1Password-resolved password during signin, parsed `~/.ttctl.yaml`
+contents — is reachable via the inspector while the process is alive.
+
+**TTCtl never enables `--inspect` by default.** The CLI bin
+(`packages/ttctl/src/cli.ts`) shells out to whatever flags the user
+passes to `node`; TTCtl itself does not inject `--inspect` flags via
+`NODE_OPTIONS`, `package.json` scripts, or any other channel. The
+invariant is structural: zero call sites in the project enable the
+inspector programmatically.
+
+If you choose to run `ttctl --inspect` for debugging (or set
+`NODE_OPTIONS=--inspect` in your shell), be aware that:
+
+- The inspector port defaults to `127.0.0.1:9229`. Any process on the
+  same machine — including a compromised browser tab connecting via
+  WebSocket — can connect and dump the heap.
+- Heap dumps written via `node --heap-prof` or the DevTools Memory tab
+  contain the bearer and any other in-memory secret verbatim. Treat
+  the resulting `.heapprofile` / `.heapsnapshot` files as you would
+  treat `~/.ttctl.yaml` itself: chmod 0o600, never commit, never
+  attach to a public issue.
+- The MCP server is especially exposed because it is long-lived. The
+  recommended posture is to never run `ttctl mcp` under `--inspect`
+  unless you are debugging the server itself.
 
 ### Bearer Revocation — Empirical Scope
 
