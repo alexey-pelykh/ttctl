@@ -271,8 +271,49 @@ jobs:
             .
           ls -la dist/sbom/
 
-      - name: Publish packages
-        run: pnpm -r publish --access public --no-git-checks --report-summary --provenance
+      # Per-package idempotent publish loop (#266). The previous bare
+      # `pnpm -r publish` provided no per-package gating: if publish failed
+      # mid-loop (network blip, registry hiccup, signing-service outage), the
+      # already-published packages could not be re-published (npmjs.com version
+      # strings are write-once), so re-running the workflow against the same
+      # tag would hard-fail on packages 1..N-1 with 403 and leave packages N..4
+      # in an unknown state. The operator's only recovery paths were (a) burn
+      # the version string and cut a new tag, or (b) hand-publish remaining
+      # packages from a maintainer laptop (violates the "publish stays in CI
+      # only" trust boundary).
+      #
+      # The skip-if-published guard makes the workflow safely retriable: a
+      # second run against the same tag will skip the already-published
+      # packages and pick up from the failure point.
+      #
+      # This loop enumerates the published-package set by package name —
+      # identical (same names, same order) to the provenance-verification
+      # step below. The set also appears three more times in this job by
+      # directory path (verify-stamped-versions, pack tarballs, generate
+      # SBOMs). Adding a new published package requires updating all five
+      # sites.
+      #
+      # The `npm view` skip guard exits 0 only when the version is already
+      # on the registry. Any other failure mode (transient network, registry
+      # outage) returns non-zero, so the script falls through to
+      # `pnpm publish`, which itself returns a clear 403 if the version is in
+      # fact already published — preserving the same retry-safe state.
+      #
+      # `--report-summary` from the previous command is dropped: nothing in
+      # this workflow consumes `pnpm-publish-summary.json`, and per-package
+      # calls would each overwrite it anyway.
+      - name: Publish packages (idempotent)
+        env:
+          EXPECTED: ${{ env.VERSION }}
+        run: |
+          for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
+            if npm view "$pkg@$EXPECTED" version >/dev/null 2>&1; then
+              echo "::notice::$pkg@$EXPECTED already published, skipping"
+              continue
+            fi
+            echo "::notice::publishing $pkg@$EXPECTED"
+            pnpm --filter "$pkg" publish --access public --no-git-checks --provenance
+          done
 
       - name: Verify provenance attestations
         env:
