@@ -81,6 +81,10 @@ const EXCLUDED_PATH_PREFIXES = [
   // bearer-absence across every emission path and needs canonical-shape
   // fixtures for the substring-absence check to be load-bearing.
   "packages/mcp/src/__tests__/diagnostic.test.ts",
+  // Crash-handlers redaction (#207) — co-located test asserts that
+  // a canonical-shape bearer interpolated into a crash log's message
+  // or stack does NOT appear verbatim in the redacted output.
+  "packages/cli/src/__tests__/crash-handlers.test.ts",
 ];
 
 /**

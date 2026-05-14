@@ -2,8 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, buildProgram, presentTtctlError } from "@ttctl/cli";
+import { ConfigError, TtctlError, buildProgram, installCrashHandlers, presentTtctlError } from "@ttctl/cli";
 import { runMcpStdio } from "@ttctl/mcp";
+
+// Wire `uncaughtException` and `unhandledRejection` handlers BEFORE any other
+// executable code (issue #207). The `main().catch()` below covers anything
+// that flows through the awaited Promise chain; the global handlers cover
+// what escapes — fire-and-forget Promise rejections in tool callbacks,
+// throws from `setTimeout` / `setImmediate` / `process.nextTick` callbacks,
+// EventEmitter listeners not in `main`'s chain. Both paths redact captured
+// Toptal session bearers via `redactString` from `@ttctl/core`.
+installCrashHandlers();
 
 /**
  * Umbrella entrypoint: dispatches to MCP-server mode if invoked as

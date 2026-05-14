@@ -187,3 +187,26 @@ export function redactBody(body: unknown): unknown {
 export function containsBearerToken(text: string): boolean {
   return new RegExp(BEARER_PATTERN_SOURCE).test(text);
 }
+
+/**
+ * Replace every Toptal Talent session bearer match in `text` with the
+ * canonical {@link REDACTED} marker. Returns the input unchanged when no
+ * match is present.
+ *
+ * Free-text counterpart to the structural {@link redactBody} /
+ * {@link redactHeaders} pair — designed for diagnostic output whose
+ * shape is a single string (error messages, stack traces, crash logs)
+ * rather than a parsed object graph. The bearer regex is the only
+ * pattern this scrubs; password and other unstructured secrets cannot
+ * be detected without a runtime registry of known values (out of scope
+ * for this module — see SECURITY.md § Crash-output secret invariant).
+ *
+ * Constructs a fresh `RegExp` per call so the shared
+ * {@link BEARER_PATTERN}'s `lastIndex` cursor cannot be advanced by
+ * unrelated callers.
+ *
+ * Pure — does not mutate the input string.
+ */
+export function redactString(text: string): string {
+  return text.replace(new RegExp(BEARER_PATTERN_SOURCE, "g"), REDACTED);
+}

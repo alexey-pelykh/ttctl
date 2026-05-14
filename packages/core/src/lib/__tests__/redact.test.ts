@@ -12,6 +12,7 @@ import {
   containsBearerToken,
   redactBody,
   redactHeaders,
+  redactString,
 } from "../redact.js";
 
 describe("BEARER_PATTERN / BEARER_PATTERN_SOURCE", () => {
@@ -231,5 +232,64 @@ describe("containsBearerToken", () => {
     // cursor is now past the match
     expect(containsBearerToken(seed)).toBe(true);
     BEARER_PATTERN.lastIndex = 0;
+  });
+});
+
+describe("redactString", () => {
+  it("replaces a single bearer match with the REDACTED marker", () => {
+    const bearer = "user_abc123def456789012345678_abcdefghij1234567890";
+    expect(redactString(`prefix ${bearer} suffix`)).toBe(`prefix ${REDACTED} suffix`);
+  });
+
+  it("replaces every bearer occurrence (global flag, not just the first)", () => {
+    const b1 = "user_abc123def456789012345678_abcdefghij1234567890";
+    const b2 = "user_def456789012345678abc123_zzzz5678901234567890";
+    const out = redactString(`first ${b1} then ${b2}`);
+    expect(out).toBe(`first ${REDACTED} then ${REDACTED}`);
+    expect(out).not.toContain(b1);
+    expect(out).not.toContain(b2);
+  });
+
+  it("returns the input unchanged when no bearer is present", () => {
+    const input = "Error: connection refused at 127.0.0.1:443";
+    expect(redactString(input)).toBe(input);
+  });
+
+  it("handles multi-line input (stack traces)", () => {
+    const bearer = "user_abc123def456789012345678_abcdefghij1234567890";
+    const stack = [
+      "Error: signin failed",
+      `  at sendRequest (token=${bearer})`,
+      "  at /home/me/.ttctl/cli.ts:42:7",
+    ].join("\n");
+    const out = redactString(stack);
+    expect(out).not.toContain(bearer);
+    expect(out).toContain(REDACTED);
+    expect(out).toContain("Error: signin failed");
+    expect(out).toContain("/home/me/.ttctl/cli.ts:42:7");
+  });
+
+  it("does NOT mutate or share state across calls (fresh regex per call)", () => {
+    const bearer = "user_abc123def456789012345678_abcdefghij1234567890";
+    // Call twice with the same input — second call must produce identical
+    // output (the prior pattern-source `g` flag's lastIndex must not bleed).
+    expect(redactString(bearer)).toBe(REDACTED);
+    expect(redactString(bearer)).toBe(REDACTED);
+  });
+
+  it("is pure (does not modify any module-level state)", () => {
+    const bearer = "user_abc123def456789012345678_abcdefghij1234567890";
+    redactString(bearer);
+    // BEARER_PATTERN's lastIndex remains whatever it was — redactString
+    // builds its own regex instance per call.
+    BEARER_PATTERN.lastIndex = 0;
+    expect(BEARER_PATTERN.exec(bearer)).not.toBeNull();
+  });
+
+  it("bearer cannot appear verbatim in the output (AC: crash-output secret invariant)", () => {
+    const bearer = "user_abc123def456789012345678_abcdefghij1234567890";
+    const message = `auth failed; replayed Authorization: Token token=${bearer}`;
+    const out = redactString(message);
+    expect(out).not.toContain(bearer);
   });
 });
