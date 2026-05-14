@@ -228,6 +228,29 @@ Allowed choices are pretty, json, yaml.` line.
 
 ### Added
 
+- **Release-rollback runbook + `deprecate-release` workflow (#220)**.
+  Closes audit-confirmed CRIT-005 (release/REL-001) from
+  `docs/briefs/2026-05-13-audit-everything.md`. Ships
+  `docs/operations/release-rollback.md` covering the rollback decision
+  tree (deprecate vs unpublish vs roll-forward), `npm deprecate` command
+  templates for all four published packages (`ttctl`, `@ttctl/core`,
+  `@ttctl/cli`, `@ttctl/mcp`), the MCP-registry and Smithery
+  re-submission sequence, consumer-communication templates (deprecation
+  message ≤120 chars, GitHub Release banner, security advisory,
+  CHANGELOG entry), and a post-rollback verification checklist. Adds
+  `.github/workflows/deprecate-release.yml` — a `workflow_dispatch`
+  workflow with `version` + `reason` inputs that runs
+  `npm deprecate` across the four packages in lockstep under the
+  `npm-publish` GitHub environment (same deployment-branch protection
+  as `release.yml`). The workflow validates semver shape, requires a
+  non-empty reason, authenticates via the `NPM_TOKEN` granular
+  automation-token secret (npm OIDC trusted publishing does not
+  authorize `npm deprecate`), and verifies each deprecation landed
+  via `npm view ... deprecated` before exiting green.
+  Cross-referenced from `CONTRIBUTING.md` § Release operations. The
+  end-to-end dry-run on `v0.1.0-rc.1` (issue item 3) is **deferred**
+  pending #211 (rc.1 cut) — see runbook § Dry-run rehearsal.
+
 - **Sub-domain formatter audit + per-command override registry (#124)**.
   Triage of all 11 profile sub-domain formatters
   (`packages/cli/src/commands/profile/*`) against entity types vs
