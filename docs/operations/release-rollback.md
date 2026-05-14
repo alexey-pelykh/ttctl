@@ -2,7 +2,8 @@
 
 This is the operational playbook for **withdrawing a bad release** of TTCtl. It
 covers the decision tree (deprecate vs unpublish vs roll-forward), the
-`deprecate-release` workflow that automates the npm side, the surfaces that
+**manual `npm deprecate` procedure** on the npm side (there is no automated
+workflow — see [§ Authorization model](#authorization-model)), the surfaces that
 need a coordinated update (npm, MCP registry, Smithery, GitHub Release), and
 the consumer-communication templates.
 
@@ -51,10 +52,10 @@ Two consequences fall out of this:
    stays attached to it forever; consumers who pinned `^0.1.0` keep
    resolving to it until they bump.
 2. **The MCP registry and Smithery surface separate, slower revocation
-   paths.** A `workflow_dispatch` deprecate on npm does **not** retract the
-   MCP-registry or Smithery manifest pointers — those need a manual
-   re-submission cycle. See [Cross-surface rollback](#cross-surface-rollback)
-   for the order of operations.
+   paths.** An `npm deprecate` does **not** retract the MCP-registry or
+   Smithery manifest pointers — those need a manual re-submission cycle.
+   See [Cross-surface rollback](#cross-surface-rollback) for the order
+   of operations.
 
 ## Decision tree
 
@@ -75,7 +76,7 @@ Within 72h of publish AND zero dependents on registry?
         └── NO ─→ `npm deprecate` (this is the default path)
                     │
                     ▼
-              Run the `deprecate-release` workflow with version + reason
+              Run the manual `npm deprecate` procedure
                     │
                     ▼
               Re-submit MCP-registry manifest + Smithery coordinate
@@ -102,80 +103,163 @@ When in doubt, **deprecate-and-roll-forward**: the deprecation warning fires
 on subsequent `npm install`s, and the hotfix version supplies the actual
 remediation. This is the strategy this runbook is built around.
 
-## The `deprecate-release` workflow
+## Manual `npm deprecate` procedure
 
-A `workflow_dispatch`-only GitHub Action at
-[`.github/workflows/deprecate-release.yml`](../../.github/workflows/deprecate-release.yml)
-runs `npm deprecate` across all four packages in lockstep. It is the
-operational entry point for any non-emergency rollback decision.
+There is no automated rollback workflow. Rollback is a **break-glass,
+maintainer-local operation** that requires an authenticated `npm` CLI
+session and the maintainer's interactive 2FA / WebAuthn / passkey factor
+per operation. The npmjs.com web UI is **not** a substitute — see
+[§ If the CLI is unavailable](#if-the-cli-is-unavailable).
 
-### Trigger via the GitHub UI
+See [§ Authorization model](#authorization-model) below for why automation
+is not possible today and what would have to change for that to flip.
 
-1. Open <https://github.com/alexey-pelykh/ttctl/actions/workflows/deprecate-release.yml>.
-2. Click **Run workflow** (top-right of the run list).
-3. Fill in the two inputs:
-   - **`version`** — the exact semver to deprecate, with no leading `v`
-     (e.g. `0.1.0`, `0.1.0-rc.1`). Build metadata (`+build`) is rejected.
-   - **`reason`** — the deprecation message users see at `npm install` time.
-     Keep it ≤120 chars and actionable. Always name the fixed version.
-4. Confirm the **`Use workflow from`** branch is `main`.
-5. **Run workflow**.
+> **Operational SLA**: rollback requires a maintainer reachable at a
+> terminal with their npm credentials. Target: one maintainer reachable
+> within hours, not days.
 
-### Trigger via `gh` CLI
+### Pre-requisites
+
+- Maintainer-local `npm` CLI installed and on `PATH` (any version ≥10).
+- Maintainer logged in to npmjs.com with read/write access to all four
+  packages (`ttctl`, `@ttctl/core`, `@ttctl/cli`, `@ttctl/mcp`).
+- The fixed (hotfix) version has been published (or is in flight) — the
+  deprecation message must name it.
+
+### Step-by-step (CLI)
+
+1. **Authenticate locally** (if not already logged in this session):
+
+   ```sh
+   npm login
+   ```
+
+   Completes via browser + 2FA / WebAuthn / passkey per the account's
+   configured factors. Verify with `npm whoami` (should print your npm
+   username, not error with `E401`).
+
+2. **Deprecate all four packages in lockstep**. Use the same `<VERSION>`
+   and `<REASON>` everywhere. Set both as shell variables to keep the
+   loop tight and prevent typos:
+
+   ```sh
+   VERSION="0.1.0"  # exact semver, no leading 'v'
+   REASON="Bad release ${VERSION}: <root cause>. Upgrade to <hotfix-version>. See https://github.com/alexey-pelykh/ttctl/security/advisories/<id>"
+
+   for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
+     echo "Deprecating ${pkg}@${VERSION}..."
+     npm deprecate "${pkg}@${VERSION}" "$REASON"
+   done
+   ```
+
+   `npm deprecate` is idempotent with the same `<REASON>` string. On
+   failure for any package (typo, credentials, network), fix the cause
+   and re-run the loop.
+
+3. **Verify each deprecation landed**:
+
+   ```sh
+   for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
+     echo -n "${pkg}@${VERSION}: "
+     npm view "${pkg}@${VERSION}" deprecated
+   done
+   ```
+
+   Each line should print your deprecation message (not an empty line).
+   If any line is empty, the registry didn't persist that package's
+   deprecation; re-run the deprecate loop for the missing package.
+
+### If the CLI is unavailable
+
+npmjs.com's web UI **cannot deprecate an individual version**. Its only
+deprecation control (package page → **Settings** → **Deprecate package**)
+deprecates the **entire package** — every version, including the hotfix
+you just published — per [npm's own documentation](https://docs.npmjs.com/deprecating-and-undeprecating-packages-or-package-versions/).
+Version-scoped deprecation is **CLI-only**. There is therefore no clean
+web-UI fallback for a version rollback.
+
+If the maintainer's `npm` CLI is unavailable mid-incident, the fallback
+is to **restore CLI access**, not to substitute the web UI:
+
+- Run the [§ Step-by-step (CLI)](#step-by-step-cli) procedure from a
+  different machine with `npm` installed — the procedure needs only
+  `npm login` plus network, no repository checkout.
+- If `npm login` itself is failing, that is the incident to fix first:
+  check for an unavailable 2FA device, an account lockout, or an npm
+  status incident at <https://status.npmjs.org>.
+
+**Whole-package web-UI deprecation is a last resort only.** If CLI
+access genuinely cannot be restored and the bad version must be flagged
+_now_, **Settings → Deprecate package** will surface a warning on every
+`npm install` of that package — but it also flags the good versions,
+including the hotfix. If you take this path, treat it as temporary. The
+moment CLI access is back, recover in this order (the reverse of the
+plain rollback flow):
+
+1. **Clear the package-level message first** via the un-deprecate CLI
+   loop in [§ Un-deprecation](#un-deprecation) — `npm deprecate
+pkg ""` clears the deprecation across _every_ version of `pkg`,
+   including any version you scope next.
+2. **Then re-scope the deprecation to the bad version** by running the
+   normal CLI procedure ([§ Step-by-step (CLI)](#step-by-step-cli))
+   against `${VERSION}` of the bad release.
+
+Reversing the order silently undoes the version-scoped message you just
+set.
+
+### Un-deprecation
+
+If a deprecation was set in error, un-deprecate by re-running the same
+procedure with an empty reason string. Via CLI:
 
 ```sh
-gh workflow run deprecate-release.yml \
-  --ref main \
-  -f version=0.1.0 \
-  -f reason='Bad release — upgrade to 0.1.1. Details: https://github.com/alexey-pelykh/ttctl/security/advisories/GHSA-xxxx-xxxx-xxxx'
+for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
+  npm deprecate "${pkg}@${VERSION}" ""
+done
 ```
 
-Then watch the run:
+Like deprecation itself, version-scoped un-deprecation is CLI-only. The
+web UI's **Settings → Deprecate package** control un-deprecates the
+whole package (clears the message from every version) when re-run with
+an empty message — a blunt instrument, same caveat as
+[§ If the CLI is unavailable](#if-the-cli-is-unavailable).
 
-```sh
-gh run watch
-```
+### Authorization model
 
-### What the workflow does
+`npm deprecate` requires the maintainer's interactive 2FA / WebAuthn /
+passkey approval per operation. There is no service-account or
+long-lived-token automation path today:
 
-For each of `ttctl`, `@ttctl/core`, `@ttctl/cli`, `@ttctl/mcp`:
+- **OIDC trusted publishing** (which [`release.yml`](../../.github/workflows/release.yml)
+  uses for `npm publish`) authorizes `npm publish` only. The npm OIDC
+  scope **does not currently cover** `npm deprecate` or `npm unpublish`.
+- **Granular automation tokens** that would have authorized `npm deprecate`
+  from CI are no longer issued for this account — npmjs.com is now
+  **OIDC-only**.
 
-1. Validates the input version against the same semver regex as
-   [`release.yml`](../../.github/workflows/release.yml) (release and
-   pre-release tags only; no build metadata).
-2. Runs `npm deprecate <pkg>@<version> "<reason>"` using the
-   `NPM_TOKEN` repository secret for authentication.
-3. Verifies the deprecation landed by reading `npm view <pkg>@<version>
-deprecated` and asserting the message is non-empty.
+Result: the four packages cannot be deprecated from GitHub Actions
+without a maintainer-held secret that the registry will no longer issue.
 
-The workflow uses the `npm-publish` GitHub environment so the same branch /
-tag protections that gate `release.yml` (deployment branches restricted to
-`main` and `v*` tags) also apply to deprecation. A non-maintainer cannot
-dispatch the workflow against the production environment.
+If npm later extends OIDC to cover `npm deprecate` (no public roadmap as
+of 2026-05-14), the automated `deprecate-release` workflow can be revived
+from git history — added by PR #260 (issue #220), removed for issue #267
+alongside this runbook rewrite. Subscribe to the [npm blog](https://github.blog/changelog/label/npm/)
+for OIDC scope announcements.
 
-### Pre-requisite: `NPM_TOKEN` secret
+### Incident-response implications
 
-The workflow authenticates to npm via a granular automation token stored as
-the `NPM_TOKEN` repository secret. npm's OIDC trusted-publishing flow
-(used by [`release.yml`](../../.github/workflows/release.yml) for publishing)
-**does not authorize `npm deprecate`** — that path is publish-scoped only.
+Because rollback is maintainer-local:
 
-Token requirements:
-
-- **Type**: granular access token (npmjs.com → **Access Tokens** → **Generate
-  New Token** → **Granular**).
-- **Permissions**: `Read and write` for the four packages
-  (`ttctl`, `@ttctl/core`, `@ttctl/cli`, `@ttctl/mcp`). The deprecate API
-  requires write permission. **Do not** grant org-wide write.
-- **Expiration**: 1 year, with a calendar reminder to rotate. Renew before
-  expiry; a workflow that fails at incident time defeats the purpose.
-- **Storage**: GitHub Settings → **Secrets and variables** → **Actions** →
-  **New repository secret** named `NPM_TOKEN`. Do **not** scope it to the
-  `npm-publish` environment alone — the workflow reads it at the repo-secret
-  level so the environment gate still applies via deployment-branch rules.
-
-If the token is missing or expired, the `Deprecate packages` step fails
-with an `E401`/`E403` from npm. Rotate, re-run the workflow.
+- **Maintainer reachability is a release-readiness gate.** Before
+  shipping `0.1.0` GA, confirm at least one maintainer is reachable at
+  short notice with their npm credentials ready to use.
+- **Document maintainer presence at release time.** When cutting a
+  release, the maintainer who triggers it should remain reachable for
+  the post-release window (24-72h is typical for surfacing show-stopper
+  regressions).
+- **Treat the bad-release window as an active incident.** Page (or
+  page-equivalent) the on-call maintainer rather than waiting on
+  asynchronous channels.
 
 ## Cross-surface rollback
 
@@ -184,17 +268,10 @@ order to minimize the window where consumers see an inconsistent picture.
 
 ### 1. npm (immediate — minutes)
 
-Run the [`deprecate-release` workflow](#the-deprecate-release-workflow)
-above. Verify with:
-
-```sh
-for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
-  echo "=== $pkg ==="
-  npm view "$pkg@<version>" deprecated
-done
-```
-
-Each line should print your deprecation message (not an empty line).
+Run the [manual `npm deprecate` procedure](#manual-npm-deprecate-procedure)
+above. The procedure's Step 3 already runs the `npm view … deprecated`
+loop and confirms each package picked up the deprecation message — do
+not re-run it separately.
 
 ### 2. GitHub Release (immediate — minutes)
 
@@ -296,7 +373,7 @@ post-incident write-up.
 
 ### npm deprecation message (≤120 chars)
 
-The `reason` input to the `deprecate-release` workflow. Strict shape:
+The `<REASON>` argument to `npm deprecate`. Strict shape:
 
 ```
 Bad release <vX.Y.Z>: <one-line root cause>. Upgrade to <vX.Y.Z+1>. See <advisory or release URL>.
@@ -435,27 +512,30 @@ Skipping any item leaves a hole consumers will find at the worst moment.
 
 ## Dry-run rehearsal
 
-The first incident is the wrong time to discover that the workflow has
-never run end-to-end. Before the first GA release, run a rehearsal pass
-against a pre-release tag (see [#211](https://github.com/alexey-pelykh/ttctl/issues/211)
+The first incident is the wrong time to discover that the procedure has
+never been run end-to-end. Before the first GA release, run a rehearsal
+pass against a pre-release tag (see [#211](https://github.com/alexey-pelykh/ttctl/issues/211)
 for the `v0.1.0-rc.1` cut):
 
 1. Cut `v0.1.0-rc.1` per #211 (publishes all four packages on the `next`
    dist-tag).
-2. Dispatch the `deprecate-release` workflow with:
-   - `version`: `0.1.0-rc.1`
-   - `reason`: `Rehearsal — release-rollback runbook validation. Not a real deprecation.`
+2. Run the [manual `npm deprecate` procedure](#manual-npm-deprecate-procedure)
+   with:
+   - `VERSION`: `0.1.0-rc.1`
+   - `REASON`: `Rehearsal — release-rollback runbook validation. Not a real deprecation.`
 3. Verify each of the four packages reports the deprecation message via
    `npm view <pkg>@0.1.0-rc.1 deprecated`.
-4. (Optional) Un-deprecate by re-running the workflow with an empty
-   `reason` — npm un-deprecates when the message string is empty. The
-   workflow currently requires a non-empty reason; un-deprecation is a
-   manual `npm deprecate <pkg>@<version> ""` step.
-5. Record the dry-run outcome on #211 (or its successor issue).
+4. **Un-deprecate** to leave the registry in a clean post-rehearsal
+   state. Re-run the procedure with an **empty** reason string — see
+   [§ Un-deprecation](#un-deprecation).
+5. Record the dry-run outcome on #211 (or its successor issue), including
+   the wall-clock time spent on each step (auth, deprecate loop, verify,
+   un-deprecate). The timings calibrate the SLA in
+   [§ Manual `npm deprecate` procedure](#manual-npm-deprecate-procedure).
 
 The rehearsal is **deferred** from the initial runbook landing because it
-depends on #211 (`v0.1.0-rc.1`). Until #211 lands, the workflow exists and
-the procedure is documented but unrehearsed.
+depends on #211 (`v0.1.0-rc.1`). Until #211 lands, the procedure is
+documented but unrehearsed.
 
 ## Anti-patterns
 
@@ -468,7 +548,9 @@ without removing the bad artifact.
 `@ttctl/mcp` live.**
 The umbrella tries to resolve the matching version across the workspace.
 Half-deprecated state confuses package managers and security scanners.
-Always run the workflow against all four; the workflow enforces this.
+Always deprecate all four packages in the same operational window — the
+CLI loop in [§ Step-by-step (CLI)](#step-by-step-cli) iterates all four
+with one identical message, which is exactly the invariant to preserve.
 
 **Skipping the GitHub Release banner.**
 Users who installed via `npm install -g ttctl@<version>` see the
@@ -478,15 +560,16 @@ banner is their only signal.
 
 **Deprecating without a roll-forward target.**
 A deprecation message that doesn't name the fixed version is a dead end.
-Always publish the hotfix BEFORE running the workflow (or in the same
-operational window — see [Cross-surface rollback](#cross-surface-rollback)
+Always publish the hotfix BEFORE running the deprecation procedure (or in
+the same operational window — see [Cross-surface rollback](#cross-surface-rollback)
 ordering).
 
 **Reusing a deprecation reason verbatim across versions.**
-Each deprecation gets its own message. If `0.1.0` and `0.1.1` are both
-deprecated for the same root cause, two separate messages name two
-separate fixed versions (`0.1.2`, `0.1.2`, respectively) — the deprecation
-attaches to a single version, and so does its hotfix pointer.
+Each deprecation gets its own message naming its own hotfix target. If
+`0.1.0` and `0.1.1` are both deprecated for the same root cause but
+point at different fixed versions (`0.1.0 → 0.1.2`, `0.1.1 → 0.1.3`),
+write two separate messages — the deprecation attaches to a single
+version, and so does its hotfix pointer.
 
 **Treating `npm unpublish` as the default.**
 The 72h window almost never applies (dependents in the registry, multiple
@@ -498,8 +581,10 @@ default; unpublish is the exception.
 
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) —
   the canonical publish workflow this runbook complements.
-- [`.github/workflows/deprecate-release.yml`](../../.github/workflows/deprecate-release.yml)
-  — the workflow this runbook drives.
 - [`CHANGELOG.md`](../../CHANGELOG.md) — record of past releases and rollbacks.
 - [#211](https://github.com/alexey-pelykh/ttctl/issues/211) — the rc.1
   rehearsal release this runbook will be dry-run against.
+- [#267](https://github.com/alexey-pelykh/ttctl/issues/267) — the OIDC-only
+  constraint that removed the automated `deprecate-release` workflow.
+  Subscribe via the npm blog for OIDC scope announcements that would
+  re-enable automation.

@@ -83,9 +83,12 @@ configuration must be kept in sync with the files in that directory.
 Release publishing is automated by [`.github/workflows/release.yml`](.github/workflows/release.yml)
 and fires on a published GitHub Release. For the operational playbook covering
 **rollback** of a bad release — the decision tree (deprecate vs unpublish vs
-roll-forward), the `deprecate-release` workflow, MCP-registry / Smithery
-coordination, and consumer-communication templates — see
+roll-forward), the manual `npm deprecate` procedure, MCP-registry /
+Smithery coordination, and consumer-communication templates — see
 [`docs/operations/release-rollback.md`](docs/operations/release-rollback.md).
+Rollback is **maintainer-local** (npm OIDC does not authorize `npm deprecate`,
+and version-scoped deprecation is CLI-only); maintainer reachability is a
+release-readiness gate.
 
 ### Submitting Changes
 
