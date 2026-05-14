@@ -242,6 +242,18 @@ Add to `.cursor/mcp.json` in your project root:
 
 > **Trust model**: any process that can spawn `ttctl mcp` gets full access to your Toptal Talent profile through your saved auth token. Don't grant MCP access to untrusted AI agents. See [SECURITY.md](SECURITY.md).
 
+### Data-handling — what MCP tools return into your assistant's context
+
+When an AI assistant calls a TTCtl MCP tool, the tool's response payload — your profile, your engagements, your payouts, your contracts — enters the assistant's context window. From that point, **your AI-assistant host decides** what happens to that data: whether it's persisted to chat history, indexed into a vector database, surfaced to other tools loaded in the same session, or uploaded as part of telemetry.
+
+TTCtl cannot pin host behaviour. The defenses live in your operator choices. Three concrete recommendations:
+
+1. **Pick a host that matches your privacy posture.** Current host defaults (as of 2026-05; expected to drift) — Claude Code: per-session, opt-in cross-session persistence; Claude Desktop: default-on local chat-history persistence; Cursor: default-on local persistence + default-on vector-DB indexing of tool outputs; Windsurf: similar to Cursor; ChatGPT desktop: vendor-managed, assume persistent. The vector-indexing hosts (Cursor / Windsurf) can re-surface your Toptal data into a future, unrelated conversation if a semantic query matches — this is the highest-friction property of the persistence destinations.
+2. **Use private / ephemeral chat modes** for sessions that exercise TTCtl tools returning third-party free-text — namely engagement comments, application messages, job descriptions, contract clauses, and review comments. Operators who routinely browse jobs or read engagement notes via the assistant should consider a host-side workspace dedicated to TTCtl tasks (Cursor: separate workspace; Claude Code: per-project scoping).
+3. **Do not co-load TTCtl with outbound tools you don't control.** A web-fetch tool, an arbitrary-filesystem-write tool, or a sibling MCP server with its own apply path makes cross-tool exfiltration a realistic threat: an adversarial instruction embedded in a Toptal engagement note could chain into the sibling tool's apply path, with no `dryRun` gate. The mitigation is session-level — keep TTCtl in sessions where the loaded tools are operator-trusted.
+
+The full threat model — including the per-tool audit, severity rubric, mitigation trade-off analysis, and residual risk register — is in [`docs/security/mcp-leakage-threat-model.md`](docs/security/mcp-leakage-threat-model.md). The companion section in [SECURITY.md § MCP Trust Model](SECURITY.md#mcp-trust-model) covers the input-side defenses (state-change mitigation via `dryRun`, file-upload sandbox).
+
 ## Troubleshooting
 
 ### Debug logs for `auth signin` / `auth signout`
