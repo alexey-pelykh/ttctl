@@ -243,7 +243,7 @@ attacks:
    (`.pub`, `.env`, `.db`, `.sqlite`, `.sh`, extensionless files like
    `id_rsa`) from the broadest portfolio-attachment allowlist. The
    threat-model anchor — `ttctl_profile_resume_upload({ filePath:
-   "~/.ssh/id_rsa" })` — fails both gates and never reaches the apply
+"~/.ssh/id_rsa" })` — fails both gates and never reaches the apply
    path. The sandbox can be bypassed by setting
    `TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY=1` in the MCP server's environment
    (extension allowlist still applies); MCP operators staging upload

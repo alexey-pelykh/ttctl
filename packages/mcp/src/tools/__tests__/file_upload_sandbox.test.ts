@@ -146,10 +146,9 @@ describe("MCP file-upload tools — defense-in-depth path/extension gate (#221)"
     it("dryRun path skips the gate (no file is read in preview mode)", async () => {
       registerProfileBasicPhotoUploadTool(server, buildAuthSuccessCtx());
       const handler = getToolHandler(server, "ttctl_profile_basic_photo_upload");
-      const result = (await handler(
-        { file: path.join(os.homedir(), ".ssh", "id_rsa"), dryRun: true },
-        {},
-      )) as { content: { text: string }[] };
+      const result = (await handler({ file: path.join(os.homedir(), ".ssh", "id_rsa"), dryRun: true }, {})) as {
+        content: { text: string }[];
+      };
       // Dry-run envelope ships even though `file` would have failed the
       // gate — the gate runs only on the apply path. This is intentional:
       // dry-run never reads the file, so the exfiltration surface is
@@ -181,10 +180,7 @@ describe("MCP file-upload tools — defense-in-depth path/extension gate (#221)"
     it("refuses base64 buffer mode with `id_rsa` as filename (no extension)", async () => {
       registerResumeTools(server, buildAuthSuccessCtx());
       const handler = getToolHandler(server, "ttctl_profile_resume_upload");
-      const result = await handler(
-        { content: Buffer.from("PRIVATE KEY").toString("base64"), filename: "id_rsa" },
-        {},
-      );
+      const result = await handler({ content: Buffer.from("PRIVATE KEY").toString("base64"), filename: "id_rsa" }, {});
       assertGateRefusal(result);
       expect(result.content[0]?.text).toContain('extension "<none>"');
     });
@@ -195,10 +191,7 @@ describe("MCP file-upload tools — defense-in-depth path/extension gate (#221)"
       // clean refusal.
       registerResumeTools(server, buildAuthSuccessCtx());
       const handler = getToolHandler(server, "ttctl_profile_resume_upload");
-      const result = await handler(
-        { content: Buffer.from("x").toString("base64"), filename: "secret.png" },
-        {},
-      );
+      const result = await handler({ content: Buffer.from("x").toString("base64"), filename: "secret.png" }, {});
       assertGateRefusal(result);
       expect(result.content[0]?.text).toContain('extension ".png"');
     });
@@ -240,10 +233,7 @@ describe("MCP file-upload tools — defense-in-depth path/extension gate (#221)"
     it("refuses base64 buffer mode with `.sh` filename via portfolio-file", async () => {
       registerPortfolioTools(server, buildAuthSuccessCtx());
       const handler = getToolHandler(server, "ttctl_profile_portfolio_upload_file");
-      const result = await handler(
-        { content: Buffer.from("#!/bin/sh").toString("base64"), filename: "evil.sh" },
-        {},
-      );
+      const result = await handler({ content: Buffer.from("#!/bin/sh").toString("base64"), filename: "evil.sh" }, {});
       assertGateRefusal(result);
       expect(result.content[0]?.text).toContain('extension ".sh"');
     });

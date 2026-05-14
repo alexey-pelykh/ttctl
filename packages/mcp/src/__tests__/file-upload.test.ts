@@ -188,10 +188,7 @@ describe("validateUploadPath — path-prefix sandbox (defense-in-depth, issue #2
   });
 
   it("accepts paths inside ~/Downloads", () => {
-    const result = validateUploadPath(
-      path.join(os.homedir(), "Downloads", "resume.pdf"),
-      UPLOAD_CATEGORIES.resume,
-    );
+    const result = validateUploadPath(path.join(os.homedir(), "Downloads", "resume.pdf"), UPLOAD_CATEGORIES.resume);
     expect(result).toBeNull();
   });
 
