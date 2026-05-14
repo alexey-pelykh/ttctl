@@ -78,6 +78,15 @@ configuration must be kept in sync with the files in that directory.
 
 [gh-rulesets]: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
 
+### Release operations
+
+Release publishing is automated by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+and fires on a published GitHub Release. For the operational playbook covering
+**rollback** of a bad release — the decision tree (deprecate vs unpublish vs
+roll-forward), the `deprecate-release` workflow, MCP-registry / Smithery
+coordination, and consumer-communication templates — see
+[`docs/operations/release-rollback.md`](docs/operations/release-rollback.md).
+
 ### Submitting Changes
 
 1. Fork and create a feature branch
