@@ -15,6 +15,7 @@ import {
   jsonResponse,
   type ToolRegistrationContext,
 } from "./_shared.js";
+import { UPLOAD_CATEGORIES, validateUploadPath } from "./file-upload.js";
 import { profileBasicPhotoUploadOutputSchema } from "./output-schemas.js";
 
 const TOOL_NAME = "ttctl_profile_basic_photo_upload";
@@ -95,6 +96,9 @@ export function registerProfileBasicPhotoUploadTool(server: McpServer, ctx: Tool
           ),
         );
       }
+
+      const pathError = validateUploadPath(input.file, UPLOAD_CATEGORIES.basicPhoto);
+      if (pathError !== null) return pathError;
 
       try {
         const result = await profile.basic.photoUpload(auth.token, { file: input.file });

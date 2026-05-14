@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
-import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
+import { UPLOAD_CATEGORIES, decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
 import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
 
 const DRY_RUN_FIELD = z
@@ -272,7 +272,7 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
           ),
         );
       }
-      const decoded = decodeFileUploadInput(args);
+      const decoded = decodeFileUploadInput(args, UPLOAD_CATEGORIES.portfolioCover);
       if ("isError" in decoded) return decoded;
       try {
         const result = await profile.portfolio.uploadCover(auth.token, decoded);
@@ -304,7 +304,7 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
           ),
         );
       }
-      const decoded = decodeFileUploadInput(args);
+      const decoded = decodeFileUploadInput(args, UPLOAD_CATEGORIES.portfolioFile);
       if ("isError" in decoded) return decoded;
       try {
         const result = await profile.portfolio.uploadFile(auth.token, decoded);
