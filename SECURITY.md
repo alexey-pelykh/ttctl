@@ -144,13 +144,16 @@ hand-curated dep tree resolved through pnpm with `--frozen-lockfile`
 during build and publish. The defenses that exist at build/publish time
 are:
 
-| Defense                                    | Where                              | What it stops                                          |
-| ------------------------------------------ | ---------------------------------- | ------------------------------------------------------ |
-| `--frozen-lockfile`                        | `.github/actions/setup/action.yml` | Lockfile drift / unauthorized version bumps in CI      |
-| `--ignore-scripts` at CI install           | `.github/actions/setup/action.yml` | Postinstall RCE in transitive deps reaching CI runners |
-| `pnpm audit --audit-level=high`            | `.github/workflows/release.yml`    | Publishing a release while a high/critical CVE exists  |
-| Workspace dep-confusion guard              | `scripts/check-dep-confusion.ts`   | `@ttctl/*` dep accidentally resolving to public npm    |
-| Pinned action SHAs (with version comments) | `.github/workflows/*.yml`          | Mutable-tag substitution in GitHub Actions             |
+| Defense                                                                 | Where                              | What it stops                                          |
+| ----------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------ |
+| `--frozen-lockfile`                                                     | `.github/actions/setup/action.yml` | Lockfile drift / unauthorized version bumps in CI      |
+| `--ignore-scripts` at CI install                                        | `.github/actions/setup/action.yml` | Postinstall RCE in transitive deps reaching CI runners |
+| `pnpm audit --audit-level=high`                                         | `.github/workflows/release.yml`    | Publishing a release while a high/critical CVE exists  |
+| Workspace dep-confusion guard                                           | `scripts/check-dep-confusion.ts`   | `@ttctl/*` dep accidentally resolving to public npm    |
+| Pinned action SHAs (with version comments)                              | `.github/workflows/*.yml`          | Mutable-tag substitution in GitHub Actions             |
+| npm-registry Sigstore provenance (`pnpm publish --provenance`)          | `.github/workflows/release.yml`    | Forged or untraceable releases on the npm registry     |
+| GitHub-side build-provenance attestation (`attest-build-provenance@v4`) | `.github/workflows/release.yml`    | Tarball substitution outside the npm registry          |
+| CycloneDX SBOMs per published package + workspace aggregate             | `.github/workflows/release.yml`    | Opaque dependency graph — blocks downstream CVE audit  |
 
 For the end user installing `ttctl` on their own laptop, the
 recommended posture is to install with postinstall hooks disabled:
@@ -175,6 +178,41 @@ behavior in dependencies the maintainer does not directly control.
 
 See [README § Hardened install](README.md#hardened-install-recommended)
 for the user-facing install snippet.
+
+#### Verifying provenance and consuming SBOMs
+
+Each tagged release publishes two independent provenance attestations
+that anchor the artifact to this GitHub Actions build:
+
+1. **npm-registry side** — visible in `npm view <pkg>@<version> --json`
+   under `.dist.attestations.provenance`, signed via npm's OIDC trusted-
+   publishing flow. The CI gate `Verify provenance attestations` in
+   `release.yml` fails the release if this is absent.
+2. **GitHub side** — signed by `actions/attest-build-provenance` and
+   stored in the public Sigstore transparency log. Verify against any
+   published tarball with the `gh` CLI:
+
+   ```sh
+   # Against an npm-served tarball (anyone, no auth required):
+   curl -fsSL "$(npm view ttctl@<version> --json | jq -r '.dist.tarball')" -o ttctl.tgz
+   gh attestation verify ttctl.tgz --owner alexey-pelykh
+
+   # Or against a tarball downloaded from the GitHub Release assets:
+   gh release download v<version> --pattern '*.tgz' --repo alexey-pelykh/ttctl
+   gh attestation verify ./ttctl-<version>.tgz --owner alexey-pelykh
+   ```
+
+CycloneDX 1.6 SBOMs are uploaded to each GitHub Release as `.cdx.json`
+assets — one per published package (`@ttctl/core`, `@ttctl/cli`,
+`@ttctl/mcp`, `ttctl`) plus a workspace aggregate. Audit the full
+transitive dependency graph against your CVE/license policy with any
+CycloneDX-compatible tool (e.g., `osv-scanner --sbom`, `grype sbom:...`,
+`cdxgen-cli vex`):
+
+```sh
+gh release download v<version> --pattern '*.cdx.json' --repo alexey-pelykh/ttctl
+osv-scanner --sbom ttctl-<version>.cdx.json
+```
 
 ### Recommendations
 
