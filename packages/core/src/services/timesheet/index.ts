@@ -174,13 +174,23 @@ export interface TimesheetListItem {
 
 /**
  * One time-entry within a timesheet (per-day duration). `duration` is
- * the canonical wire field (seconds); `note` may be empty/null;
- * `isDayOff === true` rows represent a marked day off and typically
- * carry `duration === 0`.
+ * the canonical wire field — a **string-encoded decimal** in **minutes**
+ * (e.g., `"480.0"` for an 8-hour day, `"0.0"` for a zero-hour day).
+ * `note` may be empty/null; `isDayOff === true` rows represent a marked
+ * day off and typically carry `duration === "0.0"`.
+ *
+ * **Wire-shape history**: this field was declared as `duration: number`
+ * (presumed seconds) until 2026-05-14. The live mobile-gateway returns
+ * a string-encoded minutes value, empirically captured during the first
+ * end-to-end `SubmitTimesheet` mutation run. The previous declaration
+ * caused `ttctl timesheet show` to render an 8-hour day as `0.13h`
+ * (because `"480.0" / 3600 ≈ 0.133`). See
+ * `.tmp/timesheet-submit-e2e-20260514/{01-before-show,03-submit}.json`
+ * for the originating capture.
  */
 export interface TimesheetRecord {
   date: string;
-  duration: number;
+  duration: string;
   note: string | null;
   isDayOff: boolean;
 }

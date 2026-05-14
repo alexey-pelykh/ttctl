@@ -104,7 +104,11 @@ export function formatTimesheetDetail(item: timesheet.TimesheetDetail): string {
     lines.push("");
     lines.push(`Records (${item.timesheetRecords.length.toString()})`);
     for (const rec of item.timesheetRecords) {
-      const hours = (rec.duration / 3600).toFixed(2);
+      // `duration` is a string-encoded decimal in minutes (e.g., "480.0"
+      // for an 8-hour day). `Number()` parses "480.0" → 480; division by
+      // 60 yields hours. Pre-#???: this divided by 3600 assuming
+      // number-typed seconds, rendering 8h as 0.13h.
+      const hours = (Number(rec.duration) / 60).toFixed(2);
       const tag = rec.isDayOff ? " [day off]" : "";
       const note = rec.note != null && rec.note !== "" ? ` — ${rec.note}` : "";
       lines.push(`  ${rec.date}: ${hours}h${tag}${note}`);
