@@ -14,7 +14,7 @@ vi.mock("../../../../transport.js", async () => {
 
 import { ProfileError, _setMultipartFetchForTesting, photoShow, photoUpload } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
+import { Cf403Error, impersonatedTransport, RedirectError, stockTransport } from "../../../../transport.js";
 import type { TransportResponse } from "../../../../transport.js";
 
 const mockedStock = vi.mocked(stockTransport);
@@ -166,6 +166,7 @@ interface RecordedUpload {
   headers: Record<string, string>;
   body: FormData;
   browser: string;
+  redirect: string | undefined;
 }
 
 function installFakeMultipart(
@@ -175,14 +176,22 @@ function installFakeMultipart(
       updatePhoto: { success: true, notice: null, errors: [], profile: PHOTO_PROFILE_OK },
     },
   },
+  responseHeaders: Record<string, string> = {},
 ): { calls: RecordedUpload[] } {
   const calls: RecordedUpload[] = [];
   _setMultipartFetchForTesting(async (url, init) => {
-    calls.push({ url, method: init.method, headers: init.headers, body: init.body, browser: init.browser });
+    calls.push({
+      url,
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      browser: init.browser,
+      redirect: (init as { redirect?: string }).redirect,
+    });
     return {
       status,
       text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
-      headers: { toObject: () => ({}) },
+      headers: { toObject: () => responseHeaders },
     };
   });
   return { calls };
@@ -242,6 +251,26 @@ describe("profile.basic.photoUpload (Buffer input)", () => {
       headers: { toObject: () => ({}) },
     }));
     await expect(photoUpload(TOKEN, { file: Buffer.from("x") })).rejects.toBeInstanceOf(Cf403Error);
+  });
+
+  it("pins redirect: 'manual' on the hand-rolled multipart fetch (issue #268)", async () => {
+    replyStock({ body: VIEWER_OK });
+    const { calls } = installFakeMultipart();
+    await photoUpload(TOKEN, { file: Buffer.from("x") });
+    // The photo-upload path bypasses transport.ts; it must still carry the
+    // no-follow posture — file-upload is the highest-impact exfil vector.
+    expect(calls[0]?.redirect).toBe("manual");
+  });
+
+  it("rejects an HTTP 302 redirect from the multipart transport with RedirectError (issue #268)", async () => {
+    replyStock({ body: VIEWER_OK });
+    installFakeMultipart(302, "", { location: "https://evil.example.com/steal" });
+    const err = await photoUpload(TOKEN, { file: Buffer.from("x") }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RedirectError);
+    const redirect = err as RedirectError;
+    expect(redirect.surface).toBe("talent-profile");
+    expect(redirect.status).toBe(302);
+    expect(redirect.location).toBe("https://evil.example.com/steal");
   });
 
   it("throws AuthRevokedError on HTTP 401", async () => {

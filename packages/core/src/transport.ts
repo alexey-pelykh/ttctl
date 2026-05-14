@@ -124,6 +124,114 @@ export class SchedulerBearerExpired extends TtctlError {
 }
 
 /**
+ * Thrown when a transport receives an HTTP 3xx redirect carrying a
+ * `Location` header.
+ *
+ * TTCtl talks to fixed GraphQL endpoints; none of them legitimately
+ * redirect. A 3xx is therefore an anomaly — most plausibly Cloudflare or
+ * Toptal's edge flipping an infrastructure flag (mirror of the
+ * {@link Cf403Error} case), or a misconfigured DNS / edge change.
+ *
+ * Defense-in-depth posture (issue #268): every transport entry point has a
+ * no-follow redirect policy — `redirect: "manual"` pinned explicitly on
+ * `node-wreq`, and structurally on `undici` (its `request()` on the
+ * default dispatcher never follows redirects; redirect following is an
+ * opt-in interceptor TTCtl does not install). A 3xx is therefore returned
+ * verbatim rather than followed, and {@link executeWithResilience}
+ * inspects the status and throws this typed error rather than handing the
+ * redirect body back to a caller that would not know how to interpret it.
+ *
+ * Refusing to follow is the security-relevant property: a followed
+ * cross-origin redirect would leak the request body (operation name +
+ * variables) to the redirect target even though `node-wreq` strips the
+ * `authorization` header on cross-origin hops. Pinning `node-wreq`'s
+ * policy keeps that guarantee from depending on a transitive library
+ * default (it ships `redirect: "follow"` by default).
+ *
+ * Carries `surface`, `endpoint`, `status`, and `location` — the
+ * `Location` header value is a URL, not a credential, so it is safe to
+ * surface in the message and in diagnostic traces for operator triage.
+ */
+export class RedirectError extends TtctlError {
+  override readonly name = "RedirectError";
+  readonly code = "REDIRECT_REFUSED";
+  readonly recovery =
+    "The Toptal API returned an unexpected HTTP redirect. GraphQL endpoints are not expected to redirect; " +
+    "this likely indicates a Toptal infrastructure change. File an issue at " +
+    "https://github.com/alexey-pelykh/ttctl/issues with the surface name, a timestamp, and the Location value " +
+    "from the error message.";
+
+  constructor(
+    public readonly surface: ToptalSurface,
+    public readonly endpoint: string,
+    public readonly status: number,
+    public readonly location: string,
+  ) {
+    super(RedirectError.formatMessage(surface, endpoint, status, location));
+  }
+
+  static formatMessage(surface: ToptalSurface, endpoint: string, status: number, location: string): string {
+    return [
+      `Transport refused to follow an HTTP ${status.toString()} redirect from surface "${surface}" (${endpoint}).`,
+      `Location: ${location}`,
+      "",
+      "TTCtl's GraphQL endpoints are not expected to redirect. Following the redirect is refused as a " +
+        "defense-in-depth measure — a followed redirect would carry the request body to the redirect target.",
+      "",
+      `Please file an issue at https://github.com/alexey-pelykh/ttctl/issues with the surface name ("${surface}"), ` +
+        "a timestamp, and the Location value above so we can investigate.",
+    ].join("\n");
+  }
+}
+
+/**
+ * HTTP status codes that signal a redirect when paired with a `Location`
+ * header. Matches `node-wreq`'s own `REDIRECT_STATUS_CODES` set
+ * (300, 301, 302, 303, 307, 308). `304 Not Modified` is intentionally
+ * excluded — it is a cache-validation response, not a redirect, and never
+ * carries a `Location`.
+ */
+const REDIRECT_STATUS_CODES: ReadonlySet<number> = new Set([300, 301, 302, 303, 307, 308]);
+
+/**
+ * Case-insensitive header lookup over a plain header object. HTTP header
+ * names are case-insensitive (RFC 9110 § 5.1), and the two transports
+ * normalise differently: `undici` lowercases response header keys, while
+ * `node-wreq`'s `Headers.toObject()` preserves the server's original
+ * casing. The redirect check must find `Location` regardless of which
+ * transport produced the response object.
+ */
+function getHeaderInsensitive(headers: Record<string, string>, name: string): string | undefined {
+  const lower = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lower) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Return the `Location` value if `status` + `headers` describe an HTTP
+ * redirect — a {@link REDIRECT_STATUS_CODES} status carrying a `Location`
+ * header — and `undefined` otherwise.
+ *
+ * Shared by {@link executeWithResilience} and the photo-upload path's
+ * hand-rolled `node-wreq` fetch (`multipartImpersonatedFetch` in
+ * `services/profile/basic/index.ts`) so every transport path enforces the
+ * same no-follow posture (issue #268). A 3xx WITHOUT a `Location` header
+ * is not a redirect — there is nothing to follow — so it returns
+ * `undefined` and the caller returns the response verbatim.
+ *
+ * The caller decides what to do with a positive result: throw a
+ * {@link RedirectError}. Detection and reaction are split so each call
+ * site can emit its own diagnostic-trace record before throwing, matching
+ * how each already handles the {@link Cf403Error} case.
+ */
+export function getRedirectLocation(status: number, headers: Record<string, string>): string | undefined {
+  if (!REDIRECT_STATUS_CODES.has(status)) return undefined;
+  return getHeaderInsensitive(headers, "location");
+}
+
+/**
  * TLS-impersonation profile. Pinned as a coupled pair with `USER_AGENT` —
  * see the `tls-fingerprinting` skill on identity-catalog freshness: WAFs
  * cross-validate the User-Agent string against the JA4 hash, so the profile
@@ -338,6 +446,14 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
   });
   const body = JSON.stringify(req.body);
 
+  // No-follow redirect policy (issue #268). `undici.request()` with the
+  // default global dispatcher does NOT follow redirects — redirect
+  // following is an opt-in interceptor (`undici.interceptors.redirect`)
+  // that TTCtl never installs. The guarantee is structural, not a
+  // default-value that a future major could flip, so there is no explicit
+  // `redirect` / `maxRedirections` option to pin here (the request-level
+  // options type has none). A 3xx response is surfaced verbatim and
+  // rejected by `executeWithResilience` as a typed `RedirectError`.
   return executeWithResilience(req, url, async (signal) => {
     const res = await undiciRequest(url, {
       method: "POST",
@@ -413,6 +529,15 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
       signal,
       timeout: readTransportConfig().timeoutMs,
       connectTimeout: readTransportConfig().connectMs,
+      // No-follow redirect policy (issue #268). `node-wreq` defaults to
+      // `redirect: "follow"` (up to 20 hops). It does strip the
+      // `authorization` header on cross-origin hops, but a followed
+      // redirect would still carry the request body (operation name +
+      // variables) to the redirect target. Pinning `"manual"` returns the
+      // 3xx verbatim so `executeWithResilience` can reject it as a typed
+      // `RedirectError` — and keeps the no-leak guarantee from depending
+      // on a transitive library default.
+      redirect: "manual",
     });
 
     const responseHeaders = res.headers.toObject();
@@ -609,6 +734,11 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
       signal,
       timeout: readTransportConfig().timeoutMs,
       connectTimeout: readTransportConfig().connectMs,
+      // No-follow redirect policy (issue #268). File-upload mutations are
+      // the highest-impact body-exfiltration vector if redirect handling
+      // weakens — see the rationale on the JSON `impersonatedTransport`
+      // call site above.
+      redirect: "manual",
     });
 
     const responseHeaders = res.headers.toObject();
@@ -724,6 +854,21 @@ async function executeWithResilience(
       body: res.body,
       elapsedMs: performance.now() - startMs,
     });
+
+    // Redirect anomaly (issue #268). The transports have a no-follow
+    // policy (`redirect: "manual"` on node-wreq; structural on undici, see
+    // stockTransport), so a genuine 3xx-with-Location lands here verbatim
+    // instead of being followed. GraphQL endpoints are not expected to
+    // redirect; refuse to hand the redirect body back to a caller that
+    // cannot interpret it and surface a typed RedirectError for operator
+    // triage. The response is already captured in the diagnostic trace
+    // above. A 3xx WITHOUT a `Location` header is not a redirect — it
+    // falls through to the normal (non-retryable) return path so the
+    // caller's GraphQL response handler sees it verbatim.
+    const redirectLocation = getRedirectLocation(res.status, res.headers);
+    if (redirectLocation !== undefined) {
+      throw new RedirectError(req.surface, url, res.status, redirectLocation);
+    }
 
     if (!isRetryableStatus(res.status)) {
       return res;

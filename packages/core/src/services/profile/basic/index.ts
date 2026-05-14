@@ -9,8 +9,10 @@ import { logTransportRequest, logTransportResponse } from "../../../lib/diagnost
 import {
   buildDryRunPreview,
   Cf403Error,
+  getRedirectLocation,
   IMPERSONATE_PROFILE,
   impersonatedTransport,
+  RedirectError,
   stockTransport,
 } from "../../../transport.js";
 import type { DryRunPreview, TransportResponse } from "../../../transport.js";
@@ -1364,6 +1366,13 @@ async function multipartImpersonatedFetch(
     headers,
     body: form,
     browser: IMPERSONATE_PROFILE,
+    // No-follow redirect policy (issue #268). This hand-rolled fetch
+    // mirrors `impersonatedMultipartTransport` and must carry the same
+    // posture — file-upload is the highest-impact body-exfiltration
+    // vector if redirect handling weakens. `node-wreq` defaults to
+    // `redirect: "follow"`; pinning `"manual"` returns a 3xx verbatim so
+    // the check below can reject it.
+    redirect: "manual",
   });
 
   const responseHeaders = res.headers.toObject();
@@ -1379,6 +1388,23 @@ async function multipartImpersonatedFetch(
       elapsedMs: performance.now() - startMs,
     });
     throw new Cf403Error("talent-profile", url);
+  }
+
+  // Redirect anomaly (issue #268) — same no-follow posture as the
+  // transport.ts entry points. Capture the response in the diagnostic
+  // trace before rejecting so an operator sees the redirect target.
+  const redirectLocation = getRedirectLocation(res.status, responseHeaders);
+  if (redirectLocation !== undefined) {
+    logTransportResponse({
+      surface: "talent-profile",
+      endpoint: url,
+      operationName: logContext.operationEnvelope.operationName,
+      status: res.status,
+      headers: responseHeaders,
+      body: null,
+      elapsedMs: performance.now() - startMs,
+    });
+    throw new RedirectError("talent-profile", url, res.status, redirectLocation);
   }
 
   const text = await res.text();

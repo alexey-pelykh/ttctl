@@ -44,6 +44,7 @@ export {
   Cf403PersistentError,
   DRY_RUN_REDACTED_AUTHORIZATION,
   IMPERSONATE_PROFILE,
+  RedirectError,
   SchedulerBearerExpired,
   buildDryRunPreview,
   buildGraphQLMultipart,
