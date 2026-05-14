@@ -620,11 +620,63 @@ const TALENT_PROFILE_KNOWN_UNTRUSTED_OPS: string[] = [
   "viewerName",
 ];
 
+/**
+ * Custom-scalar TypeScript mappings. Live mobile-gateway response captures
+ * pin each wire-empirical shape (`BigDecimal`, `Date`, `DateTime`, `Time`);
+ * `JSON` is mapped per GraphQL-ecosystem convention because no trusted op
+ * currently references it. This closes a defense-in-depth gap: PR #275 fixed
+ * the same class of bug — a hand-rolled service-layer type declared
+ * `duration: number` while the wire returned a string-encoded decimal — at
+ * the service layer, but generated `Scalars['BigDecimal']`-typed fields
+ * would have masked the same latent drift if consumed directly. Aligning
+ * generated and hand-rolled shapes under the same wire-faithful convention
+ * removes that surface.
+ *
+ *   | Scalar       | TS mapping                | Wire shape example                   | Source                                                                   |
+ *   |--------------|---------------------------|--------------------------------------|--------------------------------------------------------------------------|
+ *   | `BigDecimal` | `string`                  | `"8.0"`, `"480.0"`                   | PR #275; `../research/captures/Timesheets.json` `hours`                  |
+ *   | `Date`       | `string`                  | `"2026-04-16"`                       | `../research/captures/Timesheets.json` `startDate`/`endDate`             |
+ *   | `DateTime`   | `string`                  | `"2026-04-28T00:00:00+00:00"`        | `../research/captures/Timesheets.json` `timesheetSubmission*Datetime`    |
+ *   | `Time`       | `string`                  | (input-only; `"HH:MM:SS"` convention)| `DesiredOverlappingHoursFilter.from`/`to` (input scalar; no wire reply)  |
+ *   | `JSON`       | `Record<string, unknown>` | (no trusted op references it)        | convention; #279 AC hint                                                 |
+ *
+ * `PageSize` and `TimeOfDay` are declared in the gateway SDL but never
+ * referenced by a trusted operation. Unlike `JSON` above (where ecosystem
+ * convention pins the shape unambiguously), these are Toptal-specific
+ * scalars with no ecosystem fallback — left at the codegen default
+ * (`unknown`) until wire evidence emerges, avoiding over-claim of a
+ * mapping we cannot verify. If a future trusted operation begins
+ * consuming one, add it here with a captured-payload citation.
+ *
+ * Wire-string scalars (`BigDecimal`, `Date`, `DateTime`, `Time`) carry NO
+ * runtime parsing — consumers receive raw wire strings. Arithmetic at the
+ * call site uses `Number(value)`; date math uses `new Date(value)` or an
+ * equivalent parser. The hand-rolled service-layer types in
+ * `packages/core/src/services/{payments,engagements,timesheet}` already
+ * declare these fields as `string`; this mapping aligns the generated
+ * trusted-op types with the same convention so consumers that import
+ * generated types directly (e.g. `ProfileShowQuery` in
+ * `services/profile/basic/index.ts`) get the same wire-faithful shape.
+ *
+ * The talent_profile SDL declares none of these scalars (only `Upload`,
+ * `SettingName`, `Unknown`), so the mapping is a no-op for the
+ * `talent-profile.ts` output; leaving it in shared config keeps emission
+ * consistent if talent_profile ever introduces same-named scalars.
+ */
+const CUSTOM_SCALAR_MAPPINGS = {
+  BigDecimal: "string",
+  Date: "string",
+  DateTime: "string",
+  Time: "string",
+  JSON: "Record<string, unknown>",
+} as const;
+
 const SHARED_PLUGIN_CONFIG = {
   useTypeImports: true,
   avoidOptionals: true,
   skipTypename: false,
   enumsAsTypes: true,
+  scalars: CUSTOM_SCALAR_MAPPINGS,
 } as const;
 
 /**

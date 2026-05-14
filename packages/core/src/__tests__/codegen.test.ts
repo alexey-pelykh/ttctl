@@ -10,9 +10,15 @@ import type { AvailabilityDataFragment, ViewerQuery, ViewerQueryVariables } from
  * importable from `@ttctl/core` source and structurally correct end-to-end.
  *
  * The fixtures below construct values that satisfy `ViewerQuery` and
- * `AvailabilityDataFragment` without any `as` cast or `as any`. Custom-scalar
- * fields (BigDecimal, DateTime, Date, etc.) surface as `unknown` in the type
- * chain — `unknown` is NOT `any`, so consumers must narrow at use sites.
+ * `AvailabilityDataFragment` without any `as` cast or `as any`. Custom-mapped
+ * scalars — `BigDecimal`, `Date`, `DateTime`, `Time` (per captured wire
+ * shapes) and `JSON` (per ecosystem convention) — carry concrete TS mappings
+ * declared in `codegen.config.ts`; this fragment exercises
+ * `Scalars['Unknown']`-typed fields (`disablingReason`, `comment`,
+ * `rejectReason`, `futureAvailableHours`, `returnInDate`) — the schema-side
+ * `Unknown` placeholder for positions that have not yet been pinned by a
+ * live capture — which still surface as `unknown` and accept `null` via
+ * `Maybe<>`.
  */
 describe("graphql-codegen smoke", () => {
   it("emits a typed `ViewerQuery` operation type with no variables", () => {
