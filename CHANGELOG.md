@@ -75,6 +75,36 @@ basicInfo }`) consumed by the formatter / JSON / YAML branches.
     `lib/format-helpers.ts` module (`unsetOr` / `indentLines` /
     `renderMultiParagraph`).
 
+### Security
+
+- **Transport pins a no-follow redirect policy and rejects HTTP 3xx as a
+  typed `RedirectError` (#268)**. Verification of PR #237's transport
+  layer found no explicit redirect posture: `node-wreq` defaults to
+  `redirect: "follow"` (up to 20 hops), so a 3xx from a compromised CDN
+  edge would be followed. `node-wreq` strips the `authorization` header
+  on cross-origin hops, but a followed redirect still carries the request
+  body (operation name + variables) to the redirect target — a
+  body-exfiltration vector that depended on a transitive library default.
+  - **`node-wreq` call sites** (`impersonatedTransport`,
+    `impersonatedMultipartTransport`, and the hand-rolled
+    `multipartImpersonatedFetch` on the photo-upload path) now pin
+    `redirect: "manual"` so a 3xx is returned verbatim instead of
+    followed.
+  - **`undici` call site** (`stockTransport`) needs no explicit option —
+    `undici.request()` on the default dispatcher structurally does not
+    follow redirects (redirect following is an opt-in interceptor TTCtl
+    never installs). Documented in place so the guarantee is legible.
+  - **`executeWithResilience`** and the photo-upload path now reject any
+    3xx-with-`Location` response by throwing the new `RedirectError`
+    (`code: REDIRECT_REFUSED`, extends `TtctlError`) — GraphQL endpoints
+    are not expected to redirect, so a 3xx is an anomaly surfaced for
+    operator triage. A 3xx WITHOUT a `Location` header is not a redirect
+    and is returned verbatim. The error carries `surface`, `endpoint`,
+    `status`, and `location` (a URL, not a credential — safe to surface).
+  - Audit also confirmed CLEAN on the other two PR #237 spot-checks:
+    error objects (`Cf403Error`, `TransportError`) carry no response
+    headers, and `transport.ts` holds no module-level per-request state.
+
 ### Changed
 
 - **Envelope ABI lock — v0.4 wire contract for write/error/list output

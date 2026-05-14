@@ -26,7 +26,7 @@ Requires **Node.js ≥ 24**, ESM only.
 - **Config** — `resolveConfig`, `loadConfigFile`, `ConfigError`, `ConfigLoadSchema`, `ConfigWriteSchema`, `discoverConfigPath`
 - **Config writer** — `writeNewConfig` (bootstrap), `persistAuthToken` / `clearAuthToken` (atomic single-file token lifecycle), `AuthTokenPersistError`, `acquireConfigLock`
 - **Auth** — `signIn`, `signOut`, `getAuthStatus`, `resolveCredentials`, `SignInError`, `AuthRevokedError`, `TtctlError`
-- **Transport** — `stockTransport` (mobile gateway), `impersonatedTransport` / `impersonatedMultipartTransport` (Chrome-TLS impersonation for Cloudflare-protected surfaces), `callSurface`, `Cf403Error`, `Cf403PersistentError`, `SchedulerBearerExpired`, `IMPERSONATE_PROFILE`, `buildDryRunPreview`, `buildGraphQLMultipart`
+- **Transport** — `stockTransport` (mobile gateway), `impersonatedTransport` / `impersonatedMultipartTransport` (Chrome-TLS impersonation for Cloudflare-protected surfaces), `callSurface`, `Cf403Error`, `Cf403PersistentError`, `RedirectError` (no-follow redirect policy, issue #268), `SchedulerBearerExpired`, `IMPERSONATE_PROFILE`, `getRedirectLocation`, `buildDryRunPreview`, `buildGraphQLMultipart`
 - **Resilience** — `TransportError`, `readTransportConfig`, `resetTransportConfigCache`
 - **Service namespaces** — `profile`, `applications`, `contracts`, `engagements`, `availability`, `jobs`, `payments`, `timesheet`
 - **1Password** — `resolveOnePasswordReference`, `OnePasswordError`
