@@ -147,13 +147,7 @@ describe("captureWireShape — arrays", () => {
   });
 
   it("array of objects where a field is null in some samples and typed in others → nullable inner", () => {
-    expect(
-      captureWireShape([
-        { note: "first" },
-        { note: null },
-        { note: "third" },
-      ]),
-    ).toEqual({
+    expect(captureWireShape([{ note: "first" }, { note: null }, { note: "third" }])).toEqual({
       kind: "array",
       item: {
         kind: "object",
@@ -172,12 +166,7 @@ describe("captureWireShape — arrays", () => {
   });
 
   it("array of arrays unifies items recursively", () => {
-    expect(
-      captureWireShape([
-        ["a", "b"],
-        ["c"],
-      ]),
-    ).toEqual({
+    expect(captureWireShape([["a", "b"], ["c"]])).toEqual({
       kind: "array",
       item: { kind: "array", item: { kind: "string" } },
     });
@@ -336,9 +325,7 @@ describe("captureWireShape — wire-fixture shape (BillingCycle, structurally eq
       timesheetUrl: billingCycleFixture.timesheetUrl,
       timesheetComment: billingCycleFixture.timesheetComment,
     };
-    expect(JSON.stringify(captureWireShape(billingCycleFixture))).toBe(
-      JSON.stringify(captureWireShape(scrambled)),
-    );
+    expect(JSON.stringify(captureWireShape(billingCycleFixture))).toBe(JSON.stringify(captureWireShape(scrambled)));
   });
 });
 
