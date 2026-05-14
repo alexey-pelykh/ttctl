@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { resolveConfig } from "@ttctl/core";
 
 import { createToolAuthResolver } from "./auth.js";
+import { composeDescription } from "./data-handling.js";
 import { type McpDiagnosticLogger, setMcpDiagnosticLogger, wrapToolHandler } from "./diagnostic.js";
 import { createTokenLoader } from "./tools/_shared.js";
 import { createTokenResolver } from "./tools/profile/shared.js";
@@ -91,14 +92,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
 
   // Monkey-patch `server.registerTool` BEFORE `registerAllTools` runs so
   // every per-tool registrar's callback is transparently wrapped with the
-  // diagnostic-instrumentation contract. The patch:
+  // diagnostic-instrumentation contract (#224) AND every per-tool
+  // description is augmented with response-side data-handling guidance
+  // (#265). The patch:
   //   1. Captures `originalRegisterTool` bound to the McpServer instance
   //      so the SDK's internal `_registeredTools` bookkeeping fires normally.
-  //   2. Replaces `server.registerTool` with a wrapper that passes through
-  //      name + config verbatim and wraps the callback with
-  //      `wrapToolHandler(name, cb)`. The wrapper's return is the same
-  //      `RegisteredTool` handle as the original — `.enable()` /
-  //      `.disable()` / `.update()` work unchanged on the registered tool.
+  //   2. Replaces `server.registerTool` with a wrapper that (a) augments
+  //      the config's `description` field via `composeDescription` (#265),
+  //      and (b) wraps the callback with `wrapToolHandler(name, cb)` (#224).
+  //      The wrapper's return is the same `RegisteredTool` handle as the
+  //      original — `.enable()` / `.disable()` / `.update()` work unchanged
+  //      on the registered tool.
   //   3. Uses an `unknown` cast on the patch because `registerTool`'s
   //      generic signature (with `ZodRawShapeCompat | AnySchema` + the
   //      output schema variant) is hostile to a single typed override.
@@ -118,8 +122,24 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     const name = args[0] as string;
     const config = args[1] as unknown;
     const cb = args[2] as Parameters<typeof wrapToolHandler>[1];
+
+    // Augment the tool's description with response-side data-handling
+    // guidance (#265). The augmentation is at registration time so every
+    // tool — current and future — inherits the footer without per-tool
+    // boilerplate. High-risk tools (per the threat-model § 5 audit, set
+    // membership lives in `data-handling.ts`) additionally get a
+    // third-party-content notice.
+    let patchedConfig: unknown = config;
+    if (typeof config === "object" && config !== null) {
+      const cfg = config as { description?: unknown };
+      patchedConfig = {
+        ...cfg,
+        description: composeDescription(name, cfg.description),
+      };
+    }
+
     const wrappedCb = wrapToolHandler(name, cb);
-    return originalRegisterTool(name, config, wrappedCb);
+    return originalRegisterTool(name, patchedConfig, wrappedCb);
   };
   (server as unknown as { registerTool: typeof patchedRegisterTool }).registerTool = patchedRegisterTool;
 

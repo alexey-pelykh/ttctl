@@ -253,6 +253,54 @@ attacks:
    but do not eliminate the need for review when an agent is processing
    untrusted content.
 
+#### Response-Side Leakage — Operator Awareness (#265)
+
+The two prompt-injection variants above protect the **input** side:
+state-change mutations are gated by `dryRun` review, and the file-upload
+input path is sandboxed. The **response** side — what the MCP tool sends
+BACK into the AI assistant's context — is a separate threat surface
+covered by [`docs/security/mcp-leakage-threat-model.md`].
+
+Three response-side threats matter:
+
+1. **PII persistence in AI-assistant chat history / vector databases.**
+   Tool output enters the assistant's context and may be persisted by
+   the host vendor (Claude Desktop / Cursor / Windsurf default to local
+   chat-history persistence; Cursor and Windsurf additionally index tool
+   outputs into a vector DB by default). Persistence destinations are a
+   host-vendor decision outside TTCtl's control.
+2. **Indirect prompt injection via Toptal-side free-text.** Engagement
+   notes, application messages, contract clauses, job descriptions, and
+   review comments can carry adversarial instructions written by third
+   parties. Tools that surface this content are tagged High on the
+   injection severity axis (per the threat-model § 5 audit) and carry an
+   in-description third-party-content notice (composed at registration
+   time — see `packages/mcp/src/data-handling.ts`).
+3. **Cross-tool exfiltration** when TTCtl shares a session with outbound
+   tools the host has loaded. An injection in TTCtl's response payload
+   can chain into a sibling tool's apply path; `dryRun` does not gate
+   sibling tools.
+
+**Operator-side mitigations**:
+
+- Treat the [README § MCP Integration](README.md#mcp-integration)
+  guidance as required reading before enabling the server on a
+  long-lived host.
+- Use private / ephemeral chat modes when invoking TTCtl tools that
+  return third-party free-text.
+- Where the host supports it, exclude TTCtl tool outputs from vector-DB
+  indexing (Cursor: `.cursorrules`; Windsurf: workspace settings).
+- Do not co-load TTCtl with outbound tools (web-fetch, arbitrary-write
+  filesystem tools) you do not control in the same session.
+
+**Sanitization is intentionally not implemented at the MCP layer.**
+Heuristic sanitization gives false security disproportionate to its
+partial coverage; sentinel-envelope wrapping is currently not honored by
+any major MCP host. The full trade-off analysis is in the threat-model
+document § 7.
+
+[`docs/security/mcp-leakage-threat-model.md`]: docs/security/mcp-leakage-threat-model.md
+
 ### User-install supply-chain hardening
 
 The Toptal Talent platform has no public API; TTCtl is built from a
