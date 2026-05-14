@@ -592,6 +592,68 @@ The logger is also injectable for tests via `setMcpDiagnosticLogger`
 to `runMcpStdio`; tests pass a capturing function. Either path keeps
 the four-event surface stable.
 
+### MCP file-upload defense-in-depth gates (`TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY`)
+
+Every MCP tool that consumes a `file: string` / `filePath: string` and
+forwards it to a Toptal upload mutation applies two defense-in-depth
+gates at the MCP layer BEFORE the apply path runs (issue #221, audit
+CRIT-007). The gates protect against the file-exfiltration prompt-
+injection variant documented in `SECURITY.md` § MCP Trust Model.
+
+**Path-prefix sandbox**: Resolves the supplied path (normalises `..`,
+makes it absolute) and refuses anything outside `~/Documents`,
+`~/Downloads`, or `~/Desktop`. Sibling-name guard:
+`~/Documents_secret/` does NOT match `~/Documents`. The sandbox can be
+bypassed by setting `TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY=1` in the MCP
+server's environment (any other value, including empty / `"0"` /
+`"true"`, keeps it enforced). The bypass is read per-call, so a
+sibling `ttctl auth signin` or a config reload does not need to
+restart the MCP server to pick up an env-shift — but per the #113
+config-path capture rule, the path itself is captured once at startup,
+so env-shifts mid-session never retarget the sandbox prefix list
+(home-directory anchor stays stable).
+
+**Extension allowlist**: Per `UPLOAD_CATEGORIES` in
+`packages/mcp/src/tools/file-upload.ts`:
+
+- `basicPhoto` / `portfolioCover` — images only (`.jpg`, `.jpeg`,
+  `.png`, `.gif`, `.webp`). Profile photos and portfolio covers render
+  on the public profile; non-image extensions have no legitimate use.
+- `resume` — common resume document formats (`.pdf`, `.docx`, `.doc`,
+  `.txt`, `.rtf`, `.odt`).
+- `portfolioFile` — broad attachment allowlist (documents, images,
+  archives, media) that explicitly excludes secret-correlated
+  extensions (`.pub`, `.env`, `.db`, `.sqlite`, `.sh`, `.exe`) and
+  extensionless files (`id_rsa`, `credentials`, `config`). The empty-
+  extension case is refused unconditionally — `path.extname("id_rsa")`
+  returns `""` and no allowlist contains it.
+
+Case-insensitive match (`Foo.PDF` matches `.pdf`). The env override
+disables the path sandbox ONLY; extension allowlist always applies
+regardless.
+
+Order of checks: **extension first**, then sandbox. The extension
+check is cheap and the message is more actionable when both gates
+would have failed.
+
+**Apply-path-only**: The gate runs on the apply branch but NOT the
+dry-run branch (no file is read in `dryRun: true` preview mode, so the
+exfiltration surface is absent). MCP clients can probe the wire shape
+of an upload with a sandbox-outside path under `dryRun: true` without
+disabling the gate.
+
+The shared decoder `decodeFileUploadInput(input, category)` enforces
+both gates for `filePath` and the extension gate for the base64 buffer
+branch (path sandbox is N/A in buffer mode — no path is consumed).
+`ttctl_profile_basic_photo_upload` calls `validateUploadPath` directly
+because its tool schema uses a bare `file: string` field rather than
+the `fileUploadInputSchema` fragment (the buffer-mode dual-input shape
+is intentionally omitted for binary uploads through MCP).
+
+The CLI surface is intentionally pass-through — user intent is explicit
+at the shell, and the operator typing `ttctl profile resume upload
+~/.ssh/id_rsa` is not a prompt-injection victim.
+
 ### Config File Resolution
 
 `resolveConfig()` in `packages/core/src/config.ts` selects ONE config-file

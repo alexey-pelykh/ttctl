@@ -68,6 +68,8 @@ operators, not just resident in the code:
 | `--debug` bearer-absence enforcement at runtime AND test         | Bearer ever appearing in any allowlisted debug record shape               | `packages/core/src/lib/redact.ts` + tests |
 | Crash-path bearer scrub (uncaughtException + unhandledRejection) | Captured bearer leaking through a crash log on the way out of the process | `packages/cli/src/crash-handlers.ts`      |
 | MCP path-capture-on-startup                                      | Mid-session env-var shifts retargeting reads/writes                       | `packages/mcp/src/server.ts`              |
+| MCP file-upload path-prefix sandbox                              | Prompt-injection exfiltration of files outside the upload sandbox         | `packages/mcp/src/tools/file-upload.ts`   |
+| MCP file-upload extension allowlist                              | Prompt-injection exfiltration of extensionless / non-document secrets     | `packages/mcp/src/tools/file-upload.ts`   |
 
 The sync-root list (iCloud Drive, Dropbox, OneDrive, Google Drive, Box) is
 documented in [README § Sync-root exclusion](README.md#sync-root-exclusion).
@@ -231,10 +233,25 @@ attacks:
    tools (`ttctl_profile_basic_photo_upload`, `ttctl_profile_resume_upload`,
    portfolio upload tools) with an arbitrary host path that reads sensitive
    local files (`~/.ssh/id_rsa`, `~/.aws/credentials`, etc.) and uploads
-   them to Toptal under the operator's own bearer-trusted channel. **MCP
-   operators should treat file-upload tool invocations from untrusted
-   prompt contexts as dangerous**; defense-in-depth gates at the MCP layer
-   for this variant are tracked as remediation work and not yet shipped.
+   them to Toptal under the operator's own bearer-trusted channel. Two
+   defense-in-depth gates apply at the MCP layer for every file-upload
+   tool: a **path-prefix sandbox** that refuses reads outside
+   `~/Documents`, `~/Downloads`, and `~/Desktop`, and a per-tool
+   **extension allowlist** that refuses non-image extensions for photo /
+   portfolio-cover uploads, non-document extensions for resume uploads,
+   and explicitly excludes secret-correlated extensions
+   (`.pub`, `.env`, `.db`, `.sqlite`, `.sh`, extensionless files like
+   `id_rsa`) from the broadest portfolio-attachment allowlist. The
+   threat-model anchor — `ttctl_profile_resume_upload({ filePath:
+   "~/.ssh/id_rsa" })` — fails both gates and never reaches the apply
+   path. The sandbox can be bypassed by setting
+   `TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY=1` in the MCP server's environment
+   (extension allowlist still applies); MCP operators staging upload
+   candidates outside the default safe directories may opt in.
+   **Operators should still treat file-upload tool invocations from
+   untrusted prompt contexts as suspicious** — the gates raise the bar
+   but do not eliminate the need for review when an agent is processing
+   untrusted content.
 
 ### User-install supply-chain hardening
 

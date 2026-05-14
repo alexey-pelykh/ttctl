@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../../errors.js";
 import type { ToolErrorResponse } from "../../errors.js";
-import { decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
+import { UPLOAD_CATEGORIES, decodeFileUploadInput, fileUploadInputSchema } from "../file-upload.js";
 import { buildMcpDryRunPreview, dryRunResponse, jsonResponse, type ToolRegistrationContext } from "../_shared.js";
 import { profileResumeUploadOutputSchema } from "../output-schemas.js";
 
@@ -48,7 +48,7 @@ export function registerResumeTools(server: McpServer, ctx: ToolRegistrationCont
           buildMcpDryRunPreview("uploadResume", "talent-profile", { input: { file: null } }, auth.token),
         );
       }
-      const decoded = decodeFileUploadInput(args);
+      const decoded = decodeFileUploadInput(args, UPLOAD_CATEGORIES.resume);
       if ("isError" in decoded) return decoded;
       try {
         const result = await profile.resume.upload(auth.token, decoded);
