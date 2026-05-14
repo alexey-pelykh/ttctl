@@ -61,6 +61,66 @@ jobs:
       - name: pnpm audit (fail on high/critical)
         run: pnpm audit --audit-level=high
 
+  # E2E verification attestation (#228). Hard gate: the GitHub Release body
+  # must contain an E2E_VERIFIED attestation line before publish-npm runs.
+  #
+  # Rationale: the e2e test suite (TTCTL_E2E=1) requires a live Toptal
+  # session bearer and runs against the real platform. CI cannot hold those
+  # credentials, so the suite never runs in CI. Releases must therefore
+  # explicitly attest that the suite was exercised + verified locally
+  # before publish — otherwise wire-shape regressions could ship undetected
+  # (the exact failure mode CLAUDE.md § Schema/contract validation rule was
+  # designed to prevent; see #59 / #60 for prior bugs). Closes RC-2 root
+  # cause's REL-003 cross-cut (audit 2026-05-13).
+  #
+  # Mirrors the doc-surface PR-body attestation gate (ci.yml). The matcher
+  # strips Markdown emphasis (asterisks, backticks) before testing so
+  # **E2E verified**, `E2E verified`, etc. all work. Two accepted forms:
+  #   - **E2E verified**: yes — exercised against live Toptal session
+  #     [at <commit-sha>] [on <date>]
+  #   - **E2E verified**: not applicable — <reason, e.g. docs-only release>
+  e2e-attestation:
+    name: E2E verification attestation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v9.0.0
+        with:
+          script: |
+            // Strip Markdown emphasis so **E2E verified**, `E2E verified`,
+            // etc. all match. Tolerate `E2E_VERIFIED` (constant) and
+            // `E2E verified` (sentence) spellings.
+            const body = (context.payload.release.body || '').replace(/[*`]+/g, '');
+            const hasVerified = /e2e[ _]verified\s*:\s*yes\b/i.test(body);
+            const hasNotApplicable = /e2e[ _]verified\s*:\s*not[ _-]applicable\b/i.test(body);
+
+            if (hasVerified || hasNotApplicable) {
+              core.info(
+                `E2E_VERIFIED attestation found ` +
+                  `(verified=${hasVerified}, not-applicable=${hasNotApplicable}).`,
+              );
+              return;
+            }
+
+            const message = [
+              'E2E_VERIFIED attestation missing from release body.',
+              '',
+              'The e2e test suite requires live Toptal credentials (TTCTL_E2E=1)',
+              'and never runs in CI. Releases must therefore explicitly attest',
+              'that the suite was exercised against the live platform before',
+              'publish — see CLAUDE.md § Schema/contract validation rule and',
+              'issue #228 for context.',
+              '',
+              'Edit the GitHub Release description to include ONE of:',
+              '  **E2E verified**: yes — exercised against live Toptal session at <sha> on <date>',
+              '  **E2E verified**: not applicable — <reason, e.g. docs-only release>',
+              '',
+              'Then use the "Re-run failed jobs" button to re-evaluate the gate.',
+            ].join('\n');
+            core.setFailed(message);
+
   # NOTE: The npm-publish environment requires the following protection rules
   # configured in GitHub Settings → Environments → npm-publish:
   #   1. Deployment branches — restricted to "main" branch and "v*" tags
@@ -69,7 +129,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     timeout-minutes: 10
-    needs: [validate, audit]
+    needs: [validate, audit, e2e-attestation]
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
