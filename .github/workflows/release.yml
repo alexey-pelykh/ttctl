@@ -133,8 +133,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
-      contents: read
-      id-token: write
+      contents: write # gh release upload (SBOM + tarball assets)
+      id-token: write # OIDC trusted publishing + Sigstore attestations
+      attestations: write # actions/attest-build-provenance
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: ./.github/actions/setup
@@ -207,6 +208,69 @@ jobs:
       - name: Verify packages
         run: pnpm -r publish --dry-run --access public --no-git-checks
 
+      # Pack workspace tarballs ahead of publish so we have a stable, on-disk
+      # subject for `actions/attest-build-provenance`. Looped per published
+      # package because `pnpm pack` is not recursive in pnpm 9 (`-r pack`
+      # added in pnpm 10). The private `@ttctl/e2e` package is intentionally
+      # excluded from the list. Each tarball is byte-identical to what
+      # `pnpm -r publish` ships (same source tree, same `files` field), so
+      # the SHA256 digest attested here matches the digest downstream
+      # verifiers compute against the npm-served tarball.
+      - name: Pack workspace tarballs
+        run: |
+          mkdir -p dist/pack
+          for pkg_dir in packages/core packages/cli packages/mcp packages/ttctl; do
+            (cd "$pkg_dir" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist/pack")
+          done
+          ls -la dist/pack/
+
+      # Generate CycloneDX SBOMs per published package (`@ttctl/core`,
+      # `@ttctl/cli`, `@ttctl/mcp`, `ttctl`) plus an aggregate workspace SBOM.
+      # `@cyclonedx/cdxgen` is Apache-2.0 and pnpm-native (reads pnpm-lock.yaml
+      # to resolve catalog: references to concrete versions). Installed
+      # globally once to avoid 5× npx hydration. `--no-install-deps` reuses
+      # the workspace's already-resolved node_modules (populated by the setup
+      # action's `pnpm install --frozen-lockfile`) instead of triggering a
+      # redundant per-package install. Pinned to the latest stable major at
+      # PR time; bump together with action SHAs during dep refresh.
+      - name: Install cdxgen
+        run: npm install -g "@cyclonedx/cdxgen@12.3.3"
+
+      - name: Generate CycloneDX SBOMs
+        env:
+          EXPECTED: ${{ env.VERSION }}
+          # cdxgen telemetry is opt-out — disable for CI privacy.
+          DISABLE_TELEMETRY: "true"
+        run: |
+          mkdir -p dist/sbom
+          # Per-published-package SBOMs.
+          for pkg_dir in packages/core packages/cli packages/mcp packages/ttctl; do
+            pkg_name=$(jq -r '.name' "$pkg_dir/package.json")
+            # @ttctl/core → ttctl-core; ttctl → ttctl
+            safe_name=$(echo "$pkg_name" | sed 's|^@||;s|/|-|g')
+            out="dist/sbom/${safe_name}-${EXPECTED}.cdx.json"
+            cdxgen \
+              --type pnpm \
+              --no-install-deps \
+              --spec-version 1.6 \
+              --output "$out" \
+              --project-name "$pkg_name" \
+              --project-version "$EXPECTED" \
+              "$pkg_dir"
+            echo "::notice file=$out::Generated SBOM for $pkg_name@$EXPECTED"
+          done
+          # Aggregate workspace SBOM covers all workspace packages plus their
+          # joint transitive closure — useful for full-repo dependency audits.
+          cdxgen \
+            --type pnpm \
+            --no-install-deps \
+            --spec-version 1.6 \
+            --output "dist/sbom/ttctl-workspace-${EXPECTED}.cdx.json" \
+            --project-name "ttctl-workspace" \
+            --project-version "$EXPECTED" \
+            .
+          ls -la dist/sbom/
+
       - name: Publish packages
         run: pnpm -r publish --access public --no-git-checks --report-summary --provenance
 
@@ -229,3 +293,31 @@ jobs:
             fi
           done
           if [ $FAIL -ne 0 ]; then exit 1; fi
+
+      # GitHub-side SLSA Provenance attestation, complementary to the
+      # npm-registry-side provenance produced by `pnpm publish --provenance`.
+      # Anchors each packed tarball to this GitHub Actions build in the
+      # Sigstore public transparency log. Downstream verifiers can run
+      # `gh attestation verify <tarball> --owner alexey-pelykh` against any
+      # of these tarballs (or against the npm-served tarball with the same
+      # SHA256 digest) to prove the artifact came from this exact build.
+      - name: Attest build provenance (GitHub-side)
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: "dist/pack/*.tgz"
+
+      # SBOMs and packed tarballs uploaded to the GitHub Release as durable
+      # assets — supply-chain consumers can audit the dependency graph from
+      # the SBOM, and the tarballs let downstream verifiers run
+      # `gh attestation verify` offline against this release's exact bytes.
+      # --clobber permits idempotent re-runs (e.g., a release workflow
+      # re-triggered after a transient failure of a later step).
+      - name: Upload SBOMs and tarballs to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAW_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RAW_TAG" \
+            dist/sbom/*.cdx.json \
+            dist/pack/*.tgz \
+            --clobber
