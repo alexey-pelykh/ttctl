@@ -12,13 +12,19 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
+vi.mock("../../basic/index.js", () => ({
+  show: vi.fn(),
+}));
+
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { impersonatedMultipartTransport, impersonatedTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
+import { show as showBasic } from "../../basic/index.js";
 import { ResumeError, cancelUpload, upload } from "../index.js";
 
 const mockedImpersonated = vi.mocked(impersonatedTransport);
 const mockedMultipart = vi.mocked(impersonatedMultipartTransport);
+const mockedShowBasic = vi.mocked(showBasic);
 const TOKEN = "tok-resume";
 
 interface MockResponse {
@@ -44,6 +50,20 @@ function replyMultipart(...responses: MockResponse[]): void {
       body: r.body,
     } satisfies TransportResponse);
   }
+}
+
+/**
+ * Stub `show` (basic) to return a viewer with a stable profileId. The
+ * resume service calls `show` only to extract the viewer's `profileId`
+ * for the cancelResumeUpload input; we don't need a complete
+ * `ProfileShowQuery` shape.
+ */
+function stubProfileId(profileId: string = "p1"): void {
+  mockedShowBasic.mockResolvedValueOnce({
+    viewer: {
+      viewerRole: { profileId } as never,
+    } as never,
+  } as never);
 }
 
 describe("resume.upload", () => {
@@ -99,25 +119,40 @@ describe("resume.upload", () => {
 describe("resume.cancelUpload", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
+    mockedShowBasic.mockReset();
   });
 
-  it("issues cancelResumeUpload with empty input wrapper (Pattern 7)", async () => {
+  it("resolves profileId and issues cancelResumeUpload with input.profileId", async () => {
+    stubProfileId("p-cancel");
     replyImpersonated({ body: { data: { cancelResumeUpload: { success: true, errors: null } } } });
 
     const result = await cancelUpload(TOKEN);
 
     expect(result.success).toBe(true);
+    expect(mockedShowBasic).toHaveBeenCalledWith(TOKEN);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("cancelResumeUpload");
-    expect(call.body.variables).toEqual({ input: {} });
+    expect(call.body.variables).toEqual({ input: { profileId: "p-cancel" } });
   });
 
   it("returns success=false when the server reports it (idempotent path is success=true)", async () => {
+    stubProfileId();
     replyImpersonated({ body: { data: { cancelResumeUpload: { success: false, errors: null } } } });
 
     const result = await cancelUpload(TOKEN);
 
     expect(result.success).toBe(false);
+  });
+
+  it("propagates NO_VIEWER when the session response is missing the profile id", async () => {
+    mockedShowBasic.mockResolvedValueOnce({
+      viewer: {
+        viewerRole: {} as never,
+      } as never,
+    } as never);
+
+    await expect(cancelUpload(TOKEN)).rejects.toMatchObject({ code: "NO_VIEWER" });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 });
 
