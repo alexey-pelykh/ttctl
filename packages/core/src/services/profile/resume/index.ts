@@ -7,6 +7,7 @@ import { basename } from "node:path";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedMultipartTransport, impersonatedTransport } from "../../../transport.js";
 import type { MultipartFile, TransportResponse } from "../../../transport.js";
+import { show as showBasic } from "../basic/index.js";
 import { isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
@@ -20,6 +21,7 @@ export type ResumeErrorCode =
   | "VALIDATION_ERROR"
   | "FILE_NOT_FOUND"
   | "FILE_READ_ERROR"
+  | "NO_VIEWER"
   | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
@@ -124,6 +126,23 @@ function rejectIfUserErrors(errors: UserError[] | null | undefined, operationNam
   }
 }
 
+/**
+ * Resolve the signed-in user's `profileId` via the mobile-gateway
+ * `ProfileShow` query. Mirrors the helpers in `portfolio/index.ts` and
+ * `visas/index.ts` — `CancelResumeUploadInput.profileId` is required by
+ * the server despite the synthesized SDL marking the input as Pattern 7
+ * (`_placeholder` only). The decompile gap means the requirement only
+ * surfaces empirically via the live wire, not via codegen.
+ */
+async function resolveProfileId(token: string): Promise<string> {
+  const profile = await showBasic(token);
+  const profileId = profile.viewer?.viewerRole.profileId;
+  if (profileId === undefined) {
+    throw new ResumeError("NO_VIEWER", "Cannot resolve profile id from session response.");
+  }
+  return profileId;
+}
+
 async function withTransportErrors<T>(operationName: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
@@ -205,8 +224,11 @@ export async function upload(token: string, source: FileSource): Promise<UploadR
 }
 
 /**
- * Full-document `cancelResumeUpload` mutation. The `CancelResumeUploadInput`
- * is empty per Pattern 7 (the server uses session context); we send `{}`.
+ * Full-document `cancelResumeUpload` mutation. Despite the synthesized
+ * SDL marking `CancelResumeUploadInput` as Pattern 7 (the empty-wrapper
+ * `_placeholder`-only shape), the live server requires `profileId` —
+ * verified empirically (live E2E, 2026-05-15, #318). The decompile gap
+ * means the requirement surfaces only via the live wire, not codegen.
  */
 const CANCEL_RESUME_UPLOAD_MUTATION = `mutation cancelResumeUpload($input: CancelResumeUploadInput!) {
   cancelResumeUpload(input: $input) {
@@ -219,6 +241,10 @@ const CANCEL_RESUME_UPLOAD_MUTATION = `mutation cancelResumeUpload($input: Cance
   }
 }`;
 
+interface CancelResumeUploadInput {
+  profileId: string;
+}
+
 interface CancelResumeUploadPayload {
   success?: boolean | null;
   errors?: UserError[] | null;
@@ -230,10 +256,30 @@ export interface CancelResumeUploadResult {
 
 /**
  * Cancel any in-flight resume upload, clearing half-uploaded server-side
- * state. Idempotent — returns `{ success: true }` even when no upload is
- * in flight (the server's contract).
+ * state. Requires `profileId` on the input (the synthesized SDL marks
+ * `CancelResumeUploadInput` as Pattern 7 — `_placeholder` only — but
+ * the live server rejects empty input with a GRAPHQL validation error
+ * "Variable $input ... profileId (Expected value to not be null)";
+ * see #318).
+ *
+ * Empirical behavior (verified 2026-05-15 via live E2E): against a
+ * quiescent state (no in-flight upload), the server returns a
+ * deterministic USER_ERROR envelope (`key: "base"`, message
+ * "Something went wrong. Please try again later.") rather than the
+ * `success: true` originally speculated. The mutation is therefore
+ * NOT idempotent against quiescent state — that claim was authored
+ * speculatively in PR #75 and never empirically verified.
+ *
+ * Success path (`success: true`) requires an in-flight upload on the
+ * caller's profile. Driving an upload from TTCtl is destructive (see
+ * `upload` above), so the live-E2E coverage for the success path is
+ * deferred until a non-destructive upload-state setup is available.
  */
 export async function cancelUpload(token: string): Promise<CancelResumeUploadResult> {
+  const profileId = await resolveProfileId(token);
+  const variables: { input: CancelResumeUploadInput } = {
+    input: { profileId },
+  };
   const res = await withTransportErrors("cancelResumeUpload", async () =>
     impersonatedTransport({
       surface: "talent-profile",
@@ -241,7 +287,7 @@ export async function cancelUpload(token: string): Promise<CancelResumeUploadRes
       body: {
         operationName: "cancelResumeUpload",
         query: CANCEL_RESUME_UPLOAD_MUTATION,
-        variables: { input: {} },
+        variables,
       },
     }),
   );
