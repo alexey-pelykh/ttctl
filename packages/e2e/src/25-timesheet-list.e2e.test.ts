@@ -27,19 +27,41 @@
  *     scoped subtest skipped.
  */
 
+import { readFileSync } from "node:fs";
+
+import { ConfigLoadSchema, timesheet, engagements } from "@ttctl/core";
+import { parse as parseYaml } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
+/**
+ * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
+ * Mirrors the pattern from `97-auth-signout-server-side.e2e.test.ts:125-134`
+ * — `ConfigLoadSchema` validates the Form-D shape (`auth.token` present).
+ */
+function loadSandboxBearer(sandboxConfigPath: string): string {
+  const raw = readFileSync(sandboxConfigPath, "utf8");
+  const parsed: unknown = parseYaml(raw);
+  const validated = ConfigLoadSchema.parse(parsed);
+  if (validated.auth.token === undefined || validated.auth.token === "") {
+    throw new Error(`No auth.token in sandbox config at ${sandboxConfigPath}`);
+  }
+  return validated.auth.token;
+}
+
 describe("timesheet list (live mobile-gateway)", () => {
   let cli: CliClient;
+  let sandboxConfigPath: string;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxConfigPath } = getSharedSession();
+    const session = getSharedSession();
+    sandboxConfigPath = session.sandboxConfigPath;
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
@@ -129,5 +151,68 @@ describe("timesheet list (live mobile-gateway)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("version:");
     expect(result.stdout).toContain("items:");
+  });
+
+  // ---------------------------------------------------------------------
+  // Wire-shape snapshot assertions (WS-3 / #285).
+  //
+  // Track 1 structural defense against the PR #275 regression class
+  // (`duration` declared `number` while wire returned `string`). Each
+  // sub-test calls the core service directly to obtain the post-projection
+  // response, then asserts the structural shape against the committed
+  // snapshot at `packages/e2e/src/wire-snapshots/<OpName>.snapshot.json`.
+  //
+  // The projection (`projectListItem`) is a pure field-name pass-through,
+  // so the captured shape is structurally equivalent to the wire-level
+  // `BillingCycle` at the row level. Outer-envelope drift
+  // (`viewer.billingCycles.nodes` rename) is caught upstream as a service
+  // crash (`null` access on the unwrap path), not by these snapshots.
+  // ---------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("PendingTimesheets wire shape matches snapshot", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await timesheet.list(token);
+    if (response.length === 0) {
+      process.stderr.write(
+        "warning: PendingTimesheets returned 0 rows (test account has no pending cycles) — wire-shape assertion skipped\n",
+      );
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "PendingTimesheets",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  it.skipIf(!e2eEnabled)("Timesheets wire shape matches snapshot (--engagement scope)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const engs = await engagements.list(token, { status: "active" });
+    if (engs.length === 0) {
+      process.stderr.write(
+        "warning: no active engagements (test account has none currently) — Timesheets wire-shape assertion skipped\n",
+      );
+      return;
+    }
+    const engagementId = engs[0]?.id;
+    if (engagementId === undefined) return;
+    const response = await timesheet.list(token, { engagement: engagementId });
+    if (response.length === 0) {
+      process.stderr.write(
+        `warning: Timesheets returned 0 rows for engagement ${engagementId} — wire-shape assertion skipped\n`,
+      );
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "Timesheets",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
   });
 });

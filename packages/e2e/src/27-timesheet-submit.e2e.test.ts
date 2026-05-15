@@ -38,6 +38,16 @@
  *   - Test account has exactly one current pending cycle → the
  *     auto-resolve dry probe would refuse to run because submit would
  *     succeed. We refuse to invoke submit without an id in that case.
+ *
+ * **Wire-shape snapshot** (WS-3 / #285): the committed snapshot at
+ * `wire-snapshots/SubmitTimesheet.snapshot.json` is a STATIC reference
+ * — derived from the 2026-05-14 manual real-submit transcript at
+ * `.tmp/timesheet-submit-e2e-20260514/03-submit.json`. No live assertion
+ * runs in this file because no automated successful submission path
+ * exists (refusing to clobber the real account). When a future
+ * end-to-end real-submit is performed, the snapshot may be refreshed
+ * by running `captureWireShape` on the SubmitOutcome.applied value and
+ * committing the result.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";

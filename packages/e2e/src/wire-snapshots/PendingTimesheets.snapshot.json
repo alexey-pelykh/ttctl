@@ -1,0 +1,81 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-14T15:28:00.000Z",
+  "operationName": "PendingTimesheets",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "endDate": {
+          "kind": "string"
+        },
+        "engagement": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "job": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "client": {
+                  "kind": "object",
+                  "fields": {
+                    "__typename": {
+                      "kind": "string"
+                    },
+                    "fullName": {
+                      "kind": "string"
+                    },
+                    "id": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "title": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        },
+        "hours": {
+          "kind": "string"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "minimumCommitment": {
+          "kind": "null"
+        },
+        "startDate": {
+          "kind": "string"
+        },
+        "timesheetOverdue": {
+          "kind": "boolean"
+        },
+        "timesheetSubmissionDeadlineDatetime": {
+          "kind": "string"
+        },
+        "timesheetSubmissionOpenDatetime": {
+          "kind": "string"
+        },
+        "timesheetSubmitted": {
+          "kind": "boolean"
+        }
+      }
+    }
+  }
+}

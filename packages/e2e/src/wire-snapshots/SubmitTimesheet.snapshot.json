@@ -1,0 +1,228 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-14T15:28:00.000Z",
+  "operationName": "SubmitTimesheet",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "kind": {
+        "kind": "string"
+      },
+      "result": {
+        "kind": "object",
+        "fields": {
+          "actualAgreement": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "applicationRate": {
+                "kind": "string"
+              },
+              "marketplaceMargin": {
+                "kind": "null"
+              },
+              "talentHourlyRate": {
+                "kind": "string"
+              }
+            }
+          },
+          "endDate": {
+            "kind": "string"
+          },
+          "engagement": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "expectedHours": {
+                "kind": "number"
+              },
+              "id": {
+                "kind": "string"
+              },
+              "job": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "client": {
+                    "kind": "object",
+                    "fields": {
+                      "__typename": {
+                        "kind": "string"
+                      },
+                      "fullName": {
+                        "kind": "string"
+                      },
+                      "id": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  "engagementDeliveryModel": {
+                    "kind": "object",
+                    "fields": {
+                      "__typename": {
+                        "kind": "string"
+                      },
+                      "id": {
+                        "kind": "string"
+                      },
+                      "identifier": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  "id": {
+                    "kind": "string"
+                  },
+                  "pointsOfContact": {
+                    "kind": "object",
+                    "fields": {
+                      "__typename": {
+                        "kind": "string"
+                      },
+                      "current": {
+                        "kind": "object",
+                        "fields": {
+                          "__typename": {
+                            "kind": "string"
+                          },
+                          "contactFields": {
+                            "kind": "object",
+                            "fields": {
+                              "__typename": {
+                                "kind": "string"
+                              },
+                              "communitySlackId": {
+                                "kind": "string"
+                              },
+                              "email": {
+                                "kind": "string"
+                              },
+                              "phoneNumber": {
+                                "kind": "string"
+                              },
+                              "skype": {
+                                "kind": "null"
+                              }
+                            }
+                          },
+                          "fullName": {
+                            "kind": "string"
+                          },
+                          "id": {
+                            "kind": "string"
+                          },
+                          "photo": {
+                            "kind": "object",
+                            "fields": {
+                              "__typename": {
+                                "kind": "string"
+                              },
+                              "small": {
+                                "kind": "string"
+                              }
+                            }
+                          },
+                          "timeZone": {
+                            "kind": "object",
+                            "fields": {
+                              "__typename": {
+                                "kind": "string"
+                              },
+                              "location": {
+                                "kind": "string"
+                              },
+                              "value": {
+                                "kind": "string"
+                              }
+                            }
+                          },
+                          "vacation": {
+                            "kind": "null"
+                          }
+                        }
+                      },
+                      "handoff": {
+                        "kind": "null"
+                      },
+                      "kind": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  "title": {
+                    "kind": "string"
+                  }
+                }
+              }
+            }
+          },
+          "hours": {
+            "kind": "string"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "minimumCommitment": {
+            "kind": "null"
+          },
+          "startDate": {
+            "kind": "string"
+          },
+          "timesheetComment": {
+            "kind": "string"
+          },
+          "timesheetOverdue": {
+            "kind": "boolean"
+          },
+          "timesheetRecords": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "date": {
+                  "kind": "string"
+                },
+                "duration": {
+                  "kind": "string"
+                },
+                "isDayOff": {
+                  "kind": "boolean"
+                },
+                "note": {
+                  "kind": "nullable",
+                  "inner": {
+                    "kind": "string"
+                  }
+                }
+              }
+            }
+          },
+          "timesheetSubmissionDeadlineDatetime": {
+            "kind": "string"
+          },
+          "timesheetSubmissionOpenDatetime": {
+            "kind": "string"
+          },
+          "timesheetSubmitted": {
+            "kind": "boolean"
+          },
+          "timesheetUrl": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -19,19 +19,40 @@
  *     show against; happy-path subtest skipped.
  */
 
+import { readFileSync } from "node:fs";
+
+import { ConfigLoadSchema, timesheet } from "@ttctl/core";
+import { parse as parseYaml } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
+/**
+ * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
+ * Mirrors the pattern from `97-auth-signout-server-side.e2e.test.ts:125-134`.
+ */
+function loadSandboxBearer(sandboxConfigPath: string): string {
+  const raw = readFileSync(sandboxConfigPath, "utf8");
+  const parsed: unknown = parseYaml(raw);
+  const validated = ConfigLoadSchema.parse(parsed);
+  if (validated.auth.token === undefined || validated.auth.token === "") {
+    throw new Error(`No auth.token in sandbox config at ${sandboxConfigPath}`);
+  }
+  return validated.auth.token;
+}
+
 describe("timesheet show (live mobile-gateway)", () => {
   let cli: CliClient;
+  let sandboxConfigPath: string;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxConfigPath } = getSharedSession();
+    const session = getSharedSession();
+    sandboxConfigPath = session.sandboxConfigPath;
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
@@ -67,6 +88,43 @@ describe("timesheet show (live mobile-gateway)", () => {
     const engagement = payload["engagement"] as Record<string, unknown> | undefined;
     expect(engagement).toBeDefined();
     expect("expectedHours" in (engagement ?? {})).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // Wire-shape snapshot assertion (WS-3 / #285).
+  //
+  // The STRUCTURAL DEFENSE against the PR #275 regression class — the
+  // committed `TimesheetDetails.snapshot.json` declares
+  // `timesheetRecords[].duration: string`. If a future change (or a
+  // wire-side type flip) declared `duration` as `number`, the snapshot
+  // diff names `timesheetRecords[].duration: string → number` and the
+  // assertion throws.
+  //
+  // The projection (`projectDetailItem`) is a pure field-name pass-through
+  // (plus the `timesheetRecords ?? []` null-coalesce) so the captured
+  // shape is structurally equivalent to the wire-level `BillingCycle` in
+  // the `timesheetDetailsFields` projection.
+  // ---------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("TimesheetDetails wire shape matches snapshot", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const pending = await timesheet.list(token);
+    const cycleId = pending[0]?.id;
+    if (cycleId === undefined) {
+      process.stderr.write(
+        "warning: timesheet list returned 0 rows (no pending cycles) — TimesheetDetails wire-shape assertion skipped\n",
+      );
+      return;
+    }
+    const response = await timesheet.show(token, cycleId);
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "TimesheetDetails",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
   });
 
   it.skipIf(!e2eEnabled)("invalid id → NOT_FOUND error envelope on json", async () => {
