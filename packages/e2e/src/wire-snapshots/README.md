@@ -194,6 +194,45 @@ not extend to inputs. If we ever add input snapshots, they need their
 own policy because inputs may legitimately contain bearer tokens, file
 contents, or other values that must **not** be captured.
 
+## Workflows
+
+### Add a snapshot for a new operation
+
+Author an E2E test calling
+`assertWireShapeStable({ operationName, surface, transport, response })`
+on the response path (existing usage:
+`packages/e2e/src/25-timesheet-list.e2e.test.ts`), then run:
+
+```sh
+TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1 pnpm test:e2e -- -t <OpName>
+```
+
+The first run writes `<OpName>.snapshot.json` here; review against the
+[Manual review checklist](#manual-review-checklist-for-snapshot-prs)
+and commit it alongside the test.
+
+### Update an existing snapshot when the wire genuinely changed
+
+Re-run the same command — the helper overwrites the snapshot and emits
+`[wire-snapshot] updated <path>` to stderr. The PR description **must**
+justify the wire change (Toptal incident, `research/notes/` update, or
+schema-drift evidence).
+
+### Triage a failing snapshot test
+
+Without the update env var, drift surfaces as a structured diff —
+`+` added, `-` removed, `~` type / nullability changed:
+
+```sh
+TTCTL_E2E=1 pnpm test:e2e -- -t <OpName>
+```
+
+- **Expected change** (you altered consuming code or query selection)
+  → follow the update workflow above.
+- **Unexpected change** (silent server-side drift) → open an issue
+  against the sibling `../research/` schema with the diff and decide
+  whether to fix the typed client, update the snapshot, or both.
+
 ## Manual review checklist (for snapshot PRs)
 
 When reviewing a PR that adds or updates a `*.snapshot.json` file in

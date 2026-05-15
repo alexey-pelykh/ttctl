@@ -190,6 +190,17 @@ script header documents the protocol. For one-off dynamic-dispatch
 sites the helper can't model, place an `// e2e-exempt: <reason>`
 marker at the call site.
 
+### Wire-shape snapshots
+
+Post-merge wire-drift detection sibling to the rule above. E2E runs
+that call `assertWireShapeStable(...)` diff the live response shape
+against a committed `packages/e2e/src/wire-snapshots/<OpName>.snapshot.json`;
+updates require `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` (never silent). See
+[`packages/e2e/src/wire-snapshots/README.md`](packages/e2e/src/wire-snapshots/README.md)
+for the workflows (add / update / triage) and the redaction policy.
+This rule governs PR-introduction; snapshots govern continuous
+detection across already-shipped ops.
+
 ## Auth Model
 
 TTCtl uses a session bearer **token** (no cookies, no API keys), stored
