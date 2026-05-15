@@ -164,6 +164,12 @@ refactors without altering wire format, or otherwise does not introduce
 an inferred contract), state that explicitly. Silence is not
 satisfaction.
 
+For any new GraphQL operation (regardless of how the document was
+authored), the PR body must additionally declare the wire-validation
+track choice — `T1` / `T2` / `NEITHER` — per § Track 1 vs Track 2
+disposition below. This is an independent gate from the schema/contract
+rule above; both apply.
+
 ### E2E coverage gate
 
 `scripts/check-e2e-coverage.ts` (wired into `pnpm lint`) is the
@@ -200,6 +206,63 @@ updates require `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` (never silent). See
 for the workflows (add / update / triage) and the redaction policy.
 This rule governs PR-introduction; snapshots govern continuous
 detection across already-shipped ops.
+
+### Track 1 vs Track 2 disposition
+
+Corollary to the schema/contract rule above. Once a new GraphQL op
+passes the live-E2E gate, its ongoing wire-validation regime is one
+of three dispositions per the hybrid validation strategy
+([ADR-006](hq/engineering/adr/ADR-006-hybrid-wire-validation.md) / #280):
+
+- **T1 — Wire-shape snapshots**. Structure-only manifest captured at
+  E2E time, committed per-op at
+  `packages/e2e/src/wire-snapshots/<OpName>.snapshot.json`, asserted
+  on every `TTCTL_E2E=1` run via `assertWireShapeStable(...)`; updates
+  gated by `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`. Default for ops whose
+  synthesized schema is gappy (i.e., the op is in the codegen-exclusion
+  lists).
+- **T2 — Codegen-Zod**. Generated Zod schema passed as the optional
+  `schema:` argument to `callGateway` / `callTalentProfile`; a
+  `ZodError` maps to a domain `WIRE_SHAPE_ERROR` code on the per-service
+  error taxonomy (see [`docs/wire-validation-error-format.md`](docs/wire-validation-error-format.md)
+  / #281). Available only when the op is in the **trusted catalog** —
+  i.e., codegen produced a `<OpName>(Query|Mutation|Subscription)` type
+  in `packages/core/src/__generated__/{zod-schemas,talent-profile-zod-schemas}.ts`.
+- **NEITHER**. No active wire-validation. Currently applies only to
+  the `scheduler` surface (no synthesized SDL).
+
+The disposition is **derived**, not chosen — `T2` iff the op has a
+generated operation type; `T1` otherwise. The authoritative per-op
+classification lives in
+[`docs/wire-validation-routing.md`](docs/wire-validation-routing.md)
+(#289 / X-1) and is a mechanical consequence of codegen state at the
+manifest's commit time. The manifest must be updated in the same PR
+as any new op invocation.
+
+**For ANY new op**: the PR body must declare the chosen track and
+rationale. `T1` requires a committed `<OpName>.snapshot.json`. `T2`
+requires the generated schema passed as the `schema:` argument at the
+call site. `NEITHER` requires an explicit reason (currently expected
+only for `scheduler`-surface ops). This is in addition to the
+schema/contract rule trigger declaration above; both apply.
+
+**Existing-op drift detection** is structurally enforced by the two
+tracks plus the coverage gate:
+
+- T1 snapshots — diff structural shape on every `TTCTL_E2E=1` run per
+  [`packages/e2e/src/wire-snapshots/README.md`](packages/e2e/src/wire-snapshots/README.md)
+  (#287 / WS-4).
+- T2 Zod schemas — runtime `WIRE_SHAPE_ERROR` envelope on the next
+  live call when the wire drifts (production-side detection).
+- E2E coverage gate (`scripts/check-e2e-coverage.ts`) ensures every
+  in-scope op is either snapshot-covered or explicitly exempt.
+
+**Originating incident**: this entire regime was motivated by PR #275
+(`TimesheetRecord.duration` declared `number` seconds while the wire
+returned `string` minutes — an 8-hour day rendered as `0.13h` in
+`ttctl timesheet show`). The duration bug was a _pre-existing_ op
+with post-merge drift, outside the schema/contract rule's new-op
+coverage class. T1 + T2 close that gap.
 
 ## Auth Model
 
