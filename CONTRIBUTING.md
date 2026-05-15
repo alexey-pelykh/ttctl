@@ -48,10 +48,15 @@ pnpm build
 pnpm build            # Build all packages (via Turbo)
 pnpm test             # Run unit tests
 pnpm test:e2e         # Run E2E tests (sequential, requires API credentials)
-pnpm lint             # Lint all packages and root config files
+pnpm lint             # Lint: Prettier format:check + ESLint + repo checks (pre-push gate)
+pnpm format           # Auto-fix Prettier formatting
 pnpm license-check    # Verify dependency licenses
 pnpm dev              # Watch mode
 ```
+
+`pnpm lint` is the canonical pre-push gate and bundles Prettier's
+`format:check` with ESLint. Run `pnpm format` to auto-fix any
+Prettier-reported issues before re-running `pnpm lint`.
 
 ### Project Structure
 
