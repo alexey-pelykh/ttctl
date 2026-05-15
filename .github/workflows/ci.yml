@@ -137,6 +137,137 @@ jobs:
             ].join('\n');
             core.setFailed(message);
 
+  schema-contract-disposition:
+    name: Schema/Contract Rule Disposition
+    # PR-only gate: fails if the PR diff touches any file in the schema/contract
+    # trigger set (CLAUDE.md § Schema/contract validation rule § Code-review
+    # checklist) without a disposition marker in the PR body.
+    #
+    # Trigger set (per CLAUDE.md):
+    #   - packages/core/src/auth.ts
+    #   - packages/core/src/services/profile/** (any file under)
+    #   - Any new hand-authored GraphQL operation (deferred — file-path
+    #     triggers cover the typical sites; hand-authored detection is an
+    #     optional refinement per issue #302 AC)
+    #
+    # Marker forms (case-insensitive, Markdown emphasis tolerated):
+    #   Schema/contract rule: triggered — see <e2e-test-path> + transcript ...
+    #   Schema/contract rule: NOT triggered — <one-line rationale>
+    #
+    # Rationale: #302. The rule was load-bearing on real wire-shape bugs in
+    # #146 and #275. Author-side discipline alone is insufficient — this
+    # gate mechanically enforces what CLAUDE.md prescribes.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v9.0.0
+        with:
+          script: |
+            // Schema/contract trigger set (per CLAUDE.md § Code-review checklist).
+            const exactPaths = [
+              'packages/core/src/auth.ts',
+            ];
+            const dirPrefixes = [
+              'packages/core/src/services/profile/',
+            ];
+
+            const isTrigger = (filename) =>
+              exactPaths.includes(filename) ||
+              dirPrefixes.some((p) => filename.startsWith(p));
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const touched = files
+              .map((f) => f.filename)
+              .filter(isTrigger);
+
+            if (touched.length === 0) {
+              core.info(
+                'No schema/contract trigger-set files touched. ' +
+                  'Disposition marker not required.',
+              );
+              return;
+            }
+
+            core.info(`Schema/contract trigger-set files touched (${touched.length}):`);
+            for (const f of touched) core.info(`  - ${f}`);
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            // Strip Markdown emphasis (asterisks, backticks) so the regex
+            // tolerates **Schema/contract rule**, `Schema/contract rule`, etc.
+            const body = (pr.body || '').replace(/[*`]+/g, '');
+            // Check the more-specific NOT-form independently from the bare
+            // "triggered" form. The `\s*:\s*triggered` form does not match
+            // "Schema/contract rule: NOT triggered" because "NOT " sits
+            // between the colon and the word "triggered", so the two
+            // patterns are mutually exclusive at the same call site.
+            const hasNotTriggered = /schema\/contract rule\s*:\s*not[\s-]triggered\b/i.test(body);
+            const hasTriggered = /schema\/contract rule\s*:\s*triggered\b/i.test(body);
+
+            if (hasNotTriggered && hasTriggered) {
+              core.setFailed(
+                'Both "triggered" and "NOT triggered" Schema/contract rule ' +
+                  'markers present in PR body. Pick exactly one disposition.',
+              );
+              return;
+            }
+
+            if (hasNotTriggered) {
+              core.info('Schema/contract rule marked as NOT triggered.');
+              return;
+            }
+
+            if (hasTriggered) {
+              // AC #5: marker present with `triggered` but no e2e-test path
+              // or transcript reference → WARN (not fail). The warning shows
+              // in the check summary and keeps human judgement in the loop.
+              const hasEvidence =
+                /\.e2e\.test\.ts/i.test(body) || /transcript/i.test(body);
+              if (!hasEvidence) {
+                core.warning(
+                  'Schema/contract rule marked as TRIGGERED, but no e2e-test ' +
+                    'path (*.e2e.test.ts) or transcript reference detected in ' +
+                    'the PR body. Per CLAUDE.md § Schema/contract validation ' +
+                    'rule, add the test path and a transcript link.',
+                );
+              } else {
+                core.info(
+                  'Schema/contract rule marked as TRIGGERED with evidence reference.',
+                );
+              }
+              return;
+            }
+
+            const message = [
+              'Schema/contract rule disposition marker missing from PR description.',
+              '',
+              'This PR touches files in the schema/contract trigger set ' +
+                '(see CLAUDE.md § Code-review checklist):',
+              ...touched.map((f) => `  - ${f}`),
+              '',
+              'Add ONE of the following lines to the PR description:',
+              '  **Schema/contract rule**: triggered — see <e2e-test-path> + transcript in <PR comment or link>',
+              '  **Schema/contract rule**: NOT triggered — <one-line rationale>',
+              '',
+              'Then push a new commit (or use the "Re-run failed jobs" button)',
+              'to re-run this check.',
+            ].join('\n');
+            core.setFailed(message);
+
   ci-gate:
     name: CI
     if: always()
@@ -144,6 +275,7 @@ jobs:
     needs:
       - ci
       - doc-surface
+      - schema-contract-disposition
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
@@ -155,5 +287,10 @@ jobs:
           # doc-surface is PR-only; on push to main it is skipped (acceptable).
           if [[ "${{ needs.doc-surface.result }}" != "success" && "${{ needs.doc-surface.result }}" != "skipped" ]]; then
             echo "doc-surface failed: ${{ needs.doc-surface.result }}"
+            exit 1
+          fi
+          # schema-contract-disposition is PR-only; on push to main it is skipped (acceptable).
+          if [[ "${{ needs.schema-contract-disposition.result }}" != "success" && "${{ needs.schema-contract-disposition.result }}" != "skipped" ]]; then
+            echo "schema-contract-disposition failed: ${{ needs.schema-contract-disposition.result }}"
             exit 1
           fi
