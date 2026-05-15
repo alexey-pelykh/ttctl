@@ -239,6 +239,7 @@ export type ProfileErrorCode =
   | "NETWORK_ERROR"
   | "USER_ERROR"
   | "VALIDATION_ERROR"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class ProfileError extends Error {

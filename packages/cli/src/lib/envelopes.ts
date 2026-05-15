@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import type { DryRunPreview } from "@ttctl/core";
+import type { DryRunPreview, WireShapeDiffEntry } from "@ttctl/core";
 
 import { formatYaml } from "./output.js";
 import type { OutputFormat } from "./output.js";
+
+export type { WireShapeDiffEntry };
 
 /**
  * Cross-CLI envelope ABI (#128) — discriminated-union wire shape for
@@ -64,6 +66,16 @@ export interface EnvelopeChange {
  * `CF_403_PERSISTENT`, …). `message` is human-readable. `field`,
  * `hint`, `documentationUrl` are optional — `documentationUrl` is
  * reserved for v1.0+ when the error doc URLs exist; v0.4 omits.
+ *
+ * `diff?` is the additive slot reserved for `WIRE_SHAPE_ERROR` (Z-3 /
+ * #286): each entry is a `WireShapeDiffEntry` per
+ * `docs/wire-validation-error-format.md`. Populated only when `code`
+ * is `"WIRE_SHAPE_ERROR"`; absent for every other code. Adding this
+ * optional field is non-breaking under `ENVELOPE_VERSION = "1.0"`
+ * (additive — sibling slot to `documentationUrl?`). The single-valued
+ * `field?` slot keeps its meaning for non-wire-shape errors; the two
+ * are mutually-exclusive in practice but the wire shape doesn't
+ * enforce it.
  */
 export interface EnvelopeError {
   code: string;
@@ -71,6 +83,7 @@ export interface EnvelopeError {
   message: string;
   hint?: string;
   documentationUrl?: string;
+  diff?: WireShapeDiffEntry[];
 }
 
 /**
@@ -360,6 +373,44 @@ export function formatRemovePretty(args: {
 }
 
 /**
+ * Maximum number of diff entries rendered in the pretty form of a
+ * `WIRE_SHAPE_ERROR` (per `docs/wire-validation-error-format.md`
+ * § `-o pretty`). The JSON / YAML wire shapes carry the full list;
+ * only the human-readable rendering caps to keep terminal output
+ * scannable. When the diff exceeds the cap, a `… and <K> more` line
+ * tells the operator where to look for the full data.
+ */
+export const WIRE_SHAPE_DIFF_PRETTY_CAP = 10;
+
+/**
+ * Render a single {@link WireShapeDiffEntry} as the one-line form used
+ * inside the `Diff (schema vs wire):` block (per
+ * `docs/wire-validation-error-format.md` § `-o pretty`). Examples:
+ *
+ *     ~ records[0].duration: expected number, got string ("480")
+ *     - records[1].notes: expected string, got undefined
+ *     + records[0].surprise: unexpected wire field (unknown)
+ *
+ * The `value?` slot is rendered inline parenthesised with surrounding
+ * double quotes for string values — matching the spec's `("480")`
+ * formatting. Non-string values are rendered verbatim (already
+ * stringified upstream by `renderValue` in `wire-shape.ts`).
+ */
+function formatWireShapeDiffEntry(entry: WireShapeDiffEntry): string {
+  if (entry.op === "+") {
+    return `+ ${entry.path}: unexpected wire field (${entry.actual})`;
+  }
+  if (entry.op === "-") {
+    return `- ${entry.path}: expected ${entry.expected}, got ${entry.actual}`;
+  }
+  // op === "~"
+  if (entry.value === undefined) {
+    return `~ ${entry.path}: expected ${entry.expected}, got ${entry.actual}`;
+  }
+  return `~ ${entry.path}: expected ${entry.expected}, got ${entry.actual} ("${entry.value}")`;
+}
+
+/**
  * Build the pretty-format rendering of an error envelope. Each error
  * surfaces as its own block; `field` and `hint` annotate the message
  * when present.
@@ -367,6 +418,9 @@ export function formatRemovePretty(args: {
  *     Error: <message-1>
  *       (Code: <code-1>)
  *       (Field: <field-1>)
+ *       Diff (schema vs wire):
+ *         <op> <path>: expected <expected>, got <actual> [("<value>")]
+ *         …
  *       Hint: <hint-1>
  *
  *     Error: <message-2>
@@ -377,6 +431,13 @@ export function formatRemovePretty(args: {
  * `Error: …` prefix, same parenthesised metadata. The recovery line
  * from `TtctlError` does not have a generic equivalent here; callers
  * convert to `hint` if a recovery sentence is available.
+ *
+ * `WIRE_SHAPE_ERROR` (Z-3 / #286) carries a `diff` field — when
+ * present, the pretty form renders a `Diff (schema vs wire):` block
+ * before the `Hint:` footer per
+ * `docs/wire-validation-error-format.md` § `-o pretty`. Capped at
+ * {@link WIRE_SHAPE_DIFF_PRETTY_CAP} entries; overflow renders a
+ * `… and <K> more …` line pointing at `-o json` for the full diff.
  */
 export function formatErrorPretty(envelope: ErrorEnvelope): string {
   const blocks = envelope.errors.map((err) => {
@@ -384,6 +445,17 @@ export function formatErrorPretty(envelope: ErrorEnvelope): string {
     lines.push(`  (Code: ${err.code})`);
     if (err.field !== undefined) {
       lines.push(`  (Field: ${err.field})`);
+    }
+    if (err.diff !== undefined && err.diff.length > 0) {
+      lines.push(`  Diff (schema vs wire):`);
+      const head = err.diff.slice(0, WIRE_SHAPE_DIFF_PRETTY_CAP);
+      for (const entry of head) {
+        lines.push(`    ${formatWireShapeDiffEntry(entry)}`);
+      }
+      const overflow = err.diff.length - head.length;
+      if (overflow > 0) {
+        lines.push(`    … and ${overflow.toString()} more (see -o json for the full diff).`);
+      }
     }
     if (err.hint !== undefined) {
       lines.push(`  Hint: ${err.hint}`);

@@ -62,7 +62,10 @@
  *   - Per-day hour adjustments and rejection/approval workflow.
  */
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { buildDryRunPreview, stockTransport } from "../../transport.js";
 import type { DryRunPreview, TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
@@ -109,6 +112,7 @@ export type TimesheetErrorCode =
   | "GRAPHQL_ERROR"
   | "MUTATION_ERROR"
   | "NETWORK_ERROR"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class TimesheetError extends Error {
@@ -455,12 +459,22 @@ const NOT_FOUND_MESSAGE_PATTERN = /Record not found|Node id .*? resolves to an u
  * normalize transport / GraphQL outcomes into typed `TimesheetError`
  * throws. Mirrors the `callGateway` helper in the `engagements`
  * service.
+ *
+ * Optional `schema` parameter (Z-3 / #286): when provided, the
+ * received `body.data` is parsed through the schema before returning;
+ * on `ZodError` the call throws `TimesheetError("WIRE_SHAPE_ERROR")`
+ * with the original ZodError chained via `cause` and a field-level
+ * diff in the message per `docs/wire-validation-error-format.md`.
+ * When omitted, the existing pass-through behavior is preserved.
+ * Wave-3 lands the mechanism; no production op wires `schema` yet —
+ * Z-4 (#288) ships the first beachhead.
  */
 async function callGateway<T>(
   token: string,
   operationName: string,
   query: string,
   variables: Record<string, unknown>,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let res: TransportResponse;
   try {
@@ -493,6 +507,14 @@ async function callGateway<T>(
   }
   if (!body?.data) {
     throw new TimesheetError("UNKNOWN", `${operationName} response had no \`data\` field`);
+  }
+  if (schema !== undefined) {
+    const parsed = schema.safeParse(body.data);
+    if (!parsed.success) {
+      const payload = buildWireShapeError(operationName, parsed.error, body.data);
+      throw new TimesheetError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+    }
+    return parsed.data;
   }
   return body.data;
 }

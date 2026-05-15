@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { impersonatedTransport } from "../../transport.js";
 import type { TransportResponse } from "../../transport.js";
 import { show as basicShow, ProfileError } from "./basic/index.js";
@@ -108,6 +111,18 @@ export async function extractProfileId(token: string): Promise<string> {
  * Top-level GraphQL `errors` are NOT inspected here — callers handle
  * those via {@link ensureNoTopLevelErrors} once they've narrowed the body
  * to their expected shape.
+ *
+ * Optional `schema` parameter (Z-3 / #286): when provided, the
+ * response `body.data` is validated against the schema as a SIDE
+ * EFFECT before the helper returns; on `ZodError` the call throws
+ * `ProfileError("WIRE_SHAPE_ERROR")` with the original ZodError
+ * chained via `cause` and a field-level diff in the message per
+ * `docs/wire-validation-error-format.md`. The return shape is
+ * unchanged (`TransportResponse`) — callers still narrow `res.body`
+ * to their per-operation type. Schema validation is a guard rail; it
+ * does NOT mutate the response. When omitted, the existing pass-
+ * through behavior is preserved. No production op wires `schema` in
+ * Wave 3; Z-4 (#288) ships the first beachhead.
  */
 export async function callTalentProfile(
   token: string,
@@ -115,6 +130,7 @@ export async function callTalentProfile(
   query: string,
   variables: Record<string, unknown>,
   verb: string,
+  schema?: z.ZodType,
 ): Promise<TransportResponse> {
   let res: TransportResponse;
   try {
@@ -132,6 +148,16 @@ export async function callTalentProfile(
   if (res.status === 401) throw new AuthRevokedError("Session is invalid or expired.");
   if (res.status < 200 || res.status >= 300) {
     throw new ProfileError("UNKNOWN", `${verb} returned HTTP ${res.status.toString()}`);
+  }
+  if (schema !== undefined) {
+    const body = res.body as { data?: unknown } | null;
+    if (body?.data !== undefined && body.data !== null) {
+      const parsed = schema.safeParse(body.data);
+      if (!parsed.success) {
+        const payload = buildWireShapeError(operationName, parsed.error, body.data);
+        throw new ProfileError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+      }
+    }
   }
   return res;
 }

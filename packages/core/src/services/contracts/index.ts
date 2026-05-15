@@ -61,7 +61,10 @@
  *   - Engagement-scoped agreement (lives in `engagements` service).
  */
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { impersonatedTransport } from "../../transport.js";
 import type { TransportResponse } from "../../transport.js";
 import { extractProfileId, isAuthRevokedExtensionCode } from "../profile/shared.js";
@@ -96,7 +99,13 @@ import { extractProfileId, isAuthRevokedExtensionCode } from "../profile/shared.
  * also propagates verbatim — a profile-read failure surfaces with the
  * same actionable message as `ttctl profile show`.
  */
-export type ContractsErrorCode = "NO_TALENT" | "NOT_FOUND" | "GRAPHQL_ERROR" | "NETWORK_ERROR" | "UNKNOWN";
+export type ContractsErrorCode =
+  | "NO_TALENT"
+  | "NOT_FOUND"
+  | "GRAPHQL_ERROR"
+  | "NETWORK_ERROR"
+  | "WIRE_SHAPE_ERROR"
+  | "UNKNOWN";
 
 export class ContractsError extends Error {
   override readonly name = "ContractsError";
@@ -279,6 +288,7 @@ async function callTalentProfile<T>(
   operationName: string,
   query: string,
   variables: Record<string, unknown>,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let res: TransportResponse;
   try {
@@ -315,6 +325,14 @@ async function callTalentProfile<T>(
   }
   if (!body?.data) {
     throw new ContractsError("UNKNOWN", `${operationName} response had no \`data\` field`);
+  }
+  if (schema !== undefined) {
+    const parsed = schema.safeParse(body.data);
+    if (!parsed.success) {
+      const payload = buildWireShapeError(operationName, parsed.error, body.data);
+      throw new ContractsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+    }
+    return parsed.data;
   }
   return body.data;
 }

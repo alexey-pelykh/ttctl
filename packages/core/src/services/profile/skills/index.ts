@@ -52,7 +52,10 @@
  * follow-up.
  */
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
+import { buildWireShapeError } from "../../../lib/wire-shape.js";
 import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 import { isAuthRevokedExtensionCode } from "../shared.js";
@@ -73,6 +76,7 @@ export type SkillsErrorCode =
   | "USER_ERROR"
   | "VALIDATION_ERROR"
   | "PARTIAL_FAILURE"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class SkillsError extends Error {
@@ -97,12 +101,20 @@ interface GraphQLErrorEntry {
  * top-level errors + auth-revoked extension codes into typed throws, and
  * returns the parsed response body to the caller for payload-specific
  * handling. Keeps the per-leaf code small and uniform.
+ *
+ * Optional `schema` parameter (Z-3 / #286): when provided, the
+ * received `body.data` is parsed through the schema before returning;
+ * on `ZodError` the call throws `SkillsError("WIRE_SHAPE_ERROR")`
+ * with the original ZodError chained via `cause` and a field-level
+ * diff in the message per `docs/wire-validation-error-format.md`.
+ * When omitted, the existing pass-through behavior is preserved.
  */
 async function callTalentProfile<T>(
   token: string,
   operationName: string,
   query: string,
   variables: unknown,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let res: TransportResponse;
   try {
@@ -135,6 +147,14 @@ async function callTalentProfile<T>(
   }
   if (!body?.data) {
     throw new SkillsError("UNKNOWN", `${operationName} response had no \`data\` field`);
+  }
+  if (schema !== undefined) {
+    const parsed = schema.safeParse(body.data);
+    if (!parsed.success) {
+      const payload = buildWireShapeError(operationName, parsed.error, body.data);
+      throw new SkillsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+    }
+    return parsed.data;
   }
   return body.data;
 }

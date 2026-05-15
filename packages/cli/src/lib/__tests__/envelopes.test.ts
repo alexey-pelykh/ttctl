@@ -392,6 +392,212 @@ describe("formatErrorPretty", () => {
     expect(out).toContain("Error: second");
     expect(out).toContain("\n\n");
   });
+
+  // -----------------------------------------------------------------
+  // WIRE_SHAPE_ERROR diff rendering (Z-3 / #286)
+  // Per `docs/wire-validation-error-format.md` § `-o pretty`.
+  // -----------------------------------------------------------------
+
+  it("renders `Diff (schema vs wire):` block when `diff` is present (WIRE_SHAPE_ERROR)", () => {
+    const env = buildErrorEnvelope({
+      operation: "BillingCycle",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `BillingCycle` (2 field issues).",
+          hint: "wire shape doesn't match expected — this typically means Toptal changed the API; please file an issue at https://github.com/alexey-pelykh/ttctl/issues with the operation name and timestamp.",
+          diff: [
+            { op: "~", path: "billingCycle.duration", expected: "number", actual: "string", value: "480" },
+            {
+              op: "~",
+              path: "billingCycle.timesheetRecords[0].duration",
+              expected: "number",
+              actual: "string",
+              value: "480",
+            },
+          ],
+        },
+      ],
+    });
+    const out = formatErrorPretty(env);
+    expect(out).toContain("  Diff (schema vs wire):");
+    expect(out).toContain('    ~ billingCycle.duration: expected number, got string ("480")');
+    expect(out).toContain('    ~ billingCycle.timesheetRecords[0].duration: expected number, got string ("480")');
+    // Hint footer comes after the diff block.
+    expect(out.indexOf("Hint:")).toBeGreaterThan(out.indexOf("Diff (schema vs wire):"));
+    // Single-line summary header (the Error: line) is the first block line.
+    expect(out.startsWith("Error: Wire shape doesn't match expected schema for operation")).toBe(true);
+  });
+
+  it("renders `-` op for missing-required fields (no `value` slot)", () => {
+    const env = buildErrorEnvelope({
+      operation: "Op",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `Op` (1 field issue).",
+          diff: [{ op: "-", path: "records[1].notes", expected: "string", actual: "undefined" }],
+        },
+      ],
+    });
+    const out = formatErrorPretty(env);
+    expect(out).toContain("    - records[1].notes: expected string, got undefined");
+  });
+
+  it("renders `+` op for unexpected wire fields (no `expected` shown)", () => {
+    const env = buildErrorEnvelope({
+      operation: "Op",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `Op` (1 field issue).",
+          diff: [{ op: "+", path: "records[0].surprise", expected: "<unset>", actual: "unknown" }],
+        },
+      ],
+    });
+    const out = formatErrorPretty(env);
+    expect(out).toContain("    + records[0].surprise: unexpected wire field (unknown)");
+  });
+
+  it("caps the diff at 10 entries and appends an overflow line", () => {
+    const diff = Array.from({ length: 15 }, (_, i) => ({
+      op: "~" as const,
+      path: `field${i.toString()}`,
+      expected: "number",
+      actual: "string",
+      value: "x",
+    }));
+    const env = buildErrorEnvelope({
+      operation: "Op",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `Op` (15 field issues).",
+          diff,
+        },
+      ],
+    });
+    const out = formatErrorPretty(env);
+    // First 10 entries appear.
+    expect(out).toContain("~ field0:");
+    expect(out).toContain("~ field9:");
+    // Overflow line for the remaining 5.
+    expect(out).toContain("… and 5 more (see -o json for the full diff).");
+    // 11th+ entries not in pretty output (they're in JSON only).
+    expect(out).not.toContain("~ field10:");
+    expect(out).not.toContain("~ field14:");
+  });
+
+  it("omits the `Diff` block when `diff` is undefined (non-WIRE_SHAPE_ERROR codes)", () => {
+    const env = buildErrorEnvelope({
+      operation: "x",
+      errors: [{ code: "VALIDATION_ERROR", message: "Rating must be 1-5" }],
+    });
+    expect(formatErrorPretty(env)).not.toContain("Diff");
+  });
+
+  it("omits the `Diff` block when `diff` is empty array (no entries to render)", () => {
+    const env = buildErrorEnvelope({
+      operation: "x",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `x` (0 field issues).",
+          diff: [],
+        },
+      ],
+    });
+    expect(formatErrorPretty(env)).not.toContain("Diff");
+  });
+});
+
+describe("formatErrorJson with WIRE_SHAPE_ERROR diff", () => {
+  it("serializes the full diff verbatim (no truncation, single line)", () => {
+    const env = buildErrorEnvelope({
+      operation: "BillingCycle",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `BillingCycle` (2 field issues).",
+          diff: [
+            { op: "~", path: "duration", expected: "number", actual: "string", value: "480" },
+            { op: "~", path: "records[0].duration", expected: "number", actual: "string", value: "480" },
+          ],
+        },
+      ],
+    });
+    const json = formatErrorJson(env);
+    // Single-line, no whitespace beyond JSON requirements.
+    expect(json).not.toContain("\n");
+    // Roundtrip the JSON to assert the shape matches #281's example.
+    const parsed = JSON.parse(json) as {
+      ok: false;
+      errors: { code: string; diff?: { op: string; path: string; expected: string }[] }[];
+    };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.errors[0]?.code).toBe("WIRE_SHAPE_ERROR");
+    expect(parsed.errors[0]?.diff).toHaveLength(2);
+    expect(parsed.errors[0]?.diff?.[0]).toEqual({
+      op: "~",
+      path: "duration",
+      expected: "number",
+      actual: "string",
+      value: "480",
+    });
+  });
+
+  it("serializes ALL entries (no 10-cap unlike pretty form) for WIRE_SHAPE_ERROR with many fields", () => {
+    const diff = Array.from({ length: 15 }, (_, i) => ({
+      op: "~" as const,
+      path: `field${i.toString()}`,
+      expected: "number",
+      actual: "string",
+    }));
+    const env = buildErrorEnvelope({
+      operation: "Op",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "Wire shape doesn't match expected schema for operation `Op` (15 field issues).",
+          diff,
+        },
+      ],
+    });
+    const parsed = JSON.parse(formatErrorJson(env)) as {
+      errors: { diff: { path: string }[] }[];
+    };
+    expect(parsed.errors[0]?.diff).toHaveLength(15);
+  });
+});
+
+describe("formatErrorYaml with WIRE_SHAPE_ERROR diff", () => {
+  it("emits a block-style `diff:` array under the error entry", () => {
+    const env = buildErrorEnvelope({
+      operation: "BillingCycle",
+      errors: [
+        {
+          code: "WIRE_SHAPE_ERROR",
+          message: "msg",
+          diff: [{ op: "~", path: "x", expected: "number", actual: "string", value: "v" }],
+        },
+      ],
+    });
+    const out = formatErrorYaml(env);
+    const parsed = yamlParse(out) as {
+      errors: {
+        code: string;
+        diff: { op: string; path: string; expected: string; actual: string; value: string }[];
+      }[];
+    };
+    expect(parsed.errors[0]?.code).toBe("WIRE_SHAPE_ERROR");
+    expect(parsed.errors[0]?.diff[0]).toEqual({
+      op: "~",
+      path: "x",
+      expected: "number",
+      actual: "string",
+      value: "v",
+    });
+  });
 });
 
 describe("defaultPrettyErrorSummary", () => {
