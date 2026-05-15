@@ -170,6 +170,24 @@ track choice — `T1` / `T2` / `NEITHER` — per § Track 1 vs Track 2
 disposition below. This is an independent gate from the schema/contract
 rule above; both apply.
 
+The disposition statement is mechanically enforced by the
+**Schema/Contract Rule Disposition** CI check
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml), job
+`schema-contract-disposition`, wired through the `CI` ci-gate aggregate
+that is the required status check on the `main-protection` ruleset). The
+gate inspects the PR diff against the file-path trigger set above
+(`packages/core/src/auth.ts`, `packages/core/src/services/profile/**`)
+and, when any matches, requires the PR body to contain a
+`Schema/contract rule: triggered` or `Schema/contract rule: NOT triggered`
+marker. Hand-authored GraphQL detection is intentionally deferred (issue
+#302 AC marks it optional) — the file-path triggers cover the typical
+sites where hand-authored operations land. The gate WARNS but does not
+fail when the marker reads `triggered` but no `*.e2e.test.ts` path or
+`transcript` reference appears in the PR body. Rationale: #146 / #275
+were both load-bearing on this rule; author memory alone is not
+sufficient defense for a rule that has caught real wire-shape bugs
+twice. See issue #302 for design rationale.
+
 ### E2E coverage gate
 
 `scripts/check-e2e-coverage.ts` (wired into `pnpm lint`) is the
