@@ -1,0 +1,249 @@
+# Per-op wire-validation routing manifest
+
+> Authoritative per-op disposition for the hybrid runtime field-level
+> wire-validation strategy. One entry per active TTCtl GraphQL operation
+> across `mobile-gateway`, `talent-profile`, and `scheduler`. Sources:
+> [ADR-006][adr], [scope brief 2026-05-14][brief].
+
+[adr]: ../hq/engineering/adr/ADR-006-hybrid-wire-validation.md
+[brief]: ./briefs/2026-05-14-scope-runtime-validation-hybrid.md
+
+## Track legend
+
+| Track     | Mechanism                                                                                                                                                                                                                                                                                                                 | Where the schema lives                                                                                           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `T1`      | Wire-shape snapshots ([#276] / [#283]). Structure-only manifest (types + nullability, no values) captured at E2E time; committed per-op; asserted on every `TTCTL_E2E=1` run; updates gated by `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`. Default for ops whose synthesized schema is gappy (i.e., in the codegen-exclusion lists). | `packages/e2e/src/wire-snapshots/<OpName>.snapshot.json`                                                         |
+| `T2`      | Codegen-Zod ([#284] / [#286]). Generated Zod schema validated at the `callGateway` / `callTalentProfile` boundary; `ZodError` → `WIRE_SHAPE_ERROR` envelope code. Applies only when the op is in the **trusted catalog** (generated a `<OpName>(Query\|Mutation\|Subscription)` type in `__generated__/<surface>.ts`).    | `packages/core/src/__generated__/{zod-schemas,talent-profile-zod-schemas}.ts` (composed inline at the call site) |
+| `NEITHER` | No active wire-validation. Applies to surfaces excluded from codegen and not yet snapshotted (currently: scheduler — no synthesized SDL per [`research/graphql/scheduler/README.md`][scheduler-readme]).                                                                                                                  | —                                                                                                                |
+
+[#276]: https://github.com/alexey-pelykh/ttctl/pull/276
+[#283]: https://github.com/alexey-pelykh/ttctl/pull/283
+[#284]: https://github.com/alexey-pelykh/ttctl/pull/284
+[#286]: https://github.com/alexey-pelykh/ttctl/pull/286
+[#288]: https://github.com/alexey-pelykh/ttctl/pull/288
+[scheduler-readme]: https://github.com/alexey-pelykh/research/blob/main/graphql/scheduler/README.md
+
+The disposition is **derived**, not asserted: every entry below is a
+mechanical consequence of the codegen state at the manifest's
+commit time. `T2` ⇔ the op produces a generated operation type;
+`T1` otherwise. The promotion path (T1 → T2) is governed by
+[ADR-006 § Promotion Path][adr] and is the responsibility of the
+research-side schema-closure pipeline.
+
+## Op enumeration source
+
+The set of active TTCtl ops is enumerated by [`scripts/check-e2e-coverage.ts`][gate].
+That script walks `packages/core/src/**` for literal `operationName: "X"`
+appearances plus allowlisted helper-wrapped invocations
+(`callGateway`, `callTalentProfile`). The manifest below mirrors that
+authoritative set as of commit-time; the maintenance discipline
+([#290]) requires the manifest to be updated in the same PR as any
+new op invocation.
+
+[gate]: ../scripts/check-e2e-coverage.ts
+[#290]: https://github.com/alexey-pelykh/ttctl/issues/290
+
+## Summary
+
+| Surface          | Ops | T1 (snapshot) | T1 (default) | T2 (wired) | T2 (ready, not yet wired) | NEITHER |
+| ---------------- | --- | ------------- | ------------ | ---------- | ------------------------- | ------- |
+| `mobile-gateway` | 35  | 4             | 28           | 1          | 2                         | 0       |
+| `talent-profile` | 59  | 0             | 53           | 0          | 6                         | 0       |
+| `scheduler`      | 0   | 0             | 0            | 0          | 0                         | 0       |
+| **Total**        | 94  | 4             | 81           | 1          | 8                         | 0       |
+
+T2 "wired" means a Zod schema is currently validating the wire response
+at the call site. T2 "ready, not yet wired" means the generated type
+exists but no `schema:` argument is passed to the helper yet
+(future incremental work, not in the current scope).
+
+## `mobile-gateway` (35 ops)
+
+| Op                             | Track      | Rationale                                                                                                                                                                                                                  | Reference                                                                                                         |
+| ------------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| CancelEngagementBreak          | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`; also `GATEWAY_PORTAL_COLLISIONS`.                                                                                                                                      | —                                                                                                                 |
+| CreateEngagementBreak          | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| CreateRateChangeRequest        | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`; also `GATEWAY_PORTAL_COLLISIONS`.                                                                                                                                      | —                                                                                                                 |
+| EmailPasswordSignIn            | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| EngagementBreaks               | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| GetAvailability                | T1         | No generated type in `gateway.ts` (hand-rolled or absent from research repo).                                                                                                                                              | —                                                                                                                 |
+| getPortfolioItems              | T1         | No generated type in `gateway.ts` (same name lives on talent-profile backend; gappy).                                                                                                                                      | —                                                                                                                 |
+| JobActivityItem                | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| JobActivityItems               | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| JobClearInterest               | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `ClearJobInterestStatus`).                                                                                                                                 | —                                                                                                                 |
+| JobMarkNotInterested           | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `MarkJobAsNotInterested`).                                                                                                                                 | —                                                                                                                 |
+| JobMarkSaved                   | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `MarkJobAsSaved`).                                                                                                                                         | —                                                                                                                 |
+| JobMarkViewed                  | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `MarkJobAsViewed`).                                                                                                                                        | —                                                                                                                 |
+| JobSearchSubscriptionShow      | T1         | No generated type in `gateway.ts` (hand-rolled).                                                                                                                                                                           | —                                                                                                                 |
+| JobSearchSubscriptionStart     | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `StartJobsSearchSubscription`).                                                                                                                            | —                                                                                                                 |
+| JobSearchSubscriptionTerminate | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `TerminateJobsSearchSubscription`).                                                                                                                        | —                                                                                                                 |
+| JobShow                        | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `Job` in `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`).                                                                                                            | —                                                                                                                 |
+| JobsList                       | T1         | No generated type in `gateway.ts` (hand-rolled).                                                                                                                                                                           | —                                                                                                                 |
+| LastRateChangeRequest          | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| Payment                        | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| PaymentOptions                 | T1         | No generated type in `gateway.ts` (hand-rolled; cf. research op `GetTalentPaymentOptions`).                                                                                                                                | —                                                                                                                 |
+| Payments                       | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| PendingTimesheets              | T1         | Snapshot landed in [#285]; schema gappy (`TimesheetRecord` absent from SDL — see PR #275 unit-vs-wire drift root cause).                                                                                                   | [`PendingTimesheets.snapshot.json`](../packages/e2e/src/wire-snapshots/PendingTimesheets.snapshot.json)           |
+| PlatformConfiguration          | T2 (ready) | Trusted catalog: `PlatformConfigurationQuery` in `gateway.ts`.                                                                                                                                                             | [`gateway.ts`](../packages/core/src/__generated__/gateway.ts) → `PlatformConfigurationQuery`                      |
+| ProfileShow                    | T2 (ready) | Trusted catalog: `ProfileShowQuery` in `gateway.ts`.                                                                                                                                                                       | [`gateway.ts`](../packages/core/src/__generated__/gateway.ts) → `ProfileShowQuery`                                |
+| RateChangeFormDetails          | T2 (wired) | Z-4 beachhead ([#288]). Hand-composed Zod schema in `services/payments/index.ts` mirrors the verbatim query selection; uses generated `VerticalMarketConditionSchema` / `VerticalGlobalMarketConditionSchema` sub-schemas. | [`payments/index.ts`](../packages/core/src/services/payments/index.ts) `RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA` |
+| RateChangeRequestQuestions     | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| RescheduleEngagementBreak      | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`; also `GATEWAY_PORTAL_COLLISIONS`.                                                                                                                                      | —                                                                                                                 |
+| SubmitTimesheet                | T1         | Snapshot landed in [#285]; schema gappy (`TimesheetRecord` absent from SDL).                                                                                                                                               | [`SubmitTimesheet.snapshot.json`](../packages/e2e/src/wire-snapshots/SubmitTimesheet.snapshot.json)               |
+| TimesheetDetails               | T1         | Snapshot landed in [#285]; schema gappy.                                                                                                                                                                                   | [`TimesheetDetails.snapshot.json`](../packages/e2e/src/wire-snapshots/TimesheetDetails.snapshot.json)             |
+| Timesheets                     | T1         | Snapshot landed in [#285]; schema gappy.                                                                                                                                                                                   | [`Timesheets.snapshot.json`](../packages/e2e/src/wire-snapshots/Timesheets.snapshot.json)                         |
+| UpdateAllocatedHours           | T1         | Schema gappy: `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`.                                                                                                                                                                        | —                                                                                                                 |
+| UpdateWorkingHours             | T1         | Schema gappy: in `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` (cross-surface name; mobile invocation unprotected by codegen).                                                                                                      | —                                                                                                                 |
+| ViewerVerify                   | T1         | No generated type in `gateway.ts` (hand-rolled / talent-mobile-only).                                                                                                                                                      | —                                                                                                                 |
+
+[#285]: https://github.com/alexey-pelykh/ttctl/pull/285
+
+## `talent-profile` (59 ops)
+
+| Op                                              | Track      | Rationale                                                                                                                                         | Reference                                                                                                            |
+| ----------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| ADD_PROFILE_SKILL_SET                           | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| ApproveItemReview                               | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| ApproveSectionReview                            | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| cancelResumeUpload                              | T2 (ready) | Trusted catalog: `CancelResumeUploadMutation` in `talent-profile.ts`.                                                                             | [`talent-profile.ts`](../packages/core/src/__generated__/talent-profile.ts) → `CancelResumeUploadMutation`           |
+| changePortfolioItemPosition                     | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| CREATE_CERTIFICATION                            | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| CREATE_EDUCATION                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| CreateEmployment                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| CreateIndustryProfile                           | T2 (ready) | Trusted catalog: `CreateIndustryProfileMutation` in `talent-profile.ts`.                                                                          | [`talent-profile.ts`](../packages/core/src/__generated__/talent-profile.ts) → `CreateIndustryProfileMutation`        |
+| createPortfolioItem                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| createTravelVisa                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_BASIC_INFO                                  | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_CERTIFICATION                               | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_EDUCATION                                   | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_EMPLOYERS_AUTOCOMPLETE                      | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_INDUSTRIES_FOR_AUTOCOMPLETE                 | T2 (ready) | Trusted catalog: `Get_Industries_For_AutocompleteQuery` in `talent-profile.ts`.                                                                   | [`talent-profile.ts`](../packages/core/src/__generated__/talent-profile.ts) → `Get_Industries_For_AutocompleteQuery` |
+| GET_PHOTO                                       | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_SKILLS_FOR_AUTOCOMPLETE                     | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GET_WORK_EXPERIENCE                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| getAdvancedProfileData                          | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GetContracts                                    | T1         | No generated type in `talent-profile.ts` (op is `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` on the gateway side; talent-profile invocation hand-rolled). | —                                                                                                                    |
+| getCustomRequirements                           | T2 (ready) | Trusted catalog: `GetCustomRequirementsQuery` in `talent-profile.ts`.                                                                             | [`talent-profile.ts`](../packages/core/src/__generated__/talent-profile.ts) → `GetCustomRequirementsQuery`           |
+| GetIndustryProfile                              | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| getProfileReadiness                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| getProfileRecommendations                       | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| getSkillSetsWithConnectionsWithConnectionsCount | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| GetSkillSetWithConnections                      | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| getSkillsReadiness                              | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| getTravelVisas                                  | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| highlightCertification                          | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| highlightEducation                              | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| highlightEmployment                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| highlightPortfolioItem                          | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| ListIndustryProfiles                            | T1         | No generated type in `talent-profile.ts` (hand-rolled or absent from research repo).                                                              | —                                                                                                                    |
+| LogOut                                          | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| REMOVE_CERTIFICATION                            | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| REMOVE_EDUCATION                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| REMOVE_PROFILE_SKILL_SET                        | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| RemoveEmployment                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| RemoveIndustryProfile                           | T1         | No generated type in `talent-profile.ts` (hand-rolled or absent from research repo).                                                              | —                                                                                                                    |
+| removePortfolioItem                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| removeTravelVisa                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| sectionReviews                                  | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| submitForReview                                 | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UPDATE_BASIC_INFO                               | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UPDATE_CERTIFICATION                            | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UPDATE_EDUCATION                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UPDATE_PROFILE_SKILL_SET_EXPERIENCE             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UPDATE_PROFILE_SKILL_SET_PUBLICITY              | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UPDATE_PROFILE_SKILL_SET_RATING                 | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| updateCustomRequirements                        | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UpdateEmployment                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UpdateExternalProfiles                          | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UpdateIndustryProfile                           | T2 (ready) | Trusted catalog: `UpdateIndustryProfileMutation` in `talent-profile.ts`.                                                                          | [`talent-profile.ts`](../packages/core/src/__generated__/talent-profile.ts) → `UpdateIndustryProfileMutation`        |
+| updatePortfolioItem                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| updateTravelVisa                                | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| UploadProfilePhoto                              | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` (multipart upload via hand-rolled transport in `profile/basic/index.ts`).                      | —                                                                                                                    |
+| uploadPortfolioCover                            | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| uploadPortfolioFile                             | T1         | Schema gappy: `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`.                                                                                               | —                                                                                                                    |
+| uploadResume                                    | T2 (ready) | Trusted catalog: `UploadResumeMutation` in `talent-profile.ts`.                                                                                   | [`talent-profile.ts`](../packages/core/src/__generated__/talent-profile.ts) → `UploadResumeMutation`                 |
+
+## `scheduler` (0 ops)
+
+TTCtl does not currently invoke any operation against the
+`scheduler.toptal.com` surface. The runtime infrastructure
+(`types.ts:ToptalSurface`, `transport.ts` Cf403/Cf-persistent
+handling) is provisioned and the surface is recognised by the
+e2e-coverage gate, but no service-level call site exists.
+
+If a scheduler op is added, the default disposition is **NEITHER**
+until either (a) `research/graphql/scheduler/schema.graphql` is
+synthesized (unblocking T2 promotion) or (b) a wire-shape snapshot is
+landed for the op (unblocking T1). See
+[`research/graphql/scheduler/README.md`][scheduler-readme] for the
+research-side closure roadmap and [`research/notes/12-scheduler-auth-chain.md`][scheduler-auth]
+for the encrypted-bearer auth chain.
+
+[scheduler-auth]: https://github.com/alexey-pelykh/research/blob/main/notes/12-scheduler-auth-chain.md
+
+## Schema-gap follow-up
+
+Every T1 entry whose rationale cites a `*_KNOWN_UNTRUSTED_OPS` list
+is a candidate for T2 promotion once the research-side schema for
+the op is closed. The closure is research-repo work, not ttctl
+work: it requires a live wire capture of the op's response, schema
+synthesis to consume the capture, and removal of the op from the
+relevant `*_KNOWN_UNTRUSTED_OPS` list in [`codegen.config.ts`][codegen].
+The research-side gap inventory is documented in
+[`research/graphql/{gateway,talent_profile}/coverage.md`][gateway-cov]
+and [`research/notes/04-schema-gaps.md`][gaps] /
+[`research/notes/11-uncovered-gaps.md`][uncovered].
+
+[codegen]: ../codegen.config.ts
+[gateway-cov]: https://github.com/alexey-pelykh/research/blob/main/graphql/gateway/coverage.md
+[gaps]: https://github.com/alexey-pelykh/research/blob/main/notes/04-schema-gaps.md
+[uncovered]: https://github.com/alexey-pelykh/research/blob/main/notes/11-uncovered-gaps.md
+
+A per-op research-repo issue for each of the 81 T1-default ops here
+would be too granular: the research-side closure already groups
+gaps by gap **class** (`Unknown` placeholder, `_UNKNOWN` enum,
+Pattern-N input shape) rather than by op. The pragmatic closure
+unit is "the research-side schema repair PR that lets the op
+generate a typed binding", which may collapse several TTCtl ops at
+once (e.g., closing the `BillingCycle` field gap promotes the
+entire timesheet domain at once). Track follow-up at the
+research-side closure granularity, not per-TTCtl-op.
+
+For T2 (ready, not yet wired) ops — `PlatformConfiguration`,
+`ProfileShow`, `cancelResumeUpload`, `CreateIndustryProfile`,
+`GET_INDUSTRIES_FOR_AUTOCOMPLETE`, `getCustomRequirements`,
+`UpdateIndustryProfile`, `uploadResume` — the wiring follows the
+Z-4 ([#288]) beachhead pattern: hand-compose a Zod schema that
+mirrors the operation's selection set (using generated sub-schemas
+from `__generated__/{zod-schemas,talent-profile-zod-schemas}.ts`),
+pass it as the `schema:` argument to the helper, surface
+`WIRE_SHAPE_ERROR` on validation failure. Each is a separate PR;
+none is in the current scope.
+
+## Maintenance discipline
+
+When a new GraphQL op is invoked from `packages/core/src/` (a new
+`operationName: "X"` literal or a new `callGateway(...)` /
+`callTalentProfile(...)` call site), the manifest above MUST be
+updated in the same PR. This is the wire-validation-routing
+corollary to the CLAUDE.md schema/contract validation rule and is
+enforced by-convention in PR review until [#290] codifies it.
+
+The Track assignment is **derived**, not chosen:
+
+1. Run `pnpm codegen` (or look at the existing `__generated__/`
+   outputs) and check whether the op produces a `<OpName>(Query|
+Mutation|Subscription)` export in `gateway.ts` or
+   `talent-profile.ts`.
+2. If yes → **T2 (ready)**. If the same PR also wires a Zod
+   schema at the call site → **T2 (wired)**.
+3. If no → **T1**. If the PR also lands a wire-shape snapshot →
+   **T1 (snapshot)**; otherwise → **T1 (default)** and the
+   snapshot is filed as follow-up work.
+4. If the surface is `scheduler` and no snapshot is landed →
+   **NEITHER** (no validation; see § scheduler).
+
+Promotion (T1 → T2) follows [ADR-006 § Promotion Path][adr] and
+requires (a) the research-side schema closure, (b) this manifest
+entry updated, (c) the generated Zod schema landed, (d) the wire
+snapshot retired in the same PR as the Zod wiring.
