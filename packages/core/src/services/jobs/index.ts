@@ -83,7 +83,10 @@
  * - Recommendation tuning / preference editing — deferred to post-v1.
  */
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { buildDryRunPreview, stockTransport } from "../../transport.js";
 import type { DryRunPreview, TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
@@ -113,6 +116,7 @@ export type JobsErrorCode =
   | "GRAPHQL_ERROR"
   | "MUTATION_ERROR"
   | "NETWORK_ERROR"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class JobsError extends Error {
@@ -830,12 +834,20 @@ const NOT_FOUND_MESSAGE_PATTERN = /Record not found|Invalid ID/i;
  * Issue a GraphQL request against the mobile-gateway surface and
  * normalize transport / GraphQL outcomes into typed `JobsError` throws.
  * Mirrors the `callGateway` helpers in `applications` / `engagements`.
+ *
+ * Optional `schema` parameter (Z-3 / #286): when provided, the
+ * received `body.data` is parsed through the schema before returning;
+ * on `ZodError` the call throws `JobsError("WIRE_SHAPE_ERROR")` with
+ * the original ZodError chained via `cause` and a field-level diff in
+ * the message per `docs/wire-validation-error-format.md`. When
+ * omitted, the existing pass-through behavior is preserved.
  */
 async function callGateway<T>(
   token: string,
   operationName: string,
   query: string,
   variables: Record<string, unknown>,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let res: TransportResponse;
   try {
@@ -868,6 +880,14 @@ async function callGateway<T>(
   }
   if (!body?.data) {
     throw new JobsError("UNKNOWN", `${operationName} response had no \`data\` field`);
+  }
+  if (schema !== undefined) {
+    const parsed = schema.safeParse(body.data);
+    if (!parsed.success) {
+      const payload = buildWireShapeError(operationName, parsed.error, body.data);
+      throw new JobsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+    }
+    return parsed.data;
   }
   return body.data;
 }

@@ -86,6 +86,15 @@ export type { DateInputErrorCode, ParsedDate } from "./lib/date.js";
 export { splitParagraphs } from "./lib/text.js";
 
 export {
+  buildWireShapeError,
+  buildWireShapeMessage,
+  MAX_VALUE_LENGTH,
+  projectZodErrorToDiff,
+  WIRE_SHAPE_HINT,
+} from "./lib/wire-shape.js";
+export type { WireShapeDiffEntry, WireShapeErrorPayload } from "./lib/wire-shape.js";
+
+export {
   getDiagnosticLogger,
   logTransportRequest,
   logTransportResponse,

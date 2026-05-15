@@ -79,7 +79,10 @@
  *     surfaces.
  */
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { buildDryRunPreview, stockTransport } from "../../transport.js";
 import type { DryRunPreview, TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
@@ -115,6 +118,7 @@ export type PaymentsErrorCode =
   | "GRAPHQL_ERROR"
   | "MUTATION_ERROR"
   | "NETWORK_ERROR"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class PaymentsError extends Error {
@@ -700,6 +704,7 @@ async function callGateway<T>(
   operationName: string,
   query: string,
   variables: Record<string, unknown>,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let res: TransportResponse;
   try {
@@ -732,6 +737,14 @@ async function callGateway<T>(
   }
   if (!body?.data) {
     throw new PaymentsError("UNKNOWN", `${operationName} response had no \`data\` field`);
+  }
+  if (schema !== undefined) {
+    const parsed = schema.safeParse(body.data);
+    if (!parsed.success) {
+      const payload = buildWireShapeError(operationName, parsed.error, body.data);
+      throw new PaymentsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+    }
+    return parsed.data;
   }
   return body.data;
 }

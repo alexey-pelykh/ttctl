@@ -25,6 +25,7 @@ export type PortfolioErrorCode =
   | "VALIDATION_ERROR"
   | "FILE_NOT_FOUND"
   | "FILE_READ_ERROR"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class PortfolioError extends Error {

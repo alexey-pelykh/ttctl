@@ -17,6 +17,7 @@ export type VisasErrorCode =
   | "NETWORK_ERROR"
   | "USER_ERROR"
   | "VALIDATION_ERROR"
+  | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
 
 export class VisasError extends Error {

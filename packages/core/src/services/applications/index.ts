@@ -54,7 +54,10 @@
  * so the AC's "no client-side synthesis" principle is respected.
  */
 
+import type { z } from "zod";
+
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
+import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { stockTransport } from "../../transport.js";
 import type { TransportResponse } from "../../transport.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
@@ -74,7 +77,13 @@ import { isAuthRevokedExtensionCode } from "../profile/shared.js";
  * `NOT_FOUND` so the CLI can render a "no such application" line and
  * the MCP tool can return a structured `(NOT_FOUND)` error response.
  */
-export type ApplicationsErrorCode = "NO_VIEWER" | "NOT_FOUND" | "GRAPHQL_ERROR" | "NETWORK_ERROR" | "UNKNOWN";
+export type ApplicationsErrorCode =
+  | "NO_VIEWER"
+  | "NOT_FOUND"
+  | "GRAPHQL_ERROR"
+  | "NETWORK_ERROR"
+  | "WIRE_SHAPE_ERROR"
+  | "UNKNOWN";
 
 export class ApplicationsError extends Error {
   override readonly name = "ApplicationsError";
@@ -376,6 +385,7 @@ async function callGateway<T extends { viewer: { id: string } | null }>(
   operationName: string,
   query: string,
   variables: Record<string, unknown>,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let res: TransportResponse;
   try {
@@ -409,10 +419,21 @@ async function callGateway<T extends { viewer: { id: string } | null }>(
   if (!body?.data) {
     throw new ApplicationsError("UNKNOWN", `${operationName} response had no \`data\` field`);
   }
-  if (body.data.viewer === null) {
+  let data: T;
+  if (schema !== undefined) {
+    const parsed = schema.safeParse(body.data);
+    if (!parsed.success) {
+      const payload = buildWireShapeError(operationName, parsed.error, body.data);
+      throw new ApplicationsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
+    }
+    data = parsed.data;
+  } else {
+    data = body.data;
+  }
+  if (data.viewer === null) {
     throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
   }
-  return body.data;
+  return data;
 }
 
 /**
