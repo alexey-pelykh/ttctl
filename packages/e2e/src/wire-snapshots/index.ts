@@ -19,3 +19,12 @@ export type {
   WireSnapshotSurface,
   WireSnapshotTransport,
 } from "./captureWireShape.js";
+export {
+  UPDATE_ENV_VAR,
+  WireSnapshotAssertionError,
+  assertWireShapeStable,
+  diffShapes,
+  formatDiffEntry,
+  renderShape,
+} from "./assertWireShapeStable.js";
+export type { AssertWireShapeStableParams, WireShapeDiffEntry } from "./assertWireShapeStable.js";
