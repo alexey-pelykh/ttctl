@@ -79,8 +79,9 @@
  *     surfaces.
  */
 
-import type { z } from "zod";
+import { z } from "zod";
 
+import { VerticalGlobalMarketConditionSchema, VerticalMarketConditionSchema } from "../../__generated__/zod-schemas.js";
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
 import { buildWireShapeError } from "../../lib/wire-shape.js";
 import { buildDryRunPreview, stockTransport } from "../../transport.js";
@@ -652,13 +653,123 @@ interface WirePlatformConfiguration {
   rateValidationRules: WirePlatformConfigurationRateRules | null;
 }
 
-interface RateChangeFormDetailsResponse {
-  viewer: {
-    id: string;
-    viewerRole: WireViewerRole | null;
-  } | null;
-  platformConfiguration: WirePlatformConfiguration | null;
-}
+/**
+ * Z-4 (#288) beachhead schema — first production wire-up of the
+ * runtime-validation seam built in Z-3 (#286). Validates the
+ * `RateChangeFormDetails` mobile-gateway response against the
+ * structural shape `rate.show()` depends on.
+ *
+ * Beachhead choice rationale:
+ *   - `RateChangeFormDetails` is the SOLE existing `callGateway` site
+ *     in the codebase using a TRUSTED operation (i.e., NOT in
+ *     `GATEWAY_{MOBILE,PORTAL}_KNOWN_UNTRUSTED_OPS` per
+ *     `codegen.config.ts`). The codegen emits a
+ *     `RateChangeFormDetailsQuery` type in `gateway.ts`, confirming
+ *     the operation passes SDL validation end-to-end.
+ *   - The query text in `RATE_CHANGE_FORM_DETAILS_QUERY` above is
+ *     verbatim from `../research/graphql/gateway/operations/mobile/
+ *     RateChangeFormDetails.graphql`, so the wire response is exactly
+ *     what the SDL declares.
+ *
+ * Generated zod sub-schemas used directly:
+ *   - {@link VerticalMarketConditionSchema} — the wire's
+ *     `viewerRole.vertical.marketCondition` selection (`{ condition }`)
+ *     matches the SDL type `VerticalMarketCondition` exactly. No
+ *     `__typename` mismatch risk for the inner type because the
+ *     selection includes `__typename` per the verbatim query.
+ *   - {@link VerticalGlobalMarketConditionSchema} — the wire's
+ *     `viewerRole.vertical.globalMarketCondition` selection
+ *     (`{ condition, conditionColor, conditionVerbose, reportUrl }`)
+ *     matches the SDL type `VerticalGlobalMarketCondition` exactly
+ *     (4 string fields).
+ *
+ * Inline (NOT-from-codegen) sub-schemas used elsewhere:
+ *   - `viewer` / `viewerRole` / `vertical` / `platformConfiguration`
+ *     envelopes — partial selections of larger SDL types; the
+ *     auto-generated `ViewerSchema` etc. require every SDL-declared
+ *     field, which the operation does not select. An inline shape
+ *     matches the actual selection set.
+ *   - `rates`, `rateInsight.hourly`, and
+ *     `platformConfiguration.rateValidationRules.hourly` — the SDL
+ *     declares `TalentRate.hourly: String!` (non-null),
+ *     `TalentRateInsightForCommitment.currentRateCompetitive: Boolean!`
+ *     (boolean), and `TalentRateValidationRule.rateStep: Int!`
+ *     (number). The hand-rolled service-layer types
+ *     (`WireViewerRoleRates`, `WireRateInsightForCommitment`,
+ *     `WireTalentRateValidationRule`) declare these as
+ *     `string | null` / `string | null` / `string | null` —
+ *     defensively widened from the SDL. The inline schemas here
+ *     mirror the HAND-ROLLED service expectations rather than the
+ *     SDL truth so this PR does NOT introduce a cascading service-
+ *     layer type breakage: validating against the SDL would trip on
+ *     existing unit fixtures (which carry the hand-rolled widened
+ *     shape, e.g., `currentRateCompetitive: "Competitive"`) and
+ *     would require downstream type updates (`RateMarketInsight`,
+ *     CLI formatters, MCP tool envelopes) — out of beachhead scope.
+ *
+ * Schema/contract rule disposition: NOT triggered. The wire shape
+ * being validated is the SAME shape the hand-rolled types already
+ * encode; the schema is a structural mirror, not a NEW inferred
+ * contract. Follow-up work to reconcile the SDL/hand-rolled
+ * `currentRateCompetitive` / `rateStep` types belongs in a separate
+ * issue (and would be the natural Z-4-follow-up beachhead once the
+ * downstream cascade is sized).
+ *
+ * Vertical is `.optional()` because the existing in-tree unit
+ * fixtures for `rate.show` don't carry it (the hand-rolled
+ * `WireViewerRole` doesn't declare `vertical` either). The live wire
+ * does include it per the verbatim query selection — `.optional()`
+ * keeps the schema compatible with both shapes.
+ */
+const RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA = z.object({
+  viewer: z
+    .object({
+      id: z.string(),
+      viewerRole: z
+        .object({
+          vertical: z
+            .object({
+              name: z.string(),
+              marketCondition: VerticalMarketConditionSchema(),
+              globalMarketCondition: VerticalGlobalMarketConditionSchema(),
+            })
+            .optional(),
+          rates: z
+            .object({
+              hourly: z.string().nullable(),
+            })
+            .nullable(),
+          rateInsight: z
+            .object({
+              hourly: z
+                .object({
+                  currentRateCompetitive: z.string().nullable(),
+                  recentApplicationRate: z.string().nullable(),
+                  recommendedRate: z.string().nullable(),
+                })
+                .nullable(),
+            })
+            .nullable(),
+        })
+        .nullable(),
+    })
+    .nullable(),
+  platformConfiguration: z
+    .object({
+      id: z.string(),
+      rateValidationRules: z
+        .object({
+          hourly: z
+            .object({
+              minRate: z.string().nullable(),
+              rateStep: z.string().nullable(),
+            })
+            .nullable(),
+        })
+        .nullable(),
+    })
+    .nullable(),
+});
 
 interface WireRateChangeQuestionOption {
   label: string;
@@ -1025,7 +1136,16 @@ export const rate = {
   async show(token: string): Promise<RateProjection> {
     const [lastData, formData] = await Promise.all([
       callGateway<LastRateChangeRequestResponse>(token, "LastRateChangeRequest", LAST_RATE_CHANGE_REQUEST_QUERY, {}),
-      callGateway<RateChangeFormDetailsResponse>(token, "RateChangeFormDetails", RATE_CHANGE_FORM_DETAILS_QUERY, {}),
+      // Z-4 (#288) beachhead: the only `callGateway` site that passes
+      // a schema. See `RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA` for
+      // the audit transcript and the SDL-vs-hand-rolled disposition.
+      callGateway(
+        token,
+        "RateChangeFormDetails",
+        RATE_CHANGE_FORM_DETAILS_QUERY,
+        {},
+        RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA,
+      ),
     ]);
     if (lastData.viewer === null) {
       throw new PaymentsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
