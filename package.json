@@ -35,6 +35,7 @@
     "eslint": "catalog:",
     "eslint-config-prettier": "catalog:",
     "graphql": "catalog:",
+    "graphql-codegen-typescript-validation-schema": "catalog:",
     "prettier": "catalog:",
     "tsx": "catalog:",
     "turbo": "catalog:",
