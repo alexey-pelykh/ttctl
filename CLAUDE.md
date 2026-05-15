@@ -48,11 +48,22 @@ pnpm install          # Install dependencies
 pnpm build            # Build all packages (via Turbo)
 pnpm test             # Run unit tests
 pnpm test:e2e         # Run E2E tests (sequential, requires real session)
-pnpm lint             # Lint all packages and root config files
+pnpm lint             # Lint: Prettier format:check + ESLint + repo checks (the pre-push gate)
+pnpm format:check     # Prettier check only (subset of `pnpm lint`)
+pnpm format           # Prettier write (auto-fix formatting)
 pnpm license-check    # Verify dependency licenses
 pnpm codegen          # Run graphql-codegen against research/graphql/gateway/schema.graphql
 pnpm dev              # Watch mode
 ```
+
+`pnpm lint` is the single canonical pre-push gate — it bundles
+`pnpm format:check` (Prettier) with the ESLint pass, repo-local lints
+(`lint:root`), and the secret-leakage / e2e-coverage / dep-confusion
+checks. Running `pnpm lint` before pushing catches every check that CI
+enforces in its lint-class steps. `pnpm format:check` remains a separate
+script so it can be invoked standalone (e.g. by CI's first step at
+`.github/workflows/ci.yml`, or by editor save hooks); use `pnpm format`
+to auto-fix.
 
 ## Conventions
 
