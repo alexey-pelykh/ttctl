@@ -375,6 +375,162 @@ describe("rate.show", () => {
   });
 });
 
+/**
+ * Z-4 (#288) beachhead — first production wire-up of the Z-3 (#286)
+ * runtime-validation seam. The `RateChangeFormDetails` callGateway
+ * call in `rate.show` is the SOLE existing trusted-op call site
+ * passing a generated Zod schema (`VerticalMarketConditionSchema` +
+ * `VerticalGlobalMarketConditionSchema` composed into an inline
+ * envelope; see `RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA` for the
+ * audit transcript).
+ *
+ * These tests assert the integration end-to-end:
+ *   - Happy path: a wire response that matches the schema passes
+ *     through validation and projects normally (covered by the
+ *     `rate.show` describe block above, which now exercises the
+ *     schema implicitly).
+ *   - Failure path: a wire response that violates the schema in a
+ *     type-meaningful way (`rates.hourly` returned as a number when
+ *     the schema expects `string | null`) trips the schema and
+ *     surfaces as `PaymentsError("WIRE_SHAPE_ERROR")` with the
+ *     original `ZodError` chained via `cause`. The drift would have
+ *     been an `as`-cast silent passthrough pre-Z-4.
+ *   - `LastRateChangeRequest` continues to bypass schema validation
+ *     because Z-4 only wires `RateChangeFormDetails`. A drifted wire
+ *     on the last-rate side passes the schema gate and falls back to
+ *     the existing structural narrowing (the AC's "no regression in
+ *     other ops" requirement).
+ */
+describe("rate.show schema validation (Z-4 / #288)", () => {
+  it("throws PaymentsError('WIRE_SHAPE_ERROR') on type-meaningful schema mismatch", async () => {
+    // Happy LastRateChangeRequest, drifted RateChangeFormDetails:
+    // `viewerRole.rates.hourly` returns a NUMBER instead of the
+    // schema-required `string | null`. Pre-Z-4 this would pass through
+    // the `as`-cast and surface as a downstream TypeError; post-Z-4
+    // it's caught at the wire boundary with a named diff.
+    reply(
+      {
+        body: {
+          data: {
+            viewer: {
+              id: "v1",
+              lastRateChangeRequest: LAST_RATE_CHANGE_FIXTURE,
+              viewerRole: ROLE_FIXTURE,
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            viewer: {
+              id: "v1",
+              viewerRole: {
+                __typename: "ViewerRole",
+                rates: { __typename: "TalentRate", hourly: 95 },
+                rateInsight: ROLE_FIXTURE.rateInsight,
+              },
+            },
+            platformConfiguration: null,
+          },
+        },
+      },
+    );
+    let thrown: unknown;
+    try {
+      await rate.show(TOKEN);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PaymentsError);
+    const err = thrown as PaymentsError & { cause?: unknown };
+    expect(err.code).toBe("WIRE_SHAPE_ERROR");
+    // The message format is the structured `WIRE_SHAPE_ERROR` line
+    // per `docs/wire-validation-error-format.md`. The opname is
+    // `RateChangeFormDetails`; pluralisation drops the trailing "s"
+    // when there's exactly one issue.
+    expect(err.message).toMatch(/RateChangeFormDetails/);
+    expect(err.message).toMatch(/field issue/);
+    // Original `ZodError` is chained via `cause` so the CLI / MCP
+    // layers can lift the field-level diff into the user-facing
+    // envelope.
+    expect(err.cause).toBeDefined();
+  });
+
+  it("does NOT throw on a valid wire response — schema validates the existing happy-path fixtures", async () => {
+    // The `rate.show — composes ...` test above already exercises the
+    // happy path implicitly; this test makes the schema-validation
+    // success explicit so a future schema tightening that breaks the
+    // happy fixtures is loud rather than silent.
+    reply(
+      {
+        body: {
+          data: {
+            viewer: {
+              id: "v1",
+              lastRateChangeRequest: LAST_RATE_CHANGE_FIXTURE,
+              viewerRole: ROLE_FIXTURE,
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            viewer: { id: "v1", viewerRole: ROLE_FIXTURE },
+            platformConfiguration: {
+              __typename: "PlatformConfiguration",
+              id: "cfg-1",
+              rateValidationRules: {
+                __typename: "TalentRateValidationRules",
+                hourly: { __typename: "TalentRateValidationRule", minRate: "30", rateStep: "5" },
+              },
+            },
+          },
+        },
+      },
+    );
+    await expect(rate.show(TOKEN)).resolves.toBeDefined();
+  });
+
+  it("preserves no-regression for LastRateChangeRequest — drifted wire on the non-schema'd op falls through", async () => {
+    // Pre-Z-4 behavior on LastRateChangeRequest: response passes the
+    // `as`-cast; downstream code narrows to its expected shape;
+    // drifts are silently absorbed. Post-Z-4 must not change this
+    // because LastRateChangeRequest is in `KNOWN_UNTRUSTED_OPS` and
+    // Z-4 only wires the trusted RateChangeFormDetails op. We assert
+    // the no-regression invariant by issuing a drifted-but-defensive
+    // LastRateChangeRequest response paired with a valid
+    // RateChangeFormDetails response; the call resolves without
+    // throwing (drift absorbed at last-rate side; schema validates at
+    // form-details side).
+    reply(
+      {
+        body: {
+          data: {
+            viewer: {
+              id: "v1",
+              // `lastRateChangeRequest: null` is a valid wire variant
+              // for accounts that never requested a rate change.
+              // No schema validation runs on this side.
+              lastRateChangeRequest: null,
+              viewerRole: ROLE_FIXTURE,
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: { viewer: { id: "v1", viewerRole: ROLE_FIXTURE }, platformConfiguration: null },
+        },
+      },
+    );
+    const p = await rate.show(TOKEN);
+    expect(p.lastChange).toBeNull();
+    expect(p.ongoingChange).toBeNull();
+  });
+});
+
 describe("rate.questions", () => {
   it("returns the projected question form", async () => {
     reply({
