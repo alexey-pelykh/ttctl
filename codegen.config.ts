@@ -671,12 +671,99 @@ const CUSTOM_SCALAR_MAPPINGS = {
   JSON: "Record<string, unknown>",
 } as const;
 
+/**
+ * Zod-side companion validation schemas for the custom scalars above. Each
+ * entry pairs pointwise with `CUSTOM_SCALAR_MAPPINGS` — the TypeScript type
+ * and the Zod schema must agree on the same wire shape. This pair is the
+ * trust anchor for the codegen-Zod track of the hybrid wire-validation
+ * model (ADR-006, scope brief 2026-05-14): the generated `*.ts` types tell
+ * consumers what to expect, the generated `*-zod-schemas.ts` schemas detect
+ * drift when the wire diverges. The shared `Record<keyof typeof
+ * CUSTOM_SCALAR_MAPPINGS, string>` type annotation enforces the pairing at
+ * compile time — adding a scalar to one map without the other now fails
+ * `tsc` rather than silently diverging.
+ *
+ * `BigDecimal`, `Date`, `DateTime`, `Time` are wire-string scalars (no
+ * runtime parsing); the corresponding Zod schema is `z.string()`. `JSON`
+ * uses Zod v4 `z.record(z.string(), z.unknown())` to produce TypeScript
+ * `Record<string, unknown>` — semantically equivalent to the TS mapping.
+ *
+ * Scalars not in this map (`Unknown`, `Upload`, `SettingName`, `PageSize`,
+ * `TimeOfDay`) fall through to `defaultScalarTypeSchema: z.unknown()` on
+ * the Zod plugin entry, matching the TypeScript plugin's default for
+ * custom scalars without explicit mapping (`unknown`).
+ */
+const CUSTOM_SCALAR_SCHEMAS: Record<keyof typeof CUSTOM_SCALAR_MAPPINGS, string> = {
+  BigDecimal: "z.string()",
+  Date: "z.string()",
+  DateTime: "z.string()",
+  Time: "z.string()",
+  JSON: "z.record(z.string(), z.unknown())",
+};
+
 const SHARED_PLUGIN_CONFIG = {
   useTypeImports: true,
   avoidOptionals: true,
   skipTypename: false,
   enumsAsTypes: true,
   scalars: CUSTOM_SCALAR_MAPPINGS,
+} as const;
+
+/**
+ * Zod-output generate-entry config. Wired per Z-2 (#284) using the Z-0
+ * spike verdict (`docs/decisions/spike-zod-plugin.md`). Diverges from
+ * `SHARED_PLUGIN_CONFIG` on three axes:
+ *
+ *   1. `skipTypename: true` is mandatory under the project's
+ *      `exactOptionalPropertyTypes: true` tsconfig flag. The
+ *      validation-schema plugin emits `__typename: z.literal('X').optional()`
+ *      by default; `z.optional()` infers `T | undefined`, and the plugin's
+ *      `Properties<T>` constraint uses `Required<{...}>` which collapses
+ *      optional properties — under `exactOptionalPropertyTypes`,
+ *      `T | undefined` is no longer assignable to `T`, breaking the
+ *      constraint at the type level (TS2375). Stripping `__typename` from
+ *      the TS type emission avoids the constraint failure; the Zod schema
+ *      body still validates payloads carrying `__typename` (the literal
+ *      keys remain in the Zod object schema, just absent from the
+ *      accompanying TS type). Consumers needing `__typename`-bearing TS
+ *      shapes import from `gateway.ts` / `talent-profile.ts` instead.
+ *
+ *   2. `nullishBehavior: "nullable"` keeps generated Zod schemas in lockstep
+ *      with the TypeScript plugin's `Maybe<T> = T | null` contract. The
+ *      plugin defaults to `.nullish()` for nullable GraphQL fields, which
+ *      produces parsed type `T | null | undefined`; under
+ *      `exactOptionalPropertyTypes: true` plus `avoidOptionals: true` (TS
+ *      plugin), `Maybe<T>` excludes `undefined`, so the broader Zod parse
+ *      type fails the plugin's `Properties<T> = Required<{...}>`
+ *      constraint (TS2375 on any non-degenerate field type — `unknown`
+ *      absorbs the mismatch and hides it on `Unknown`-mapped scalars, which
+ *      is why the Z-0 spike's proof-of-life passed). The `nullable` mode
+ *      emits `.nullable()` instead, producing `T | null` parsed type that
+ *      matches `Maybe<T>` exactly. Runtime semantic: nullable wire fields
+ *      are required-present and may be null (no omitted-field tolerance) —
+ *      desirable for wire-drift detection.
+ *
+ *   3. The validation-schema plugin reads `schema: "zod"`, `withObjectType`,
+ *      `scalarSchemas`, and `defaultScalarTypeSchema`. Setting `schema:
+ *      "zod"` selects Zod (v4 auto-detected from the installed catalog
+ *      version, `^4.4.3`). `withObjectType: true` emits Zod schemas for
+ *      OUTPUT object types in the SDL (not just INPUT types — the
+ *      council's goal is wire-response validation, which is the OUTPUT
+ *      side). `defaultScalarTypeSchema: "z.unknown()"` is the permissive
+ *      fallback for unmapped scalars, matching the TypeScript plugin's
+ *      `unknown` default.
+ */
+const ZOD_PLUGIN_CONFIG = {
+  useTypeImports: true,
+  avoidOptionals: true,
+  skipTypename: true,
+  enumsAsTypes: true,
+  scalars: CUSTOM_SCALAR_MAPPINGS,
+  schema: "zod" as const,
+  withObjectType: true,
+  nullishBehavior: "nullable" as const,
+  scalarSchemas: CUSTOM_SCALAR_SCHEMAS,
+  defaultScalarTypeSchema: "z.unknown()",
 } as const;
 
 /**
@@ -879,6 +966,97 @@ const config: CodegenConfig = {
         "typescript-operations",
       ],
       config: SHARED_PLUGIN_CONFIG,
+    },
+    /*
+     * Z-2 (#284) Zod-validation-schema outputs. The validation-schema plugin
+     * emits Zod schemas for OUTPUT object types in each backend SDL alongside
+     * the TS types (with `__typename` stripped — see § ZOD_PLUGIN_CONFIG for
+     * the `exactOptionalPropertyTypes` interaction). These are companion
+     * files to `gateway.ts` / `talent-profile.ts`; consumers needing the
+     * `__typename`-bearing TS shapes import from the originals.
+     *
+     * Per-surface split (gateway → `zod-schemas.ts`, talent_profile →
+     * `talent-profile-zod-schemas.ts`) follows the Z-0 spike's verdict
+     * (`docs/decisions/spike-zod-plugin.md` § "Configuration shape for Z-2").
+     * The Z-3 (#286) call-boundary integration will consume these schemas
+     * via an inline `schema` param on `callGateway` / `callTalentProfile`.
+     */
+    "packages/core/src/__generated__/zod-schemas.ts": {
+      schema: "../research/graphql/gateway/schema.graphql",
+      documents: [
+        "../research/graphql/gateway/operations/mobile/*.graphql",
+        "../research/graphql/gateway/operations/portal/*.graphql",
+        ...GATEWAY_PORTAL_COLLISIONS.map((name) => `!../research/graphql/gateway/operations/portal/${name}.graphql`),
+        ...GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS.map(
+          (name) => `!../research/graphql/gateway/operations/mobile/${name}.graphql`,
+        ),
+        ...GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS.map(
+          (name) => `!../research/graphql/gateway/operations/portal/${name}.graphql`,
+        ),
+      ],
+      documentTransforms: [dedupeFragments],
+      hooks: SHARED_HOOKS,
+      plugins: [
+        {
+          add: {
+            content: [
+              "// SPDX-License-Identifier: AGPL-3.0-only",
+              "// Copyright (C) 2026 Oleksii PELYKH",
+              "//",
+              "// AUTO-GENERATED by `pnpm codegen` from",
+              "// `../research/graphql/gateway/schema.graphql` and operations under",
+              "// `../research/graphql/gateway/operations/{mobile,portal}/`.",
+              "// Do not edit by hand; re-run codegen instead.",
+              "//",
+              "// Companion file to `gateway.ts`. The TS types here have",
+              "// `__typename` stripped (see codegen.config.ts § ZOD_PLUGIN_CONFIG);",
+              "// the Zod schemas validate payloads with or without `__typename`.",
+              "// Import TS types from `gateway.ts` for `__typename`-bearing shapes.",
+              "",
+            ].join("\n"),
+          },
+        },
+        "typescript",
+        "typescript-validation-schema",
+      ],
+      config: ZOD_PLUGIN_CONFIG,
+    },
+    "packages/core/src/__generated__/talent-profile-zod-schemas.ts": {
+      schema: ["../research/graphql/talent_profile/schema.graphql", "scalar Unknown"],
+      documents: [
+        "../research/graphql/talent_profile/operations/*.graphql",
+        "../research/graphql/talent_profile/fragments/*.graphql",
+        ...TALENT_PROFILE_KNOWN_UNTRUSTED_OPS.map(
+          (name) => `!../research/graphql/talent_profile/operations/${name}.graphql`,
+        ),
+        ...TALENT_PROFILE_KNOWN_UNTRUSTED_FRAGMENTS.map(
+          (name) => `!../research/graphql/talent_profile/fragments/${name}.graphql`,
+        ),
+      ],
+      documentTransforms: [dedupeFragments],
+      hooks: SHARED_HOOKS,
+      plugins: [
+        {
+          add: {
+            content: [
+              "// SPDX-License-Identifier: AGPL-3.0-only",
+              "// Copyright (C) 2026 Oleksii PELYKH",
+              "//",
+              "// AUTO-GENERATED by `pnpm codegen` from",
+              "// `../research/graphql/talent_profile/schema.graphql` and operations under",
+              "// `../research/graphql/talent_profile/operations/`.",
+              "// Do not edit by hand; re-run codegen instead.",
+              "//",
+              "// Companion file to `talent-profile.ts`. See `zod-schemas.ts` header",
+              "// for the TS-type / Zod-schema duality applied to this output.",
+              "",
+            ].join("\n"),
+          },
+        },
+        "typescript",
+        "typescript-validation-schema",
+      ],
+      config: ZOD_PLUGIN_CONFIG,
     },
   },
 };
