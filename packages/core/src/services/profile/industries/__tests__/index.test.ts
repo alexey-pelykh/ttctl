@@ -53,18 +53,81 @@ const IND_1 = {
   domainArea: "Backend",
 };
 
+const IND_2 = {
+  id: "V1-IndustryProfile-2",
+  title: "Finance",
+  about: null,
+  domainArea: "Frontend",
+};
+
+/**
+ * Helper: produce a `ListIndustryProfiles` response body for a given
+ * rows array. Centralizes the post-#321 envelope shape so every test
+ * uses the same structural baseline.
+ */
+function listBody(rows: (typeof IND_1)[]): unknown {
+  return { data: { profile: { id: "p1", industryProfiles: { nodes: rows } } } };
+}
+
 beforeEach(() => {
   mockedStock.mockReset();
   mockedImpersonated.mockReset();
 });
 
 describe("list", () => {
-  it("queries industryProfiles by profileId", async () => {
+  it("queries industryProfiles by profileId and returns the nodes array", async () => {
     replyStock({ body: VIEWER_OK });
-    replyImpersonated({ body: { data: { profile: { id: "p1", industryProfiles: { nodes: [IND_1] } } } } });
+    replyImpersonated({ body: listBody([IND_1, IND_2]) });
 
     const rows = await list(TOKEN);
-    expect(rows).toEqual([IND_1]);
+    expect(rows).toEqual([IND_1, IND_2]);
+  });
+
+  it("returns [] when nodes is an empty array (legitimate zero-industries account)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: listBody([]) });
+
+    const rows = await list(TOKEN);
+    expect(rows).toEqual([]);
+  });
+
+  it("throws GRAPHQL_ERROR when data.profile is null (wire-shape mismatch — AC #6)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: null } } });
+
+    await expect(list(TOKEN)).rejects.toMatchObject({
+      code: "GRAPHQL_ERROR",
+      message: expect.stringContaining("no `data.profile`"),
+    });
+  });
+
+  it("throws GRAPHQL_ERROR when industryProfiles field is missing (wire-shape mismatch — AC #6)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1" } } } });
+
+    await expect(list(TOKEN)).rejects.toMatchObject({
+      code: "GRAPHQL_ERROR",
+      message: expect.stringContaining("`industryProfiles`"),
+    });
+  });
+
+  it("throws GRAPHQL_ERROR when nodes is non-array (wire-shape mismatch — AC #6)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", industryProfiles: { nodes: null } } } } });
+
+    await expect(list(TOKEN)).rejects.toMatchObject({
+      code: "GRAPHQL_ERROR",
+      message: expect.stringContaining("non-array"),
+    });
+  });
+
+  it("filters out null entries inside the nodes array", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", industryProfiles: { nodes: [IND_1, null, IND_2] } } } },
+    });
+    const rows = await list(TOKEN);
+    expect(rows).toEqual([IND_1, IND_2]);
   });
 });
 
@@ -90,22 +153,82 @@ describe("add", () => {
     await expect(add(TOKEN, {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("dispatches CreateIndustryProfile with profileId + industryProfile input", async () => {
+  it("creates the row via CreateIndustryProfile, then reads back via pre/post list set-diff", async () => {
+    // extractProfileId (single basic-show via the shared profileId path).
     replyStock({ body: VIEWER_OK });
+    // pre-list query.
+    replyImpersonated({ body: listBody([IND_1]) });
+    // mutation — payload is `{ success, errors }` only.
     replyImpersonated({
       body: {
         data: {
-          createIndustryProfile: { success: true, errors: null, industryProfile: IND_1 },
+          createIndustryProfile: { success: true, errors: null },
+        },
+      },
+    });
+    // post-list query — IND_2 is the newly-added row.
+    replyImpersonated({ body: listBody([IND_1, IND_2]) });
+
+    const created = await add(TOKEN, { title: "Finance", domainArea: "Frontend" });
+    expect(created).toEqual(IND_2);
+
+    // Verify the mutation wire shape — operationName + flat input envelope
+    // verified live 2026-05-16 (#321): { profileId, title, about, domainArea,
+    // highlights, educations, employments, certifications, portfolioItems }.
+    // Call indices: [0] pre-list, [1] mutation, [2] post-list.
+    const mutationCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(mutationCall.body.operationName).toBe("CreateIndustryProfile");
+    expect(mutationCall.body.variables).toEqual({
+      input: {
+        profileId: "p1",
+        title: "Finance",
+        about: "",
+        domainArea: "Frontend",
+        highlights: [],
+        educations: [],
+        employments: [],
+        certifications: [],
+        portfolioItems: [],
+      },
+    });
+  });
+
+  it("throws UNKNOWN when the post-list does not surface the new row", async () => {
+    // extractProfileId + pre-list.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: listBody([IND_1]) });
+    // mutation success.
+    replyImpersonated({
+      body: { data: { createIndustryProfile: { success: true, errors: null } } },
+    });
+    // post-list — same as pre-list (server filtered the row out? wire regression?).
+    replyImpersonated({ body: listBody([IND_1]) });
+
+    await expect(add(TOKEN, { title: "Finance", domainArea: "Frontend" })).rejects.toMatchObject({
+      code: "UNKNOWN",
+      message: expect.stringContaining("no new row appeared"),
+    });
+  });
+
+  it("propagates USER_ERROR from the mutation payload's `errors` array", async () => {
+    // extractProfileId + pre-list.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: listBody([]) });
+    // mutation reports success: false with structured user errors.
+    replyImpersonated({
+      body: {
+        data: {
+          createIndustryProfile: {
+            success: false,
+            errors: [{ code: "INVALID", key: "title", message: "title is taken" }],
+          },
         },
       },
     });
 
-    const created = await add(TOKEN, { title: "Healthcare", domainArea: "Backend" });
-    expect(created).toEqual(IND_1);
-    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.body.operationName).toBe("CreateIndustryProfile");
-    expect(call.body.variables).toEqual({
-      input: { profileId: "p1", industryProfile: { title: "Healthcare", domainArea: "Backend" } },
+    await expect(add(TOKEN, { title: "Duplicate", domainArea: "D" })).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("title is taken"),
     });
   });
 });
@@ -115,20 +238,40 @@ describe("update", () => {
     await expect(update(TOKEN, "id", {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("dispatches UpdateIndustryProfile", async () => {
+  it("partial-update over server-side full-replace: shows current, merges, dispatches, reads back", async () => {
+    // pre-show — fetch current row to merge into.
+    replyImpersonated({ body: { data: { node: IND_1 } } });
+    // mutation.
     replyImpersonated({
-      body: {
-        data: {
-          updateIndustryProfile: {
-            success: true,
-            errors: null,
-            industryProfile: { ...IND_1, about: "Updated" },
-          },
-        },
-      },
+      body: { data: { updateIndustryProfile: { success: true, errors: null } } },
     });
+    // post-show — returns the updated entity.
+    const UPDATED = { ...IND_1, about: "Updated" };
+    replyImpersonated({ body: { data: { node: UPDATED } } });
+
     const updated = await update(TOKEN, IND_1.id, { about: "Updated" });
     expect(updated.about).toBe("Updated");
+
+    // Verify mutation wire-shape — flat input envelope verified live
+    // 2026-05-16 (#321). Title and domainArea preserved from the
+    // pre-show fetch (partial-update merge); the user supplied only
+    // `about` so the other fields fall back to the current row's
+    // values rather than being clobbered to empty strings.
+    const mutationCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(mutationCall.body.operationName).toBe("UpdateIndustryProfile");
+    expect(mutationCall.body.variables).toEqual({
+      input: {
+        industryProfileId: IND_1.id,
+        title: IND_1.title,
+        about: "Updated",
+        domainArea: IND_1.domainArea,
+        highlights: [],
+        educations: [],
+        employments: [],
+        certifications: [],
+        portfolioItems: [],
+      },
+    });
   });
 });
 
