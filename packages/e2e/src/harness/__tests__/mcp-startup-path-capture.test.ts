@@ -65,7 +65,17 @@ describe("ttctl mcp — startup-time path capture (#113)", () => {
     }
   });
 
-  it("FAIL-FAST: spawns and exits non-zero when no config resolves at startup", async () => {
+  // Wall-clock budget widened from 5s → 20s (#300) — Windows CI runners
+  // (Azure-hosted, shared) intermittently take longer than 5s to spawn the
+  // umbrella binary + run resolveConfig + fail-fast + exit. Two independent
+  // post-merge flakes within 24h (commits `a9bd802`, #284) re-running clean
+  // with no code changes — pattern is consistent with slow-spawn timing
+  // variance, not a regression. 20s preserves the functional contract (the
+  // happy-path failure still completes in <1s; the wide budget only matters
+  // when the runner is degraded) and the per-test timeout is set explicitly
+  // via the vitest 4.x options-object form so the inner 20s budget can fire
+  // before vitest's default `testTimeout` (15s from the package config).
+  it("FAIL-FAST: spawns and exits non-zero when no config resolves at startup", { timeout: 30_000 }, async () => {
     // No config anywhere: TTCTL_CONFIG_FILE is unset (the harness only
     // injects it when configPath is passed), HOME points at an empty tmp
     // dir, and the spawned process inherits these — so resolveConfig has
@@ -78,7 +88,7 @@ describe("ttctl mcp — startup-time path capture (#113)", () => {
       env: { TTCTL_CONFIG_FILE: undefined, HOME: workDir, USERPROFILE: workDir, XDG_CONFIG_HOME: undefined },
     });
     try {
-      const exitInfo = await waitForExit(client.process, 5_000);
+      const exitInfo = await waitForExit(client.process, 20_000);
       expect(exitInfo.exitCode).not.toBe(0);
       expect(client.getStderr()).toContain("NO_CREDS");
     } finally {
