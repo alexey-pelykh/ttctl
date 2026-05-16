@@ -82,13 +82,22 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
         toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
+        industryIds: z
+          .array(z.string())
+          .min(1)
+          .describe(
+            'Catalog Industry ids (at least one required). Discover via `ttctl_profile_industries_autocomplete` or `ttctl profile industries autocomplete "<query>"`.',
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
-      const input = buildPortfolioInput(args);
+      const baseInput = buildPortfolioInput(args);
+      // industryIds is required by the schema (zod `.min(1)`); cast through
+      // the narrowed add-input type so the type-narrowed `add()` accepts it.
+      const input: profile.portfolio.PortfolioItemAddInput = { ...baseInput, industryIds: args.industryIds };
       if (args.dryRun === true) {
         return dryRunResponse(
           buildMcpDryRunPreview(
@@ -125,6 +134,11 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
         toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
+        industryIds: z
+          .array(z.string())
+          .min(1)
+          .optional()
+          .describe("Catalog Industry ids — when supplied, replaces the item's industry set (partial update)."),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -353,6 +367,7 @@ function buildPortfolioInput(args: {
   toptalRelated?: boolean | undefined;
   showViaToptal?: boolean | undefined;
   highlight?: boolean | undefined;
+  industryIds?: string[] | undefined;
 }): profile.portfolio.PortfolioItemInput {
   const out: profile.portfolio.PortfolioItemInput = {};
   if (args.title !== undefined) out.title = args.title;
@@ -365,6 +380,7 @@ function buildPortfolioInput(args: {
   if (args.toptalRelated !== undefined) out.toptalRelated = args.toptalRelated;
   if (args.showViaToptal !== undefined) out.showViaToptal = args.showViaToptal;
   if (args.highlight !== undefined) out.highlight = args.highlight;
+  if (args.industryIds !== undefined) out.industryIds = args.industryIds;
   return out;
 }
 

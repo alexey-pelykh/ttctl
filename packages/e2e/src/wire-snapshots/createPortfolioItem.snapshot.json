@@ -1,0 +1,85 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-16T15:01:27.275Z",
+  "operationName": "createPortfolioItem",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "accomplishment": {
+          "kind": "null"
+        },
+        "clientOrCompanyName": {
+          "kind": "null"
+        },
+        "coverImage": {
+          "kind": "null"
+        },
+        "description": {
+          "kind": "string"
+        },
+        "highlight": {
+          "kind": "boolean"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "industries": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "kind": {
+          "kind": "string"
+        },
+        "link": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
+        "publicationPermit": {
+          "kind": "boolean"
+        },
+        "showViaToptal": {
+          "kind": "boolean"
+        },
+        "skills": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "title": {
+          "kind": "string"
+        },
+        "toptalRelated": {
+          "kind": "boolean"
+        },
+        "websiteUrl": {
+          "kind": "null"
+        }
+      }
+    }
+  }
+}

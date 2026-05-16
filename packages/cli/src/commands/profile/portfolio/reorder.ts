@@ -82,7 +82,13 @@ export async function runProfilePortfolioReorder(
       return;
     }
     if (options.before !== undefined) {
-      const result = profile.portfolio.positionBefore(current, options.before);
+      // Pass `id` (the moving item) so the helper filters it out before
+      // computing the target's index. Without it, the helper would
+      // return a position that's one off in the common "A before B (A
+      // is before B in the list)" case and the server would either
+      // reject or move the item to the wrong slot. See service-layer
+      // doc comment on `positionBefore` for the post-removal semantics.
+      const result = profile.portfolio.positionBefore(current, options.before, id);
       if (result === null) {
         emitErrorAndExit({
           operation: "profile.portfolio.reorder",
@@ -100,7 +106,9 @@ export async function runProfilePortfolioReorder(
       position = result;
     } else {
       const after = options.after as string;
-      const result = profile.portfolio.positionAfter(current, after);
+      // See positionBefore comment above — `id` (moving item) is
+      // filtered out before computing the target's index.
+      const result = profile.portfolio.positionAfter(current, after, id);
       if (result === null) {
         emitErrorAndExit({
           operation: "profile.portfolio.reorder",

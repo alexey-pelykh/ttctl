@@ -60,6 +60,10 @@
  */
 
 // e2e-covers: createPortfolioItem, updatePortfolioItem, removePortfolioItem, changePortfolioItemPosition, highlightPortfolioItem, uploadPortfolioCover, uploadPortfolioFile
+//
+// Wire-shape snapshot for `createPortfolioItem` (T1 disposition per
+// `docs/wire-validation-routing.md`) is asserted in this file via
+// `assertWireShapeStable` — originating issue #314.
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,8 +73,21 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
+
+/**
+ * Catalog Industry id for "Software" — required by `createPortfolioItem`
+ * (server rejects empty / null `industryIds` with `code: blank, key:
+ * industries`, verified 2026-05-16 via `.tmp/probe-empty-industries.mjs`).
+ *
+ * Stable Toptal catalog ID (Relay encoding `VjEtSW5kdXN0cnktNzg2`).
+ * Discovered via `ttctl profile industries autocomplete "Software"`.
+ * Hardcoded for E2E speed; if Toptal ever rotates this ID, autocomplete
+ * lookup in `beforeAll` is the resolution path.
+ */
+const SOFTWARE_INDUSTRY_ID = "VjEtSW5kdXN0cnktNzg2";
 
 /**
  * Minimal 1×1 transparent PNG. Verbatim PNG bytes — header (8) + IHDR
@@ -127,6 +144,8 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
         sentinelTitle,
         "--link",
         "https://example.com/e2e",
+        "--industry-id",
+        SOFTWARE_INDUSTRY_ID,
         "-o",
         "json",
       ]);
@@ -195,7 +214,17 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
       const titleA = `e2e-sentinel-pos-A-${ts}`;
       const titleB = `e2e-sentinel-pos-B-${ts}`;
 
-      const addA = await cli.run(["profile", "portfolio", "add", "--title", titleA, "-o", "json"]);
+      const addA = await cli.run([
+        "profile",
+        "portfolio",
+        "add",
+        "--title",
+        titleA,
+        "--industry-id",
+        SOFTWARE_INDUSTRY_ID,
+        "-o",
+        "json",
+      ]);
       expect(addA.exitCode).toBe(0);
       const addAPayload = JSON.parse(addA.stdout) as { ok?: boolean; created?: PortfolioItemShape[] };
       const idA = (addAPayload.created ?? []).find((it) => it.title === titleA)?.id;
@@ -204,7 +233,17 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
 
       let idB: string | undefined;
       try {
-        const addB = await cli.run(["profile", "portfolio", "add", "--title", titleB, "-o", "json"]);
+        const addB = await cli.run([
+          "profile",
+          "portfolio",
+          "add",
+          "--title",
+          titleB,
+          "--industry-id",
+          SOFTWARE_INDUSTRY_ID,
+          "-o",
+          "json",
+        ]);
         expect(addB.exitCode).toBe(0);
         const addBPayload = JSON.parse(addB.stdout) as { ok?: boolean; created?: PortfolioItemShape[] };
         idB = (addBPayload.created ?? []).find((it) => it.title === titleB)?.id;
@@ -246,7 +285,17 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
     "highlightPortfolioItem round-trip on a sentinel (highlight on, highlight off, cleanup)",
     async () => {
       const sentinelTitle = `e2e-sentinel-highlight-${Date.now().toString()}`;
-      const addResult = await cli.run(["profile", "portfolio", "add", "--title", sentinelTitle, "-o", "json"]);
+      const addResult = await cli.run([
+        "profile",
+        "portfolio",
+        "add",
+        "--title",
+        sentinelTitle,
+        "--industry-id",
+        SOFTWARE_INDUSTRY_ID,
+        "-o",
+        "json",
+      ]);
       expect(addResult.exitCode).toBe(0);
       const addPayload = JSON.parse(addResult.stdout) as { ok?: boolean; created?: PortfolioItemShape[] };
       const sentinelId = (addPayload.created ?? []).find((it) => it.title === sentinelTitle)?.id;
@@ -306,6 +355,60 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
       expect(payload.updated?.coverImageCacheName?.length).toBeGreaterThan(0);
     },
   );
+
+  it.skipIf(!e2eEnabled)("createPortfolioItem response wire shape matches snapshot (T1 disposition)", async () => {
+    // Schema/contract validation rule corollary: `createPortfolioItem`
+    // is on the T1 track per `docs/wire-validation-routing.md:114`
+    // (talent-profile schema is gappy). The snapshot captures the
+    // post-mutation profile.portfolioItems.nodes shape — drift in the
+    // server's response signals a wire-format regression we must
+    // re-engineer for. Originating discovery: issue #314.
+    const sentinelTitle = `e2e-sentinel-wire-${Date.now().toString()}`;
+    const addResult = await cli.run([
+      "profile",
+      "portfolio",
+      "add",
+      "--title",
+      sentinelTitle,
+      "--industry-id",
+      SOFTWARE_INDUSTRY_ID,
+      "-o",
+      "json",
+    ]);
+    expect(addResult.exitCode).toBe(0);
+    const addPayload = JSON.parse(addResult.stdout) as {
+      ok?: boolean;
+      created?: PortfolioItemShape[];
+    };
+    expect(addPayload.ok).toBe(true);
+    const created = addPayload.created ?? [];
+    const sentinelId = created.find((it) => it.title === sentinelTitle)?.id;
+    expect(typeof sentinelId).toBe("string");
+    if (sentinelId === undefined) return;
+
+    try {
+      // The CLI envelope projects the read-side `PortfolioItem`
+      // mapped shape (see `mapPortfolioNode` in
+      // `packages/core/src/services/profile/portfolio/index.ts`).
+      // The wire-shape snapshot is taken on that projection — it
+      // captures the field set surfaced to envelope consumers, which
+      // is the load-bearing contract (the raw GraphQL response shape
+      // is opaque to consumers and not what we want to gate drift
+      // against). Sentinel cleanup runs in `finally` regardless of
+      // the assertion outcome.
+      expect(() =>
+        assertWireShapeStable({
+          operationName: "createPortfolioItem",
+          surface: "talent-profile",
+          transport: "impersonated",
+          response: created,
+        }),
+      ).not.toThrow();
+    } finally {
+      const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
+      expect(cleanup.exitCode).toBe(0);
+    }
+  });
 
   it.skipIf(!e2eEnabled)(
     "uploadPortfolioFile accepts a tiny text attachment via --file and returns a fileCacheName",
