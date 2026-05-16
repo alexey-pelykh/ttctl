@@ -270,8 +270,25 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
     {
       title: "Upload a portfolio cover image",
       description:
-        "Upload a cover image for the user's portfolio. Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `coverImageCacheName` and `coverImageUrl`; pass the cache name into a subsequent portfolio-add or portfolio-update call's `coverImage` field to bind the cover to a specific item.",
-      inputSchema: { ...fileUploadInputSchema, dryRun: DRY_RUN_FIELD },
+        "Upload a cover image for the user's portfolio. Supply EITHER `filePath` (server-relative; preferred when the host has filesystem access — Claude Desktop, Claude Code) OR `content` (base64-encoded; for web-hosted clients without filesystem access). Returns `coverImageCacheName` and `coverImageUrl`; pass the cache name into a subsequent portfolio-add or portfolio-update call's `coverImage` field to bind the cover to a specific item. Server requires the image to be at least 750x500 px and under 5 MB.",
+      inputSchema: {
+        ...fileUploadInputSchema,
+        cropX: z.number().int().nonnegative().optional().describe("crop origin x (px). Default: 0 (whole image)."),
+        cropY: z.number().int().nonnegative().optional().describe("crop origin y (px). Default: 0 (whole image)."),
+        cropW: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("crop width (px). Default: PNG image width if detectable, otherwise oversized (server clamps)."),
+        cropH: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("crop height (px). Default: PNG image height if detectable, otherwise oversized (server clamps)."),
+        dryRun: DRY_RUN_FIELD,
+      },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
@@ -288,8 +305,14 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       }
       const decoded = decodeFileUploadInput(args, UPLOAD_CATEGORIES.portfolioCover);
       if ("isError" in decoded) return decoded;
+      // Build the transformation only when ALL four crop fields are
+      // supplied; the service auto-defaults when omitted.
+      const transformation: profile.portfolio.PortfolioCoverTransformation | undefined =
+        args.cropX !== undefined && args.cropY !== undefined && args.cropW !== undefined && args.cropH !== undefined
+          ? { cropX: args.cropX, cropY: args.cropY, cropW: args.cropW, cropH: args.cropH }
+          : undefined;
       try {
-        const result = await profile.portfolio.uploadCover(auth.token, decoded);
+        const result = await profile.portfolio.uploadCover(auth.token, decoded, transformation);
         return successResponse(result);
       } catch (err) {
         return mapPortfolioError(err);
