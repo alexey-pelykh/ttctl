@@ -65,9 +65,11 @@
 // `docs/wire-validation-routing.md`) is asserted in this file via
 // `assertWireShapeStable` — originating issue #314.
 
+import { Buffer } from "node:buffer";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -90,16 +92,63 @@ const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 const SOFTWARE_INDUSTRY_ID = "VjEtSW5kdXN0cnktNzg2";
 
 /**
- * Minimal 1×1 transparent PNG. Verbatim PNG bytes — header (8) + IHDR
- * (25) + IDAT (18) + IEND (12) = 63 bytes. Embedding the literal bytes
- * sidesteps any test-time PNG-encoder dependency.
+ * Build a synthetic solid-color PNG at the given dimensions. Used by
+ * the cover-upload test where the server's `uploadPortfolioCoverImage`
+ * mutation enforces a minimum image size of 750x500 px (USER_ERROR
+ * `code: invalidImage` if smaller — verified live 2026-05-16, see
+ * `.tmp/probe-cover-crop2.mjs`). A 1×1 fixture is rejected pre-crop.
+ *
+ * Uses only `node:zlib` + manual PNG-chunk assembly so the test stays
+ * free of image-library dependencies. Solid-color images compress
+ * tightly under deflate (the 750×500 RGBA output is ≈1500 bytes).
+ *
+ * PNG layout: 8-byte signature, then a sequence of chunks (4-byte
+ * length, 4-byte type, N bytes data, 4-byte CRC over type+data).
+ * Required chunks: IHDR (header), one or more IDAT (pixel data),
+ * IEND (end marker).
  */
-const PNG_1X1_TRANSPARENT = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
-  0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49,
-  0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00,
-  0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-]);
+function buildSolidPng(
+  width: number,
+  height: number,
+  rgba: [number, number, number, number] = [100, 150, 200, 255],
+): Buffer {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(width, 0);
+  ihdrData.writeUInt32BE(height, 4);
+  ihdrData[8] = 8; // bit depth
+  ihdrData[9] = 6; // color type: RGBA
+  ihdrData[10] = 0; // compression
+  ihdrData[11] = 0; // filter
+  ihdrData[12] = 0; // interlace
+  // Pixel rows: 1 filter byte (0 = None) + width * 4 bytes RGBA.
+  const rowSize = 1 + width * 4;
+  const raw = Buffer.alloc(height * rowSize);
+  for (let y = 0; y < height; y++) {
+    const off = y * rowSize;
+    raw[off] = 0; // filter
+    for (let x = 0; x < width; x++) {
+      const px = off + 1 + x * 4;
+      raw[px] = rgba[0];
+      raw[px + 1] = rgba[1];
+      raw[px + 2] = rgba[2];
+      raw[px + 3] = rgba[3];
+    }
+  }
+  const idatData = deflateSync(raw);
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32BE(data.length);
+    const typeBuf = Buffer.from(type, "ascii");
+    const crcInput = Buffer.concat([typeBuf, data]);
+    const crcBuf = Buffer.alloc(4);
+    crcBuf.writeUInt32BE(crc32(crcInput));
+    return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
+  };
+  return Buffer.concat([sig, chunk("IHDR", ihdrData), chunk("IDAT", idatData), chunk("IEND", Buffer.alloc(0))]);
+}
+
+const PNG_750x500 = buildSolidPng(750, 500);
 
 interface PortfolioItemShape {
   id?: string;
@@ -334,25 +383,32 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
   );
 
   it.skipIf(!e2eEnabled)(
-    "uploadPortfolioCover accepts a 1x1 PNG via --cover and returns a coverImageCacheName",
+    "uploadPortfolioCover accepts a 750x500 PNG via --cover and returns a coverImageCacheName",
     async () => {
+      // The server enforces a 750x500 px minimum on cover images
+      // (USER_ERROR `code: invalidImage` if smaller — verified live
+      // 2026-05-16). The test fixture is generated at runtime to keep
+      // the package free of image-library dependencies.
       const fixturePath = join(tmpDir, "e2e-cover.png");
-      await writeFile(fixturePath, PNG_1X1_TRANSPARENT);
+      await writeFile(fixturePath, PNG_750x500);
 
       const result = await cli.run(["profile", "portfolio", "upload", "--cover", fixturePath, "-o", "json"]);
       expect(result.exitCode).toBe(0);
+      // The CLI dispatches `emitAddSuccess` for uploads — the envelope
+      // names the payload `created` (not `updated`); the cache name is
+      // the freshly-issued artifact.
       const payload = JSON.parse(result.stdout) as {
         ok?: boolean;
         operation?: string;
-        updated?: { coverImageCacheName?: string | null; coverImageUrl?: string | null };
+        created?: { coverImageCacheName?: string | null; coverImageUrl?: string | null };
       };
       expect(payload.ok).toBe(true);
       expect(payload.operation).toBe("profile.portfolio.upload");
       // The server-issued cache name MUST be present — this is the
       // critical wire-shape assertion (the mutation's response carries
       // the cache name used to bind the cover to a future add/update).
-      expect(typeof payload.updated?.coverImageCacheName).toBe("string");
-      expect(payload.updated?.coverImageCacheName?.length).toBeGreaterThan(0);
+      expect(typeof payload.created?.coverImageCacheName).toBe("string");
+      expect(payload.created?.coverImageCacheName?.length).toBeGreaterThan(0);
     },
   );
 

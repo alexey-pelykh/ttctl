@@ -977,8 +977,19 @@ async function resolveFileSource(source: FileSource, fieldLabel: string): Promis
  * GraphQL `Upload` slot — the multipart map binds it to the
  * `variables.file` path.
  *
- * `transformation` is required by the input schema even when no transform
- * is desired; we send an empty object to satisfy the contract.
+ * `transformation` is `PortfolioCoverImageTransformationInput!` with four
+ * non-null `Int!` fields — `cropX`, `cropY`, `cropW`, `cropH` (verified
+ * live 2026-05-16, probe `.tmp/probe-cover-crop.mjs`). Sending `{}` is
+ * rejected at the GQL layer ("Expected value to not be null"). All four
+ * fields must be integers in PIXEL units. The server is tolerant of
+ * oversized crop boxes (e.g. `cropW: 99999`) and will clamp; it does
+ * NOT support normalized 0..1 units.
+ *
+ * The server also enforces a minimum cover-image dimension of
+ * **750 × 500 px** (USER_ERROR `code: invalidImage` —
+ * "This image must be at least 750 x 500px and under 5MB to be
+ * accepted"). Callers are responsible for ensuring the uploaded file
+ * meets this bound; this service does not pre-validate dimensions.
  */
 const UPLOAD_PORTFOLIO_COVER_MUTATION = `mutation uploadPortfolioCover(
   $profileId: ID!
@@ -1014,15 +1025,68 @@ export interface UploadPortfolioCoverResult {
 }
 
 /**
+ * Crop transformation input for {@link uploadCover}. Pixel-based; all
+ * four values are required by the server. {@link uploadCover} accepts
+ * this as an optional parameter — when omitted, the service attempts to
+ * read the source image's dimensions (PNG header parsing) and defaults
+ * to a whole-image crop. For non-PNG sources or parse failures, the
+ * service falls back to an oversized `(0, 0, 99999, 99999)` bounding
+ * box and lets the server clamp.
+ */
+export interface PortfolioCoverTransformation {
+  cropX: number;
+  cropY: number;
+  cropW: number;
+  cropH: number;
+}
+
+/**
+ * Read width/height from a PNG file's IHDR chunk. PNG signature is
+ * 8 bytes; the IHDR chunk follows with a 4-byte length, "IHDR" type,
+ * then 4-byte width, 4-byte height (big-endian uint32s). Returns
+ * `null` for non-PNG inputs or short buffers (caller falls back to a
+ * sentinel oversized crop).
+ */
+function parsePngDimensions(buffer: Buffer | Uint8Array): { width: number; height: number } | null {
+  if (buffer.length < 24) return null;
+  const isPng =
+    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 && buffer[4] === 0x0d;
+  if (!isPng) return null;
+  const view = new DataView(buffer.buffer as ArrayBuffer, buffer.byteOffset, buffer.byteLength);
+  const width = view.getUint32(16);
+  const height = view.getUint32(20);
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+/**
  * Upload a cover image for a portfolio item. The cover image is bound to
  * the user's profile rather than a specific portfolio item — the response
  * carries a `coverImageCacheName` the caller passes back into a
  * subsequent `update()` call (or `add()` for new items) via the
  * `coverImage` field.
+ *
+ * The `transformation` parameter is optional. When omitted, the service
+ * resolves a sensible default: PNG sources have their dimensions read
+ * from the IHDR header and used as the whole-image crop
+ * `(0, 0, width, height)`; non-PNG sources fall back to a large
+ * bounding box `(0, 0, 99999, 99999)` (the server clamps oversized
+ * crops). Callers who need explicit control pass `transformation`
+ * directly.
+ *
+ * The server enforces a minimum cover-image size of 750x500px — the
+ * service does NOT pre-validate this; callers receive a `USER_ERROR`
+ * (`code: invalidImage`) when the image is too small.
  */
-export async function uploadCover(token: string, source: FileSource): Promise<UploadPortfolioCoverResult> {
+export async function uploadCover(
+  token: string,
+  source: FileSource,
+  transformation?: PortfolioCoverTransformation,
+): Promise<UploadPortfolioCoverResult> {
   const profileId = await resolveProfileId(token);
   const file = await resolveFileSource(source, "uploadCover");
+  const resolvedTransformation: PortfolioCoverTransformation =
+    transformation ?? defaultCoverTransformation(file.content);
   const res = await withTransportErrors("uploadPortfolioCover", async () =>
     impersonatedMultipartTransport({
       surface: "talent-profile",
@@ -1032,7 +1096,7 @@ export async function uploadCover(token: string, source: FileSource): Promise<Up
         query: UPLOAD_PORTFOLIO_COVER_MUTATION,
         variables: {
           profileId,
-          transformation: {},
+          transformation: resolvedTransformation,
           file: null,
         },
       },
@@ -1052,6 +1116,21 @@ export async function uploadCover(token: string, source: FileSource): Promise<Up
     coverImageCacheName: payload.coverImageCacheName ?? null,
     coverImageUrl: payload.coverImageUrl ?? null,
   };
+}
+
+/**
+ * Sentinel oversized crop bounding box used when image dimensions
+ * cannot be statically inferred (non-PNG, malformed PNG). The server
+ * clamps oversized crops to the actual image extent.
+ */
+const OVERSIZED_CROP: PortfolioCoverTransformation = { cropX: 0, cropY: 0, cropW: 99999, cropH: 99999 };
+
+function defaultCoverTransformation(content: Buffer | Uint8Array): PortfolioCoverTransformation {
+  const dims = parsePngDimensions(content);
+  if (dims) {
+    return { cropX: 0, cropY: 0, cropW: dims.width, cropH: dims.height };
+  }
+  return OVERSIZED_CROP;
 }
 
 /**

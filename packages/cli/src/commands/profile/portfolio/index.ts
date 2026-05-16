@@ -161,14 +161,23 @@ export function buildProfilePortfolioCommand(): Command {
     .argument("[id]", "(unused; reserved for future per-item upload routing)")
     .option("--cover <file>", "path to a cover-image file to upload")
     .option("--file <file>", "path to a portfolio-attachment file to upload")
+    .option(
+      "--crop <x,y,w,h>",
+      "cover crop (px), comma-separated x,y,w,h; default: whole image (PNG) or sentinel oversize",
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
-    .action(async (id: string | undefined, options: { cover?: string; file?: string; output: OutputFormat }) => {
-      await runProfilePortfolioUpload(id, options);
-    });
+    .action(
+      async (
+        id: string | undefined,
+        options: { cover?: string; file?: string; crop?: string; output: OutputFormat },
+      ) => {
+        await runProfilePortfolioUpload(id, options);
+      },
+    );
 
   return portfolio;
 }

@@ -20,9 +20,30 @@ import { loadAuthTokenOrExit } from "./shared.js";
  * now it is accepted but unused so the public surface stays stable when
  * the binding lands.
  */
+/**
+ * Parse a `--crop x,y,w,h` value into a `PortfolioCoverTransformation`.
+ * All four components must be non-negative integers; otherwise the
+ * function returns a `VALIDATION_ERROR` for the caller to surface.
+ */
+function parseCropOption(value: string): profile.portfolio.PortfolioCoverTransformation | { error: string } {
+  const parts = value.split(",");
+  if (parts.length !== 4) {
+    return { error: "--crop must be four comma-separated integers (x,y,w,h)." };
+  }
+  const ints = parts.map((p) => Number.parseInt(p.trim(), 10));
+  if (ints.some((n) => !Number.isInteger(n) || n < 0)) {
+    return { error: "--crop components must be non-negative integers." };
+  }
+  const [cropX, cropY, cropW, cropH] = ints as [number, number, number, number];
+  if (cropW === 0 || cropH === 0) {
+    return { error: "--crop width and height must be positive." };
+  }
+  return { cropX, cropY, cropW, cropH };
+}
+
 export async function runProfilePortfolioUpload(
   _id: string | undefined,
-  options: { cover?: string; file?: string; output: OutputFormat },
+  options: { cover?: string; file?: string; crop?: string; output: OutputFormat },
 ): Promise<void> {
   const modes = [options.cover !== undefined, options.file !== undefined];
   const modeCount = modes.filter(Boolean).length;
@@ -51,9 +72,26 @@ export async function runProfilePortfolioUpload(
   const token = await loadAuthTokenOrExit("portfolio upload", options.output);
 
   if (options.cover !== undefined) {
+    // Optional explicit crop override. The service supplies sensible
+    // defaults (whole-image for PNG, oversized for non-PNG) when this
+    // is omitted — see service-layer doc on `uploadCover` for the
+    // `cropX/Y/W/H` wire shape and server-side 750x500 minimum.
+    let transformation: profile.portfolio.PortfolioCoverTransformation | undefined;
+    if (options.crop !== undefined) {
+      const parsed = parseCropOption(options.crop);
+      if ("error" in parsed) {
+        emitErrorAndExit({
+          operation: "profile.portfolio.upload",
+          format: options.output,
+          errors: [{ code: "VALIDATION_ERROR", field: "crop", message: parsed.error }],
+          prettySummary: `portfolio upload failed (VALIDATION_ERROR): ${parsed.error}`,
+        });
+      }
+      transformation = parsed;
+    }
     let result: profile.portfolio.UploadPortfolioCoverResult;
     try {
-      result = await profile.portfolio.uploadCover(token, { kind: "path", path: options.cover });
+      result = await profile.portfolio.uploadCover(token, { kind: "path", path: options.cover }, transformation);
     } catch (err) {
       handlePortfolioError("portfolio upload", err, options.output);
       return;
