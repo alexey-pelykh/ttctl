@@ -160,31 +160,104 @@ describe("visas.add", () => {
 describe("visas.update", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
+    mockedShowBasic.mockReset();
   });
 
   it("rejects empty changes with VALIDATION_ERROR", async () => {
     await expect(update(TOKEN, "v1", {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("issues updateTravelVisa with travelVisaId + travelVisa wrapper", async () => {
+  it("read-modify-write: merges current countryId + visaType + expiryDate with caller's patch", async () => {
+    // First call is list() (read), second is updateTravelVisa (write).
+    stubProfileId();
+    replyImpersonated(
+      {
+        body: {
+          data: {
+            profile: {
+              id: "p1",
+              travelVisas: { nodes: [VISA_NODE] },
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            updateTravelVisa: {
+              profile: { id: "p1", travelVisas: { nodes: [{ ...VISA_NODE, expiryDate: "2030-01-01" }] } },
+              errors: null,
+            },
+          },
+        },
+      },
+    );
+
+    await update(TOKEN, "v1", { expiryDate: "2030-01-01" });
+
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.operationName).toBe("updateTravelVisa");
+    const variables = updateCall.body.variables as { input: { travelVisaId: string; travelVisa: unknown } };
+    expect(variables.input.travelVisaId).toBe("v1");
+    expect(variables.input.travelVisa).toEqual({
+      countryId: "DE",
+      visaType: "Schengen",
+      expiryDate: "2030-01-01",
+    });
+  });
+
+  it("read-modify-write: omits expiryDate when current record has null expiry and patch doesn't set one", async () => {
+    stubProfileId();
+    replyImpersonated(
+      {
+        body: {
+          data: {
+            profile: {
+              id: "p1",
+              travelVisas: { nodes: [{ ...VISA_NODE, expiryDate: null }] },
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            updateTravelVisa: {
+              profile: { id: "p1", travelVisas: { nodes: [{ ...VISA_NODE, visaType: "Tourist", expiryDate: null }] } },
+              errors: null,
+            },
+          },
+        },
+      },
+    );
+
+    await update(TOKEN, "v1", { visaType: "Tourist" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { travelVisa: Record<string, unknown> } };
+    expect(variables.input.travelVisa).toEqual({
+      countryId: "DE",
+      visaType: "Tourist",
+    });
+    expect("expiryDate" in variables.input.travelVisa).toBe(false);
+  });
+
+  it("rejects unknown visa id with VALIDATION_ERROR before any update call", async () => {
+    stubProfileId();
     replyImpersonated({
       body: {
         data: {
-          updateTravelVisa: {
-            profile: { id: "p1", travelVisas: { nodes: [VISA_NODE] } },
-            errors: null,
-          },
+          profile: { id: "p1", travelVisas: { nodes: [VISA_NODE] } },
         },
       },
     });
 
-    await update(TOKEN, "v1", { expiryDate: "2030-01-01" });
-
-    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.body.operationName).toBe("updateTravelVisa");
-    const variables = call.body.variables as { input: { travelVisaId: string; travelVisa: unknown } };
-    expect(variables.input.travelVisaId).toBe("v1");
-    expect(variables.input.travelVisa).toEqual({ expiryDate: "2030-01-01" });
+    await expect(update(TOKEN, "v-unknown", { expiryDate: "2030-01-01" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    // Only the list() call should have fired — never the update.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
   });
 });
 

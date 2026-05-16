@@ -44,6 +44,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
@@ -143,6 +144,21 @@ describe("profile visas (live talent-profile, INFERRED wire shape)", () => {
         expect(updated?.expiryDate).toBe(newExpiry);
         // The `visaType` must remain unchanged (we only sent `--expires`).
         expect(updated?.visaType).toBe(sentinelType);
+
+        // T1 wire-shape snapshot — see `docs/wire-validation-routing.md`
+        // (updateTravelVisa is gappy-schema, T1 disposition). The
+        // snapshot captures the projected read-side `TravelVisa` shape
+        // surfaced via the envelope's `updated[]` (matches
+        // `mapTravelVisaNode` in `packages/core/src/services/profile/visas/index.ts`).
+        // Originating issue: #317.
+        expect(() =>
+          assertWireShapeStable({
+            operationName: "updateTravelVisa",
+            surface: "talent-profile",
+            transport: "impersonated",
+            response: updatePayload.updated ?? [],
+          }),
+        ).not.toThrow();
       } finally {
         // Step 4 (always-runs): remove the sentinel.
         const removeResult = await cli.run(["profile", "visas", "remove", sentinelId, "-o", "json"]);
