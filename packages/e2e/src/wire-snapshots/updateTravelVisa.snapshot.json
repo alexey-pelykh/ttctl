@@ -1,0 +1,33 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-16T16:54:08.148Z",
+  "operationName": "updateTravelVisa",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "countryId": {
+          "kind": "string"
+        },
+        "countryName": {
+          "kind": "string"
+        },
+        "expiryDate": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
+        "id": {
+          "kind": "string"
+        },
+        "visaType": {
+          "kind": "string"
+        }
+      }
+    }
+  }
+}

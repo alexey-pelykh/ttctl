@@ -310,13 +310,43 @@ interface UpdateTravelVisaInput {
   travelVisa: TravelVisaInput;
 }
 
-/** Update a travel-visa record by id. */
+/**
+ * Update a travel-visa record by id.
+ *
+ * `UpdateTravelVisaInput.travelVisa` is treated as a **full-document
+ * replacement** by the server — `countryId` and `visaType` are
+ * non-nullable on the input even when the caller doesn't want to change
+ * them. Sending only the patched field returns
+ * `Variable $input of type UpdateTravelVisaInput! was provided invalid
+ * value for travelVisa.countryId/visaType (Expected value to not be
+ * null)` (verified live 2026-05-15, see #317).
+ *
+ * To preserve the partial-update UX over the full-replace wire shape,
+ * this function does read-modify-write: fetch the current record via
+ * {@link list}, merge caller's `changes` on top of the current state,
+ * then send the merged input. Same pattern as
+ * `services/profile/portfolio/index.ts` `update` (PR #323 / #314).
+ */
 export async function update(token: string, id: string, changes: TravelVisaInput): Promise<TravelVisa[]> {
   if (Object.keys(changes).length === 0) {
     throw new VisasError("VALIDATION_ERROR", "Travel visa update requires at least one field.");
   }
+  // Read-modify-write: see function doc-comment.
+  const current = (await list(token)).find((v) => v.id === id);
+  if (!current) {
+    throw new VisasError("VALIDATION_ERROR", `Travel visa ${id} not found.`);
+  }
+  // `expiryDate` is `string | null` on the read side but `string | undefined`
+  // on the write side; the conditional spread satisfies
+  // `exactOptionalPropertyTypes: true` (omit when null, value when string).
+  const merged: TravelVisaInput = {
+    countryId: current.countryId,
+    visaType: current.visaType,
+    ...(current.expiryDate !== null && { expiryDate: current.expiryDate }),
+    ...changes,
+  };
   const variables: { input: UpdateTravelVisaInput } = {
-    input: { travelVisaId: id, travelVisa: changes },
+    input: { travelVisaId: id, travelVisa: merged },
   };
   const res = await withTransportErrors("updateTravelVisa", async () =>
     impersonatedTransport({
