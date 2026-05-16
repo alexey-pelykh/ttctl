@@ -146,6 +146,82 @@ describe("list", () => {
 
     await expect(list(TOKEN)).rejects.toThrow(AuthRevokedError);
   });
+
+  it("returns [] when graphql-pro hides the sectionReviews field ('hidden due to permissions')", async () => {
+    // talent_profile emits this shape for accounts with no pending section
+    // reviews: data:null + UNAUTHORIZED code + the "hidden due to permissions"
+    // message. The bearer is valid; only this specific field is permission-
+    // gated. The truthful semantic is "no visible reviews" — surface as [].
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: {
+        data: null,
+        errors: [
+          {
+            message: "An object of type SectionReview was hidden due to permissions",
+            path: ["sectionReviews", 0],
+            extensions: { code: "UNAUTHORIZED", login_url: "https://www.toptal.com/users/login" },
+          },
+        ],
+      },
+    });
+
+    await expect(list(TOKEN)).resolves.toEqual([]);
+  });
+
+  it("still throws AuthRevokedError on extensions.code='UNAUTHORIZED' WITHOUT the field-hidden marker", async () => {
+    // Defense-in-depth: a genuinely revoked bearer also surfaces UNAUTHORIZED
+    // but with a different message AND no `path` (top-level errors fire BEFORE
+    // field resolution per GraphQL spec § 7.1.7). Only the field-hidden
+    // discriminator (path + message) should short-circuit to [].
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: { data: null, errors: [{ message: "Session invalid", extensions: { code: "UNAUTHORIZED" } }] },
+    });
+
+    await expect(list(TOKEN)).rejects.toThrow(AuthRevokedError);
+  });
+
+  it("still throws AuthRevokedError on UNAUTHORIZED with the message marker but NO path (defends F1)", async () => {
+    // Robustness against false positives: a top-level error that happens to contain
+    // the "hidden due to permissions" substring in its message but lacks a `path`
+    // is NOT a field-level denial — it's a top-level error. Without the path-based
+    // primary discriminator, the discriminator would over-fire.
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: {
+        data: null,
+        errors: [
+          {
+            message: "Some top-level error mentioning hidden due to permissions in passing",
+            extensions: { code: "UNAUTHORIZED" },
+          },
+        ],
+      },
+    });
+
+    await expect(list(TOKEN)).rejects.toThrow(AuthRevokedError);
+  });
+
+  it("still throws AuthRevokedError on UNAUTHORIZED with path on a DIFFERENT field (sectionReviews-specific)", async () => {
+    // Robustness: the helper is sectionReviews-specific by design. A field-level
+    // permission error on some unrelated field should NOT short-circuit list() to [].
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: {
+        data: null,
+        errors: [
+          {
+            message: "An object of type SomethingElse was hidden due to permissions",
+            path: ["someOtherField", 0],
+            extensions: { code: "UNAUTHORIZED" },
+          },
+        ],
+      },
+    });
+
+    await expect(list(TOKEN)).rejects.toThrow(AuthRevokedError);
+  });
 });
 
 // ---------------------------------------------------------------------------

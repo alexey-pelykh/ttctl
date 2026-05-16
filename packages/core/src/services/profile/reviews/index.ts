@@ -60,6 +60,12 @@ export type { ProfileErrorCode };
 
 interface GraphQLErrorEntry {
   message?: string | null;
+  // GraphQL spec § 7.1.7 — `path` is present on field-level errors (carrying the response
+  // key sequence to the field that errored) and absent on errors raised before field
+  // resolution (e.g. session-revoked top-level errors). Used by
+  // {@link isFieldHiddenSectionReviews} as the primary discriminator between the two
+  // overloaded meanings of `extensions.code = "UNAUTHORIZED"` on talent_profile.
+  path?: readonly (string | number)[] | null;
   extensions?: { code?: string | null } | null;
 }
 
@@ -183,8 +189,46 @@ function coerceString(value: unknown): string | null {
 }
 
 /**
+ * Detect the talent_profile graphql-pro "field hidden due to permissions"
+ * response on the `sectionReviews` field. The server emits this when the
+ * signed-in user has no pending section reviews visible — the field is
+ * permission-gated rather than returning an empty array. The shape is:
+ *
+ *   { data: null, errors: [{
+ *       message: "An object of type SectionReview was hidden due to permissions",
+ *       path: ["sectionReviews", 0],
+ *       extensions: { code: "UNAUTHORIZED" },
+ *     }] }
+ *
+ * `extensions.code` ALONE is ambiguous (same code is used for session-revoked
+ * bearer). Two discriminators are checked, both must hold:
+ *
+ *   1. **Primary** — `path[0] === "sectionReviews"`. GraphQL spec § 7.1.7 mandates
+ *      `path` on field-level errors and prohibits it on errors raised before
+ *      field resolution (session-revoked top-level errors fire BEFORE field
+ *      resolution and therefore have no `path`). This is the structural
+ *      discriminator and survives English-wording drift of the message.
+ *   2. **Confirmation** — message contains `"hidden due to permissions"`. Defense
+ *      against the (unlikely) case where a path-bearing top-level error is
+ *      emitted for some unrelated reason.
+ */
+function isFieldHiddenSectionReviews(body: unknown): boolean {
+  if (body === null || typeof body !== "object") return false;
+  const envelope = body as { data?: unknown; errors?: GraphQLErrorEntry[] | null };
+  if (envelope.data !== null && envelope.data !== undefined) return false;
+  if (!Array.isArray(envelope.errors) || envelope.errors.length === 0) return false;
+  const first = envelope.errors[0];
+  if (first?.extensions?.code !== "UNAUTHORIZED") return false;
+  if (!Array.isArray(first.path) || first.path[0] !== "sectionReviews") return false;
+  return typeof first.message === "string" && first.message.includes("hidden due to permissions");
+}
+
+/**
  * List pending section reviews for the signed-in user. Returns an empty
- * array (not a `null` or thrown error) when no reviews are pending.
+ * array (not a `null` or thrown error) when no reviews are pending. This
+ * includes the talent_profile "field hidden due to permissions" response
+ * (see {@link isFieldHiddenSectionReviews}) — empirically the
+ * no-pending-reviews surface form for accounts that have no review activity.
  *
  * Errors: `AuthRevokedError`, `ProfileError(GRAPHQL_ERROR)`,
  * `ProfileError(NETWORK_ERROR)`, `Cf403Error` (and other `TtctlError`
@@ -204,6 +248,21 @@ export async function list(token: string): Promise<SectionReview[]> {
       },
     }),
   );
+
+  // talent_profile's graphql-pro layer overloads `extensions.code = "UNAUTHORIZED"`
+  // for two distinct conditions: (1) session-revoked bearer (handled globally by
+  // `isAuthRevokedExtensionCode` → AuthRevokedError); (2) field-level permission
+  // denial, surfaced with `data: null` + `message: "An object of type
+  // SectionReview was hidden due to permissions"`. For `sectionReviews` the
+  // field-hidden case empirically corresponds to "no pending reviews are visible
+  // to this user" (live capture 2026-05-16 against an account with no pending
+  // section reviews). Short-circuit to `[]` BEFORE the generic auth-revoked
+  // mapping fires, otherwise the user sees a misleading "Run `ttctl auth
+  // signin`" hint when the session is in fact valid for every other
+  // talent_profile op.
+  if (res.status === 200 && isFieldHiddenSectionReviews(res.body)) {
+    return [];
+  }
 
   const data = parseTalentProfileResponse(res, "Section reviews list") as SectionReviewsData;
   const rows = data.sectionReviews ?? [];
