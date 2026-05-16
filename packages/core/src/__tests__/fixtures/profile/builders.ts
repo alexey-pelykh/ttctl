@@ -182,6 +182,9 @@ export function buildMinimalProfile(): ProfileFixture {
     websiteUrl: null,
     toptalRelated: null,
     showViaToptal: null,
+    kind: null,
+    skills: [],
+    industries: [],
   };
 
   const minimalEmployment: Employment = {

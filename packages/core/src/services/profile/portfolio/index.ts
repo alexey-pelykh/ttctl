@@ -5,10 +5,11 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { impersonatedMultipartTransport, impersonatedTransport, stockTransport } from "../../../transport.js";
+import { impersonatedMultipartTransport, impersonatedTransport } from "../../../transport.js";
 import type { MultipartFile, TransportResponse } from "../../../transport.js";
 import { show as showBasic } from "../basic/index.js";
 import { isAuthRevokedExtensionCode } from "../shared.js";
+import { list as listSkills } from "../skills/index.js";
 
 /**
  * Portfolio sub-domain error codes. All file-shape and field-shape
@@ -64,14 +65,39 @@ export interface SkillRef {
 }
 
 /**
+ * Portfolio item kind enumeration. Empirically the server requires this
+ * as a non-null field on `CreatePortfolioItemInput.portfolioItem`. The
+ * WRITE-side enum uses **lowercase snake_case** values — the
+ * SCREAMING_SNAKE forms returned by the read-side `PortfolioItemKindEnum`
+ * in `research/graphql/gateway/schema.graphql` are REJECTED on create
+ * with `"kind: is not included in the list"` (verified live 2026-05-16
+ * during issue #314 investigation, see `.tmp/probe-portfolio-kind.mjs`).
+ *
+ * Use the {@link PORTFOLIO_ITEM_KIND} constant for autocomplete-friendly
+ * references. The {@link PortfolioItemKind} type is derived so adding a
+ * member here automatically extends the type.
+ */
+export const PORTFOLIO_ITEM_KIND = {
+  ACCOMPLISHMENT: "accomplishment",
+  BASIC: "basic",
+  CLASSIC: "classic",
+  CODE_BASE: "code_base",
+  OTHER_AMAZING_THINGS: "other_amazing_things",
+} as const;
+
+export type PortfolioItemKind = (typeof PORTFOLIO_ITEM_KIND)[keyof typeof PORTFOLIO_ITEM_KIND];
+
+/**
  * Portfolio item write-side input shape.
  *
- * **[INFERRED — UNVERIFIED]** Mirrors the read-side `Portfolio` fragment
- * field-by-field per Pattern 1/2 in `research/notes/10-mutation-input-patterns.md`.
- * The `UPDATE_BASIC_INFO` precedent showed that wrapper-key inference can
- * be falsified by live capture (`profile` vs the predicted `basicInfo`).
- * If the API rejects the wrapper-key `portfolioItem`, capture the actual
- * shape via curl and amend.
+ * **[INFERRED — partially verified live]** Mirrors the read-side `Portfolio`
+ * fragment field-by-field per Pattern 1/2 in
+ * `research/notes/10-mutation-input-patterns.md`. The `UPDATE_BASIC_INFO`
+ * precedent showed that wrapper-key inference can be falsified by live
+ * capture (`profile` vs the predicted `basicInfo`). The 2026-05-15 batch
+ * (issue #314) live-discovered that `kind`, `showViaToptal`, and `skills`
+ * are non-null required on create — {@link add} applies safe defaults so
+ * existing callers do not need to thread these fields.
  */
 export interface PortfolioItemInput {
   title?: string;
@@ -84,7 +110,20 @@ export interface PortfolioItemInput {
   toptalRelated?: boolean;
   showViaToptal?: boolean;
   highlight?: boolean;
+  kind?: PortfolioItemKind;
   skills?: SkillRef[];
+  /**
+   * Catalog Industry IDs (from `industriesAutocomplete`) that this
+   * portfolio item belongs to. Required by the server on create — empty
+   * array surfaces as `industries: You can't leave this empty` USER_ERROR
+   * (verified live 2026-05-16, see `.tmp/probe-portfolio-industries.mjs`).
+   *
+   * **Per-item explicit choice**: industries are NOT defaulted from
+   * `Profile.basicInfoIndustries`, `industriesAutocomplete`, skill
+   * inference, or any other source. Each portfolio item's industry
+   * association is the caller's deliberate decision; auto-defaulting
+   * would silently mis-tag work and pollute the portfolio.
+   */
   industryIds?: string[];
   /**
    * Cover-image cache name returned by a prior `uploadCover()` call. The
@@ -100,6 +139,10 @@ export interface PortfolioItemInput {
  * Read-side portfolio item shape — projection of the `Portfolio` fragment.
  * Service callers receive this on `list()` / mutation responses; the
  * mutation responses also surface the full mutated list on `profile.portfolioItems.nodes`.
+ *
+ * The `kind`, `skills`, and `industries` fields are populated for callers
+ * that need the full state (e.g. {@link update}'s read-modify-write
+ * path); the server enforces these as non-null on `update` mutations.
  */
 export interface PortfolioItem {
   id: string;
@@ -114,6 +157,9 @@ export interface PortfolioItem {
   websiteUrl: string | null;
   toptalRelated: boolean | null;
   showViaToptal: boolean | null;
+  kind: PortfolioItemKind | null;
+  skills: SkillRef[];
+  industries: { id: string; name: string }[];
 }
 
 interface TalentProfileResponse<T> {
@@ -130,6 +176,23 @@ interface TalentProfileResponse<T> {
  */
 function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
   const id = node["id"];
+  const skillsConn = node["skills"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
+  const industriesConn = node["industries"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
+  const skills: SkillRef[] = Array.isArray(skillsConn?.nodes)
+    ? skillsConn.nodes.flatMap((s) =>
+        typeof s.id === "string" && typeof s.name === "string" ? [{ id: s.id, name: s.name }] : [],
+      )
+    : [];
+  const industries: { id: string; name: string }[] = Array.isArray(industriesConn?.nodes)
+    ? industriesConn.nodes.flatMap((i) =>
+        typeof i.id === "string" && typeof i.name === "string" ? [{ id: i.id, name: i.name }] : [],
+      )
+    : [];
+  const rawKind = node["kind"];
+  const kind: PortfolioItemKind | null =
+    typeof rawKind === "string" && (Object.values(PORTFOLIO_ITEM_KIND) as string[]).includes(rawKind)
+      ? (rawKind as PortfolioItemKind)
+      : null;
   return {
     id: typeof id === "string" ? id : "",
     title: (node["title"] as string | null | undefined) ?? null,
@@ -143,6 +206,9 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
     websiteUrl: (node["websiteUrl"] as string | null | undefined) ?? null,
     toptalRelated: (node["toptalRelated"] as boolean | null | undefined) ?? null,
     showViaToptal: (node["showViaToptal"] as boolean | null | undefined) ?? null,
+    kind,
+    skills,
+    industries,
   };
 }
 
@@ -247,24 +313,39 @@ async function withTransportErrors<T>(operationName: string, fn: () => Promise<T
  * trimmed to the v0 read surface (no skills/industries/files/details
  * fragments — those are separate sub-domains).
  */
+/**
+ * Shared selection set for `PortfolioItem` nodes used across `list`,
+ * `create`, `update`, `remove`, `reorder`, and `highlight` mutation
+ * responses. Centralized so the `mapPortfolioNode` mapper always sees a
+ * consistent shape regardless of which operation produced the response.
+ *
+ * Includes `kind`, `skills.nodes`, and `industries.nodes` so the
+ * `update` read-modify-write path can preserve non-null required fields
+ * the server enforces (`showViaToptal`, `skills`).
+ */
+const PORTFOLIO_NODE_SELECTION = `
+  id
+  title
+  description
+  link
+  highlight
+  coverImage
+  accomplishment
+  publicationPermit
+  clientOrCompanyName
+  websiteUrl
+  toptalRelated
+  showViaToptal
+  kind
+  skills { nodes { id name } }
+  industries { nodes { id name } }
+`;
+
 const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {
   profile(id: $profileId) {
     id
     portfolioItems {
-      nodes {
-        id
-        title
-        description
-        link
-        highlight
-        coverImage
-        accomplishment
-        publicationPermit
-        clientOrCompanyName
-        websiteUrl
-        toptalRelated
-        showViaToptal
-      }
+      nodes { ${PORTFOLIO_NODE_SELECTION} }
     }
   }
 }`;
@@ -276,9 +357,15 @@ const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {
  */
 export async function list(token: string): Promise<PortfolioItem[]> {
   const profileId = await resolveProfileId(token);
+  // Routed to `talent-profile` (impersonated, Cloudflare-protected): the
+  // older `mobile-gateway` schema is missing fields the read surface
+  // selects (`toptalRelated` empirically — `Cannot query field
+  // "toptalRelated" on type "PortfolioItem"`, captured 2026-05-16). The
+  // talent-profile schema is authoritative for all mutations in this
+  // service; aligning the query surface keeps a single source of truth.
   const res = await withTransportErrors("getPortfolioItems", async () =>
-    stockTransport({
-      surface: "mobile-gateway",
+    impersonatedTransport({
+      surface: "talent-profile",
       authToken: token,
       body: {
         operationName: "getPortfolioItems",
@@ -308,20 +395,7 @@ const CREATE_PORTFOLIO_ITEM_MUTATION = `mutation createPortfolioItem($input: Cre
     profile {
       id
       portfolioItems {
-        nodes {
-          id
-          title
-          description
-          link
-          highlight
-          coverImage
-          accomplishment
-          publicationPermit
-          clientOrCompanyName
-          websiteUrl
-          toptalRelated
-          showViaToptal
-        }
+        nodes { ${PORTFOLIO_NODE_SELECTION} }
       }
     }
     success
@@ -347,20 +421,147 @@ interface PortfolioMutationPayload {
 }
 
 /**
+ * Default description used when the caller does not supply one. The
+ * server validates a minimum length on `description` (≥200 characters,
+ * empirically discovered during issue #314); a short title-derived
+ * default would be rejected with `"is too short (minimum is 200
+ * characters)"` for typical CLI titles. This placeholder satisfies the
+ * minimum while remaining obviously a placeholder a user would refine.
+ *
+ * Length: 273 characters.
+ */
+const DEFAULT_PORTFOLIO_DESCRIPTION =
+  "This portfolio item was created via the ttctl CLI without an explicit description. " +
+  "Replace this placeholder via `ttctl profile portfolio update <id> --description ...` " +
+  "with details about the project, the work performed, the technologies used, and the outcomes achieved.";
+
+/**
  * Create a new portfolio item.
  *
  * Returns the full updated portfolio list — the server treats portfolio
  * items as a profile-scoped collection, and the mutation response always
  * carries the post-mutation snapshot. Callers that only want the new item
  * find it as the last entry (or by matching `title`).
+ *
+ * **Required-field defaults**: live capture (issue #314, batch 2026-05-15;
+ * extended 2026-05-16 with empirical re-investigation via
+ * `.tmp/probe-portfolio-*.mjs`) showed the server requires `kind`,
+ * `showViaToptal`, `skills`, `description`, `publicationPermit`, and
+ * `industryIds` as non-null (and `description` carries a ≥200-character
+ * minimum-length constraint). We project safe defaults so existing
+ * callers (e.g. the `ttctl profile portfolio add --title ...` CLI
+ * surface) do not need to thread the structural fields; users who want
+ * explicit control can still pass them through.
+ *
+ *   - `kind` defaults to `"basic"` — the most neutral enum member,
+ *     matching a portfolio entry with only `title` / `description` /
+ *     `link` and no special structural framing (vs. `accomplishment`,
+ *     `classic` case-study, `code_base` repo, or `other_amazing_things`).
+ *     Note: write-side enum is LOWERCASE; the synthesized read-side
+ *     `PortfolioItemKindEnum` uses SCREAMING_SNAKE which is rejected on
+ *     create.
+ *   - `showViaToptal` defaults to `true` — a TTCtl-created item is
+ *     intended for visibility on the user's Toptal profile; users who
+ *     want to hide can `update` after create.
+ *   - `skills` defaults to the first profile skill — preserves the
+ *     "minimal CLI invocation just works" UX; empty-profile case
+ *     surfaces VALIDATION_ERROR.
+ *   - `description` defaults to {@link DEFAULT_PORTFOLIO_DESCRIPTION},
+ *     a 273-character placeholder that satisfies the server's ≥200-char
+ *     minimum and obviously reads as a placeholder users would refine
+ *     via `ttctl profile portfolio update`.
+ *   - `publicationPermit` defaults to `true`. The server treats `false`
+ *     as blank (`USER_ERROR code: blank, key: publicationPermit`) — only
+ *     `true` is accepted on create. Users who want to flip the field can
+ *     `update` after create (the update path may handle `false`
+ *     differently — uninvestigated).
+ *   - `industryIds` is **REQUIRED** — caller MUST supply at least one
+ *     catalog Industry ID per portfolio item. We do NOT default from
+ *     `Profile.basicInfoIndustries`, `industriesAutocomplete`, or skill
+ *     inference: each portfolio item's industry association is the
+ *     caller's deliberate choice; auto-defaulting would silently mis-tag
+ *     work. Discover IDs via `ttctl profile industries autocomplete
+ *     <query>`.
  */
-export async function add(token: string, input: PortfolioItemInput): Promise<PortfolioItem[]> {
+/**
+ * `add()` parameter shape: `PortfolioItemInput` with `industryIds` narrowed
+ * to a required field. `update()` still accepts the base
+ * `PortfolioItemInput` (where `industryIds` is optional — partial-update
+ * semantics). Splitting at the function-parameter level keeps a single
+ * input vocabulary and lets TypeScript catch missing-industries at the
+ * call site instead of waiting for the runtime guard.
+ *
+ * The empty-array case is still checked at runtime — `[]` is structurally
+ * a `string[]` but semantically invalid; TS lacks a native non-empty-array
+ * type and `[string, ...string[]]` would be hostile to spread-from-array
+ * call sites.
+ */
+export type PortfolioItemAddInput = PortfolioItemInput & { industryIds: string[] };
+
+export async function add(token: string, input: PortfolioItemAddInput): Promise<PortfolioItem[]> {
   if (!input.title || input.title.trim() === "") {
     throw new PortfolioError("VALIDATION_ERROR", "Portfolio item requires a non-empty `title`.");
   }
+  // Runtime guard: TS narrowing requires `industryIds` to exist as a
+  // `string[]`, but JS callers / MCP tool inputs / `as any` casts can
+  // bypass that. Server-verified to reject `[]` / `null` / omitted with
+  // `code: blank, key: industries` (live probe 2026-05-16,
+  // `.tmp/probe-empty-industries.mjs`); we surface the same constraint as
+  // VALIDATION_ERROR before reaching the wire.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defense-in-depth for non-TS callers
+  if (!input.industryIds || input.industryIds.length === 0) {
+    throw new PortfolioError(
+      "VALIDATION_ERROR",
+      "Portfolio item requires at least one industry id (`industryIds`). " +
+        "Discover catalog IDs via `ttctl profile industries autocomplete <query>`, " +
+        "then pass `--industry-id <id>` (repeatable) on the CLI.",
+    );
+  }
   const profileId = await resolveProfileId(token);
+
+  // The server rejects `skills: []` with `"You need to add at least one
+  // tag"`. When the caller does not supply skills, fall back to the
+  // user's first profile skill — preserves the "minimal CLI invocation
+  // just works" experience and aligns the portfolio entry with the
+  // user's primary skill domain. Empty-profile case surfaces a clear
+  // VALIDATION_ERROR pointing the user at remediation.
+  const callerSkills = input.skills;
+  let resolvedSkills: SkillRef[];
+  if (callerSkills !== undefined && callerSkills.length > 0) {
+    resolvedSkills = callerSkills;
+  } else {
+    const profileSkills = await listSkills(token, profileId);
+    if (profileSkills.length === 0) {
+      throw new PortfolioError(
+        "VALIDATION_ERROR",
+        "Cannot create portfolio item: profile has no skills. " +
+          "Add at least one skill via `ttctl profile skills add <name>`, " +
+          "then retry — or pass `skills` explicitly.",
+      );
+    }
+    // The first skill set is typically the talent's primary skill;
+    // users who want a different tag association can update the item
+    // afterward (or thread `skills` explicitly).
+    const first = profileSkills[0];
+    if (first === undefined) {
+      throw new PortfolioError("UNKNOWN", "Skills list non-empty but indexed lookup returned undefined.");
+    }
+    resolvedSkills = [{ id: first.skill.id, name: first.skill.name }];
+  }
+
+  const portfolioItem: PortfolioItemInput = {
+    kind: PORTFOLIO_ITEM_KIND.BASIC,
+    showViaToptal: true,
+    description: DEFAULT_PORTFOLIO_DESCRIPTION,
+    publicationPermit: true,
+    ...input,
+    // `skills` is set AFTER the spread so the resolved default applies
+    // even when the caller passed an empty array (the server treats `[]`
+    // identically to `null` for this field).
+    skills: resolvedSkills,
+  };
   const variables: { input: CreatePortfolioItemInput } = {
-    input: { profileId, portfolioItem: input },
+    input: { profileId, portfolioItem },
   };
   const res = await withTransportErrors("createPortfolioItem", async () =>
     impersonatedTransport({
@@ -397,20 +598,7 @@ const UPDATE_PORTFOLIO_ITEM_MUTATION = `mutation updatePortfolioItem($input: Upd
     profile {
       id
       portfolioItems {
-        nodes {
-          id
-          title
-          description
-          link
-          highlight
-          coverImage
-          accomplishment
-          publicationPermit
-          clientOrCompanyName
-          websiteUrl
-          toptalRelated
-          showViaToptal
-        }
+        nodes { ${PORTFOLIO_NODE_SELECTION} }
       }
     }
     success
@@ -429,15 +617,84 @@ interface UpdatePortfolioItemInput {
 }
 
 /**
- * Update a portfolio item by id. Only the fields supplied in `changes`
- * are sent to the server.
+ * Update a portfolio item by id. Conceptually a partial update — callers
+ * supply only the fields they want to change — but the server's
+ * `updatePortfolioItem` mutation enforces full-replace semantics on
+ * `PortfolioItemUpdateInput` non-null fields. Verified live 2026-05-16
+ * (probe `.tmp/probe-portfolio-update-shape2.mjs`): the update input
+ * shape DIFFERS from create:
+ *
+ *   - GQL-level non-null required: `showViaToptal`, `skills`.
+ *   - USER_ERROR (`code: blank`) if missing: `description` (≥200 chars),
+ *     `publicationPermit`, `industries` (i.e. `industryIds`).
+ *   - **NOT defined** on `PortfolioItemUpdateInput` (rejected at GQL
+ *     layer): `kind`, `coverImage`. These are write-once on create; to
+ *     change a cover, the caller goes through `uploadCover()` →
+ *     separate mutation, not via `update`.
+ *
+ * To preserve the partial-update UX over the full-replace wire shape,
+ * this function does read-modify-write: fetch the current item, merge
+ * caller's `changes` on top of the current state, then send the merged
+ * input. The mutation response carries the full post-mutation list,
+ * which is returned to callers as `PortfolioItem[]`.
+ *
+ * The function ACCEPTS the broader `PortfolioItemInput` shape (which
+ * still types `kind` / `coverImage`) so callers don't need a separate
+ * partial type, but it INTENTIONALLY DROPS those fields from the merged
+ * payload before sending — keeping them would surface a confusing
+ * "Field is not defined on PortfolioItemUpdateInput" GraphQL error.
  */
 export async function update(token: string, id: string, changes: PortfolioItemInput): Promise<PortfolioItem[]> {
   if (Object.keys(changes).length === 0) {
     throw new PortfolioError("VALIDATION_ERROR", "Portfolio update requires at least one field.");
   }
+  // Read-modify-write: fetch current state of the target item so we can
+  // satisfy the server's non-null requirements on update. `list()` is the
+  // single source of truth for the current shape — using it keeps the
+  // selection-set in sync with `mapPortfolioNode`.
+  const current = (await list(token)).find((it) => it.id === id);
+  if (!current) {
+    throw new PortfolioError("VALIDATION_ERROR", `Portfolio item ${id} not found.`);
+  }
+  // Build the merged input: current state as base, caller's `changes` as
+  // overrides. The wire shape uses `industryIds: string[]` (catalog IDs)
+  // whereas the read shape returns `industries: { id, name }[]` — bridge
+  // by projecting current.industries to ids. Caller's `industryIds`
+  // (when supplied via `changes`) wins over the projected current set.
+  //
+  // Conditional spread is required by `exactOptionalPropertyTypes: true`:
+  // a `T?: string` field cannot be assigned `undefined` (only omitted or
+  // a value), so each potentially-null current field becomes a `&& {...}`
+  // spread that contributes nothing when the current value is null.
+  //
+  // `kind` and `coverImage` are intentionally NOT spread from current —
+  // `PortfolioItemUpdateInput` does not define them. Caller's `changes`
+  // are merged below; we strip these two fields out of the final payload.
+  const merged: PortfolioItemInput = {
+    ...(current.title !== null && { title: current.title }),
+    ...(current.description !== null && { description: current.description }),
+    ...(current.link !== null && { link: current.link }),
+    ...(current.websiteUrl !== null && { websiteUrl: current.websiteUrl }),
+    ...(current.accomplishment !== null && { accomplishment: current.accomplishment }),
+    ...(current.publicationPermit !== null && { publicationPermit: current.publicationPermit }),
+    ...(current.clientOrCompanyName !== null && { clientOrCompanyName: current.clientOrCompanyName }),
+    ...(current.toptalRelated !== null && { toptalRelated: current.toptalRelated }),
+    ...(current.showViaToptal !== null && { showViaToptal: current.showViaToptal }),
+    highlight: current.highlight,
+    skills: current.skills,
+    industryIds: current.industries.map((i) => i.id),
+    ...changes,
+  };
+  // Strip the two fields rejected by `PortfolioItemUpdateInput` even if
+  // a caller passed them in `changes` — the typed `PortfolioItemInput`
+  // is shared with `add()` which DOES accept them. Deleting here keeps
+  // the call-site UX uniform: callers can pass `kind` / `coverImage`
+  // through the same typed dict; we'll quietly drop them on the update
+  // path rather than crashing with a server-side GraphQL error.
+  delete merged.kind;
+  delete merged.coverImage;
   const variables: { input: UpdatePortfolioItemInput } = {
-    input: { portfolioItemId: id, portfolioItem: changes },
+    input: { portfolioItemId: id, portfolioItem: merged },
   };
   const res = await withTransportErrors("updatePortfolioItem", async () =>
     impersonatedTransport({
@@ -470,20 +727,7 @@ const REMOVE_PORTFOLIO_ITEM_MUTATION = `mutation removePortfolioItem($input: Rem
     profile {
       id
       portfolioItems {
-        nodes {
-          id
-          title
-          description
-          link
-          highlight
-          coverImage
-          accomplishment
-          publicationPermit
-          clientOrCompanyName
-          websiteUrl
-          toptalRelated
-          showViaToptal
-        }
+        nodes { ${PORTFOLIO_NODE_SELECTION} }
       }
     }
     success
@@ -527,20 +771,7 @@ const CHANGE_PORTFOLIO_ITEM_POSITION_MUTATION = `mutation changePortfolioItemPos
     profile {
       id
       portfolioItems {
-        nodes {
-          id
-          title
-          description
-          link
-          highlight
-          coverImage
-          accomplishment
-          publicationPermit
-          clientOrCompanyName
-          websiteUrl
-          toptalRelated
-          showViaToptal
-        }
+        nodes { ${PORTFOLIO_NODE_SELECTION} }
       }
     }
     success
@@ -559,12 +790,20 @@ const CHANGE_PORTFOLIO_ITEM_POSITION_MUTATION = `mutation changePortfolioItemPos
  * `--after <id>` flags to this absolute position; the helpers
  * {@link positionBefore} / {@link positionAfter} compute the position
  * given the current list.
+ *
+ * Wire shape (verified live 2026-05-16, probe
+ * `.tmp/probe-portfolio-reorder.mjs`): the position lives INSIDE
+ * `portfolioItem: { position: Int! }` — NOT at the top level of
+ * `ChangePortfolioItemPositionInput`. The naive `{ portfolioItemId,
+ * position }` shape is rejected with "Field is not defined on
+ * ChangePortfolioItemPositionInput" (for `position`) and
+ * "portfolioItem (Expected value to not be null)".
  */
 export async function reorder(token: string, id: string, position: number): Promise<PortfolioItem[]> {
   if (!Number.isInteger(position) || position < 0) {
     throw new PortfolioError("VALIDATION_ERROR", "Portfolio reorder position must be a non-negative integer.");
   }
-  const variables = { input: { portfolioItemId: id, position } };
+  const variables = { input: { portfolioItemId: id, portfolioItem: { position } } };
   const res = await withTransportErrors("changePortfolioItemPosition", async () =>
     impersonatedTransport({
       surface: "talent-profile",
@@ -591,9 +830,23 @@ export async function reorder(token: string, id: string, position: number): Prom
  * `changePortfolioItemPosition` takes an absolute index, not a relative
  * one — the CLI computes the index from a friendlier neighbour-anchored
  * flag.
+ *
+ * Verified live 2026-05-16: the server interprets `position` against the
+ * POST-REMOVAL list (i.e. it first removes the moving item, then inserts
+ * at `position`). Valid range is `[0, N-1]` where `N` is the original
+ * list length; `position = N` (= the naive "after the last item")
+ * returns `USER_ERROR code: invalidPosition` ("Position should be
+ * greater or equal to 0 and less than the number of items").
+ *
+ * When `movingId` is supplied AND points at an item that exists in
+ * `items`, that item is filtered out before computing the target's
+ * index — this correctly handles the case where the moving item is
+ * already in the list and sits before the target (removing it shifts
+ * the target left by 1).
  */
-export function positionBefore(items: PortfolioItem[], targetId: string): number | null {
-  const idx = items.findIndex((it) => it.id === targetId);
+export function positionBefore(items: PortfolioItem[], targetId: string, movingId?: string): number | null {
+  const filtered = movingId !== undefined ? items.filter((it) => it.id !== movingId) : items;
+  const idx = filtered.findIndex((it) => it.id === targetId);
   return idx === -1 ? null : idx;
 }
 
@@ -601,9 +854,18 @@ export function positionBefore(items: PortfolioItem[], targetId: string): number
  * Compute the absolute position the moved item should land at, given a
  * target item to be placed AFTER. Returns `null` if `targetId` is not in
  * the list.
+ *
+ * Same post-removal semantics as {@link positionBefore} — pass the
+ * `movingId` so the helper can filter it out of `items` before
+ * computing the target's index. Without `movingId`, the helper assumes
+ * the moving item is not present and computes `idx + 1` directly; that
+ * value will be one too high for the common "move A `--after` B" CLI
+ * flow when both items are in the list and A is before B, and the
+ * server will reject it.
  */
-export function positionAfter(items: PortfolioItem[], targetId: string): number | null {
-  const idx = items.findIndex((it) => it.id === targetId);
+export function positionAfter(items: PortfolioItem[], targetId: string, movingId?: string): number | null {
+  const filtered = movingId !== undefined ? items.filter((it) => it.id !== movingId) : items;
+  const idx = filtered.findIndex((it) => it.id === targetId);
   return idx === -1 ? null : idx + 1;
 }
 

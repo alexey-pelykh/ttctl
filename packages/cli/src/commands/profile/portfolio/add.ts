@@ -23,6 +23,7 @@ export async function runProfilePortfolioAdd(options: {
   url?: string;
   link?: string;
   cover?: string;
+  industryId?: string[];
   output: OutputFormat;
 }): Promise<void> {
   let description: string | undefined;
@@ -51,6 +52,21 @@ export async function runProfilePortfolioAdd(options: {
       prettySummary: "portfolio add failed (VALIDATION_ERROR): --url and --link cannot disagree.",
     });
   }
+  if (options.industryId === undefined || options.industryId.length === 0) {
+    emitErrorAndExit({
+      operation: "profile.portfolio.add",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message:
+            "--industry-id is required (at least one). " +
+            'Discover catalog IDs via `ttctl profile industries autocomplete "<query>"`.',
+        },
+      ],
+      prettySummary: "portfolio add failed (VALIDATION_ERROR): --industry-id is required.",
+    });
+  }
   const link = options.link ?? options.url;
   const token = await loadAuthTokenOrExit("portfolio add", options.output);
 
@@ -69,8 +85,12 @@ export async function runProfilePortfolioAdd(options: {
     }
   }
 
-  const input: profile.portfolio.PortfolioItemInput = {
+  // `options.industryId` is verified non-empty above (emitErrorAndExit
+  // short-circuits) — narrow for TypeScript's benefit.
+  const industryIds: string[] = options.industryId;
+  const input: profile.portfolio.PortfolioItemAddInput = {
     title: options.title,
+    industryIds,
   };
   if (description !== undefined) input.description = description;
   if (link !== undefined) input.link = link;

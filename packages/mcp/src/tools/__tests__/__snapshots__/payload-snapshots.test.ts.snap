@@ -265,7 +265,20 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
     "clientOrCompanyName": "Acme Financial",
     "websiteUrl": "https://example.com/acme",
     "toptalRelated": true,
-    "showViaToptal": true
+    "showViaToptal": true,
+    "kind": "classic",
+    "skills": [
+      {
+        "id": "sk_test_typescript",
+        "name": "TypeScript"
+      }
+    ],
+    "industries": [
+      {
+        "id": "ind_test_finance",
+        "name": "Financial Software"
+      }
+    ]
   },
   {
     "id": "port_test_002",
@@ -279,7 +292,20 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
     "clientOrCompanyName": "Mercury Health",
     "websiteUrl": "https://example.com/mercury",
     "toptalRelated": false,
-    "showViaToptal": true
+    "showViaToptal": true,
+    "kind": "code_base",
+    "skills": [
+      {
+        "id": "sk_test_typescript",
+        "name": "TypeScript"
+      }
+    ],
+    "industries": [
+      {
+        "id": "ind_test_healthcare",
+        "name": "Healthcare Software"
+      }
+    ]
   },
   {
     "id": "port_test_003",
@@ -293,7 +319,20 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
     "clientOrCompanyName": "Stellar Logistics",
     "websiteUrl": null,
     "toptalRelated": false,
-    "showViaToptal": false
+    "showViaToptal": false,
+    "kind": "basic",
+    "skills": [
+      {
+        "id": "sk_test_typescript",
+        "name": "TypeScript"
+      }
+    ],
+    "industries": [
+      {
+        "id": "ind_test_software",
+        "name": "Software"
+      }
+    ]
   }
 ]"
 `;
@@ -312,7 +351,20 @@ exports[`MCP profile_portfolio — payload snapshots > payload: single portfolio
     "clientOrCompanyName": "Acme Financial",
     "websiteUrl": "https://example.com/acme",
     "toptalRelated": true,
-    "showViaToptal": true
+    "showViaToptal": true,
+    "kind": "classic",
+    "skills": [
+      {
+        "id": "sk_test_typescript",
+        "name": "TypeScript"
+      }
+    ],
+    "industries": [
+      {
+        "id": "ind_test_finance",
+        "name": "Financial Software"
+      }
+    ]
   }
 ]"
 `;

@@ -40,6 +40,11 @@ export function buildProfilePortfolioCommand(): Command {
     .option("--url <url>", "primary URL for the item (alias for --link)")
     .option("--link <url>", "primary URL for the item (canonical flag, equivalent to --url)")
     .option("--cover <file>", "path to a cover-image file to upload alongside the item")
+    .option(
+      "--industry-id <id>",
+      'catalog Industry id (repeatable; required — at least one). Discover via `ttctl profile industries autocomplete "<query>"`.',
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -53,6 +58,7 @@ export function buildProfilePortfolioCommand(): Command {
         url?: string;
         link?: string;
         cover?: string;
+        industryId?: string[];
         output: OutputFormat;
       }) => {
         await runProfilePortfolioAdd(options);

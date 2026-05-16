@@ -104,6 +104,9 @@ export const PORTFOLIO_DISTRIBUTED_LEDGER: PortfolioItem = {
   websiteUrl: "https://example.com/acme",
   toptalRelated: true,
   showViaToptal: true,
+  kind: "classic",
+  skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
+  industries: [{ id: "ind_test_finance", name: "Financial Software" }],
 };
 
 export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
@@ -122,6 +125,9 @@ export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
   websiteUrl: "https://example.com/mercury",
   toptalRelated: false,
   showViaToptal: true,
+  kind: "code_base",
+  skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
+  industries: [{ id: "ind_test_healthcare", name: "Healthcare Software" }],
 };
 
 export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
@@ -140,6 +146,9 @@ export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
   websiteUrl: null,
   toptalRelated: false,
   showViaToptal: false,
+  kind: "basic",
+  skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
+  industries: [{ id: "ind_test_software", name: "Software" }],
 };
 
 // -----------------------------------------------------------------------
