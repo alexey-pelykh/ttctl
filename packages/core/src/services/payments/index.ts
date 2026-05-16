@@ -316,9 +316,14 @@ export interface RateChangeRequest {
 
 /**
  * Per-commitment market insight returned by `RateChangeFormDetails`.
+ *
+ * `currentRateCompetitive` is `Boolean!` per the synthesized SDL — and
+ * the live wire returns a JSON boolean (verified 2026-05-16, issue
+ * #319). Pre-#319, the hand-rolled type widened this to `string | null`
+ * defensively; the T2 Zod runtime validator caught the drift.
  */
 export interface RateMarketInsight {
-  currentRateCompetitive: string | null;
+  currentRateCompetitive: boolean | null;
   recentApplicationRate: string | null;
   recommendedRate: string | null;
 }
@@ -327,10 +332,15 @@ export interface RateMarketInsight {
  * Server-side validation rules for the hourly-rate input. Used by
  * `rate.show()` to surface the floor / step that the
  * `CreateRateChangeRequest` mutation would otherwise reject silently.
+ *
+ * `rateStep` is `Int!` per the synthesized SDL — and the live wire
+ * returns a JSON number (verified 2026-05-16, issue #319). Pre-#319,
+ * the hand-rolled type widened this to `string | null` defensively;
+ * the T2 Zod runtime validator caught the drift.
  */
 export interface RateValidation {
   minRate: string | null;
-  rateStep: string | null;
+  rateStep: number | null;
 }
 
 /**
@@ -610,7 +620,7 @@ interface WireRateChangeRequest {
 }
 
 interface WireRateInsightForCommitment {
-  currentRateCompetitive: string | null;
+  currentRateCompetitive: boolean | null;
   recentApplicationRate: string | null;
   recommendedRate: string | null;
 }
@@ -641,7 +651,7 @@ interface LastRateChangeRequestResponse {
 
 interface WireTalentRateValidationRule {
   minRate: string | null;
-  rateStep: string | null;
+  rateStep: number | null;
 }
 
 interface WirePlatformConfigurationRateRules {
@@ -696,24 +706,18 @@ interface WirePlatformConfiguration {
  *     (boolean), and `TalentRateValidationRule.rateStep: Int!`
  *     (number). The hand-rolled service-layer types
  *     (`WireViewerRoleRates`, `WireRateInsightForCommitment`,
- *     `WireTalentRateValidationRule`) declare these as
- *     `string | null` / `string | null` / `string | null` —
- *     defensively widened from the SDL. The inline schemas here
- *     mirror the HAND-ROLLED service expectations rather than the
- *     SDL truth so this PR does NOT introduce a cascading service-
- *     layer type breakage: validating against the SDL would trip on
- *     existing unit fixtures (which carry the hand-rolled widened
- *     shape, e.g., `currentRateCompetitive: "Competitive"`) and
- *     would require downstream type updates (`RateMarketInsight`,
- *     CLI formatters, MCP tool envelopes) — out of beachhead scope.
+ *     `WireTalentRateValidationRule`) declare `hourly` as
+ *     `string | null` (defensive null tolerance) and now declare
+ *     `currentRateCompetitive` as `boolean | null` and `rateStep` as
+ *     `number | null` (SDL-aligned per #319 — pre-#319 they were
+ *     widened to `string | null`, the T2 Zod validator caught the
+ *     drift on the live wire on 2026-05-15).
  *
  * Schema/contract rule disposition: NOT triggered. The wire shape
- * being validated is the SAME shape the hand-rolled types already
- * encode; the schema is a structural mirror, not a NEW inferred
- * contract. Follow-up work to reconcile the SDL/hand-rolled
- * `currentRateCompetitive` / `rateStep` types belongs in a separate
- * issue (and would be the natural Z-4-follow-up beachhead once the
- * downstream cascade is sized).
+ * being validated is the SAME shape the hand-rolled types now
+ * encode; the schema is a structural mirror. Issue #319 reconciled
+ * the `currentRateCompetitive` / `rateStep` types with the SDL truth
+ * and the live wire (post-Z-4 beachhead follow-up).
  *
  * Vertical is `.optional()` because the existing in-tree unit
  * fixtures for `rate.show` don't carry it (the hand-rolled
@@ -743,7 +747,8 @@ const RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA = z.object({
             .object({
               hourly: z
                 .object({
-                  currentRateCompetitive: z.string().nullable(),
+                  // `Boolean!` per SDL; live wire returns JSON boolean (#319).
+                  currentRateCompetitive: z.boolean().nullable(),
                   recentApplicationRate: z.string().nullable(),
                   recommendedRate: z.string().nullable(),
                 })
@@ -762,7 +767,8 @@ const RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA = z.object({
           hourly: z
             .object({
               minRate: z.string().nullable(),
-              rateStep: z.string().nullable(),
+              // `Int!` per SDL; live wire returns JSON number (#319).
+              rateStep: z.number().nullable(),
             })
             .nullable(),
         })

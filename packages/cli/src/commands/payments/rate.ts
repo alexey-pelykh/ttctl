@@ -204,7 +204,9 @@ export function formatRateShow(p: payments.RateProjection): string {
     lines.push("");
     lines.push("Market insight (hourly)");
     if (p.marketInsight.currentRateCompetitive !== null) {
-      lines.push(`  Current rate vs market: ${p.marketInsight.currentRateCompetitive}`);
+      lines.push(
+        `  Current rate vs market: ${p.marketInsight.currentRateCompetitive ? "competitive" : "below market"}`,
+      );
     }
     if (p.marketInsight.recommendedRate !== null) {
       lines.push(`  Recommended rate:       ${p.marketInsight.recommendedRate}`);
