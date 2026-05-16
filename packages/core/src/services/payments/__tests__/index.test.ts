@@ -304,7 +304,7 @@ const ROLE_FIXTURE = {
     __typename: "RateInsight",
     hourly: {
       __typename: "TalentRateInsightForCommitment",
-      currentRateCompetitive: "Competitive",
+      currentRateCompetitive: true,
       recentApplicationRate: "98",
       recommendedRate: "100",
     },
@@ -334,7 +334,7 @@ describe("rate.show", () => {
               id: "cfg-1",
               rateValidationRules: {
                 __typename: "RateValidationRules",
-                hourly: { __typename: "TalentRateValidationRule", minRate: "30", rateStep: "5" },
+                hourly: { __typename: "TalentRateValidationRule", minRate: "30", rateStep: 5 },
               },
             },
           },
@@ -483,7 +483,7 @@ describe("rate.show schema validation (Z-4 / #288)", () => {
               id: "cfg-1",
               rateValidationRules: {
                 __typename: "TalentRateValidationRules",
-                hourly: { __typename: "TalentRateValidationRule", minRate: "30", rateStep: "5" },
+                hourly: { __typename: "TalentRateValidationRule", minRate: "30", rateStep: 5 },
               },
             },
           },
