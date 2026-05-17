@@ -366,10 +366,11 @@ export async function show(token: string): Promise<ProfileShowQuery> {
 // only carries a flat `photo.large` URL).
 //
 // The function is independent of `show()` — internal callers that only
-// need `profileId` (e.g. `set`, `photoShow`, the sibling sub-domains'
-// `resolveProfileId` helpers) keep using the cheap mobile-gateway-only
-// `show()` path; only the CLI / MCP `basic show` surface (post-#129
-// formatter rewrite) pays the cost of the second talent-profile call.
+// need `profileId` (e.g. `set`, `photoShow`, every sibling sub-domain's
+// call to the shared `extractProfileId` helper in `../shared.ts`) keep
+// using the cheap mobile-gateway-only `show()` path; only the CLI / MCP
+// `basic show` surface (post-#129 formatter rewrite) pays the cost of
+// the second talent-profile call.
 //
 // The selection set is a deliberate subset of the canonical
 // `GET_BASIC_INFO` operation (research/graphql/talent_profile/operations/
