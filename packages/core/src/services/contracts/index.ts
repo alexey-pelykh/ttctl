@@ -63,11 +63,9 @@
 
 import type { z } from "zod";
 
-import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { impersonatedTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
-import { extractProfileId, isAuthRevokedExtensionCode } from "../profile/shared.js";
+import { callGatewayShared } from "../_shared/transport.js";
+import type { GraphQLErrorEntry } from "../profile/shared.js";
+import { extractProfileId } from "../profile/shared.js";
 
 // ---------------------------------------------------------------------
 // Error taxonomy
@@ -101,6 +99,7 @@ import { extractProfileId, isAuthRevokedExtensionCode } from "../profile/shared.
  */
 export type ContractsErrorCode =
   | "NO_TALENT"
+  | "NO_VIEWER"
   | "NOT_FOUND"
   | "GRAPHQL_ERROR"
   | "NETWORK_ERROR"
@@ -234,11 +233,6 @@ const GET_CONTRACTS_QUERY = `query GetContracts($profileId: ID!) {
 // Wire shape (best-effort, INFERRED)
 // ---------------------------------------------------------------------
 
-interface GraphQLErrorEntry {
-  message?: string | null;
-  extensions?: { code?: string | null } | null;
-}
-
 interface WireContract {
   id: string;
   kind: string | null;
@@ -283,6 +277,20 @@ const NOT_FOUND_MESSAGE_PATTERN = /Record not found/i;
 // Transport helper
 // ---------------------------------------------------------------------
 
+/**
+ * Thin per-service wrapper around {@link callGatewayShared} (issue
+ * #329). Pins the talent-profile surface and the {@link ContractsError}
+ * domain class.
+ *
+ * The `Record not found` → `NOT_FOUND` remap previously lived inside
+ * the local helper. It's now applied at the {@link list} call site via
+ * a `GRAPHQL_ERROR` → `NOT_FOUND` translation (matching the pattern
+ * used in `applications.show()`, `jobs.show()`, `timesheet.resolve()`).
+ * The remap is defensive — the primary `show()` path filters
+ * client-side, but the gateway might surface `Record not found` as a
+ * top-level GraphQL error if a future `viewer.contract(id:)` lookup
+ * ever lands.
+ */
 async function callTalentProfile<T>(
   token: string,
   operationName: string,
@@ -290,51 +298,15 @@ async function callTalentProfile<T>(
   variables: Record<string, unknown>,
   schema?: z.ZodType<T>,
 ): Promise<T> {
-  let res: TransportResponse;
-  try {
-    res = await impersonatedTransport({
-      surface: "talent-profile",
-      authToken: token,
-      body: { operationName, query, variables },
-    });
-  } catch (err) {
-    if (err instanceof TtctlError) throw err;
-    throw new ContractsError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-
-  if (res.status === 401) {
-    throw new AuthRevokedError("Session is invalid or expired.");
-  }
-  if (res.status < 200 || res.status >= 300) {
-    throw new ContractsError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
-  }
-
-  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
-  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
-    const first = body.errors[0];
-    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
-      throw new AuthRevokedError("Session is invalid or expired.");
-    }
-    const message = first?.message ?? "GraphQL error";
-    if (NOT_FOUND_MESSAGE_PATTERN.test(message)) {
-      throw new ContractsError("NOT_FOUND", `Contract not found: ${message}`);
-    }
-    throw new ContractsError("GRAPHQL_ERROR", `${operationName} failed: ${message}`);
-  }
-  if (!body?.data) {
-    throw new ContractsError("UNKNOWN", `${operationName} response had no \`data\` field`);
-  }
-  if (schema !== undefined) {
-    const parsed = schema.safeParse(body.data);
-    if (!parsed.success) {
-      const payload = buildWireShapeError(operationName, parsed.error, body.data);
-      throw new ContractsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
-    }
-    return parsed.data;
-  }
-  return body.data;
+  return callGatewayShared<T, ContractsError>(
+    "talent-profile",
+    token,
+    operationName,
+    query,
+    variables,
+    ContractsError,
+    { schema },
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -395,9 +367,30 @@ function projectContract(wire: WireContract): Contract {
  */
 export async function list(token: string): Promise<Contract[]> {
   const profileId = await extractProfileId(token);
-  const data = await callTalentProfile<GetContractsResponse["data"]>(token, "GetContracts", GET_CONTRACTS_QUERY, {
-    profileId,
-  });
+  let data: GetContractsResponse["data"];
+  try {
+    data = await callTalentProfile<GetContractsResponse["data"]>(token, "GetContracts", GET_CONTRACTS_QUERY, {
+      profileId,
+    });
+  } catch (err) {
+    // Defensive: if the portal surface ever switches to returning
+    // `Record not found` as a top-level GraphQL error for the
+    // contracts list (e.g. through a `viewer.contract(id:)` lookup
+    // path), surface it as the typed `NOT_FOUND` code instead of the
+    // generic `GRAPHQL_ERROR`. Matches the pattern used in
+    // `applications.show()` / `jobs.show()` / `timesheet.resolve()`.
+    //
+    // The wire-level GraphQL message is lifted off `err.cause` (set
+    // by `callGatewayShared` to the offending `GraphQLErrorEntry`) so
+    // the user-facing message stays "Contract not found: <wire-reason>"
+    // — without the `${operationName} failed:` prefix that lives in
+    // `err.message`.
+    if (err instanceof ContractsError && err.code === "GRAPHQL_ERROR" && NOT_FOUND_MESSAGE_PATTERN.test(err.message)) {
+      const wireMessage = (err.cause as GraphQLErrorEntry | undefined)?.message ?? "Record not found";
+      throw new ContractsError("NOT_FOUND", `Contract not found: ${wireMessage}`, { cause: err });
+    }
+    throw err;
+  }
   if (data === null || data === undefined) {
     throw new ContractsError("UNKNOWN", "GetContracts returned no `data` payload.");
   }
