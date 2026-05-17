@@ -31,12 +31,17 @@
  * pattern as `applications` and `profile.skills` mutations. The
  * captured operations live in
  * `../research/graphql/gateway/operations/mobile/`:
- *   - `EngagementBreaks.graphql` — used verbatim
- *   - `CreateEngagementBreak.graphql` — used verbatim
+ *   - `EngagementBreaks.graphql` — extended (engagementBreakData fragment
+ *     selects `reason { identifier nameForRole }` per #346 so the reason
+ *     round-trips on the read shape; same divergence applied to the
+ *     create/reschedule mutation responses below)
+ *   - `CreateEngagementBreak.graphql` — extended (#346 reason selection)
  *   - `CancelEngagementBreak.graphql` — used verbatim
- *   - `RescheduleEngagementBreak.graphql` — used verbatim (#155)
+ *   - `RescheduleEngagementBreak.graphql` — extended (#346 reason selection;
+ *     unchanged input shape per #155)
  *   - `JobActivityItems.graphql` — derived (extended engagement projection)
- *   - `JobActivityItem.graphql` — derived (extended engagement projection)
+ *   - `JobActivityItem.graphql` — derived (extended engagement projection;
+ *     inlines the #346-extended engagementBreakData fragment)
  *
  * **CLAUDE.md schema/contract validation rule**: the operations here
  * are **[INFERRED — UNVERIFIED]** until the gated `*.e2e.test.ts` files
@@ -219,17 +224,32 @@ export interface EngagementBreakReason {
 }
 
 /**
- * Engagement break wire shape (matches the captured
- * `engagementBreakData` fragment). `operations` mirrors the schema's
- * `EngagementBreakOperations` projection — `callable` is a free-text
- * indicator the server returns to signal whether the operation is
- * available for this break (active vs cancelled vs already-removed).
+ * Engagement break wire shape (extends the captured
+ * `engagementBreakData` fragment with #346's reason projection).
+ *
+ * `operations` mirrors the schema's `EngagementBreakOperations`
+ * projection — `callable` is a free-text indicator the server returns
+ * to signal whether the operation is available for this break (active
+ * vs cancelled vs already-removed).
+ *
+ * `reason` is the server-side break reason (per #346). Shape mirrors
+ * the `FeedbackReason` schema type (same shape as
+ * {@link EngagementBreakReason}, which the catalog query
+ * {@link breaks.reasonsList} returns): `identifier` is the same value
+ * passed to `breaks.add` as `reasonIdentifier`, so the field
+ * round-trips the input; `nameForRole` is the human-readable label.
+ *
+ * The synthesized SDL marks the engagementBreaks list element type
+ * `[Unknown]!` (per `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`), so the
+ * wire-shape contract for this field is best-effort — confirmed at
+ * E2E time (TTCTL_E2E=1) against the live mobile-gateway.
  */
 export interface EngagementBreak {
   id: string;
   startDate: string;
   endDate: string;
   comment: string | null;
+  reason: EngagementBreakReason | null;
   operations: {
     removeEngagementBreak: { callable: string } | null;
     rescheduleEngagementBreak: { callable: string } | null;
@@ -320,6 +340,11 @@ export interface ListOptions {
 export interface AddBreakOptions {
   startDate: string;
   endDate: string;
+  // write-only: echoed at read time under `EngagementBreak.reason.identifier`
+  // — the wire returns the reason as a nested `FeedbackReason` object
+  // (#346), so the symmetric round-trip exists but cannot be detected by
+  // the symmetry gate's lexical field-name match (input is
+  // `reasonIdentifier`, output is `reason.identifier`).
   reasonIdentifier: string;
   comment?: string;
 }
@@ -557,6 +582,7 @@ fragment engagementBreakData on TalentEngagementBreak {
   startDate
   endDate
   comment
+  reason { __typename identifier nameForRole }
   operations {
     __typename
     removeEngagementBreak { __typename callable }
@@ -564,17 +590,26 @@ fragment engagementBreakData on TalentEngagementBreak {
   }
 }`;
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/EngagementBreaks.graphql`.
-const ENGAGEMENT_BREAKS_QUERY = `query EngagementBreaks($jobActivityItemId: ID!) { viewer { __typename id jobActivityItem(id: $jobActivityItemId) { __typename id engagement { __typename id engagementBreaks { __typename ...engagementBreakData } } } } }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
+// Captured from `../research/graphql/gateway/operations/mobile/EngagementBreaks.graphql`;
+// engagementBreakData fragment extended with `reason { identifier nameForRole }`
+// per #346 (write-only-field echo — input accepts reasonIdentifier; read
+// shape now exposes the reason). T1 wire-validation per
+// docs/wire-validation-routing.md.
+const ENGAGEMENT_BREAKS_QUERY = `query EngagementBreaks($jobActivityItemId: ID!) { viewer { __typename id jobActivityItem(id: $jobActivityItemId) { __typename id engagement { __typename id engagementBreaks { __typename ...engagementBreakData } } } } }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment reason { __typename identifier nameForRole } operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/CreateEngagementBreak.graphql`.
-const CREATE_ENGAGEMENT_BREAK_MUTATION = `mutation CreateEngagementBreak($engagementId: ID!, $startDate: Date!, $endDate: Date!, $reasonIdentifier: String!, $comment: String) { engagement(id: $engagementId) { __typename createBreak(input: { startDate: $startDate endDate: $endDate reasonIdentifier: $reasonIdentifier comment: $comment } ) { __typename ...mutationResultFields break { __typename ...engagementBreakData engagement { __typename id engagementBreaks { __typename id } } } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
+// Captured from `../research/graphql/gateway/operations/mobile/CreateEngagementBreak.graphql`;
+// engagementBreakData fragment extended per #346 so the post-mutation
+// read shape echoes the reason that was just written.
+const CREATE_ENGAGEMENT_BREAK_MUTATION = `mutation CreateEngagementBreak($engagementId: ID!, $startDate: Date!, $endDate: Date!, $reasonIdentifier: String!, $comment: String) { engagement(id: $engagementId) { __typename createBreak(input: { startDate: $startDate endDate: $endDate reasonIdentifier: $reasonIdentifier comment: $comment } ) { __typename ...mutationResultFields break { __typename ...engagementBreakData engagement { __typename id engagementBreaks { __typename id } } } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment reason { __typename identifier nameForRole } operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/CancelEngagementBreak.graphql`.
 const CANCEL_ENGAGEMENT_BREAK_MUTATION = `mutation CancelEngagementBreak($engagementBreakId: ID!) { engagementBreak(id: $engagementBreakId) { __typename cancel(input: {  } ) { __typename ...mutationResultFields break { __typename id engagement { __typename id engagementBreaks { __typename id } } } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }`;
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/RescheduleEngagementBreak.graphql` (#155).
-const RESCHEDULE_ENGAGEMENT_BREAK_MUTATION = `mutation RescheduleEngagementBreak($engagementBreakId: ID!, $startDate: Date!, $endDate: Date!) { engagementBreak(id: $engagementBreakId) { __typename reschedule(input: { startDate: $startDate endDate: $endDate } ) { __typename ...mutationResultFields break { __typename ...engagementBreakData } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
+// Captured from `../research/graphql/gateway/operations/mobile/RescheduleEngagementBreak.graphql` (#155);
+// engagementBreakData fragment extended per #346 — the reschedule
+// mutation preserves the original reason server-side, so the response
+// now echoes it for the caller.
+const RESCHEDULE_ENGAGEMENT_BREAK_MUTATION = `mutation RescheduleEngagementBreak($engagementBreakId: ID!, $startDate: Date!, $endDate: Date!) { engagementBreak(id: $engagementBreakId) { __typename reschedule(input: { startDate: $startDate endDate: $endDate } ) { __typename ...mutationResultFields break { __typename ...engagementBreakData } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment engagementBreakData on TalentEngagementBreak { __typename id startDate endDate comment reason { __typename identifier nameForRole } operations { __typename removeEngagementBreak { __typename callable } rescheduleEngagementBreak { __typename callable } } }`;
 
 // Minimal projection on `PlatformConfiguration` — we only need the
 // `engagementBreakReasons` field for the reasons-catalog discovery

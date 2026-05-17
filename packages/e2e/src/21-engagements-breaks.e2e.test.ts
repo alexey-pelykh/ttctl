@@ -161,7 +161,12 @@ describe("engagements breaks (live mobile-gateway)", () => {
     const addPayload = JSON.parse(addResult.stdout) as {
       ok?: boolean;
       operation?: string;
-      created?: { id?: string; startDate?: string; endDate?: string };
+      created?: {
+        id?: string;
+        startDate?: string;
+        endDate?: string;
+        reason?: { identifier?: string; nameForRole?: string } | null;
+      };
     };
     expect(addPayload.ok).toBe(true);
     expect(addPayload.operation).toBe("engagements.breaks.add");
@@ -170,15 +175,31 @@ describe("engagements breaks (live mobile-gateway)", () => {
     if (typeof newBreakId !== "string") return;
     expect(addPayload.created?.startDate).toBe(startDate);
     expect(addPayload.created?.endDate).toBe(endDate);
+    // #346: reason round-trips on the post-mutation read shape. The
+    // identifier we passed as `--reason-id other` must echo as
+    // `created.reason.identifier`. `nameForRole` is server-supplied
+    // (from the FeedbackReason catalog) — assert it's a non-empty
+    // string rather than pinning a specific label so a server-side
+    // copy change doesn't break the test.
+    expect(addPayload.created?.reason?.identifier).toBe("other");
+    expect(typeof addPayload.created?.reason?.nameForRole).toBe("string");
+    expect(addPayload.created?.reason?.nameForRole?.length).toBeGreaterThan(0);
 
     try {
-      // Step 5: verify the new break appears in `breaks list`.
+      // Step 5: verify the new break appears in `breaks list` AND the
+      // reason is preserved on the read path (#346 — same wire shape
+      // as the post-mutation echo, but via a separate query so this
+      // exercises the EngagementBreaks selection set).
       const postBreaksResult = await cli.run(["engagements", "breaks", "list", engagementId, "-o", "json"]);
       expect(postBreaksResult.exitCode).toBe(0);
-      const postBreaks = JSON.parse(postBreaksResult.stdout) as { items: Array<{ id?: string }> };
+      const postBreaks = JSON.parse(postBreaksResult.stdout) as {
+        items: Array<{ id?: string; reason?: { identifier?: string } | null }>;
+      };
       const postIds = new Set(postBreaks.items.map((b) => b.id).filter((id): id is string => typeof id === "string"));
       expect(postIds.has(newBreakId)).toBe(true);
       expect(postIds.size).toBe(preIds.size + 1);
+      const listedNewBreak = postBreaks.items.find((b) => b.id === newBreakId);
+      expect(listedNewBreak?.reason?.identifier).toBe("other");
     } finally {
       // Step 6 (always-runs): remove the break, regardless of whether the
       // post-add list assertion passed. The cleanup MUST run to avoid
@@ -419,7 +440,13 @@ describe("engagements breaks (live mobile-gateway)", () => {
         const reschedulePayload = JSON.parse(rescheduleResult.stdout) as {
           ok?: boolean;
           operation?: string;
-          updated?: { id?: string; startDate?: string; endDate?: string; comment?: string | null };
+          updated?: {
+            id?: string;
+            startDate?: string;
+            endDate?: string;
+            comment?: string | null;
+            reason?: { identifier?: string; nameForRole?: string } | null;
+          };
         };
         expect(reschedulePayload.ok).toBe(true);
         expect(reschedulePayload.operation).toBe("engagements.breaks.reschedule");
@@ -427,10 +454,16 @@ describe("engagements breaks (live mobile-gateway)", () => {
         //   1. Break id is preserved (in-place update, not delete-then-create).
         //   2. Dates reflect the target window.
         //   3. Comment is preserved server-side (wire mutation does not carry comment).
+        //   4. Reason is preserved server-side (#346 — wire mutation
+        //      does not carry reasonIdentifier; the server preserves the
+        //      original reason across the reschedule).
         expect(reschedulePayload.updated?.id).toBe(newBreakId);
         expect(reschedulePayload.updated?.startDate).toBe(target.startDate);
         expect(reschedulePayload.updated?.endDate).toBe(target.endDate);
         expect(reschedulePayload.updated?.comment).toBe("ttctl e2e reschedule test (auto-cleanup attempted)");
+        // Original reason was `--reason-id other` (Step 3 above); it
+        // should round-trip unchanged on the reschedule response.
+        expect(reschedulePayload.updated?.reason?.identifier).toBe("other");
 
         // Step 5: verify via `breaks list` that the new window is
         // reflected for the same break id (the source window is gone).

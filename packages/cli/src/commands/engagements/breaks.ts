@@ -262,27 +262,39 @@ export function formatReasonsTable(
 
 /**
  * Render the breaks list as a `cli-table3` table. Columns: id,
- * starts, ends, comment.
+ * starts, ends, reason, comment.
+ *
+ * The `reason` column surfaces the human-readable `nameForRole` (per
+ * #346); the underlying `identifier` round-trips on the JSON/YAML
+ * envelope for machine consumers. Empty string when the wire returned
+ * no reason (defensive — see `EngagementBreak.reason` shape notes).
  */
 export function formatBreaksTable(
   items: engagements.EngagementBreak[],
   terminalWidth: number = process.stdout.columns || 100,
 ): string {
   if (items.length === 0) {
-    const empty = new Table({ head: ["id", "starts", "ends", "comment"] });
+    const empty = new Table({ head: ["id", "starts", "ends", "reason", "comment"] });
     return empty.toString();
   }
   const idWidth = 22;
   const dateWidth = 12;
-  const remaining = Math.max(20, terminalWidth - idWidth - dateWidth - dateWidth - 12);
+  const reasonWidth = 18;
+  const remaining = Math.max(20, terminalWidth - idWidth - dateWidth - dateWidth - reasonWidth - 14);
   const commentWidth = Math.max(20, remaining);
   const table = new Table({
-    head: ["id", "starts", "ends", "comment"],
-    colWidths: [idWidth, dateWidth, dateWidth, commentWidth],
+    head: ["id", "starts", "ends", "reason", "comment"],
+    colWidths: [idWidth, dateWidth, dateWidth, reasonWidth, commentWidth],
     wordWrap: true,
   });
   for (const br of items) {
-    table.push([br.id, formatDate(br.startDate), formatDate(br.endDate), br.comment ?? ""]);
+    table.push([
+      br.id,
+      formatDate(br.startDate),
+      formatDate(br.endDate),
+      br.reason?.nameForRole ?? "",
+      br.comment ?? "",
+    ]);
   }
   return table.toString();
 }
@@ -290,12 +302,19 @@ export function formatBreaksTable(
 /**
  * Render a single break as a multi-line key:value entity. Used inside
  * the success-add envelope's `prettyEntity` slot.
+ *
+ * Reason renders as `Reason: <nameForRole> (<identifier>)` when present,
+ * so the user sees both the human-readable label and the round-tripped
+ * identifier they could supply to a future `breaks add --reason-id`.
  */
 export function formatBreakEntity(br: engagements.EngagementBreak): string {
   const lines: string[] = [];
   lines.push(`Id: ${br.id}`);
   lines.push(`Starts: ${formatDate(br.startDate)}`);
   lines.push(`Ends: ${formatDate(br.endDate)}`);
+  if (br.reason != null) {
+    lines.push(`Reason: ${br.reason.nameForRole} (${br.reason.identifier})`);
+  }
   if (br.comment != null && br.comment !== "") {
     lines.push(`Comment: ${br.comment}`);
   }

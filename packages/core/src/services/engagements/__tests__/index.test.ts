@@ -107,6 +107,11 @@ const BREAK_FIXTURE = {
   startDate: "2026-06-01",
   endDate: "2026-06-08",
   comment: "Vacation",
+  reason: {
+    __typename: "FeedbackReason",
+    identifier: "talent_on_vacation",
+    nameForRole: "On vacation",
+  },
   operations: {
     __typename: "EngagementBreakOperationsRefs",
     removeEngagementBreak: { __typename: "EngagementBreakOpsRef", callable: "true" },
@@ -345,11 +350,48 @@ describe("engagements.breaks.list", () => {
     const items = await breaks.list(TOKEN, "act-eng-1");
     expect(items).toHaveLength(1);
     expect(items[0]?.id).toBe("br-1");
+    // #346: reason field round-trips on the read shape (the write-only-field
+    // echo). Catalog shape (identifier + nameForRole) mirrors
+    // FeedbackReason / EngagementBreakReason. (Wire `__typename` passes
+    // through alongside the interface fields — same pattern as the
+    // outer EngagementBreak object — so the assertion uses
+    // `toMatchObject` to stay agnostic to that field.)
+    expect(items[0]?.reason).toMatchObject({
+      identifier: "talent_on_vacation",
+      nameForRole: "On vacation",
+    });
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "EngagementBreaks",
       variables: { jobActivityItemId: "act-eng-1" },
     });
+    // The query body must select the reason sub-fields per #346 — wire
+    // contract for the T1 op (schema gappy, no codegen-Zod path).
+    const queryStr = (call?.body as { query?: string } | undefined)?.query ?? "";
+    expect(queryStr).toContain("reason { __typename identifier nameForRole }");
+  });
+
+  it("exposes a null reason when the wire returns no reason (defensive)", async () => {
+    // The synthesized SDL marks the engagementBreaks list element
+    // `[Unknown]!` so the reason field's nullability on the wire is
+    // best-effort. Defensive: ensure callers receive null rather than a
+    // runtime TypeError when the wire omits the field.
+    const fixtureWithoutReason = { ...BREAK_FIXTURE, reason: null };
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityItem: {
+              id: "act-eng-1",
+              engagement: { id: "eng-1", engagementBreaks: [fixtureWithoutReason] },
+            },
+          },
+        },
+      },
+    });
+    const items = await breaks.list(TOKEN, "act-eng-1");
+    expect(items[0]?.reason).toBeNull();
   });
 
   it("returns [] when engagementBreaks is null", async () => {
@@ -437,6 +479,14 @@ describe("engagements.breaks.add", () => {
     expect(outcome.kind).toBe("applied");
     if (outcome.kind !== "applied") throw new Error("expected applied outcome");
     expect(outcome.result.id).toBe("br-1");
+    // #346: reason echoes on the post-mutation read shape — the same
+    // identifier the caller passed as `reasonIdentifier` round-trips
+    // back as `reason.identifier`. (`toMatchObject` for the same
+    // __typename-passthrough reason as the breaks.list test above.)
+    expect(outcome.result.reason).toMatchObject({
+      identifier: "talent_on_vacation",
+      nameForRole: "On vacation",
+    });
     expect(mockedStock).toHaveBeenCalledTimes(2);
     expect(mockedStock.mock.calls[0]?.[0]?.body).toMatchObject({ operationName: "EngagementBreaks" });
     expect(mockedStock.mock.calls[1]?.[0]?.body).toMatchObject({
@@ -449,6 +499,11 @@ describe("engagements.breaks.add", () => {
         comment: "Vacation",
       },
     });
+    // The mutation body must select the reason sub-fields on the
+    // post-mutation read shape (extended engagementBreakData fragment
+    // per #346).
+    const mutationQuery = (mockedStock.mock.calls[1]?.[0]?.body as { query?: string } | undefined)?.query ?? "";
+    expect(mutationQuery).toContain("reason { __typename identifier nameForRole }");
   });
 
   it("defaults comment to null when omitted; reasonIdentifier is required and forwarded verbatim", async () => {

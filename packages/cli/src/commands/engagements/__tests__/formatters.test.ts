@@ -64,6 +64,7 @@ const BREAK_FIXTURE: engagements.EngagementBreak = {
   startDate: "2026-06-01",
   endDate: "2026-06-08",
   comment: "Vacation",
+  reason: { identifier: "talent_on_vacation", nameForRole: "On vacation" },
   operations: {
     removeEngagementBreak: { callable: "true" },
     rescheduleEngagementBreak: { callable: "true" },
@@ -157,7 +158,15 @@ describe("formatEngagementDetail", () => {
   it("renders the Breaks section with each break inline when present", () => {
     const out = formatEngagementDetail({ ...DETAIL_FIXTURE, breaks: [BREAK_FIXTURE] });
     expect(out).toContain("Breaks (1)");
+    // #346: reason renders in brackets between the range and the comment.
+    expect(out).toContain("br-1: 2026-06-01 → 2026-06-08 [On vacation] — Vacation");
+  });
+
+  it("renders a break with no reason omitting the reason bracket (#346)", () => {
+    const noReason: engagements.EngagementBreak = { ...BREAK_FIXTURE, reason: null };
+    const out = formatEngagementDetail({ ...DETAIL_FIXTURE, breaks: [noReason] });
     expect(out).toContain("br-1: 2026-06-01 → 2026-06-08 — Vacation");
+    expect(out).not.toContain("[");
   });
 
   it("preserves description paragraph boundaries", () => {
@@ -186,36 +195,48 @@ describe("formatStatsPretty", () => {
 });
 
 describe("formatBreaksTable", () => {
-  it("renders rows with id, starts, ends, comment", () => {
+  it("renders rows with id, starts, ends, reason, comment", () => {
     const out = formatBreaksTable([BREAK_FIXTURE]);
     expect(out).toContain("br-1");
     expect(out).toContain("2026-06-01");
     expect(out).toContain("2026-06-08");
+    // #346: reason column shows the human-readable label.
+    expect(out).toContain("On vacation");
     expect(out).toContain("Vacation");
   });
 
-  it("renders empty header table when items is empty", () => {
+  it("renders empty header table when items is empty (#346 adds reason column)", () => {
     const out = formatBreaksTable([]);
     expect(out).toContain("id");
     expect(out).toContain("starts");
     expect(out).toContain("ends");
+    expect(out).toContain("reason");
     expect(out).toContain("comment");
   });
 
   it("handles null comment", () => {
     const out = formatBreaksTable([{ ...BREAK_FIXTURE, comment: null }]);
     expect(out).toContain("br-1");
-    // No "Vacation" string when comment is null
-    expect(out).not.toContain("Vacation");
+    // Comment cell empty when comment is null; only the row's own
+    // "Vacation" comment string is absent.
+    expect(out).not.toMatch(/\| Vacation /);
+  });
+
+  it("handles null reason (#346)", () => {
+    const out = formatBreaksTable([{ ...BREAK_FIXTURE, reason: null }]);
+    expect(out).toContain("br-1");
+    // Reason cell empty; the row's own "On vacation" string disappears.
+    expect(out).not.toContain("On vacation");
   });
 });
 
 describe("formatBreakEntity", () => {
-  it("renders id, starts, ends, comment when present", () => {
+  it("renders id, starts, ends, reason, comment when present (#346)", () => {
     const out = formatBreakEntity(BREAK_FIXTURE);
     expect(out).toContain("Id: br-1");
     expect(out).toContain("Starts: 2026-06-01");
     expect(out).toContain("Ends: 2026-06-08");
+    expect(out).toContain("Reason: On vacation (talent_on_vacation)");
     expect(out).toContain("Comment: Vacation");
   });
 
@@ -224,6 +245,11 @@ describe("formatBreakEntity", () => {
     expect(out1).not.toContain("Comment:");
     const out2 = formatBreakEntity({ ...BREAK_FIXTURE, comment: "" });
     expect(out2).not.toContain("Comment:");
+  });
+
+  it("omits the Reason line when reason is null (#346)", () => {
+    const out = formatBreakEntity({ ...BREAK_FIXTURE, reason: null });
+    expect(out).not.toContain("Reason:");
   });
 });
 
