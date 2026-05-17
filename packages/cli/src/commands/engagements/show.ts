@@ -145,8 +145,9 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
     lines.push(`Breaks (${item.breaks.length.toString()})`);
     for (const br of item.breaks) {
       const range = `${formatDate(br.startDate)} → ${formatDate(br.endDate)}`;
-      const comment = br.comment != null && br.comment !== "" ? ` — ${br.comment}` : "";
-      lines.push(`  ${br.id}: ${range}${comment}`);
+      const reasonSuffix = br.reason != null ? ` [${br.reason.nameForRole}]` : "";
+      const commentSuffix = br.comment != null && br.comment !== "" ? ` — ${br.comment}` : "";
+      lines.push(`  ${br.id}: ${range}${reasonSuffix}${commentSuffix}`);
     }
   }
 
