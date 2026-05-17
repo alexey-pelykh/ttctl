@@ -10,6 +10,7 @@ import { runProfileExternalCustomRequirementsSet } from "./custom-requirements-s
 import { runProfileExternalCustomRequirementsShow } from "./custom-requirements-show.js";
 import { runProfileExternalReadiness } from "./readiness.js";
 import { runProfileExternalRecommendations } from "./recommendations.js";
+import { runProfileExternalShow } from "./show.js";
 import { runProfileExternalUpdate } from "./update.js";
 
 /**
@@ -21,7 +22,8 @@ import { runProfileExternalUpdate } from "./update.js";
  * (notably: the `customRequirementsSet` boolean trio that supersedes the
  * issue's free-text-helper-#70 description).
  *
- * Six leaves:
+ * Seven leaves:
+ *   - show
  *   - update
  *   - custom-requirements show
  *   - custom-requirements set
@@ -33,6 +35,18 @@ export function buildProfileExternalCommand(): Command {
   const external = new Command("external").description(
     "View and update external profile links, custom requirements, readiness, and the advanced-profile wizard",
   );
+
+  external
+    .command("show")
+    .description("Show the stored external profile URLs (linkedin, github, website, twitter, behance, dribbble)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runProfileExternalShow(options.output);
+    });
 
   external
     .command("update")

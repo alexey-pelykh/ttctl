@@ -905,3 +905,127 @@ export async function advancedWizardShow(token: string): Promise<AdvancedProfile
     travelVisaIds,
   };
 }
+
+// -----------------------------------------------------------------------------
+// External profile URLs — `show` (read side of `update`)
+// -----------------------------------------------------------------------------
+
+/**
+ * Server-side state of the talent's external profile URLs. This is the
+ * **read** counterpart of {@link update} — the primary inspection path for
+ * the stored linkedin / github / website / twitter / behance / dribbble
+ * values.
+ *
+ * Prior to this leaf (issue #343) the `external` sub-domain shipped six
+ * service functions but **none** was a primary read for the stored URL
+ * state: `advancedWizardShow` intentionally trims its selection set to
+ * `advancedProfileWizardStatus + travelVisas` (see its doc comment), and
+ * `update`'s response is POST-state only (write-disguised-as-read). This
+ * type closes that asymmetry.
+ *
+ * The shape mirrors what {@link ExternalProfilesUpdate} **accepts** (all
+ * six URL fields), NOT what {@link UpdateExternalProfilesResult} echoes —
+ * the latter drops `twitter` (a separate companion gap on the mutation's
+ * response selection). `show` selects `twitter` directly from the
+ * `Profile` type, so it returns full six-field parity. Every URL is
+ * nullable because the server returns `null` for any link the talent has
+ * not set; `id` / `updatedByTalentAt` mirror the
+ * {@link UpdateExternalProfilesResult.profile} envelope fields.
+ */
+export interface ExternalProfiles {
+  id: string;
+  updatedByTalentAt: string | null;
+  linkedin: string | null;
+  github: string | null;
+  website: string | null;
+  twitter: string | null;
+  behance: string | null;
+  dribbble: string | null;
+}
+
+/**
+ * Full-document `getExternalProfiles` query. Reads the six external-URL
+ * fields directly off the `Profile` type via the `profile(id:)` root
+ * query — the same access pattern `GET_BASIC_INFO` uses (it selects the
+ * identical six URL fields). Mirrored at
+ * `research/graphql/talent_profile/operations/getExternalProfiles.graphql`.
+ *
+ * **INFERRED — UNVERIFIED**: the synthesized talent_profile SDL types
+ * every selected field as the `Unknown` placeholder (no live capture
+ * pinned a concrete type), so this operation is listed in
+ * `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` (codegen excludes it; T1
+ * wire-shape-snapshot disposition). The wire shape is exercised by
+ * `packages/e2e/src/42-profile-external-show.e2e.test.ts` (gated by
+ * `TTCTL_E2E=1`) per CLAUDE.md § Schema/contract validation rule.
+ */
+const GET_EXTERNAL_PROFILES_QUERY = `query getExternalProfiles($profileId: ID!) {
+  profile(id: $profileId) {
+    id
+    updatedByTalentAt
+    linkedin
+    github
+    website
+    twitter
+    behance
+    dribbble
+  }
+}`;
+
+interface GetExternalProfilesData {
+  profile?: {
+    id: string;
+    updatedByTalentAt?: unknown;
+    linkedin?: unknown;
+    github?: unknown;
+    website?: unknown;
+    twitter?: unknown;
+    behance?: unknown;
+    dribbble?: unknown;
+  } | null;
+}
+
+/**
+ * Read the talent's stored external profile URLs (linkedin / github /
+ * website / twitter / behance / dribbble) plus `id` and the last
+ * talent-side edit timestamp.
+ *
+ * This is the primary read for the external-URL state — use it instead of
+ * a no-op {@link update} (which is a write-disguised-as-read and risks an
+ * unintended write if the response is misinterpreted).
+ *
+ * Errors: `AuthRevokedError`, `ProfileError(GRAPHQL_ERROR)`,
+ * `ProfileError(NETWORK_ERROR)`, `ProfileError(NO_VIEWER)`, `Cf403Error`
+ * (and other `TtctlError` subclasses) propagate verbatim — same taxonomy
+ * as {@link customRequirementsShow} / {@link readiness}.
+ */
+export async function show(token: string): Promise<ExternalProfiles> {
+  const profileId = await extractProfileId(token);
+
+  const res = await withNetworkErrorMapping("External profiles show", () =>
+    impersonatedTransport({
+      surface: "talent-profile",
+      authToken: token,
+      body: {
+        operationName: "getExternalProfiles",
+        query: GET_EXTERNAL_PROFILES_QUERY,
+        variables: { profileId },
+      },
+    }),
+  );
+
+  const data = parseTalentProfileResponse(res, "External profiles show") as GetExternalProfilesData;
+  if (!data.profile) {
+    throw new ProfileError("NO_VIEWER", "External profiles query returned no profile.");
+  }
+  const p = data.profile;
+  return {
+    id: p.id,
+    updatedByTalentAt: coerceString(p.updatedByTalentAt),
+    linkedin: coerceString(p.linkedin),
+    github: coerceString(p.github),
+    website: coerceString(p.website),
+    twitter: coerceString(p.twitter),
+    behance: coerceString(p.behance),
+    dribbble: coerceString(p.dribbble),
+  };
+}

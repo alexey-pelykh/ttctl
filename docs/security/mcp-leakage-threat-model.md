@@ -315,7 +315,7 @@ and a primary OWASP LLM Top 10 (2025) reference.
 
 ## 5. Per-Tool Response Shape Audit
 
-97 tools total. Grouped by sub-domain. Two severity columns — **Inj** (Tampering, T3/T4
+99 tools total. Grouped by sub-domain. Two severity columns — **Inj** (Tampering, T3/T4
 risk) and **Dis** (Information Disclosure, T1/T2/T7 risk) — because mitigations differ.
 
 **Legend**:
@@ -354,11 +354,11 @@ itself is PII (it references a person). Severity holds at Medium.
 **Notes**: `profile_skills_readiness` returns Toptal-authored advisory text describing
 missing items — semi-trusted free-text. Injection severity Medium; disclosure Low.
 
-### profile.industries / education / certifications / employment (21 tools)
+### profile.industries / education / certifications / employment (22 tools)
 
 | group                          | sub-tools                                              | xuser                | pii_self   | pii_other                          | inj | dis     |
 | ------------------------------ | ------------------------------------------------------ | -------------------- | ---------- | ---------------------------------- | --- | ------- |
-| `profile_industries_*` (5)     | add/remove/update/list/autocomplete                    | none                 | employment | none                               | Low | Low     |
+| `profile_industries_*` (6)     | add/remove/update/list/show/autocomplete               | none                 | employment | none                               | Low | Low     |
 | `profile_education_*` (5)      | add/remove/update/show/highlight                       | none                 | employment | none                               | Low | Med     |
 | `profile_certifications_*` (5) | add/remove/update/show/highlight                       | none                 | employment | none                               | Low | Low     |
 | `profile_employment_*` (6)     | add/remove/update/show/highlight/employer_autocomplete | none (self-authored) | employment | counterparty (past-employer names) | Low | **Med** |
@@ -379,10 +379,11 @@ at Medium per Asset C (third-party name surface).
 special-category data (immigration status); disclosure severity is elevated to High even
 though the data flows through TTCtl is self-authored.
 
-### profile.external (6 tools)
+### profile.external (7 tools)
 
 | tool                                        | surface | dir | xuser                           | pii_self        | pii_other | inj     | dis  |
 | ------------------------------------------- | ------- | --- | ------------------------------- | --------------- | --------- | ------- | ---- |
+| `profile_external_show`                     | TP      | R   | none                            | identity (URLs) | none      | Low     | Low  |
 | `profile_external_update`                   | TP      | M   | none                            | identity (URLs) | none      | Low     | Low  |
 | `profile_external_custom_requirements_show` | TP      | R   | **Toptal** (catalog text)       | none            | none      | **Med** | Info |
 | `profile_external_custom_requirements_set`  | TP      | M   | none                            | none            | none      | Low     | Low  |
@@ -390,10 +391,13 @@ though the data flows through TTCtl is self-authored.
 | `profile_external_recommendations`          | TP      | R   | **Toptal** (advisory + scoring) | employment      | none      | **Med** | Med  |
 | `profile_external_advanced_wizard_show`     | TP      | R   | **Toptal** (wizard prompts)     | employment      | none      | **Med** | Low  |
 
-**Notes**: all the `_show` / `_recommendations` / `_readiness` / `_wizard_show` tools
-echo Toptal-authored advisory text. Semi-trusted: Toptal staff wrote these strings, but
-they pass through Toptal's content pipeline without LLM-injection vetting. Injection
-severity Medium.
+**Notes**: the `_custom_requirements_show` / `_recommendations` / `_readiness` /
+`_advanced_wizard_show` tools echo Toptal-authored advisory text. Semi-trusted: Toptal
+staff wrote these strings, but they pass through Toptal's content pipeline without
+LLM-injection vetting. Injection severity Medium. `profile_external_show` is the
+exception — it returns only the operator's own self-authored URL strings (identity
+PII, no Toptal-authored free-text), so injection severity is Low, matching
+`profile_external_update`.
 
 ### profile.reviews (4 tools)
 

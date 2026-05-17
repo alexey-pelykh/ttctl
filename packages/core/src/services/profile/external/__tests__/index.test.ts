@@ -19,6 +19,7 @@ import {
   customRequirementsShow,
   readiness,
   recommendations,
+  show,
   update,
 } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
@@ -549,5 +550,149 @@ describe("advancedWizardShow", () => {
 
     const result = await advancedWizardShow(TOKEN);
     expect(result).toEqual({ wizardStatus: null, travelVisaCount: 0, travelVisaIds: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// show (#343 — read side of external URLs)
+// ---------------------------------------------------------------------------
+
+describe("show", () => {
+  it("issues getExternalProfiles via impersonated and returns all six URLs (happy path)", async () => {
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: PROFILE_ID,
+            updatedByTalentAt: "2026-05-07T12:00:00Z",
+            linkedin: "https://linkedin.com/in/ada",
+            github: "https://github.com/ada",
+            website: "https://ada.dev",
+            twitter: "https://twitter.com/ada",
+            behance: "https://behance.net/ada",
+            dribbble: "https://dribbble.com/ada",
+          },
+        },
+      },
+    });
+
+    const result = await show(TOKEN);
+
+    expect(mockedStock).toHaveBeenCalledOnce();
+    expect(mockedImpersonated).toHaveBeenCalledOnce();
+    expect(mockedImpersonated.mock.calls[0]?.[0]).toMatchObject({
+      surface: "talent-profile",
+      authToken: TOKEN,
+      body: {
+        operationName: "getExternalProfiles",
+        variables: { profileId: PROFILE_ID },
+      },
+    } satisfies Partial<TransportRequest>);
+    expect(result).toEqual({
+      id: PROFILE_ID,
+      updatedByTalentAt: "2026-05-07T12:00:00Z",
+      linkedin: "https://linkedin.com/in/ada",
+      github: "https://github.com/ada",
+      website: "https://ada.dev",
+      twitter: "https://twitter.com/ada",
+      behance: "https://behance.net/ada",
+      dribbble: "https://dribbble.com/ada",
+    });
+  });
+
+  it("maps every unset URL to null (no URLs set)", async () => {
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: PROFILE_ID,
+            updatedByTalentAt: null,
+            linkedin: null,
+            github: null,
+            website: null,
+            twitter: null,
+            behance: null,
+            dribbble: null,
+          },
+        },
+      },
+    });
+
+    const result = await show(TOKEN);
+    expect(result).toEqual({
+      id: PROFILE_ID,
+      updatedByTalentAt: null,
+      linkedin: null,
+      github: null,
+      website: null,
+      twitter: null,
+      behance: null,
+      dribbble: null,
+    });
+  });
+
+  it("coerces non-string wire values to null defensively", async () => {
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: PROFILE_ID,
+            updatedByTalentAt: 1234567890,
+            linkedin: { nested: "object" },
+            github: 42,
+            website: false,
+            twitter: ["array"],
+            behance: null,
+            dribbble: "https://dribbble.com/ada",
+          },
+        },
+      },
+    });
+
+    const result = await show(TOKEN);
+    expect(result).toEqual({
+      id: PROFILE_ID,
+      updatedByTalentAt: null,
+      linkedin: null,
+      github: null,
+      website: null,
+      twitter: null,
+      behance: null,
+      dribbble: "https://dribbble.com/ada",
+    });
+  });
+
+  it("throws ProfileError NO_VIEWER when data.profile is null", async () => {
+    mockProfileIdResolver();
+    replyImpersonated({ body: { data: { profile: null } } });
+
+    await expect(show(TOKEN)).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "NO_VIEWER",
+    });
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    mockProfileIdResolver();
+    replyImpersonated({ status: 401, body: {} });
+    await expect(show(TOKEN)).rejects.toThrow(AuthRevokedError);
+  });
+
+  it("throws AuthRevokedError on extensions.code='UNAUTHENTICATED'", async () => {
+    mockProfileIdResolver();
+    replyImpersonated({
+      body: { errors: [{ message: "Session invalid", extensions: { code: "UNAUTHENTICATED" } }] },
+    });
+    await expect(show(TOKEN)).rejects.toThrow(AuthRevokedError);
+  });
+
+  it("propagates Cf403Error from the impersonated transport", async () => {
+    mockProfileIdResolver();
+    mockedImpersonated.mockRejectedValueOnce(new Cf403Error("talent-profile", "https://example/"));
+
+    await expect(show(TOKEN)).rejects.toThrow(Cf403Error);
   });
 });

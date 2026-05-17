@@ -8,6 +8,7 @@ import { formatSetPrettyEntity } from "../custom-requirements-set.js";
 import { formatCustomRequirementsTable, formatCustomRequirementsText } from "../custom-requirements-show.js";
 import { formatReadinessTable, formatReadinessText } from "../readiness.js";
 import { formatRecommendationsTable, formatRecommendationsText } from "../recommendations.js";
+import { formatExternalShowTable, formatExternalShowText } from "../show.js";
 import { formatUpdatePrettyEntity } from "../update.js";
 
 /**
@@ -55,6 +56,60 @@ describe("formatUpdatePrettyEntity (external update)", () => {
   it("does not include the notice — that flows through the envelope's notice slot", () => {
     const out = formatUpdatePrettyEntity(sample);
     expect(out).not.toContain("Saved.");
+  });
+});
+
+describe("formatExternalShowText / Table (#343 external show)", () => {
+  const allSet = {
+    id: "p1",
+    updatedByTalentAt: "2026-05-07T12:00:00Z",
+    linkedin: "https://linkedin.com/in/ada",
+    github: "https://github.com/ada",
+    website: "https://ada.dev",
+    twitter: "https://twitter.com/ada",
+    behance: "https://behance.net/ada",
+    dribbble: "https://dribbble.com/ada",
+  };
+  const noneSet = {
+    id: "p1",
+    updatedByTalentAt: null,
+    linkedin: null,
+    github: null,
+    website: null,
+    twitter: null,
+    behance: null,
+    dribbble: null,
+  };
+
+  it("text: renders all six URLs plus the timestamp when everything is set", () => {
+    const out = formatExternalShowText(allSet);
+    expect(out).toContain("linkedin: https://linkedin.com/in/ada");
+    expect(out).toContain("github: https://github.com/ada");
+    expect(out).toContain("website: https://ada.dev");
+    expect(out).toContain("twitter: https://twitter.com/ada");
+    expect(out).toContain("behance: https://behance.net/ada");
+    expect(out).toContain("dribbble: https://dribbble.com/ada");
+    expect(out).toContain("updated-by-talent-at: 2026-05-07T12:00:00Z");
+  });
+
+  it("text: renders (unset) for every null field", () => {
+    const out = formatExternalShowText(noneSet);
+    // Six URL lines + the timestamp line all read (unset).
+    expect(out.match(/\(unset\)/g)).toHaveLength(7);
+    expect(out).toContain("linkedin: (unset)");
+    expect(out).toContain("updated-by-talent-at: (unset)");
+  });
+
+  it("table: emits tab-separated key/value rows, empty string for nulls", () => {
+    const out = formatExternalShowTable(allSet);
+    expect(out).toContain("linkedin\thttps://linkedin.com/in/ada");
+    expect(out).toContain("twitter\thttps://twitter.com/ada");
+    expect(out).toContain("updated-by-talent-at\t2026-05-07T12:00:00Z");
+
+    const empty = formatExternalShowTable(noneSet);
+    expect(empty).toContain("linkedin\t");
+    expect(empty).toContain("updated-by-talent-at\t");
+    expect(empty).not.toContain("(unset)");
   });
 });
 
