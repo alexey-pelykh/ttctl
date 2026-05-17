@@ -82,11 +82,9 @@
 import { z } from "zod";
 
 import { VerticalGlobalMarketConditionSchema, VerticalMarketConditionSchema } from "../../__generated__/zod-schemas.js";
-import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { buildDryRunPreview, stockTransport } from "../../transport.js";
-import type { DryRunPreview, TransportResponse } from "../../transport.js";
-import { isAuthRevokedExtensionCode } from "../profile/shared.js";
+import { buildDryRunPreview } from "../../transport.js";
+import type { DryRunPreview } from "../../transport.js";
+import { callGatewayShared } from "../_shared/transport.js";
 
 // ---------------------------------------------------------------------
 // Error taxonomy
@@ -495,11 +493,6 @@ const CREATE_RATE_CHANGE_REQUEST_MUTATION = `mutation CreateRateChangeRequest($d
 // Wire-shape interfaces (private)
 // ---------------------------------------------------------------------
 
-interface GraphQLErrorEntry {
-  message?: string | null;
-  extensions?: { code?: string | null } | null;
-}
-
 interface MutationResultErrors {
   key?: string | null;
   message?: string | null;
@@ -816,6 +809,11 @@ const NODE_NOT_FOUND_PATTERN = /Node id .* resolves to/i;
 // Transport helper (mirrors the engagements/applications pattern)
 // ---------------------------------------------------------------------
 
+/**
+ * Thin per-service wrapper around {@link callGatewayShared} (issue
+ * #329). Pins the mobile-gateway surface and the {@link PaymentsError}
+ * domain class.
+ */
 async function callGateway<T>(
   token: string,
   operationName: string,
@@ -823,47 +821,9 @@ async function callGateway<T>(
   variables: Record<string, unknown>,
   schema?: z.ZodType<T>,
 ): Promise<T> {
-  let res: TransportResponse;
-  try {
-    res = await stockTransport({
-      surface: "mobile-gateway",
-      authToken: token,
-      body: { operationName, query, variables },
-    });
-  } catch (err) {
-    if (err instanceof TtctlError) throw err;
-    throw new PaymentsError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-
-  if (res.status === 401) {
-    throw new AuthRevokedError("Session is invalid or expired.");
-  }
-  if (res.status < 200 || res.status >= 300) {
-    throw new PaymentsError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
-  }
-
-  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
-  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
-    const first = body.errors[0];
-    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
-      throw new AuthRevokedError("Session is invalid or expired.");
-    }
-    throw new PaymentsError("GRAPHQL_ERROR", `${operationName} failed: ${first?.message ?? "GraphQL error"}`);
-  }
-  if (!body?.data) {
-    throw new PaymentsError("UNKNOWN", `${operationName} response had no \`data\` field`);
-  }
-  if (schema !== undefined) {
-    const parsed = schema.safeParse(body.data);
-    if (!parsed.success) {
-      const payload = buildWireShapeError(operationName, parsed.error, body.data);
-      throw new PaymentsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
-    }
-    return parsed.data;
-  }
-  return body.data;
+  return callGatewayShared<T, PaymentsError>("mobile-gateway", token, operationName, query, variables, PaymentsError, {
+    schema,
+  });
 }
 
 function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | null | undefined): string {

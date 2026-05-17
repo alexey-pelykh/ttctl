@@ -64,11 +64,9 @@
 
 import type { z } from "zod";
 
-import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { buildDryRunPreview, stockTransport } from "../../transport.js";
-import type { DryRunPreview, TransportResponse } from "../../transport.js";
-import { isAuthRevokedExtensionCode } from "../profile/shared.js";
+import { buildDryRunPreview } from "../../transport.js";
+import type { DryRunPreview } from "../../transport.js";
+import { callGatewayShared } from "../_shared/transport.js";
 
 /**
  * Timesheet-domain error codes. Mirrors the `EngagementsError` /
@@ -339,11 +337,6 @@ const SUBMIT_TIMESHEET_MUTATION = `mutation SubmitTimesheet($id: ID!) { submitTi
 
 // ---------------------------------------------------------------------
 
-interface GraphQLErrorEntry {
-  message?: string | null;
-  extensions?: { code?: string | null } | null;
-}
-
 interface MutationResultErrors {
   key?: string | null;
   message?: string | null;
@@ -455,19 +448,9 @@ interface TimesheetDetailWireItem extends TimesheetListWireItem {
 const NOT_FOUND_MESSAGE_PATTERN = /Record not found|Node id .*? resolves to an unknown type/i;
 
 /**
- * Issue a GraphQL request against the mobile-gateway surface and
- * normalize transport / GraphQL outcomes into typed `TimesheetError`
- * throws. Mirrors the `callGateway` helper in the `engagements`
- * service.
- *
- * Optional `schema` parameter (Z-3 / #286): when provided, the
- * received `body.data` is parsed through the schema before returning;
- * on `ZodError` the call throws `TimesheetError("WIRE_SHAPE_ERROR")`
- * with the original ZodError chained via `cause` and a field-level
- * diff in the message per `docs/wire-validation-error-format.md`.
- * When omitted, the existing pass-through behavior is preserved.
- * Wave-3 lands the mechanism; no production op wires `schema` yet —
- * Z-4 (#288) ships the first beachhead.
+ * Thin per-service wrapper around {@link callGatewayShared} (issue
+ * #329). Pins the mobile-gateway surface and the {@link TimesheetError}
+ * domain class.
  */
 async function callGateway<T>(
   token: string,
@@ -476,47 +459,15 @@ async function callGateway<T>(
   variables: Record<string, unknown>,
   schema?: z.ZodType<T>,
 ): Promise<T> {
-  let res: TransportResponse;
-  try {
-    res = await stockTransport({
-      surface: "mobile-gateway",
-      authToken: token,
-      body: { operationName, query, variables },
-    });
-  } catch (err) {
-    if (err instanceof TtctlError) throw err;
-    throw new TimesheetError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-
-  if (res.status === 401) {
-    throw new AuthRevokedError("Session is invalid or expired.");
-  }
-  if (res.status < 200 || res.status >= 300) {
-    throw new TimesheetError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
-  }
-
-  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
-  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
-    const first = body.errors[0];
-    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
-      throw new AuthRevokedError("Session is invalid or expired.");
-    }
-    throw new TimesheetError("GRAPHQL_ERROR", `${operationName} failed: ${first?.message ?? "GraphQL error"}`);
-  }
-  if (!body?.data) {
-    throw new TimesheetError("UNKNOWN", `${operationName} response had no \`data\` field`);
-  }
-  if (schema !== undefined) {
-    const parsed = schema.safeParse(body.data);
-    if (!parsed.success) {
-      const payload = buildWireShapeError(operationName, parsed.error, body.data);
-      throw new TimesheetError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
-    }
-    return parsed.data;
-  }
-  return body.data;
+  return callGatewayShared<T, TimesheetError>(
+    "mobile-gateway",
+    token,
+    operationName,
+    query,
+    variables,
+    TimesheetError,
+    { schema },
+  );
 }
 
 /**

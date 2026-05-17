@@ -56,11 +56,8 @@
 
 import type { z } from "zod";
 
-import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { stockTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
-import { isAuthRevokedExtensionCode } from "../profile/shared.js";
+import { callGatewayShared } from "../_shared/transport.js";
+import type { GraphQLErrorEntry } from "../profile/shared.js";
 
 /**
  * Applications-domain error codes. Mirrors the `ProfileError` /
@@ -331,11 +328,6 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
 // Five small parallel calls keep the wall-clock cost flat (≈ one
 // round-trip).
 
-interface GraphQLErrorEntry {
-  message?: string | null;
-  extensions?: { code?: string | null } | null;
-}
-
 interface JobActivityListResponse {
   data?: {
     viewer: {
@@ -360,25 +352,13 @@ interface JobActivityItemResponse {
 }
 
 /**
- * Issue a GraphQL request against the mobile-gateway surface and
- * normalize transport / GraphQL outcomes into typed `ApplicationsError`
- * throws. Mirrors the helper pattern in `profile.skills` (sub-domain
- * carries its own helper rather than depending on
- * `profile/shared.ts#callTalentProfile`, which is `talent-profile`-
- * specific).
- *
- * Error mapping:
- * - `TtctlError` subclasses (`Cf403Error`, `AuthRevokedError`, etc.)
- *   propagate as-is so the CLI / MCP surfaces apply their uniform
- *   `recovery` rendering.
- * - Other transport throws → `ApplicationsError("NETWORK_ERROR")`.
- * - HTTP 401 → `AuthRevokedError`.
- * - Non-2xx → `ApplicationsError("UNKNOWN")` with the status code.
- * - Top-level `errors[]` with an auth-revoked extension code →
- *   `AuthRevokedError`.
- * - Top-level `errors[]` otherwise → `ApplicationsError("GRAPHQL_ERROR")`.
- * - Missing `data` field → `ApplicationsError("UNKNOWN")`.
- * - `data.viewer === null` → `ApplicationsError("NO_VIEWER")`.
+ * Thin per-service wrapper around {@link callGatewayShared} (issue
+ * #329). Pins the mobile-gateway surface, the {@link ApplicationsError}
+ * domain class, and the `requireViewer` flag — every `applications`
+ * response carries `viewer` and we surface a `NO_VIEWER` whenever
+ * the session is technically valid but no viewer is bound. The
+ * generic constraint mirrors the previous local helper so call sites
+ * stay type-checked.
  */
 async function callGateway<T extends { viewer: { id: string } | null }>(
   token: string,
@@ -387,53 +367,15 @@ async function callGateway<T extends { viewer: { id: string } | null }>(
   variables: Record<string, unknown>,
   schema?: z.ZodType<T>,
 ): Promise<T> {
-  let res: TransportResponse;
-  try {
-    res = await stockTransport({
-      surface: "mobile-gateway",
-      authToken: token,
-      body: { operationName, query, variables },
-    });
-  } catch (err) {
-    if (err instanceof TtctlError) throw err;
-    throw new ApplicationsError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-
-  if (res.status === 401) {
-    throw new AuthRevokedError("Session is invalid or expired.");
-  }
-  if (res.status < 200 || res.status >= 300) {
-    throw new ApplicationsError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
-  }
-
-  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
-  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
-    const first = body.errors[0];
-    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
-      throw new AuthRevokedError("Session is invalid or expired.");
-    }
-    throw new ApplicationsError("GRAPHQL_ERROR", `${operationName} failed: ${first?.message ?? "GraphQL error"}`);
-  }
-  if (!body?.data) {
-    throw new ApplicationsError("UNKNOWN", `${operationName} response had no \`data\` field`);
-  }
-  let data: T;
-  if (schema !== undefined) {
-    const parsed = schema.safeParse(body.data);
-    if (!parsed.success) {
-      const payload = buildWireShapeError(operationName, parsed.error, body.data);
-      throw new ApplicationsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
-    }
-    data = parsed.data;
-  } else {
-    data = body.data;
-  }
-  if (data.viewer === null) {
-    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
-  }
-  return data;
+  return callGatewayShared<T, ApplicationsError>(
+    "mobile-gateway",
+    token,
+    operationName,
+    query,
+    variables,
+    ApplicationsError,
+    { schema, requireViewer: true },
+  );
 }
 
 /**

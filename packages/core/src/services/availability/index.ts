@@ -76,11 +76,9 @@
 
 import type { z } from "zod";
 
-import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
-import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { buildDryRunPreview, stockTransport } from "../../transport.js";
-import type { DryRunPreview, TransportResponse } from "../../transport.js";
-import { isAuthRevokedExtensionCode } from "../profile/shared.js";
+import { buildDryRunPreview } from "../../transport.js";
+import type { DryRunPreview } from "../../transport.js";
+import { callGatewayShared } from "../_shared/transport.js";
 
 /**
  * Availability-domain error codes. Mirrors the `EngagementsError` /
@@ -314,11 +312,6 @@ const UPDATE_WORKING_HOURS_MUTATION = `mutation UpdateWorkingHours($input: Updat
 // Verbatim from `../research/graphql/gateway/operations/mobile/UpdateAllocatedHours.graphql`.
 const UPDATE_ALLOCATED_HOURS_MUTATION = `mutation UpdateAllocatedHours($hours: Int!) { viewerRole { __typename update(input: { allocatedHours: $hours } ) { __typename notice ...mutationResultFields viewer { __typename id ...availabilityData } } } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }  fragment lastAllocatedHoursChangeRequestData on AllocatedHoursChangeRequest { __typename id allocatedHours rejectReason comment statusV2 { __typename value } futureAvailableHours returnInDate useReturnAvailability reviewedManually }  fragment availabilityData on Viewer { __typename id preliminarySearchSetting { __typename enabled disablingReason comment } viewerRole { __typename allocatedHours hiredHours lastAllocatedHoursChangeRequest { __typename ...lastAllocatedHoursChangeRequestData } } }`;
 
-interface GraphQLErrorEntry {
-  message?: string | null;
-  extensions?: { code?: string | null } | null;
-}
-
 interface MutationResultErrors {
   key?: string | null;
   message?: string | null;
@@ -381,17 +374,9 @@ interface UpdateAllocatedHoursResponse {
 }
 
 /**
- * Issue a GraphQL request against the mobile-gateway surface and
- * normalize transport / GraphQL outcomes into typed `AvailabilityError`
- * throws. Mirrors the `callGateway` helper in `services/engagements/`.
- *
- * Optional `schema` parameter (Z-3 / #286): when provided, the
- * received `body.data` is parsed through the schema before returning;
- * on `ZodError` the call throws
- * `AvailabilityError("WIRE_SHAPE_ERROR")` with the original ZodError
- * chained via `cause` and a field-level diff in the message per
- * `docs/wire-validation-error-format.md`. When omitted, the existing
- * pass-through behavior is preserved.
+ * Thin per-service wrapper around {@link callGatewayShared} (issue
+ * #329). Pins the mobile-gateway surface and the
+ * {@link AvailabilityError} domain class.
  */
 async function callGateway<T>(
   token: string,
@@ -400,47 +385,15 @@ async function callGateway<T>(
   variables: Record<string, unknown>,
   schema?: z.ZodType<T>,
 ): Promise<T> {
-  let res: TransportResponse;
-  try {
-    res = await stockTransport({
-      surface: "mobile-gateway",
-      authToken: token,
-      body: { operationName, query, variables },
-    });
-  } catch (err) {
-    if (err instanceof TtctlError) throw err;
-    throw new AvailabilityError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-
-  if (res.status === 401) {
-    throw new AuthRevokedError("Session is invalid or expired.");
-  }
-  if (res.status < 200 || res.status >= 300) {
-    throw new AvailabilityError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
-  }
-
-  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
-  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
-    const first = body.errors[0];
-    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
-      throw new AuthRevokedError("Session is invalid or expired.");
-    }
-    throw new AvailabilityError("GRAPHQL_ERROR", `${operationName} failed: ${first?.message ?? "GraphQL error"}`);
-  }
-  if (!body?.data) {
-    throw new AvailabilityError("UNKNOWN", `${operationName} response had no \`data\` field`);
-  }
-  if (schema !== undefined) {
-    const parsed = schema.safeParse(body.data);
-    if (!parsed.success) {
-      const payload = buildWireShapeError(operationName, parsed.error, body.data);
-      throw new AvailabilityError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
-    }
-    return parsed.data;
-  }
-  return body.data;
+  return callGatewayShared<T, AvailabilityError>(
+    "mobile-gateway",
+    token,
+    operationName,
+    query,
+    variables,
+    AvailabilityError,
+    { schema },
+  );
 }
 
 function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | null | undefined): string {

@@ -54,11 +54,7 @@
 
 import type { z } from "zod";
 
-import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { buildWireShapeError } from "../../../lib/wire-shape.js";
-import { impersonatedTransport } from "../../../transport.js";
-import type { TransportResponse } from "../../../transport.js";
-import { isAuthRevokedExtensionCode } from "../shared.js";
+import { callGatewayShared } from "../../_shared/transport.js";
 
 /**
  * Skills-domain error codes. Mirrors `profile.basic.ProfileErrorCode`'s
@@ -90,24 +86,13 @@ export class SkillsError extends Error {
   }
 }
 
-interface GraphQLErrorEntry {
-  message?: string | null;
-  extensions?: { code?: string | null } | null;
-}
-
 /**
- * Wraps the common impersonated-transport request flow used by every leaf
- * here. Issues the GraphQL operation, normalises HTTP non-2xx + GraphQL
- * top-level errors + auth-revoked extension codes into typed throws, and
- * returns the parsed response body to the caller for payload-specific
- * handling. Keeps the per-leaf code small and uniform.
- *
- * Optional `schema` parameter (Z-3 / #286): when provided, the
- * received `body.data` is parsed through the schema before returning;
- * on `ZodError` the call throws `SkillsError("WIRE_SHAPE_ERROR")`
- * with the original ZodError chained via `cause` and a field-level
- * diff in the message per `docs/wire-validation-error-format.md`.
- * When omitted, the existing pass-through behavior is preserved.
+ * Thin per-service wrapper around {@link callGatewayShared} (issue
+ * #329). Pins the talent-profile surface and the {@link SkillsError}
+ * domain class. The `variables: unknown` parameter (cast to
+ * `Record<string, unknown>` here) preserves the historical signature
+ * — every leaf in this file constructs a fresh variables literal that
+ * is structurally a `Record` regardless of nominal typing.
  */
 async function callTalentProfile<T>(
   token: string,
@@ -116,47 +101,15 @@ async function callTalentProfile<T>(
   variables: unknown,
   schema?: z.ZodType<T>,
 ): Promise<T> {
-  let res: TransportResponse;
-  try {
-    res = await impersonatedTransport({
-      surface: "talent-profile",
-      authToken: token,
-      body: { operationName, query, variables: variables as Record<string, unknown> },
-    });
-  } catch (err) {
-    if (err instanceof TtctlError) throw err;
-    throw new SkillsError("NETWORK_ERROR", `${operationName} request failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-
-  if (res.status === 401) {
-    throw new AuthRevokedError("Session is invalid or expired.");
-  }
-  if (res.status < 200 || res.status >= 300) {
-    throw new SkillsError("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
-  }
-
-  const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
-  if (body && Array.isArray(body.errors) && body.errors.length > 0) {
-    const first = body.errors[0];
-    if (isAuthRevokedExtensionCode(first?.extensions?.code)) {
-      throw new AuthRevokedError("Session is invalid or expired.");
-    }
-    throw new SkillsError("GRAPHQL_ERROR", `${operationName} failed: ${first?.message ?? "GraphQL error"}`);
-  }
-  if (!body?.data) {
-    throw new SkillsError("UNKNOWN", `${operationName} response had no \`data\` field`);
-  }
-  if (schema !== undefined) {
-    const parsed = schema.safeParse(body.data);
-    if (!parsed.success) {
-      const payload = buildWireShapeError(operationName, parsed.error, body.data);
-      throw new SkillsError("WIRE_SHAPE_ERROR", payload.message, { cause: parsed.error });
-    }
-    return parsed.data;
-  }
-  return body.data;
+  return callGatewayShared<T, SkillsError>(
+    "talent-profile",
+    token,
+    operationName,
+    query,
+    variables as Record<string, unknown>,
+    SkillsError,
+    { schema },
+  );
 }
 
 // -----------------------------------------------------------------------
