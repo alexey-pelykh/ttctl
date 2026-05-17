@@ -213,6 +213,13 @@ export interface ExternalProfilesUpdate {
  * of the captured `UpdateExternalProfiles` mutation. Fields are nullable
  * because the server returns `null` for any external link the talent has
  * not set.
+ *
+ * `twitter` was added in #345 to close a write-only-echo gap — the input
+ * accepts `twitter` (see {@link ExternalProfilesUpdate}) but the mutation
+ * response previously dropped it, so callers could SET a twitter URL but
+ * not VERIFY it from the response alone (had to issue a follow-up
+ * {@link show} call). Adding it to the selection set + this interface
+ * makes the response self-contained for round-trip verification.
  */
 export interface UpdateExternalProfilesResult {
   profile: {
@@ -221,6 +228,7 @@ export interface UpdateExternalProfilesResult {
     linkedin: string | null;
     github: string | null;
     website: string | null;
+    twitter: string | null;
     behance: string | null;
     dribbble: string | null;
   };
@@ -246,6 +254,7 @@ const UPDATE_EXTERNAL_PROFILES_MUTATION = `mutation UpdateExternalProfiles($inpu
       linkedin
       github
       website
+      twitter
       behance
       dribbble
     }
@@ -281,6 +290,7 @@ interface UpdateExternalProfilesPayload {
     linkedin?: string | null;
     github?: string | null;
     website?: string | null;
+    twitter?: string | null;
     behance?: string | null;
     dribbble?: string | null;
   } | null;
@@ -379,6 +389,7 @@ export async function update(token: string, changes: ExternalProfilesUpdate): Pr
       linkedin: payload.profile.linkedin ?? null,
       github: payload.profile.github ?? null,
       website: payload.profile.website ?? null,
+      twitter: payload.profile.twitter ?? null,
       behance: payload.profile.behance ?? null,
       dribbble: payload.profile.dribbble ?? null,
     },

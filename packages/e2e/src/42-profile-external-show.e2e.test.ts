@@ -2,46 +2,52 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `ttctl profile external show` (#343).
+ * E2E coverage for `ttctl profile external show` (#343) and
+ * `ttctl profile external update`'s response-echo gap (#345).
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** — this
- * issue introduces a NEW hand-authored GraphQL query (`getExternalProfiles`)
- * against the Cloudflare-protected `talent-profile` surface. The document
- * is NOT in `codegen.config.ts`'s trusted catalog (it is listed in
+ * **Mandatory per CLAUDE.md § Schema/contract validation rule** — both
+ * operations target the Cloudflare-protected `talent-profile` surface.
+ * Neither is in `codegen.config.ts`'s trusted catalog (both listed in
  * `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` — every selected field is typed
  * `Unknown` in the synthesized SDL). The live API is the only authority
- * on whether the document accurately models the wire shape.
+ * on whether the documents accurately model the wire shape.
  *
  * **Track 1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track 2):
- * `getExternalProfiles` is excluded from codegen → no generated operation
- * type → **T1** (wire-shape snapshot). `assertWireShapeStable(...)` diffs
- * the live response shape against the committed
- * `packages/e2e/src/wire-snapshots/getExternalProfiles.snapshot.json`.
+ * neither op has a generated operation type → **T1** (wire-shape
+ * snapshot). `assertWireShapeStable(...)` diffs each live response shape
+ * against the committed
+ * `packages/e2e/src/wire-snapshots/<OpName>.snapshot.json`. Snapshots
+ * are generated on the first `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1`
+ * run (per `packages/e2e/src/wire-snapshots/README.md`); the maintainer
+ * commits them alongside the test.
  *
  * Coverage:
  *   - **Pure read** (`getExternalProfiles`): the response carries the
  *     eight documented keys (`id`, `updatedByTalentAt`, and the six URL
  *     fields linkedin / github / website / twitter / behance / dribbble),
- *     each `string | null`. This is the schema/contract rule's core
- *     requirement — the new hand-authored query exercised live.
- *   - **Wire-shape snapshot** (T1): structural shape diffed against the
- *     committed snapshot via `assertWireShapeStable`.
- *   - **Round-trip** (AC: `update --<url> <X>` → `show` → assert echoed):
- *     read the current state, pick a URL that IS set, re-apply its EXACT
- *     current value via `update` (an idempotent no-op write — NOT a
- *     sentinel, so non-destructive), then `show` again and assert the
- *     value round-tripped. This is the same safe-round-trip shape the
- *     `updateCustomRequirements` E2E uses (re-apply current state). The
- *     existence of `show` is precisely what makes `UpdateExternalProfiles`
- *     safely round-trippable for the first time (previously e2e-exempt at
- *     source for lack of a read-side pre-state).
+ *     each `string | null`.
+ *   - **Wire-shape snapshot — read** (`getExternalProfiles`, T1):
+ *     structural shape diffed against the committed snapshot.
+ *   - **Round-trip** (AC: `update --<url> <X>` → response echoes; #343 +
+ *     #345 AC): read the current state, pick a URL that IS set,
+ *     re-apply its EXACT current value via `update` (an idempotent no-op
+ *     write — NOT a sentinel, so non-destructive), then assert (a) the
+ *     update response echoes every URL field including `twitter` (the
+ *     #345 selection-set gap; pre-#345 the typed result.profile.twitter
+ *     slot did not exist), and (b) `show` again round-trips the value.
+ *   - **Wire-shape snapshot — write** (`UpdateExternalProfiles`, T1;
+ *     added #345): structural shape diffed against the committed snapshot.
+ *     The snapshot's `profile.twitter` field is the regression-detector —
+ *     a future selection-set regression (twitter dropped again) would
+ *     surface as a structural diff.
  *
  * **Skip conditions** (silent — emit a stderr warning, do not fail):
- *   - Test account has NO external URL set → the round-trip subtest is
- *     skipped (re-applying `null` is impossible: `update` requires at
- *     least one field and a valid URL). The pure-read + wire-snapshot
- *     assertions still run unconditionally and satisfy the
- *     schema/contract rule on their own.
+ *   - Test account has NO external URL set → both the round-trip subtest
+ *     AND the UpdateExternalProfiles snapshot subtest are skipped
+ *     (re-applying `null` is impossible: `update` requires at least one
+ *     field and a valid URL). The pure-read + `getExternalProfiles`
+ *     snapshot assertions still run unconditionally and satisfy the
+ *     schema/contract rule for the read side.
  */
 
 // e2e-covers: getExternalProfiles, UpdateExternalProfiles
@@ -144,6 +150,17 @@ describe("profile external show (live talent-profile, INFERRED wire shape, #343)
     const updated = await profile.external.update(token, { [field]: value as string });
     expect(updated.profile.id).toBe(before.id);
 
+    // #345 — assert the mutation response echoes all six URL fields,
+    // not just the one we wrote. Prior to #345 the response selection
+    // set omitted `twitter`, so callers could SET a twitter URL but the
+    // result.profile.twitter slot did not exist on the typed result.
+    // After #345 every URL is echoed (string | null) on every response
+    // regardless of which subset of fields the input carried.
+    for (const f of URL_FIELDS) {
+      const v = updated.profile[f];
+      expect(typeof v === "string" || v === null).toBe(true);
+    }
+
     // Step 4: show again — the value must have round-tripped unchanged.
     const after = await profile.external.show(token);
     expect(after[field]).toBe(value);
@@ -152,5 +169,37 @@ describe("profile external show (live talent-profile, INFERRED wire shape, #343)
       if (f === field) continue;
       expect(after[f]).toBe(before[f]);
     }
+  });
+
+  // -----------------------------------------------------------------
+  // T1 wire-shape snapshot for UpdateExternalProfiles (#345)
+  // -----------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("UpdateExternalProfiles wire shape is stable (T1 snapshot, includes twitter)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+
+    // Pick a URL that IS set so the round-trip stays non-destructive
+    // (re-apply current value — identical to the round-trip subtest
+    // above). The snapshot subject is the full mutation result shape
+    // (id + 6 URL fields + updatedByTalentAt + notice), independent of
+    // which URL we used to trigger the call.
+    const before = await profile.external.show(token);
+    const field = URL_FIELDS.find((f) => typeof before[f] === "string" && before[f] !== "");
+    if (field === undefined) {
+      process.stderr.write(
+        "[42-profile-external-show] account has no external URL set — UpdateExternalProfiles snapshot subtest skipped " +
+          "(no safe value to re-apply; pure-read + getExternalProfiles snapshot still cover the wire shape on the read side).\n",
+      );
+      return;
+    }
+    const value = before[field];
+
+    const updated = await profile.external.update(token, { [field]: value as string });
+    assertWireShapeStable({
+      operationName: "UpdateExternalProfiles",
+      surface: "talent-profile",
+      transport: "impersonated",
+      response: updated,
+    });
   });
 });

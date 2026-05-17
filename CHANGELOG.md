@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`profile.external.update` mutation response now echoes `twitter`
+  (#345)**. Closes a MINOR Class B (write-only-echo) gap surfaced by the
+  MCP/CLI surface-shape audit (`docs/briefs/2026-05-17-scope-mcp-cli-surface-shape-audit.md`):
+  the `UpdateExternalProfiles` mutation accepts `twitter` on its input
+  (`ExternalProfilesUpdate`) but the response selection set previously
+  dropped it, so the typed `UpdateExternalProfilesResult.profile` shape
+  carried only 5 of the 6 input URL fields. Callers writing a twitter
+  URL got back a `notice` but had no way to verify the persisted value
+  from the mutation response alone — they had to issue a follow-up
+  `profile.external.show()` call (the read-side companion shipped in
+  #343). The original source comment at the v0 input declaration
+  acknowledged the omission as an oversight ("`twitter`/`behance`/`dribbble`
+  are exposed because they are present in the schema") rather than an
+  intentional design decision.
+  - **Core**: `UPDATE_EXTERNAL_PROFILES_MUTATION` selects `twitter`
+    inside the `updateExternalProfiles.profile { … }` block, alongside
+    the existing five URL fields. The typed `UpdateExternalProfilesResult.profile`
+    interface and the internal `UpdateExternalProfilesPayload.profile`
+    interface both grow a `twitter: string | null` slot, and the
+    `update()` mapping forwards `payload.profile.twitter ?? null`.
+  - **CLI**: `formatUpdatePrettyEntity` renders `twitter` between
+    `website` and `behance` — matches the ordering used by `external
+show` (#343) for cross-command consistency. The pretty/JSON/YAML
+    envelopes now carry twitter on every external-update response.
+  - **MCP**: `ttctl_profile_external_update` returns the same enriched
+    `UpdateExternalProfilesResult` shape on `jsonResponse` (no MCP-side
+    output-schema declaration; the tool returns the typed core result
+    verbatim).
+  - **Wire validation**: `UpdateExternalProfiles` remains **T1** per
+    `docs/wire-validation-routing.md` (schema-gappy: in
+    `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`). The selection-set extension
+    adds the first wire-shape snapshot for this op
+    (`packages/e2e/src/wire-snapshots/UpdateExternalProfiles.snapshot.json`,
+    generated on first `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1`
+    run per `packages/e2e/src/wire-snapshots/README.md`). A future
+    selection-set regression — twitter dropped again — would surface as
+    a structural diff against this snapshot. The existing E2E at
+    `packages/e2e/src/42-profile-external-show.e2e.test.ts` extends its
+    `update → show` round-trip with (a) per-field type-presence assertions
+    (`updated.profile[f]` is `string | null` for every URL field
+    regardless of which subset the input carried) and (b) the new
+    snapshot assertion. The schema/contract rule is TRIGGERED (extending
+    response selection of an existing mutation per inferred field
+    availability); E2E test is gated by `TTCTL_E2E=1`.
+  - Unit tests extended: a new `update` regression test asserts
+    `result.profile.twitter` echoes the server-supplied value, plus the
+    existing fixtures gain `twitter: null` where missing. The CLI
+    `formatUpdatePrettyEntity` test grows a "renders twitter when set"
+    case.
+
 - **Default `pretty` output for `basic show` and `portfolio list` now
   surfaces every editable field (#129)**. Closes the audit-confirmed
   HIGH-severity formatter defects from #124: `ttctl profile basic show`

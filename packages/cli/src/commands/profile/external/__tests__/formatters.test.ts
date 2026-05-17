@@ -32,6 +32,7 @@ describe("formatUpdatePrettyEntity (external update)", () => {
       linkedin: "https://linkedin.com/in/ada",
       github: "https://github.com/ada",
       website: null,
+      twitter: null,
       behance: null,
       dribbble: null,
     },
@@ -43,8 +44,21 @@ describe("formatUpdatePrettyEntity (external update)", () => {
     expect(out).toContain("linkedin: https://linkedin.com/in/ada");
     expect(out).toContain("github: https://github.com/ada");
     expect(out).not.toContain("website:");
+    expect(out).not.toContain("twitter:");
     expect(out).not.toContain("behance:");
     expect(out).not.toContain("dribbble:");
+  });
+
+  it("renders twitter when set (#345 — Class B gap closure)", () => {
+    const withTwitter = {
+      profile: {
+        ...sample.profile,
+        twitter: "https://twitter.com/ada",
+      },
+      notice: null,
+    };
+    const out = formatUpdatePrettyEntity(withTwitter);
+    expect(out).toContain("twitter: https://twitter.com/ada");
   });
 
   it("does not include the leading confirmation line — that's the envelope header's job", () => {

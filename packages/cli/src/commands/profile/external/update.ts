@@ -105,11 +105,16 @@ function handleError(err: unknown, format: OutputFormat): never {
 
 /**
  * Pretty entity preview for the external-update envelope. Renders the
- * non-null URL trio (linkedin / github / website / twitter / behance /
+ * non-null URL sextet (linkedin / github / website / twitter / behance /
  * dribbble), each truncated at 80 columns. The notice (when present)
  * flows through the envelope's `notice` field, NOT this body —
  * `emitUpdateSuccess` appends it as a trailing indented line in pretty
  * mode.
+ *
+ * `twitter` was added in #345 once the mutation's response selection set
+ * grew to echo it (`UPDATE_EXTERNAL_PROFILES_MUTATION` previously dropped
+ * twitter so the formatter had nothing to render). Ordering matches the
+ * `external show` formatter for cross-command consistency.
  *
  * Pure — directly unit-testable.
  */
@@ -119,6 +124,7 @@ export function formatUpdatePrettyEntity(result: profile.external.UpdateExternal
   if (updated.linkedin !== null) lines.push(truncate(`linkedin: ${updated.linkedin}`, 80));
   if (updated.github !== null) lines.push(truncate(`github: ${updated.github}`, 80));
   if (updated.website !== null) lines.push(truncate(`website: ${updated.website}`, 80));
+  if (updated.twitter !== null) lines.push(truncate(`twitter: ${updated.twitter}`, 80));
   if (updated.behance !== null) lines.push(truncate(`behance: ${updated.behance}`, 80));
   if (updated.dribbble !== null) lines.push(truncate(`dribbble: ${updated.dribbble}`, 80));
   return lines.join("\n");
