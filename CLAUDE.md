@@ -225,6 +225,61 @@ script header documents the protocol. For one-off dynamic-dispatch
 sites the helper can't model, place an `// e2e-exempt: <reason>`
 marker at the call site.
 
+### Write-read symmetry gate (Class B gap defense)
+
+`scripts/check-write-read-symmetry.ts` (wired into `pnpm lint`) is the
+structural CI-time defense against **Class B** gaps — the recurring
+pattern where a service's write function accepts field X on its input
+interface but the matching read function (or, when no read fn exists,
+the write fn's own response interface) does NOT echo X on its output.
+Result: the agent can SET the value but cannot VERIFY it persisted or
+DISPLAY it afterwards. Originating incidents: #340 (basic.set
+bio/headline ↔ basic.show, already paired in core via #127), #344
+(employment.update {publicationPermit, industryIds,
+primaryGeographyId, reportingTo} ↔ Employment), #345
+(external.update twitter ↔ UpdateExternalProfilesResult.profile),
+and #346 (engagements.breaks.add reasonIdentifier ↔ EngagementBreak).
+
+Detection scope: `packages/core/src/services/profile/**/index.ts`,
+`packages/core/src/services/engagements/**/index.ts`, and
+`packages/core/src/services/payments/**/index.ts`. The script walks
+`export interface` declarations and `export (async)? function`
+signatures (including method-shorthand properties inside
+`export const namespace = { … }` blocks, e.g. `engagements.breaks`),
+pairs each write fn (name in `add` / `set` / `update` / `change` /
+`save` / `upsert` / `create` / `reschedule`) with the appropriate
+echo (a sibling read fn's unwrapped return type, with fallback to the
+write fn's own return type), and asserts every write-input field
+appears at any depth of the echo interface's reachable field-name set.
+The reachable set spans the echo interface's own body PLUS the
+top-level fields of every interface it references by name in a
+property's type expression (cycle-safe BFS, file-local). This catches
+the named-reference echo pattern — e.g. `RateProjection.lastChange:
+RateChangeRequest | null` pulls `RateChangeRequest`'s fields
+(`desiredRate`, `talentComment`, …) into `RateProjection`'s reachable
+set — without flagging legitimately-echoed fields as gaps.
+
+- **Exempt** a write-only-by-design field by placing
+  `// write-only: <reason>` on the line immediately above its
+  declaration. The reason is mandatory and surfaces in the report.
+  Use for secrets, file-upload payloads, dry-run / preview flags,
+  or any field where round-tripping makes no semantic sense.
+- **Override** the auto-detected pairing inside a file by placing
+  `// write-read-pair: WriteName => ReadName` anywhere in the file.
+  Useful when the script's first-match heuristic picks the wrong
+  read fn or when the genuine echo lives in a sibling-shape interface
+  rather than the read fn's direct return type. Cross-FILE overrides
+  are not supported in v1 (see script header).
+- **Default mode** is warn-only (exit 0). Set
+  `WRITE_READ_SYMMETRY_STRICT=1` (or pass `--strict`) to fail on
+  any non-exempt asymmetry once the existing gaps are paid down.
+
+The runtime-options interfaces that are NOT write-shape inputs
+(`DryRunOptions`, `SetOptions`, `ListOptions`, `PaginationOptions`)
+are filtered at the param-pick step via `INTERNAL_OPTIONS_TYPES` in
+the script. Adding a new sibling option-bag interface requires
+extending that set; the script header documents the protocol.
+
 ### Wire-shape snapshots
 
 Post-merge wire-drift detection sibling to the rule above. E2E runs
