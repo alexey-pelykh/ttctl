@@ -250,6 +250,204 @@ interface YamlMutation {
 }
 
 /**
+ * Atomic-write event surfaced to the optional `onEvent` hook on
+ * {@link writeAtomicAt0600}. Lets callers tap into the helper's phase
+ * transitions without owning the file-IO boilerplate. The locked-mutation
+ * path threads these through `emitDebug(...)`; the bootstrap path
+ * (`writeNewConfig`) ignores them.
+ */
+interface AtomicWriteEvent {
+  type: "tempfile_written" | "final_state" | "rename_completed";
+  /** Path to the staged temp file. Set on `tempfile_written`. */
+  tmpPath?: string;
+  /** Size of the written bytes. Set on `tempfile_written`. */
+  sizeBytes?: number;
+  /** Octal mode of the temp file post-chmod (e.g. "0600", "0644", "n/a", "stat_failed"). Set on `final_state`. */
+  modeApplied?: string;
+}
+
+/**
+ * Module-private error surfaced by {@link writeAtomicAt0600} on any
+ * file-IO failure inside its boundary. Carries a `stage` discriminator
+ * (which of the open/write/rename steps failed) AND the underlying
+ * `cause` so callers can wrap into their domain error class without
+ * losing the original `NodeJS.ErrnoException` (`code: "EACCES"` etc).
+ *
+ * Caller errors thrown FROM the `preRename` hook propagate as-is — the
+ * helper does NOT wrap them. This lets the locked persist path keep
+ * raising `AuthTokenPersistError` directly from the mtime-drift refusal.
+ */
+class AtomicWriteError extends Error {
+  override readonly name = "AtomicWriteError";
+  constructor(
+    message: string,
+    public readonly stage: "open" | "write" | "rename",
+    public readonly tmpPath: string,
+    public readonly cause: NodeJS.ErrnoException,
+  ) {
+    super(message);
+  }
+}
+
+interface AtomicWriteOpts {
+  /**
+   * Hook fired AFTER chmod and BEFORE rename. Used by the locked persist
+   * path to assert that the live config's mtime hasn't drifted under us.
+   * Throws to abort the write — the helper unlinks the staged tmp file
+   * and re-throws the hook's error verbatim (not wrapped in
+   * `AtomicWriteError`).
+   */
+  preRename?: () => Promise<void>;
+  /**
+   * Diagnostic event sink. When provided, the helper reads back the
+   * post-chmod mode (one extra `stat()`) so the `final_state` event
+   * carries the actual filesystem-applied mode (FUSE may clamp). When
+   * omitted, that read-back is skipped.
+   */
+  onEvent?: (event: AtomicWriteEvent) => void;
+}
+
+/**
+ * Atomic-write scaffolding shared by {@link runYamlMutationLocked} (the
+ * locked persist/clear path) and {@link writeNewConfig} (the bootstrap
+ * path). Encapsulates the dance both callers had inlined verbatim:
+ *
+ *   1. `mkdir(dirname(absolutePath), { recursive: true })` — parent dir
+ *   2. `open(tmpPath, "w", 0o600)` — open temp at mode 0600
+ *   3. `await fh.writeFile(content, "utf8"); await fh.sync(); await fh.close()`
+ *      in nested try/finally (close always runs)
+ *   4. `tempfile_written` event
+ *   5. Defensive `chmod(tmpPath, 0o600)` (FUSE-tolerant) + optional
+ *      mode read-back when `onEvent` provided
+ *   6. `final_state` event
+ *   7. Optional `preRename` hook (mtime drift check or any caller gate)
+ *   8. `rename(tmpPath, absolutePath)` — atomic publish
+ *   9. `rename_completed` event
+ *  10. Parent-dir fsync for power-loss durability (POSIX-only, best-effort)
+ *
+ * Behaviors deliberately NOT in this helper (because they differ between
+ * the two callers): cross-process advisory lock, stat baseline / mtime
+ * drift check, `emitDebug()` formatting (the persist path threads events
+ * through `onEvent` and constructs its `DebugRecord`-shaped lines there),
+ * schema validation, pre-existence + force gate, sync-root / symlink
+ * `assertSafePath` (the callers run this once before invoking the helper).
+ *
+ * Error mapping:
+ *   - `open()` failure  → `AtomicWriteError(stage="open",  cause)` (no unlink — nothing to clean)
+ *   - `write/sync/close` failure → `AtomicWriteError(stage="write", cause)` after best-effort `unlink(tmpPath)`
+ *   - `preRename` throw → propagates as-is (caller's class), after best-effort `unlink(tmpPath)`
+ *   - `rename()` failure → `AtomicWriteError(stage="rename", cause)` after best-effort `unlink(tmpPath)`
+ *
+ * Parent-dir fsync is unconditional best-effort: any failure (FUSE refusal,
+ * network FS, missing inode) is swallowed silently. The rename has already
+ * succeeded; skipping dir-fsync only weakens power-loss durability.
+ */
+async function writeAtomicAt0600(absolutePath: string, content: string, opts: AtomicWriteOpts = {}): Promise<void> {
+  const tmpPath = `${absolutePath}.tmp`;
+  await mkdir(dirname(absolutePath), { recursive: true });
+
+  // O_WRONLY | O_CREAT | O_TRUNC with mode 0o600. Existing tmp from a
+  // prior crashed write is overwritten.
+  let fh: Awaited<ReturnType<typeof open>>;
+  try {
+    fh = await open(tmpPath, "w", 0o600);
+  } catch (err) {
+    throw new AtomicWriteError(
+      `Cannot open temp file ${tmpPath}: ${(err as Error).message}`,
+      "open",
+      tmpPath,
+      err as NodeJS.ErrnoException,
+    );
+  }
+  const sizeBytes = Buffer.byteLength(content, "utf8");
+
+  // After open(), any throw must best-effort unlink the tmp file. `stage`
+  // lets the catch differentiate caller-class throws (preRename) from
+  // helper-stage failures that must be wrapped in AtomicWriteError.
+  let stage: "write" | "preRename" | "rename" = "write";
+  try {
+    try {
+      await fh.writeFile(content, "utf8");
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+
+    opts.onEvent?.({ type: "tempfile_written", tmpPath, sizeBytes });
+
+    // Defensive re-chmod in case umask filtered the open() mode.
+    let modeApplied = "0600";
+    if (process.platform !== "win32") {
+      try {
+        await chmod(tmpPath, 0o600);
+      } catch {
+        // Some FUSE filesystems refuse POSIX perm changes. The rename
+        // below still produces a valid file. Don't block here.
+      }
+      if (opts.onEvent !== undefined) {
+        // Read back the actual mode so the trace surfaces filesystem reality
+        // (e.g., FUSE-clamped 0644) rather than the intent.
+        try {
+          const tmpStat = await stat(tmpPath);
+          modeApplied = (tmpStat.mode & 0o777).toString(8).padStart(3, "0");
+        } catch {
+          modeApplied = "stat_failed";
+        }
+      }
+    } else {
+      modeApplied = "n/a";
+    }
+
+    opts.onEvent?.({ type: "final_state", modeApplied });
+
+    // preRename hook runs between chmod and rename. Used by the locked
+    // persist path to assert mtime hasn't drifted under us. Hook errors
+    // propagate as-is (caller's class), bypassing AtomicWriteError wrap.
+    if (opts.preRename) {
+      stage = "preRename";
+      await opts.preRename();
+    }
+
+    stage = "rename";
+    await rename(tmpPath, absolutePath);
+
+    opts.onEvent?.({ type: "rename_completed" });
+  } catch (err) {
+    // Best-effort cleanup of the temp file if anything failed after open().
+    try {
+      await unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    if (stage === "preRename") throw err;
+    throw new AtomicWriteError(
+      `Atomic write to ${absolutePath} failed at stage '${stage}': ${(err as Error).message}`,
+      stage,
+      tmpPath,
+      err as NodeJS.ErrnoException,
+    );
+  }
+
+  // Fsync the parent directory — without this, a power-loss between rename
+  // and the next implicit metadata flush can leave the file invisible.
+  // POSIX-only; NTFS journaling covers this on Windows.
+  if (process.platform !== "win32") {
+    try {
+      const dirHandle = await open(dirname(absolutePath), "r");
+      try {
+        await dirHandle.sync();
+      } finally {
+        await dirHandle.close();
+      }
+    } catch {
+      // FUSE / network filesystems may refuse fsync on directory handles.
+      // Rename succeeded; skipping dir-fsync only weakens power-loss
+      // durability, not process-crash atomicity.
+    }
+  }
+}
+
+/**
  * Atomic YAML mutation primitive shared by `persistAuthToken` and
  * `clearAuthToken`. The flow:
  *
@@ -440,136 +638,83 @@ async function runYamlMutationLocked(absolute: string, mutation: YamlMutation, o
   }
 
   const updated = String(doc);
-  const tmpPath = `${absolute}.tmp`;
-
-  await mkdir(dirname(absolute), { recursive: true });
-
-  // O_WRONLY | O_CREAT | O_TRUNC with mode 0o600. Existing tmp from a
-  // prior crashed write is overwritten.
-  let fh: Awaited<ReturnType<typeof open>>;
-  try {
-    fh = await open(tmpPath, "w", 0o600);
-  } catch (err) {
-    throw new AuthTokenPersistError(
-      `Cannot open temp file ${tmpPath}: ${(err as Error).message}`,
-      absolute,
-      err as NodeJS.ErrnoException,
-      mutation.rescueBearer,
-    );
-  }
-  const updatedSize = Buffer.byteLength(updated, "utf8");
 
   try {
-    try {
-      await fh.writeFile(updated, "utf8");
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
-
-    emitDebug(() => ({
-      ts: new Date().toISOString(),
-      op,
-      path: absolute,
-      event: "tempfile_written",
-      temp_path: tmpPath,
-      size_bytes: updatedSize,
-    }));
-
-    // Defensive re-chmod in case umask filtered the open() mode.
-    let modeApplied = "0600";
-    if (process.platform !== "win32") {
-      try {
-        await chmod(tmpPath, 0o600);
-      } catch {
-        // Some FUSE filesystems refuse POSIX perm changes. The rename
-        // below still produces a valid file. Don't block here.
-      }
-      // Read back the actual mode so the trace surfaces filesystem reality
-      // (e.g., FUSE-clamped 0644) rather than the intent.
-      try {
-        const tmpStat = await stat(tmpPath);
-        modeApplied = (tmpStat.mode & 0o777).toString(8).padStart(3, "0");
-      } catch {
-        modeApplied = "stat_failed";
-      }
-    } else {
-      modeApplied = "n/a";
-    }
-
-    emitDebug(() => ({
-      ts: new Date().toISOString(),
-      op,
-      path: absolute,
-      event: "final_state",
-      mode_applied: modeApplied,
-    }));
-
-    // Concurrency re-check — refuse if the source moved underneath us
-    // (mid-session backup-restore or a lock-disregarding writer like a
-    // manual editor save). Lock-disregarding writers exist; mtime drift is
-    // the second line.
-    const after = await stat(absolute);
-    const mtimeDelta = after.mtimeMs - beforeMtime;
-    const driftPass = after.mtimeMs === beforeMtime;
-    emitDebug(() => ({
-      ts: new Date().toISOString(),
-      op,
-      path: absolute,
-      event: "mtime_drift_check",
-      delta_ms: mtimeDelta,
-      pass: driftPass,
-    }));
-    if (!driftPass) {
-      throw new AuthTokenPersistError(
-        `Config file at ${absolute} was modified concurrently (mtime drift detected). ` +
-          `Refusing to overwrite. Re-run the command after verifying the file's current ` +
-          `contents are what you expect.`,
-        absolute,
-        undefined,
-        mutation.rescueBearer,
-      );
-    }
-
-    await rename(tmpPath, absolute);
-    emitDebug(() => ({
-      ts: new Date().toISOString(),
-      op,
-      path: absolute,
-      event: "rename_completed",
-    }));
+    await writeAtomicAt0600(absolute, updated, {
+      onEvent: (event) => {
+        switch (event.type) {
+          case "tempfile_written":
+            emitDebug(() => ({
+              ts: new Date().toISOString(),
+              op,
+              path: absolute,
+              event: "tempfile_written",
+              temp_path: event.tmpPath ?? "",
+              size_bytes: event.sizeBytes ?? 0,
+            }));
+            return;
+          case "final_state":
+            emitDebug(() => ({
+              ts: new Date().toISOString(),
+              op,
+              path: absolute,
+              event: "final_state",
+              mode_applied: event.modeApplied ?? "unknown",
+            }));
+            return;
+          case "rename_completed":
+            emitDebug(() => ({
+              ts: new Date().toISOString(),
+              op,
+              path: absolute,
+              event: "rename_completed",
+            }));
+            return;
+        }
+      },
+      preRename: async () => {
+        // Concurrency re-check — refuse if the source moved underneath us
+        // (mid-session backup-restore or a lock-disregarding writer like
+        // a manual editor save). The cross-process lock catches sibling
+        // ttctl processes; mtime drift catches anything else.
+        const after = await stat(absolute);
+        const mtimeDelta = after.mtimeMs - beforeMtime;
+        const driftPass = after.mtimeMs === beforeMtime;
+        emitDebug(() => ({
+          ts: new Date().toISOString(),
+          op,
+          path: absolute,
+          event: "mtime_drift_check",
+          delta_ms: mtimeDelta,
+          pass: driftPass,
+        }));
+        if (!driftPass) {
+          throw new AuthTokenPersistError(
+            `Config file at ${absolute} was modified concurrently (mtime drift detected). ` +
+              `Refusing to overwrite. Re-run the command after verifying the file's current ` +
+              `contents are what you expect.`,
+            absolute,
+            undefined,
+            mutation.rescueBearer,
+          );
+        }
+      },
+    });
   } catch (err) {
-    // Best-effort cleanup of the temp file if anything failed after open().
-    try {
-      await unlink(tmpPath);
-    } catch {
-      /* ignore */
-    }
     if (err instanceof AuthTokenPersistError) throw err;
+    if (err instanceof AtomicWriteError) {
+      const message =
+        err.stage === "open"
+          ? `Cannot open temp file ${err.tmpPath}: ${err.cause.message}`
+          : `Failed to write config file at ${absolute}: ${err.cause.message}`;
+      throw new AuthTokenPersistError(message, absolute, err.cause, mutation.rescueBearer);
+    }
     throw new AuthTokenPersistError(
       `Failed to write config file at ${absolute}: ${(err as Error).message}`,
       absolute,
       err as NodeJS.ErrnoException,
       mutation.rescueBearer,
     );
-  }
-
-  // Fsync the parent directory — without this, a power-loss between rename
-  // and the next implicit metadata flush can leave the file invisible.
-  // POSIX-only; NTFS journaling covers this on Windows.
-  if (process.platform !== "win32") {
-    try {
-      const dirHandle = await open(dirname(absolute), "r");
-      try {
-        await dirHandle.sync();
-      } finally {
-        await dirHandle.close();
-      }
-    } catch {
-      // FUSE / network filesystems may refuse fsync on directory handles.
-      // Rename succeeded; skipping dir-fsync only weakens power-loss
-      // durability, not process-crash atomicity.
-    }
   }
 }
 
@@ -722,60 +867,21 @@ export async function writeNewConfig(configPath: string, content: string, opts: 
     );
   }
 
-  await mkdir(dirname(absolute), { recursive: true });
-
-  const tmpPath = `${absolute}.tmp`;
-  let fh: Awaited<ReturnType<typeof open>>;
   try {
-    fh = await open(tmpPath, "w", 0o600);
+    await writeAtomicAt0600(absolute, content);
   } catch (err) {
-    throw new ConfigError(`Cannot open temp file ${tmpPath}: ${(err as Error).message}`, "PERMISSION", absolute);
-  }
-  try {
-    try {
-      await fh.writeFile(content, "utf8");
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
-
-    if (process.platform !== "win32") {
-      try {
-        await chmod(tmpPath, 0o600);
-      } catch {
-        // FUSE filesystems may refuse POSIX perm changes — same posture
-        // as performYamlMutation. Rename below still produces a file
-        // with the umask-filtered open() mode.
-      }
-    }
-
-    await rename(tmpPath, absolute);
-  } catch (err) {
-    try {
-      await unlink(tmpPath);
-    } catch {
-      /* ignore */
-    }
     if (err instanceof ConfigError) throw err;
+    if (err instanceof AtomicWriteError) {
+      const message =
+        err.stage === "open"
+          ? `Cannot open temp file ${err.tmpPath}: ${err.cause.message}`
+          : `Failed to write config file at ${absolute}: ${err.cause.message}`;
+      throw new ConfigError(message, "PERMISSION", absolute);
+    }
     throw new ConfigError(
       `Failed to write config file at ${absolute}: ${(err as Error).message}`,
       "PERMISSION",
       absolute,
     );
-  }
-
-  // Fsync the parent directory — same power-loss durability gate as
-  // performYamlMutation. POSIX-only; NTFS journaling covers it on Windows.
-  if (process.platform !== "win32") {
-    try {
-      const dirHandle = await open(dirname(absolute), "r");
-      try {
-        await dirHandle.sync();
-      } finally {
-        await dirHandle.close();
-      }
-    } catch {
-      /* FUSE / network FS refusal — non-blocking */
-    }
   }
 }
