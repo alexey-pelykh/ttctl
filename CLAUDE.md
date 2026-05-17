@@ -280,6 +280,57 @@ are filtered at the param-pick step via `INTERNAL_OPTIONS_TYPES` in
 the script. Adding a new sibling option-bag interface requires
 extending that set; the script header documents the protocol.
 
+### Surface coverage gate (Class A gap defense)
+
+`scripts/check-surface-coverage.ts` (wired into `pnpm lint`) is the
+structural CI-time defense against **Class A** gaps — the recurring
+pattern where a service function is exported from
+`packages/core/src/services/**/index.ts` but is registered as NEITHER
+a CLI command (`packages/cli/src/commands/**`) NOR an MCP tool
+(`packages/mcp/src/tools/**`). When both surfaces omit symmetrically,
+the parity test direction (sibling) stays green — the capability
+ships in core but no user-facing surface exposes it. Originating
+incidents: #341 (certifications/education/employment `.list` missing
+both surfaces), #342 (industries `.show` missing both — closed
+post-fix), #343 (external `.show` missing both — open).
+
+Detection scope: `packages/core/src/services/{profile,engagements,payments,timesheet,scheduler}/**/index.ts`.
+The script walks two export shapes — top-level `export async function
+<name>(...)` and `export const <ns> = { async <name>(...) }`
+namespace blocks (the `payouts` / `methods` / `rate` / `breaks`
+pattern) — and asserts each exported operation is invoked from at
+least one surface tree. Detection is invocation-based, not name-based:
+for each export the script searches CLI + MCP files for the literal
+call pattern `<domain>.[<sub>.][<ns>.]<name>(` (e.g.
+`profile.basic.show(`, `payments.payouts.list(`). The approach is
+robust to MCP/CLI renames — e.g. service `basic.set()` → MCP tool
+`ttctl_profile_basic_update` still reads `profile.basic.set(` at the
+call site, so the mapping is captured without an alias table. Block
+comments and JSDoc bodies are masked before matching so docstring
+references like `{@link timesheet.resolveCurrentCycle}` do not
+register as coverage.
+
+- **Exempt** an internal-only service export (e.g.
+  `timesheet.resolveCurrentCycle`, a cycle-id resolution helper for
+  the `submit` flow per #348) by placing
+  `// surface-exempt: <reason>` on the line immediately above its
+  `export` declaration. The reason is mandatory and surfaces in the
+  report. A marker placed on a namespace header
+  (`export const breaks = {`) applies to every method inside; per-
+  method markers override the namespace marker for that method.
+- **Default mode** is warn-only (exit 0). Set
+  `SURFACE_COVERAGE_STRICT=1` (or pass `--strict`) to fail on Class A
+  gaps (the `NEITHER` disposition). Class C gaps (one surface only —
+  e.g. an export invoked from CLI only) are reported as informational
+  rows but do not fail this gate; that framing belongs to the sibling
+  parity contract test.
+
+Exports whose names start with `_` (e.g.
+`_setMultipartFetchForTesting`) are treated as internal by convention
+and skipped — the leading-underscore convention coexists with the
+explicit `// surface-exempt:` marker for cases where the export name
+cannot be changed without breaking callers.
+
 ### Wire-shape snapshots
 
 Post-merge wire-drift detection sibling to the rule above. E2E runs
