@@ -4,8 +4,7 @@
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
-import { show as showBasic } from "../basic/index.js";
-import { isAuthRevokedExtensionCode } from "../shared.js";
+import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
  * Visas sub-domain error codes. Cross-cutting auth/Cloudflare failures
@@ -87,15 +86,6 @@ function mapTravelVisaNode(node: Record<string, unknown>): TravelVisa {
     visaType: (node["visaType"] as string | null | undefined) ?? "",
     expiryDate: (node["expiryDate"] as string | null | undefined) ?? null,
   };
-}
-
-async function resolveProfileId(token: string): Promise<string> {
-  const profile = await showBasic(token);
-  const profileId = profile.viewer?.viewerRole.profileId;
-  if (profileId === undefined) {
-    throw new VisasError("NO_VIEWER", "Cannot resolve profile id from session response.");
-  }
-  return profileId;
 }
 
 /**
@@ -190,7 +180,7 @@ const GET_TRAVEL_VISAS_QUERY = `query getTravelVisas($profileId: ID!) {
  * never `null`.
  */
 export async function list(token: string): Promise<TravelVisa[]> {
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
   const res = await withTransportErrors("getTravelVisas", async () =>
     impersonatedTransport({
       surface: "talent-profile",
@@ -258,7 +248,7 @@ export async function add(token: string, input: TravelVisaInput): Promise<Travel
   if (!input.visaType || input.visaType.trim() === "") {
     throw new VisasError("VALIDATION_ERROR", "Travel visa requires a non-empty `visaType`.");
   }
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
   const variables: { input: CreateTravelVisaInput } = {
     input: { profileId, travelVisa: input },
   };

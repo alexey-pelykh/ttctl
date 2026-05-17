@@ -13,14 +13,9 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-vi.mock("../../basic/index.js", () => ({
-  show: vi.fn(),
-}));
-
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { impersonatedMultipartTransport, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
-import { show as showBasic } from "../../basic/index.js";
 import {
   PortfolioError,
   add,
@@ -38,7 +33,6 @@ import {
 const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);
 const mockedImpersonatedMultipart = vi.mocked(impersonatedMultipartTransport);
-const mockedShowBasic = vi.mocked(showBasic);
 const TOKEN = "tok-portfolio";
 
 interface MockResponse {
@@ -67,16 +61,23 @@ function replyMultipart(...responses: MockResponse[]): void {
 }
 
 /**
- * Stub `show` (basic) to return a viewer with a stable profileId. The
- * portfolio service calls `show` only to extract the viewer's
- * `profileId`; we don't need a complete `ProfileShowQuery` shape.
+ * Stub the stock-transport reply consumed by `extractProfileId`'s internal
+ * `basic.show()` round-trip. Only `data.viewer.viewerRole.profileId` is
+ * inspected by `extractProfileId`; we don't need a complete
+ * `ProfileShowQuery` shape on the wire.
  */
 function stubProfileId(profileId: string = "p1"): void {
-  mockedShowBasic.mockResolvedValueOnce({
-    viewer: {
-      viewerRole: { profileId } as never,
-    } as never,
-  } as never);
+  mockedStock.mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: {
+      data: {
+        viewer: {
+          viewerRole: { profileId } as never,
+        } as never,
+      },
+    },
+  } satisfies TransportResponse);
 }
 
 const PORTFOLIO_NODE = {
@@ -131,7 +132,6 @@ describe("portfolio.list", () => {
   beforeEach(() => {
     mockedStock.mockReset();
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
   });
 
   it("targets talent-profile with getPortfolioItems and the resolved profileId", async () => {
@@ -180,14 +180,13 @@ describe("portfolio.add", () => {
   beforeEach(() => {
     mockedStock.mockReset();
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
   });
 
   it("rejects an empty title with VALIDATION_ERROR before any network call", async () => {
     await expect(add(TOKEN, { title: "", industryIds: ["i-1"] })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
     });
-    expect(mockedShowBasic).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
     expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 
@@ -199,7 +198,7 @@ describe("portfolio.add", () => {
     await expect(add(TOKEN, { title: "ok", industryIds: [] })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
     });
-    expect(mockedShowBasic).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
     expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 
@@ -355,7 +354,6 @@ describe("portfolio.add", () => {
 describe("portfolio.update", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
   });
 
   it("rejects an empty changes object with VALIDATION_ERROR", async () => {
@@ -588,7 +586,7 @@ describe("portfolio.highlight", () => {
 describe("portfolio.uploadCover", () => {
   beforeEach(() => {
     mockedImpersonatedMultipart.mockReset();
-    mockedShowBasic.mockReset();
+    mockedStock.mockReset();
   });
 
   it("accepts a buffer source and binds it to variables.file via the multipart map", async () => {
@@ -635,7 +633,7 @@ describe("portfolio.uploadCover", () => {
 describe("portfolio.uploadFile", () => {
   beforeEach(() => {
     mockedImpersonatedMultipart.mockReset();
-    mockedShowBasic.mockReset();
+    mockedStock.mockReset();
   });
 
   it("issues uploadPortfolioFile via multipart and returns the cache name + url", async () => {

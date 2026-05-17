@@ -7,8 +7,7 @@ import { basename } from "node:path";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedMultipartTransport, impersonatedTransport } from "../../../transport.js";
 import type { MultipartFile, TransportResponse } from "../../../transport.js";
-import { show as showBasic } from "../basic/index.js";
-import { isAuthRevokedExtensionCode } from "../shared.js";
+import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 
 /**
  * Resume sub-domain error codes. Cross-cutting auth/Cloudflare failures
@@ -127,21 +126,13 @@ function rejectIfUserErrors(errors: UserError[] | null | undefined, operationNam
 }
 
 /**
- * Resolve the signed-in user's `profileId` via the mobile-gateway
- * `ProfileShow` query. Mirrors the helpers in `portfolio/index.ts` and
- * `visas/index.ts` — `CancelResumeUploadInput.profileId` is required by
- * the server despite the synthesized SDL marking the input as Pattern 7
- * (`_placeholder` only). The decompile gap means the requirement only
- * surfaces empirically via the live wire, not via codegen.
+ * Note on the upstream resolution helper: `extractProfileId` from
+ * `../shared.js` returns the viewer's `profileId` so this module can pass
+ * `CancelResumeUploadInput.profileId`, which the server requires despite
+ * the synthesized SDL marking the input as Pattern 7 (`_placeholder` only).
+ * The decompile gap means the requirement only surfaces empirically via the
+ * live wire, not via codegen.
  */
-async function resolveProfileId(token: string): Promise<string> {
-  const profile = await showBasic(token);
-  const profileId = profile.viewer?.viewerRole.profileId;
-  if (profileId === undefined) {
-    throw new ResumeError("NO_VIEWER", "Cannot resolve profile id from session response.");
-  }
-  return profileId;
-}
 
 async function withTransportErrors<T>(operationName: string, fn: () => Promise<T>): Promise<T> {
   try {
@@ -276,7 +267,7 @@ export interface CancelResumeUploadResult {
  * deferred until a non-destructive upload-state setup is available.
  */
 export async function cancelUpload(token: string): Promise<CancelResumeUploadResult> {
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
   const variables: { input: CancelResumeUploadInput } = {
     input: { profileId },
   };

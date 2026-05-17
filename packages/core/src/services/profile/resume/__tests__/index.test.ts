@@ -7,24 +7,20 @@ vi.mock("../../../../transport.js", async () => {
   const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
   return {
     ...actual,
+    stockTransport: vi.fn(),
     impersonatedTransport: vi.fn(),
     impersonatedMultipartTransport: vi.fn(),
   };
 });
 
-vi.mock("../../basic/index.js", () => ({
-  show: vi.fn(),
-}));
-
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { impersonatedMultipartTransport, impersonatedTransport } from "../../../../transport.js";
+import { impersonatedMultipartTransport, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
-import { show as showBasic } from "../../basic/index.js";
 import { ResumeError, cancelUpload, upload } from "../index.js";
 
+const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);
 const mockedMultipart = vi.mocked(impersonatedMultipartTransport);
-const mockedShowBasic = vi.mocked(showBasic);
 const TOKEN = "tok-resume";
 
 interface MockResponse {
@@ -58,12 +54,41 @@ function replyMultipart(...responses: MockResponse[]): void {
  * for the cancelResumeUpload input; we don't need a complete
  * `ProfileShowQuery` shape.
  */
+/**
+ * Stub the stock-transport reply consumed by `extractProfileId`'s internal
+ * `basic.show()` round-trip. Only `data.viewer.viewerRole.profileId` is
+ * inspected; we don't need a complete `ProfileShowQuery` shape on the wire.
+ */
 function stubProfileId(profileId: string = "p1"): void {
-  mockedShowBasic.mockResolvedValueOnce({
-    viewer: {
-      viewerRole: { profileId } as never,
-    } as never,
-  } as never);
+  mockedStock.mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: {
+      data: {
+        viewer: {
+          viewerRole: { profileId } as never,
+        } as never,
+      },
+    },
+  } satisfies TransportResponse);
+}
+
+/**
+ * Stub a stock-transport reply that carries a viewer with NO `profileId`
+ * (the NO_VIEWER path through `extractProfileId`).
+ */
+function stubProfileIdMissing(): void {
+  mockedStock.mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: {
+      data: {
+        viewer: {
+          viewerRole: {} as never,
+        } as never,
+      },
+    },
+  } satisfies TransportResponse);
 }
 
 describe("resume.upload", () => {
@@ -119,7 +144,7 @@ describe("resume.upload", () => {
 describe("resume.cancelUpload", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
+    mockedStock.mockReset();
   });
 
   it("resolves profileId and issues cancelResumeUpload with input.profileId", async () => {
@@ -129,7 +154,7 @@ describe("resume.cancelUpload", () => {
     const result = await cancelUpload(TOKEN);
 
     expect(result.success).toBe(true);
-    expect(mockedShowBasic).toHaveBeenCalledWith(TOKEN);
+    expect(mockedStock).toHaveBeenCalledTimes(1);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("cancelResumeUpload");
     expect(call.body.variables).toEqual({ input: { profileId: "p-cancel" } });
@@ -145,11 +170,7 @@ describe("resume.cancelUpload", () => {
   });
 
   it("propagates NO_VIEWER when the session response is missing the profile id", async () => {
-    mockedShowBasic.mockResolvedValueOnce({
-      viewer: {
-        viewerRole: {} as never,
-      } as never,
-    } as never);
+    stubProfileIdMissing();
 
     await expect(cancelUpload(TOKEN)).rejects.toMatchObject({ code: "NO_VIEWER" });
     expect(mockedImpersonated).not.toHaveBeenCalled();

@@ -7,22 +7,18 @@ vi.mock("../../../../transport.js", async () => {
   const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
   return {
     ...actual,
+    stockTransport: vi.fn(),
     impersonatedTransport: vi.fn(),
   };
 });
 
-vi.mock("../../basic/index.js", () => ({
-  show: vi.fn(),
-}));
-
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { impersonatedTransport } from "../../../../transport.js";
+import { impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
-import { show as showBasic } from "../../basic/index.js";
 import { VisasError, add, list, remove, update } from "../index.js";
 
+const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);
-const mockedShowBasic = vi.mocked(showBasic);
 const TOKEN = "tok-visas";
 
 interface MockResponse {
@@ -40,10 +36,21 @@ function replyImpersonated(...responses: MockResponse[]): void {
   }
 }
 
+/**
+ * Stub the stock-transport reply consumed by `extractProfileId`'s internal
+ * `basic.show()` round-trip. Only `data.viewer.viewerRole.profileId` is
+ * inspected; we don't need a complete `ProfileShowQuery` shape on the wire.
+ */
 function stubProfileId(profileId: string = "p1"): void {
-  mockedShowBasic.mockResolvedValueOnce({
-    viewer: { viewerRole: { profileId } as never } as never,
-  } as never);
+  mockedStock.mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: {
+      data: {
+        viewer: { viewerRole: { profileId } as never } as never,
+      },
+    },
+  } satisfies TransportResponse);
 }
 
 const VISA_NODE = {
@@ -56,7 +63,7 @@ const VISA_NODE = {
 describe("visas.list", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
+    mockedStock.mockReset();
   });
 
   it("targets talent-profile with getTravelVisas", async () => {
@@ -96,14 +103,14 @@ describe("visas.list", () => {
 describe("visas.add", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
+    mockedStock.mockReset();
   });
 
   it("rejects empty countryId with VALIDATION_ERROR before any network call", async () => {
     await expect(add(TOKEN, { countryId: "", visaType: "X" })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
     });
-    expect(mockedShowBasic).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
   });
 
   it("rejects empty visaType with VALIDATION_ERROR", async () => {
@@ -160,7 +167,7 @@ describe("visas.add", () => {
 describe("visas.update", () => {
   beforeEach(() => {
     mockedImpersonated.mockReset();
-    mockedShowBasic.mockReset();
+    mockedStock.mockReset();
   });
 
   it("rejects empty changes with VALIDATION_ERROR", async () => {

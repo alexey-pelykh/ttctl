@@ -7,8 +7,7 @@ import { basename } from "node:path";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedMultipartTransport, impersonatedTransport } from "../../../transport.js";
 import type { MultipartFile, TransportResponse } from "../../../transport.js";
-import { show as showBasic } from "../basic/index.js";
-import { isAuthRevokedExtensionCode } from "../shared.js";
+import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 import { list as listSkills } from "../skills/index.js";
 
 /**
@@ -213,24 +212,6 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
 }
 
 /**
- * Resolve the signed-in user's `profileId` via the mobile-gateway
- * `ProfileShow` query. Centralized here so each write-side operation has
- * one path to the id without duplicating the read-call boilerplate.
- *
- * Errors propagate verbatim: a `set`-flow that can't read its own profile
- * is unrecoverable, and surfacing the read-side error gives the user the
- * same actionable message they'd get from `ttctl profile show`.
- */
-async function resolveProfileId(token: string): Promise<string> {
-  const profile = await showBasic(token);
-  const profileId = profile.viewer?.viewerRole.profileId;
-  if (profileId === undefined) {
-    throw new PortfolioError("NO_VIEWER", "Cannot resolve profile id from session response.");
-  }
-  return profileId;
-}
-
-/**
  * Common "200 with errors" shape handler. Returns the unwrapped payload
  * (the value of the single root data field) as `unknown`; callers
  * narrow at the call site to their per-operation payload shape. The
@@ -356,7 +337,7 @@ const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {
  * `null`).
  */
 export async function list(token: string): Promise<PortfolioItem[]> {
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
   // Routed to `talent-profile` (impersonated, Cloudflare-protected): the
   // older `mobile-gateway` schema is missing fields the read surface
   // selects (`toptalRelated` empirically — `Cannot query field
@@ -517,7 +498,7 @@ export async function add(token: string, input: PortfolioItemAddInput): Promise<
         "then pass `--industry-id <id>` (repeatable) on the CLI.",
     );
   }
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
 
   // The server rejects `skills: []` with `"You need to add at least one
   // tag"`. When the caller does not supply skills, fall back to the
@@ -1083,7 +1064,7 @@ export async function uploadCover(
   source: FileSource,
   transformation?: PortfolioCoverTransformation,
 ): Promise<UploadPortfolioCoverResult> {
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
   const file = await resolveFileSource(source, "uploadCover");
   const resolvedTransformation: PortfolioCoverTransformation =
     transformation ?? defaultCoverTransformation(file.content);
@@ -1171,7 +1152,7 @@ export interface UploadPortfolioFileResult {
  * the cache name + url; the CLI surface prints both for downstream use.
  */
 export async function uploadFile(token: string, source: FileSource): Promise<UploadPortfolioFileResult> {
-  const profileId = await resolveProfileId(token);
+  const profileId = await extractProfileId(token);
   const file = await resolveFileSource(source, "uploadFile");
   const res = await withTransportErrors("uploadPortfolioFile", async () =>
     impersonatedMultipartTransport({
