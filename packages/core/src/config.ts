@@ -9,23 +9,37 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 /**
- * 1Password item reference for credential resolution.
+ * Source pattern for a 1Password item reference, exported as a STRING (not
+ * a `RegExp`) so non-schema consumers (the CLI's interactive `auth init`
+ * flow's validation closure) can adopt the canonical pattern without
+ * pulling the entire Zod schema into their bundle. Analogous to
+ * {@link ./lib/redact.ts#BEARER_PATTERN_SOURCE}.
  *
- * Forms:
+ * Forms accepted:
  *   - `op://VAULT/ITEM` (2-segment) — relies on `op` CLI default-account or
  *     `OP_ACCOUNT` env. Works for single-account setups.
- *   - `op://ACCOUNT/VAULT/ITEM` (3-segment) — selects a specific account when
- *     the user has multiple `op` accounts configured. ACCOUNT is forwarded
- *     verbatim to `op item get --account` (accepts UUID, shorthand, or sign-in
- *     email — `op` CLI validates).
+ *   - `op://ACCOUNT/VAULT/ITEM` (3-segment) — selects a specific account
+ *     when the user has multiple `op` accounts configured. ACCOUNT is
+ *     forwarded verbatim to `op item get --account` (accepts UUID,
+ *     shorthand, or sign-in email — `op` CLI validates).
  *
  * Per-field references (`op://VAULT/ITEM/FIELD` or 4+ segments) are
  * deliberately NOT supported — TTCtl always reads `username` and `password`
- * from a single LOGIN-category item. The regex rejects 4+ segments.
+ * from a single LOGIN-category item. The pattern rejects 4+ segments.
  */
-const OnePasswordReferenceSchema = z
-  .string()
-  .regex(/^op:\/\/(?:[^/]+\/)?[^/]+\/[^/]+$/, "auth.credentials must be op://[account/]vault/item (no /field suffix)");
+export const OP_REF_PATTERN_SOURCE = "^op://(?:[^/]+/)?[^/]+/[^/]+$" as const;
+
+/**
+ * Canonical user-facing hint paired with {@link OP_REF_PATTERN_SOURCE}.
+ * Used as the Zod error message AND as the CLI's interactive-prompt
+ * validation hint so both surfaces speak the same language. Phrased as a
+ * standalone sentence (no field-name prefix) because the schema's
+ * `formatLoadValidationError` adds the field path (`auth.credentials:`) and
+ * the CLI prompt has its own context.
+ */
+export const OP_REF_PATTERN_HINT = "Expected op://[account/]vault/item — no /field suffix" as const;
+
+const OnePasswordReferenceSchema = z.string().regex(new RegExp(OP_REF_PATTERN_SOURCE), OP_REF_PATTERN_HINT);
 
 /**
  * Literal credentials in YAML — discouraged for daily use; the 1Password form

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { z } from "zod";
 
-import { writeNewConfig } from "@ttctl/core";
+import { OP_REF_PATTERN_HINT, OP_REF_PATTERN_SOURCE, writeNewConfig } from "@ttctl/core";
 
 /**
  * Outcome shape for `runAuthInit`. The discriminated union lets unit tests
@@ -28,15 +28,13 @@ export interface AuthInitOptions {
 }
 
 /**
- * Regex for a 1Password item reference. Matches the `OnePasswordReferenceSchema`
- * in `packages/core/src/config.ts` line-for-line — accepts both
- * `op://VAULT/ITEM` (2-segment) and `op://ACCOUNT/VAULT/ITEM` (3-segment)
- * forms; rejects 4+ segments (per-field references). Duplicated here rather
- * than imported from core to avoid pulling the entire schema into the
- * interactive flow's validation closure.
+ * Compiled `RegExp` for a 1Password item reference, constructed once at
+ * module load from the canonical {@link OP_REF_PATTERN_SOURCE} exported by
+ * `@ttctl/core`. Sharing the source string (rather than the compiled
+ * `RegExp`) keeps the CLI bundle free of Zod while guaranteeing the
+ * pattern stays in lock-step with `OnePasswordReferenceSchema`.
  */
-const OP_REF_REGEX = /^op:\/\/(?:[^/]+\/)?[^/]+\/[^/]+$/;
-const OP_REF_HINT = "Expected op://[account/]vault/item — no /field suffix";
+const OP_REF_REGEX = new RegExp(OP_REF_PATTERN_SOURCE);
 
 /**
  * Email regex for Form B username validation. Permissive — matches what a
@@ -403,7 +401,7 @@ async function promptFreeformOpRef(): Promise<string | undefined> {
     placeholder: "op://Personal/ttctl",
     validate: (value: string | undefined) => {
       if (value === undefined || value.length === 0) return "Reference is required.";
-      if (!OP_REF_REGEX.test(value)) return OP_REF_HINT;
+      if (!OP_REF_REGEX.test(value)) return OP_REF_PATTERN_HINT;
       return undefined;
     },
   });

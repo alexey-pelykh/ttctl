@@ -8,6 +8,8 @@ export {
   ConfigWriteSchema,
   discoverConfigPath,
   loadConfigFile,
+  OP_REF_PATTERN_HINT,
+  OP_REF_PATTERN_SOURCE,
   resolveConfig,
 } from "./config.js";
 export type {
