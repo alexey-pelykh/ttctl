@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ConfigError, TtctlError, profile } from "@ttctl/core";
+import { ConfigError, profile } from "@ttctl/core";
 
-import { presentTtctlError } from "../../errors.js";
 import { resolveConfigForCli } from "../../lib/config-context.js";
 import { emitErrorAndExit } from "../../lib/envelopes.js";
-import type { EnvelopeError } from "../../lib/envelopes.js";
+import { handleDomainError } from "../../lib/error-routing.js";
 import type { OutputFormat } from "../../lib/output.js";
 
 /**
@@ -77,46 +76,17 @@ export async function loadAuthTokenOrExit(commandLabel: string, format: OutputFo
 /**
  * Render a domain error from any of the four sub-domain services
  * (education, certifications, employment, industries). All four reuse
- * `profile.basic.ProfileError` for domain errors and pass `TtctlError`
- * subclasses through verbatim — the rendering is therefore identical
- * across sub-domains.
+ * `profile.basic.ProfileError` for domain errors.
  *
- * Post-#128 the function routes through the envelope ABI: `json`/`yaml`
- * land on STDOUT; `pretty` lands on STDERR with a one-line summary plus
- * the multi-line block. `TtctlError` subclasses keep their dedicated
- * 3-block pretty rendering (Recovery, Code) on `pretty` for backward
- * UX continuity with #77; on `json`/`yaml` they flow through the
- * envelope so machine consumers see the stable wire shape.
+ * Thin wrapper around the shared CLI error router (#330) closed over
+ * `profile.basic.ProfileError`. No per-code hint adapter — `ProfileError`
+ * codes do not carry actionable next-step hints today.
  *
  * `commandLabel` is the user-facing leaf-verb pair (e.g.
  * `"profile education add"`). Returns `never` (always exits).
  */
 export function presentSubDomainError(commandLabel: string, err: unknown, format: OutputFormat = "pretty"): never {
-  if (err instanceof TtctlError) {
-    if (format === "pretty") presentTtctlError(err);
-    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
-    emitErrorAndExit({
-      operation: operationFor(commandLabel),
-      format,
-      errors,
-      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
-    });
-  }
-  if (err instanceof profile.basic.ProfileError) {
-    emitErrorAndExit({
-      operation: operationFor(commandLabel),
-      format,
-      errors: [{ code: err.code, message: err.message }],
-      prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
-    });
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  emitErrorAndExit({
-    operation: operationFor(commandLabel),
-    format,
-    errors: [{ code: "INTERNAL_ERROR", message }],
-    prettySummary: `${commandLabel} failed: ${message}`,
-  });
+  handleDomainError(commandLabel, err, profile.basic.ProfileError, format);
 }
 
 /**

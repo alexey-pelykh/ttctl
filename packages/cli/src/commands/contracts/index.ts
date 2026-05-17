@@ -4,11 +4,10 @@
 import Table from "cli-table3";
 import { Command, Option } from "commander";
 
-import { TtctlError, contracts } from "@ttctl/core";
+import { contracts } from "@ttctl/core";
 
-import { presentTtctlError } from "../../errors.js";
-import { wrapListEnvelope, emitErrorAndExit } from "../../lib/envelopes.js";
-import type { EnvelopeError } from "../../lib/envelopes.js";
+import { wrapListEnvelope } from "../../lib/envelopes.js";
+import { handleDomainError } from "../../lib/error-routing.js";
 import { emitResult } from "../../lib/output.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
@@ -196,38 +195,13 @@ export function activeMarker(isActive: boolean | null): string {
 }
 
 /**
- * Route service errors through the envelope ABI (#128). Mirrors
- * `handleEngagementsError` / `handlePaymentsError`.
+ * Thin wrapper around the shared CLI error router (#330) closed over
+ * `contracts.ContractsError` and {@link hintForContractsCode}. The
+ * router applies the envelope ABI (#128) branching uniformly across
+ * sub-domains.
  */
 export function handleContractsError(commandLabel: string, err: unknown, format: OutputFormat = "pretty"): never {
-  if (err instanceof TtctlError) {
-    if (format === "pretty") presentTtctlError(err);
-    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
-    emitErrorAndExit({
-      operation: commandLabel.replace(/ /g, "."),
-      format,
-      errors,
-      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
-    });
-  }
-  if (err instanceof contracts.ContractsError) {
-    const envelopeError: EnvelopeError = { code: err.code, message: err.message };
-    const hint = hintForContractsCode(err.code);
-    if (hint !== undefined) envelopeError.hint = hint;
-    emitErrorAndExit({
-      operation: commandLabel.replace(/ /g, "."),
-      format,
-      errors: [envelopeError],
-      prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
-    });
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  emitErrorAndExit({
-    operation: commandLabel.replace(/ /g, "."),
-    format,
-    errors: [{ code: "INTERNAL_ERROR", message }],
-    prettySummary: `${commandLabel} failed: ${message}`,
-  });
+  handleDomainError(commandLabel, err, contracts.ContractsError, format, hintForContractsCode);
 }
 
 function hintForContractsCode(code: contracts.ContractsErrorCode): string | undefined {

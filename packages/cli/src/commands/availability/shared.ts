@@ -1,57 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { TtctlError, availability } from "@ttctl/core";
+import { availability } from "@ttctl/core";
 
-import { presentTtctlError } from "../../errors.js";
-import { emitErrorAndExit } from "../../lib/envelopes.js";
-import type { EnvelopeError } from "../../lib/envelopes.js";
+import { handleDomainError } from "../../lib/error-routing.js";
 import type { OutputFormat } from "../../lib/output.js";
 
 export { loadAuthTokenOrExit } from "../profile/shared.js";
 
 /**
- * Route service errors through the envelope ABI (#128). Mirrors
- * `handleEngagementsError` and the other sub-domain handlers:
- *
- * - `TtctlError` subclasses keep their dedicated 3-block pretty
- *   rendering on `pretty`; `json` / `yaml` flow through the envelope.
- * - `AvailabilityError` codes always flow through the envelope.
- * - Anything else collapses into `INTERNAL_ERROR`.
- *
- * `commandLabel` is the user-visible prefix (e.g.
- * `"availability show"`); the envelope `operation` is derived by
- * replacing spaces with dots (`"availability.show"`).
+ * Thin wrapper around the shared CLI error router (#330) closed over
+ * `availability.AvailabilityError` and {@link hintForAvailabilityCode}.
+ * The router applies the envelope ABI (#128) branching uniformly across
+ * sub-domains; the hint adapter is invoked on the domain-error branch
+ * to surface a per-code recovery suggestion when one is available.
  */
 export function handleAvailabilityError(commandLabel: string, err: unknown, format: OutputFormat = "pretty"): never {
-  if (err instanceof TtctlError) {
-    if (format === "pretty") presentTtctlError(err);
-    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
-    emitErrorAndExit({
-      operation: commandLabel.replace(/ /g, "."),
-      format,
-      errors,
-      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
-    });
-  }
-  if (err instanceof availability.AvailabilityError) {
-    const envelopeError: EnvelopeError = { code: err.code, message: err.message };
-    const hint = hintForAvailabilityCode(err.code);
-    if (hint !== undefined) envelopeError.hint = hint;
-    emitErrorAndExit({
-      operation: commandLabel.replace(/ /g, "."),
-      format,
-      errors: [envelopeError],
-      prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
-    });
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  emitErrorAndExit({
-    operation: commandLabel.replace(/ /g, "."),
-    format,
-    errors: [{ code: "INTERNAL_ERROR", message }],
-    prettySummary: `${commandLabel} failed: ${message}`,
-  });
+  handleDomainError(commandLabel, err, availability.AvailabilityError, format, hintForAvailabilityCode);
 }
 
 /**

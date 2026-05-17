@@ -2,50 +2,21 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import Table from "cli-table3";
-import { TtctlError, jobs } from "@ttctl/core";
+import { jobs } from "@ttctl/core";
 
-import { presentTtctlError } from "../../errors.js";
-import { emitErrorAndExit } from "../../lib/envelopes.js";
-import type { EnvelopeError } from "../../lib/envelopes.js";
+import { handleDomainError } from "../../lib/error-routing.js";
 import type { OutputFormat } from "../../lib/output.js";
 
 export { loadAuthTokenOrExit } from "../profile/shared.js";
 
 /**
- * Route service errors through the envelope ABI (#128) — mirrors
- * `handleApplicationsError` / `handleEngagementsError`. Branches:
- *
- * - `TtctlError` subclasses keep their dedicated 3-block pretty
- *   rendering on `pretty` (Recovery / Code / message).
- * - `JobsError` codes always flow through the envelope.
- * - Anything else collapses into `INTERNAL_ERROR`.
+ * Thin wrapper around the shared CLI error router (#330) closed over
+ * `jobs.JobsError`. The router applies the envelope ABI (#128)
+ * branching uniformly across sub-domains. No per-code hint adapter —
+ * `JobsError` codes do not carry actionable next-step hints today.
  */
 export function handleJobsError(commandLabel: string, err: unknown, format: OutputFormat = "pretty"): never {
-  if (err instanceof TtctlError) {
-    if (format === "pretty") presentTtctlError(err);
-    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
-    emitErrorAndExit({
-      operation: commandLabel.replace(/ /g, "."),
-      format,
-      errors,
-      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
-    });
-  }
-  if (err instanceof jobs.JobsError) {
-    emitErrorAndExit({
-      operation: commandLabel.replace(/ /g, "."),
-      format,
-      errors: [{ code: err.code, message: err.message }],
-      prettySummary: `${commandLabel} failed (${err.code}): ${err.message}`,
-    });
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  emitErrorAndExit({
-    operation: commandLabel.replace(/ /g, "."),
-    format,
-    errors: [{ code: "INTERNAL_ERROR", message }],
-    prettySummary: `${commandLabel} failed: ${message}`,
-  });
+  handleDomainError(commandLabel, err, jobs.JobsError, format);
 }
 
 /**
