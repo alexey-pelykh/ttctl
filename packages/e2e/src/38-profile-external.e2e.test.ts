@@ -27,17 +27,15 @@
  *     with the full mutation path exercised. Verifies the post-update
  *     response carries the same trio.
  *
- * **Exempted at source** (`packages/core/src/services/profile/external/index.ts`):
- *   - `UpdateExternalProfiles`: no safe round-trip is possible. The
- *     service has no read-side endpoint exposing linkedin / github /
- *     website / twitter / behance / dribbble (basic profile show does
- *     not include them; the response of an UPDATE call gives POST-
- *     state only). Sending a sentinel value cannot be reverted without
- *     a captured pre-state, and overwriting the maintainer's real
- *     URLs with an `e2e-test` value is destructive. The wire shape
- *     (Pattern 1 wrapper key `externalProfiles`) is inferred per
- *     `research/notes/10-mutation-input-patterns.md`; covered by
- *     run-time monitoring if invoked.
+ * **`UpdateExternalProfiles` round-trip now covered elsewhere** — once
+ * `getExternalProfiles` landed (#343) the destructive-round-trip blocker
+ * dissolved (re-apply the EXACT current value via `update`, then `show`
+ * to assert echo — non-destructive, NOT a sentinel). That round-trip
+ * lives in `42-profile-external-show.e2e.test.ts` alongside the new
+ * read, where the captured-pre-state is naturally available. The wire
+ * shape itself — `{ input: { profileId, profile: { …urls } } }` — was
+ * validated by that same round-trip 2026-05-17; the prior-inferred
+ * `externalProfiles:` wrapper was wrong (corrected in the same change).
  *
  * **Skip conditions** (silent — emit a stderr warning, do not fail):
  *   - The custom-requirements `set` round-trip uses the booleans
