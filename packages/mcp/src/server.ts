@@ -9,6 +9,7 @@ import { resolveConfig } from "@ttctl/core";
 import { createToolAuthResolver } from "./auth.js";
 import { composeDescription } from "./data-handling.js";
 import { type McpDiagnosticLogger, setMcpDiagnosticLogger, wrapToolHandler } from "./diagnostic.js";
+import { scheduleMcpKillSwitch, type McpKillSwitchHookOptions } from "./kill-switch-hook.js";
 import { createTokenLoader } from "./tools/_shared.js";
 import { createTokenResolver } from "./tools/profile/shared.js";
 import { registerAllTools } from "./tools/index.js";
@@ -38,6 +39,18 @@ import { registerAllTools } from "./tools/index.js";
 export interface BuildServerOptions {
   configPath?: string;
   logger?: McpDiagnosticLogger;
+  /**
+   * Remote version-killed manifest check (#312, AC 4). When omitted,
+   * `buildServer` fires the default at-startup check and schedules a
+   * recurring ~24h refetch. Production callers omit this; tests inject
+   * a mocked `fetchFn` + `setIntervalFn` + `writeStderr` to assert
+   * the wiring without hitting the network or polluting stderr.
+   *
+   * Set to `null` to opt out entirely (used by some test setups where
+   * the kill-switch is exercised separately or is irrelevant to the
+   * scenario under test).
+   */
+  killSwitch?: McpKillSwitchHookOptions | null;
 }
 
 /**
@@ -148,6 +161,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     loadTokenForTool: createTokenLoader(capturedPath),
     resolveTokenForTool: createTokenResolver(capturedPath),
   });
+
+  // Fire-and-forget kill-switch check (#312, AC 4). Detached on
+  // purpose — buildServer is sync (the MCP SDK has no async-build
+  // path), and a synchronous block here would delay the JSON-RPC
+  // handshake. The check writes to stderr when the running version
+  // matches an entry; never throws (fail-silent contract); never
+  // refuses (refusing a long-lived MCP server has no usable
+  // semantics — see kill-switch-hook.ts docstring).
+  //
+  // Schedules a ~24h refetch with `.unref()` so the timer doesn't
+  // keep the process alive solely for the recurring fetch.
+  if (opts.killSwitch !== null) {
+    scheduleMcpKillSwitch(opts.killSwitch ?? {});
+  }
 
   return server;
 }

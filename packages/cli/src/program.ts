@@ -20,6 +20,7 @@ import { buildTimesheetCommand } from "./commands/timesheet/index.js";
 import { buildProfileCommand } from "./commands/profile/index.js";
 import { setCliConfigPath } from "./lib/config-context.js";
 import { DRY_RUN_NO_OP_STDERR_NOTE, isMutationCommand, setCliDryRun } from "./lib/dry-run.js";
+import { runKillSwitchAtStartup } from "./lib/kill-switch-hook.js";
 import type { OutputFormat } from "./lib/output.js";
 
 /**
@@ -245,6 +246,26 @@ export function buildProgram(): Command {
       if (dryRun && !isMutationCommand(actionCommand)) {
         process.stderr.write(DRY_RUN_NO_OP_STDERR_NOTE);
       }
+    })
+    // Second preAction hook — fires AFTER the sync setup above (Commander
+    // runs registered hooks in order). Async on purpose: the existing
+    // hook stays sync so it pays zero Promise-overhead on the hot path;
+    // the kill-switch fetch (#312) lives in its own hook so the async
+    // boundary is explicit.
+    //
+    // The hook awaits the remote known-broken manifest with a 3s cap.
+    // On match: emits a stderr warning (and exits non-zero when the
+    // entry's `action: "refuse"`). On any failure (network, timeout,
+    // 404, parse error, malformed manifest): silent — fail-silent
+    // contract per #312. Override via `TTCTL_DISABLE_KILL_SWITCH=1`.
+    //
+    // Skipped for `auth init` deliberately? — NO. The bootstrap command
+    // benefits from the warning too: a user creating a fresh config on
+    // a known-broken version should learn before they invest time in
+    // setup. The kill-switch fetch is fail-silent so it cannot block
+    // init's interactive prompts on a network failure.
+    .hook("preAction", async () => {
+      await runKillSwitchAtStartup();
     });
 
   registerAuthCommand(program);
