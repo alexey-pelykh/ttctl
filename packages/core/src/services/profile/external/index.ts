@@ -81,9 +81,9 @@
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
-import { ProfileError, show as basicShow } from "../basic/index.js";
+import { ProfileError } from "../basic/index.js";
 import type { ProfileErrorCode } from "../basic/index.js";
-import { isAuthRevokedExtensionCode } from "../shared.js";
+import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 
 // Re-export the shared `ProfileError` / `ProfileErrorCode` so consumers can
 // continue to write `profile.external.ProfileError` (mirrors the
@@ -100,27 +100,6 @@ interface UserErrorEntry {
   code?: string | null;
   key?: string | null;
   message?: string | null;
-}
-
-/**
- * Resolve the signed-in user's `profileId` by replaying the rich
- * `ProfileShow` mobile-gateway query and projecting `viewerRole.profileId`
- * out of the response. Mirrors the pattern from `profile.basic.set()`.
- *
- * Throws the same error taxonomy as `basic.show()`: `AuthRevokedError`,
- * `ProfileError(NO_VIEWER)`, `ProfileError(GRAPHQL_ERROR)`,
- * `ProfileError(NETWORK_ERROR)`. Callers re-throw verbatim.
- */
-async function getProfileId(token: string): Promise<string> {
-  const profile = await basicShow(token);
-  const profileId = profile.viewer?.viewerRole.profileId;
-  if (profileId === undefined) {
-    throw new ProfileError(
-      "NO_VIEWER",
-      "Cannot fulfil request: viewer or profile id missing from the session response.",
-    );
-  }
-  return profileId;
 }
 
 /**
@@ -336,7 +315,7 @@ export async function update(token: string, changes: ExternalProfilesUpdate): Pr
     );
   }
 
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   // No safe round-trip: the service has no read endpoint exposing
   // linkedin/github/website/twitter/behance/dribbble (basic profile show
@@ -447,7 +426,7 @@ interface GetCustomRequirementsData {
  * subclasses) propagate verbatim.
  */
 export async function customRequirementsShow(token: string): Promise<CustomRequirements> {
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   const res = await withNetworkErrorMapping("Custom requirements show", () =>
     impersonatedTransport({
@@ -579,7 +558,7 @@ export async function customRequirementsSet(
   // user didn't mean to change. The cost (one extra round-trip per set) is
   // small relative to the user-visible correctness improvement.
   const current = await customRequirementsShow(token);
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   const merged: UpdateCustomRequirementsInput["customRequirements"] = {
     backgroundCheck: changes.backgroundCheck ?? current.backgroundCheck ?? false,
@@ -704,7 +683,7 @@ interface GetProfileReadinessData {
  * Errors: same taxonomy as {@link customRequirementsShow}.
  */
 export async function readiness(token: string): Promise<ProfileReadiness> {
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   const res = await withNetworkErrorMapping("Profile readiness", () =>
     impersonatedTransport({
@@ -801,7 +780,7 @@ interface GetProfileRecommendationsData {
  * recommendations leaf's scope.
  */
 export async function recommendations(token: string): Promise<ProfileRecommendation[]> {
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   const res = await withNetworkErrorMapping("Profile recommendations", () =>
     impersonatedTransport({
@@ -897,7 +876,7 @@ interface GetAdvancedProfileDataData {
  * sub-domain evolves.
  */
 export async function advancedWizardShow(token: string): Promise<AdvancedProfileSnapshot> {
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   const res = await withNetworkErrorMapping("Advanced profile wizard show", () =>
     impersonatedTransport({

@@ -49,9 +49,9 @@
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
-import { ProfileError, show as basicShow } from "../basic/index.js";
+import { ProfileError } from "../basic/index.js";
 import type { ProfileErrorCode } from "../basic/index.js";
-import { isAuthRevokedExtensionCode } from "../shared.js";
+import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 
 // Re-export the shared `ProfileError` / `ProfileErrorCode` so consumers can
 // continue to write `profile.reviews.ProfileError`.
@@ -73,18 +73,6 @@ interface UserErrorEntry {
   code?: string | null;
   key?: string | null;
   message?: string | null;
-}
-
-async function getProfileId(token: string): Promise<string> {
-  const profile = await basicShow(token);
-  const profileId = profile.viewer?.viewerRole.profileId;
-  if (profileId === undefined) {
-    throw new ProfileError(
-      "NO_VIEWER",
-      "Cannot fulfil request: viewer or profile id missing from the session response.",
-    );
-  }
-  return profileId;
 }
 
 interface TalentProfileResponse<TData> {
@@ -235,7 +223,7 @@ function isFieldHiddenSectionReviews(body: unknown): boolean {
  * subclasses) propagate verbatim.
  */
 export async function list(token: string): Promise<SectionReview[]> {
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   const res = await withNetworkErrorMapping("Section reviews list", () =>
     impersonatedTransport({
@@ -633,7 +621,7 @@ interface SubmitForReviewPayload {
  *     propagate verbatim
  */
 export async function submitForReview(token: string): Promise<SubmitForReviewResult> {
-  const profileId = await getProfileId(token);
+  const profileId = await extractProfileId(token);
 
   // Triggers an actual platform-side re-review against the maintainer's
   // profile when called on a submittable state. No safe reverse-trip.
