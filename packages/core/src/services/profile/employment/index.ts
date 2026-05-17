@@ -12,6 +12,11 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  * are integers (`startDate`, `endDate`) per the empirical capture
  * `research/captures/web/inputs/UpdateEmploymentInput.json`. `endDate` is
  * `null` for current positions.
+ *
+ * The last four fields close the #344 read/write asymmetry; see
+ * {@link mapEmploymentNode} for why the read shape uses nested
+ * `industries` / `primaryGeography` rather than the scalar write-input
+ * names.
  */
 export interface Employment {
   id: string;
@@ -25,6 +30,14 @@ export interface Employment {
   highlight: boolean;
   showViaToptal: boolean;
   toptalRelated: boolean;
+  /** Whether the talent permits this row to be shown publicly (#344). */
+  publicationPermit: boolean | null;
+  /** Free-text reporting-line description (#344). */
+  reportingTo: string | null;
+  /** Catalog industries assigned to this row (#344). */
+  industries: { id: string; name: string }[];
+  /** The role's primary geography; `null` when unset (#344). */
+  primaryGeography: { id: string; code: string | null; name: string | null } | null;
 }
 
 /**
@@ -83,6 +96,10 @@ const EMPLOYMENT_FRAGMENT = `fragment Employment on Employment {
   highlight
   showViaToptal
   toptalRelated
+  publicationPermit
+  reportingTo
+  industries { nodes { id name } }
+  primaryGeography { id code name }
 }`;
 
 const GET_WORK_EXPERIENCE_QUERY = `query GET_WORK_EXPERIENCE($profileId: ID!) {
@@ -144,7 +161,7 @@ const EMPLOYERS_AUTOCOMPLETE_QUERY = `query GET_EMPLOYERS_AUTOCOMPLETE($search: 
 }`;
 
 interface ListResponse {
-  data?: { profile?: { id: string; employments: { nodes: (Employment | null)[] } } | null } | null;
+  data?: { profile?: { id: string; employments: { nodes: (Record<string, unknown> | null)[] } } | null } | null;
   errors?: GraphQLErrorEntry[] | null;
 }
 
@@ -152,7 +169,53 @@ interface MutationPayload {
   success?: boolean | null;
   notice?: string | null;
   errors?: UserError[] | null;
-  profile?: { id: string; employments: { nodes: (Employment | null)[] } } | null;
+  profile?: { id: string; employments: { nodes: (Record<string, unknown> | null)[] } } | null;
+}
+
+/**
+ * Map an Employment fragment node from the raw wire shape to the typed
+ * {@link Employment}. Mirrors `mapPortfolioNode` in the portfolio
+ * service — the wire surfaces `industries` / `primaryGeography` as a
+ * nested connection / object, NOT the scalar `industryIds` /
+ * `primaryGeographyId` of the write input, so a projection step (rather
+ * than a direct cast) is required. Introduced for #344.
+ */
+function mapEmploymentNode(node: Record<string, unknown>): Employment {
+  const industriesConn = node["industries"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
+  const industries: { id: string; name: string }[] = Array.isArray(industriesConn?.nodes)
+    ? industriesConn.nodes.flatMap((i) =>
+        typeof i.id === "string" && typeof i.name === "string" ? [{ id: i.id, name: i.name }] : [],
+      )
+    : [];
+  const geoRaw = node["primaryGeography"] as { id?: unknown; code?: unknown; name?: unknown } | null | undefined;
+  const primaryGeography =
+    geoRaw && typeof geoRaw.id === "string"
+      ? {
+          id: geoRaw.id,
+          code: typeof geoRaw.code === "string" ? geoRaw.code : null,
+          name: typeof geoRaw.name === "string" ? geoRaw.name : null,
+        }
+      : null;
+  const rawItems = node["experienceItems"];
+  return {
+    id: typeof node["id"] === "string" ? node["id"] : "",
+    company: typeof node["company"] === "string" ? node["company"] : "",
+    position: typeof node["position"] === "string" ? node["position"] : "",
+    companyWebsite: (node["companyWebsite"] as string | null | undefined) ?? null,
+    noWebsite: Boolean(node["noWebsite"]),
+    startDate: (node["startDate"] as number | null | undefined) ?? null,
+    endDate: (node["endDate"] as number | null | undefined) ?? null,
+    experienceItems: Array.isArray(rawItems)
+      ? (rawItems as unknown[]).filter((x): x is string => typeof x === "string")
+      : null,
+    highlight: Boolean(node["highlight"]),
+    showViaToptal: Boolean(node["showViaToptal"]),
+    toptalRelated: Boolean(node["toptalRelated"]),
+    publicationPermit: (node["publicationPermit"] as boolean | null | undefined) ?? null,
+    reportingTo: (node["reportingTo"] as string | null | undefined) ?? null,
+    industries,
+    primaryGeography,
+  };
 }
 
 interface HighlightPayload {
@@ -200,7 +263,7 @@ async function listByProfileId(token: string, profileId: string): Promise<Employ
   ensureNoTopLevelErrors(body, "employment list");
   const profile = body?.data?.profile;
   if (!profile) throw new ProfileError("UNKNOWN", "employment list response had no `data.profile` field");
-  return profile.employments.nodes.filter((n): n is Employment => n !== null);
+  return profile.employments.nodes.filter((n): n is Record<string, unknown> => n !== null).map(mapEmploymentNode);
 }
 
 /**
@@ -235,7 +298,9 @@ export async function add(token: string, fields: EmploymentFields): Promise<Empl
     "employment add",
   );
   const payload = unwrapMutation(res, "createEmployment", "employment add");
-  const after = payload.profile?.employments.nodes.filter((n): n is Employment => n !== null) ?? [];
+  const after =
+    payload.profile?.employments.nodes.filter((n): n is Record<string, unknown> => n !== null).map(mapEmploymentNode) ??
+    [];
   const created = after.find((e) => !beforeIds.has(e.id));
   if (!created) {
     throw new ProfileError("UNKNOWN", "employment add returned success but no new row was found in the response.");
@@ -260,7 +325,8 @@ export async function update(token: string, id: string, fields: EmploymentFields
   );
   const payload = unwrapMutation(res, "updateEmployment", "employment update");
   const updated = payload.profile?.employments.nodes
-    .filter((n): n is Employment => n !== null)
+    .filter((n): n is Record<string, unknown> => n !== null)
+    .map(mapEmploymentNode)
     .find((e) => e.id === id);
   if (!updated) {
     throw new ProfileError("UNKNOWN", `employment update returned success but row "${id}" was not in the response.`);

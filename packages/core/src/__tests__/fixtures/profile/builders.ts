@@ -199,6 +199,10 @@ export function buildMinimalProfile(): ProfileFixture {
     highlight: false,
     showViaToptal: false,
     toptalRelated: false,
+    publicationPermit: null,
+    reportingTo: null,
+    industries: [],
+    primaryGeography: null,
   };
 
   const minimalEducation: Education = {

@@ -368,6 +368,17 @@ export function formatEmploymentText(e: profile.employment.Employment): string {
     }
   }
   if (e.highlight) lines.push(`  highlighted`);
+  if (e.reportingTo !== null && e.reportingTo !== "") lines.push(`  reports to: ${e.reportingTo}`);
+  if (e.industries.length > 0) {
+    lines.push(`  industries: ${e.industries.map((i) => i.name).join(", ")}`);
+  }
+  if (e.primaryGeography !== null) {
+    const geo = e.primaryGeography.name ?? e.primaryGeography.code ?? e.primaryGeography.id;
+    lines.push(`  geography: ${geo}`);
+  }
+  if (e.publicationPermit !== null) {
+    lines.push(`  public: ${e.publicationPermit ? "yes" : "no"}`);
+  }
   lines.push(`  id: ${e.id}`);
   return lines.join("\n");
 }
@@ -376,6 +387,8 @@ export function formatEmploymentText(e: profile.employment.Employment): string {
  * Pretty-print an Employment row as a key/value table.
  */
 export function formatEmploymentTable(e: profile.employment.Employment): string {
+  const geo =
+    e.primaryGeography === null ? "" : (e.primaryGeography.name ?? e.primaryGeography.code ?? e.primaryGeography.id);
   const rows: [string, string][] = [
     ["id", e.id],
     ["company", e.company],
@@ -384,6 +397,10 @@ export function formatEmploymentTable(e: profile.employment.Employment): string 
     ["years", formatYearRange(e.startDate, e.endDate)],
     ["highlight", e.highlight.toString()],
     ["paragraphs", (e.experienceItems?.length ?? 0).toString()],
+    ["publicationPermit", e.publicationPermit === null ? "" : e.publicationPermit.toString()],
+    ["reportingTo", e.reportingTo ?? ""],
+    ["industries", e.industries.map((i) => i.name).join(", ")],
+    ["primaryGeography", geo],
   ];
   return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
 }
