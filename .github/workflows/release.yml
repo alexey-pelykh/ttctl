@@ -292,19 +292,39 @@ jobs:
       - name: Verify provenance attestations
         env:
           EXPECTED: ${{ env.VERSION }}
+          # npm registry CDN has a documented 1-30s eventual-consistency window
+          # between successful publish and when `npm view` returns metadata.
+          # Retry with backoff so a transient indexing lag does not produce a
+          # false-negative gate failure (see #338).
+          VERIFY_RETRIES: "5"
+          VERIFY_INTERVAL_SECS: "5"
         run: |
           # Catch silent OIDC misconfiguration where publish succeeds but
           # Sigstore provenance is absent. Every published package must carry
           # a provenance predicate or this gate fails the run.
           FAIL=0
           for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
-            ATTEST=$(npm view "${pkg}@${EXPECTED}" --json \
-              | jq -r '.dist.attestations.provenance.predicateType // empty')
+            ATTEST=""
+            for attempt in $(seq 1 "$VERIFY_RETRIES"); do
+              ATTEST=$(npm view "${pkg}@${EXPECTED}" --json 2>/dev/null \
+                | jq -r '.dist.attestations.provenance.predicateType // empty')
+              if [ -n "$ATTEST" ]; then
+                echo "${pkg}@${EXPECTED}: provenance=$ATTEST (attempt $attempt/$VERIFY_RETRIES)"
+                break
+              fi
+              if [ "$attempt" -lt "$VERIFY_RETRIES" ]; then
+                echo "::notice::${pkg}@${EXPECTED}: not indexed yet (attempt $attempt/$VERIFY_RETRIES), retrying in ${VERIFY_INTERVAL_SECS}s"
+                sleep "$VERIFY_INTERVAL_SECS"
+              fi
+            done
             if [ -z "$ATTEST" ]; then
-              echo "::error::${pkg}@${EXPECTED} published without provenance attestation"
+              # Distinguish registry-indexing timeout from genuine
+              # missing-provenance so failures can be triaged. The most likely
+              # cause after $VERIFY_RETRIES retries is indexing lag, but a
+              # `--provenance`-flagless publish path or a Sigstore signing
+              # failure would also reach here.
+              echo "::error::${pkg}@${EXPECTED}: provenance still missing after $VERIFY_RETRIES retries (~$((VERIFY_RETRIES * VERIFY_INTERVAL_SECS))s) — registry indexing timeout OR genuine missing-provenance"
               FAIL=1
-            else
-              echo "${pkg}@${EXPECTED}: provenance=$ATTEST"
             fi
           done
           if [ $FAIL -ne 0 ]; then exit 1; fi
