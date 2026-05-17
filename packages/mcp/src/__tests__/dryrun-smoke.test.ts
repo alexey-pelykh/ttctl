@@ -13,7 +13,7 @@ import { registerAllTools } from "../tools/index.js";
  * produces a structurally-valid preview envelope. This is the
  * cross-cutting safety net").
  *
- * For each of the 97 registered tools:
+ * For each of the 99 registered tools:
  *   1. Invoke the handler with `dryRun: true` (plus minimal fixture
  *      input satisfying the zod schema).
  *   2. Assert the response is the uniform dry-run envelope —
@@ -177,7 +177,8 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_employment_remove: { id: "emp_123" },
   ttctl_profile_employment_show: { id: "emp_123" },
   ttctl_profile_employment_update: { id: "emp_123", company: "Anthropic" },
-  // profile.external (6)
+  // profile.external (7; +show #343)
+  ttctl_profile_external_show: {},
   ttctl_profile_external_advanced_wizard_show: {},
   ttctl_profile_external_custom_requirements_set: { backgroundCheck: true },
   ttctl_profile_external_custom_requirements_show: {},
@@ -262,8 +263,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 98 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(98);
+  it("registers exactly 99 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(99);
   });
 
   it("every registered tool has a fixture", () => {

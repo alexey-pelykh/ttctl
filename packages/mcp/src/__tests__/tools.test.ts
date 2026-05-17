@@ -39,6 +39,9 @@ import { registerAllTools } from "../tools/index.js";
  *
  * Post-#342: + 1 industries.show tool (per-id read companion of
  * industries.list, closing the Class A surface-shape gap) = 98 tools total.
+ *
+ * Post-#343: + 1 profile.external.show tool (read side of external URLs)
+ * = 99 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -53,7 +56,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (98 tools = 57 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (99 tools = 58 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -129,12 +132,13 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_employment_remove",
       "ttctl_profile_employment_show",
       "ttctl_profile_employment_update",
-      // #76 — profile.external (6)
+      // #76 — profile.external (7; +show #343)
       "ttctl_profile_external_advanced_wizard_show",
       "ttctl_profile_external_custom_requirements_set",
       "ttctl_profile_external_custom_requirements_show",
       "ttctl_profile_external_readiness",
       "ttctl_profile_external_recommendations",
+      "ttctl_profile_external_show",
       "ttctl_profile_external_update",
       // #74 — profile.industries (6, +show #342)
       "ttctl_profile_industries_add",

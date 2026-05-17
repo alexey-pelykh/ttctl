@@ -285,6 +285,39 @@ Allowed choices are pretty, json, yaml.` line.
     (`industries/__tests__/index.test.ts`); surface registration tests
     extended (`wave3-tree`, MCP `registration`/`tools`/`dryrun-smoke`).
 
+- **`ttctl profile external show` — read side of the stored external
+  URL state (#343)**. Closes a Class A surface-shape gap from the
+  MCP/CLI surface-shape audit (`docs/briefs/2026-05-17-scope-mcp-cli-surface-shape-audit.md`):
+  the `profile.external` sub-domain shipped six service functions but
+  **none** was a primary read for the stored linkedin / github /
+  website / twitter / behance / dribbble URLs. Before this leaf the
+  only ways to inspect current values were a no-op `update`
+  (write-disguised-as-read) or `advanced-wizard show` (which trims URLs
+  from its selection set).
+  - **Core**: `profile.external.show(token)` backed by a new
+    hand-authored `getExternalProfiles` query against
+    `talent_profile/graphql` — selects `id`, `updatedByTalentAt`, and
+    all six URL fields directly off the `Profile` type (same access
+    pattern `GET_BASIC_INFO` uses). Returns the full six-field shape
+    including `twitter` (the `update` mutation's response drops it — a
+    separate companion gap; `show` has full parity with what `update`
+    accepts). Every URL is `string | null`.
+  - **CLI**: `ttctl profile external show [-o pretty|json|yaml]`,
+    plus `table` via the formatter hook. Pretty/table render the six
+    URLs (unset → `(unset)`) and the last talent-side edit timestamp.
+  - **MCP**: `ttctl_profile_external_show` (read counterpart of
+    `ttctl_profile_external_update`; agents should use this instead of
+    a no-op update to inspect URL state).
+  - **Wire validation**: `getExternalProfiles` is schema-gappy (every
+    selected field typed `Unknown` in the synthesized SDL), so it is
+    added to `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` in `codegen.config.ts`
+    and the wire-validation routing manifest — **T1** (wire-shape
+    snapshot) disposition per ADR-006. Live E2E coverage ships in
+    `packages/e2e/src/42-profile-external-show.e2e.test.ts` (gated by
+    `TTCTL_E2E=1`) per the Schema/contract validation rule, including
+    a non-destructive `update → show` round-trip (re-applies a current
+    URL's exact value — an idempotent no-op write).
+
 - **Release-rollback runbook (#220, reworked for #267)**. Closes
   audit-confirmed CRIT-005 (release/REL-001) from
   `docs/briefs/2026-05-13-audit-everything.md`. Ships

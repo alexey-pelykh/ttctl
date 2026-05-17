@@ -27,6 +27,7 @@ import { registerProfileExternalCustomRequirementsSetTool } from "./profile_exte
 import { registerProfileExternalCustomRequirementsShowTool } from "./profile_external_custom_requirements_show.js";
 import { registerProfileExternalReadinessTool } from "./profile_external_readiness.js";
 import { registerProfileExternalRecommendationsTool } from "./profile_external_recommendations.js";
+import { registerProfileExternalShowTool } from "./profile_external_show.js";
 import { registerProfileExternalUpdateTool } from "./profile_external_update.js";
 import { registerProfileReviewsApproveItemTool } from "./profile_reviews_approve_item.js";
 import { registerProfileReviewsApproveSectionTool } from "./profile_reviews_approve_section.js";
@@ -92,7 +93,8 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerVisasTools(server, ctx);
   registerResumeTools(server, ctx);
 
-  // profile.external — 6 leaves (#76)
+  // profile.external — 7 leaves (#76; +show #343)
+  registerProfileExternalShowTool(server, ctx);
   registerProfileExternalUpdateTool(server, ctx);
   registerProfileExternalCustomRequirementsShowTool(server, ctx);
   registerProfileExternalCustomRequirementsSetTool(server, ctx);

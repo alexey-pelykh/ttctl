@@ -22,10 +22,10 @@ import { TOOLS_WITH_OUTPUT_SCHEMA } from "../output-schemas.js";
  * | portfolio (#75)     | 8 (add, update, remove, list, reorder, highlight, upload_cover, upload_file) |
  * | visas (#75)         | 4 (add, update, remove, list) |
  * | resume (#75)        | 2 (upload, cancel_upload) |
- * | external (#76)      | 6 (update, custom_requirements_show/set, readiness, recommendations, advanced_wizard_show) |
+ * | external (#76)      | 7 (show, update, custom_requirements_show/set, readiness, recommendations, advanced_wizard_show) |
  * | reviews (#76)       | 4 (list, approve_item, approve_section, submit_for_review) |
  *
- * Total: 57 tools.
+ * Total: 58 tools.
  *
  * Per project policy (#72), MCP tool names use ONLY the canonical sub-domain
  * names — no `certs`, no `experience`. These tests assert exact tool name
@@ -89,7 +89,8 @@ const EXPECTED_TOOLS = [
   // resume (#75)
   "ttctl_profile_resume_upload",
   "ttctl_profile_resume_cancel_upload",
-  // external (#76)
+  // external (#76; +show #343)
+  "ttctl_profile_external_show",
   "ttctl_profile_external_update",
   "ttctl_profile_external_custom_requirements_show",
   "ttctl_profile_external_custom_requirements_set",
@@ -190,7 +191,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (98 tools = 57 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (99 tools = 58 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

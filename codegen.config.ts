@@ -578,6 +578,7 @@ const TALENT_PROFILE_KNOWN_UNTRUSTED_OPS: string[] = [
   "getAdvancedProfileData",
   "getAgreement",
   "getCountries",
+  "getExternalProfiles",
   "getLegalSettingsData",
   "getPaymentData",
   "getPortfolioItems",
