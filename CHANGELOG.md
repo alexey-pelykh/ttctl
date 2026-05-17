@@ -308,6 +308,56 @@ Allowed choices are pretty, json, yaml.` line.
 
 ### Added
 
+- **More fields visible in `employment show` / `list` (#344)**.
+  Remediates a Class B write/read-asymmetry gap surfaced by the
+  post-#340/#341 surface-shape audit
+  (`docs/briefs/2026-05-17-scope-mcp-cli-surface-shape-audit.md`):
+  `EmploymentFields` (write input) accepted `publicationPermit`,
+  `industryIds`, `primaryGeographyId`, and `reportingTo`, but the
+  `Employment` read shape dropped them — an agent could set them but
+  never verify or display them afterwards. After this change a write
+  is verifiable on read (write `publicationPermit: false`, read it
+  back; write `industryIds: ["X"]`, read `industries: [{ id: "X" }]`).
+  The static `check-write-read-symmetry` gate still reports a
+  WARN-level name-asymmetry for `industryIds` / `primaryGeographyId`
+  (its name-match cannot pair the scalar write-input names with the
+  wire-faithful nested read names) — identical to the pre-existing,
+  un-exempted `PortfolioItemInput.industryIds ↔ PortfolioItem`
+  warning, and benign for the same reason (the semantic round-trip
+  holds; only the field _names_ differ, by wire reality).
+  - **`@ttctl/core`**: the `Employment` interface and the
+    `EMPLOYMENT_FRAGMENT` selection set gain `publicationPermit`
+    (`boolean | null`), `reportingTo` (`string | null`), `industries`
+    (`{ id, name }[]`), and `primaryGeography`
+    (`{ id, code, name } | null`). The READ wire shape is NOT the
+    scalar shape of the write input — `industryIds` / `primaryGeographyId`
+    surface on the wire as the nested `industries { nodes { id name } }`
+    connection and the `primaryGeography { id code name }` object — so a
+    new `mapEmploymentNode` projection (mirroring the established
+    `mapPortfolioNode`, per the issue's "mirror the #127 / portfolio
+    approach" instruction) maps the raw nodes in `list` / `add` /
+    `update`. Round-trip verification still holds: write
+    `publicationPermit: false`, read it back on the mapped row.
+  - **CLI**: `ttctl profile employment show` (pretty + table) now
+    renders `reports to`, `industries`, `geography`, and `public`
+    (the publication-permit flag).
+  - **MCP**: `profileEmploymentRowOutputSchema` (the `employment_add` /
+    `employment_update` `outputSchema`) extended to match — kept in
+    lock-step with the `Employment` interface so the declared schema
+    does not under-report the returned row. `employment_show` remains
+    `outputSchema`-less per #226 scope (top-10 write-capable tools
+    only).
+  - **Schema/contract rule: TRIGGERED.** The hand-authored
+    `EMPLOYMENT_FRAGMENT` selection set is extended with fields whose
+    READ wire shape was INFERRED from
+    `research/graphql/talent_profile/fragments/Employment.graphql`.
+    Ships `packages/e2e/src/42-profile-employment.e2e.test.ts` (gated
+    by `TTCTL_E2E=1`): a sentinel round-trip
+    (`add → update → show → remove`) that asserts the parity fields
+    echo, plus a **T1** `assertWireShapeStable` snapshot on
+    `GET_WORK_EXPERIENCE` (`docs/wire-validation-routing.md:123` — the
+    op is codegen-excluded / SDL-gappy, so T1 is the derived track).
+
 - **`profile industries show <id>` — CLI + MCP (#342)**. Closes a
   Class A surface-shape gap surfaced by the post-#340/#341 audit
   (`docs/briefs/2026-05-17-scope-mcp-cli-surface-shape-audit.md`): the

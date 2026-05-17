@@ -46,6 +46,13 @@ function replyStock(...responses: MockResponse[]): void {
   }
 }
 
+// `EMP_*` are RAW WIRE nodes (what the mock transport returns). `list()`
+// / `add()` / `update()` now run them through `mapEmploymentNode`
+// (#344), so assertions compare against the `EMP_*_MAPPED` typed
+// projections, never the raw fixtures.
+
+// EMP_1: the four #344 fields ABSENT on the wire — exercises the
+// mapper's null/empty defaults.
 const EMP_1 = {
   id: "V1-Employment-1",
   company: "Acme",
@@ -60,6 +67,18 @@ const EMP_1 = {
   toptalRelated: false,
 };
 
+const EMP_1_MAPPED = {
+  ...EMP_1,
+  publicationPermit: null,
+  reportingTo: null,
+  industries: [],
+  primaryGeography: null,
+};
+
+// EMP_2: the four #344 fields PRESENT in their nested wire shape —
+// `industries { nodes }` connection + `primaryGeography { id code name }`
+// object (NOT the scalar `industryIds` / `primaryGeographyId` of the
+// write input).
 const EMP_2 = {
   id: "V1-Employment-2",
   company: "Globex",
@@ -72,6 +91,18 @@ const EMP_2 = {
   highlight: true,
   showViaToptal: true,
   toptalRelated: false,
+  publicationPermit: true,
+  reportingTo: "VP Engineering",
+  industries: { nodes: [{ id: "V1-Industry-1", name: "Software" }] },
+  primaryGeography: { id: "V1-Geo-1", code: "US", name: "United States" },
+};
+
+// EMP_2 and its mapped form differ in exactly one field — the wire
+// `industries { nodes }` connection projects to a flat `{id,name}[]`.
+// Spread keeps the two in lock-step (mirrors EMP_1_MAPPED above).
+const EMP_2_MAPPED = {
+  ...EMP_2,
+  industries: [{ id: "V1-Industry-1", name: "Software" }],
 };
 
 beforeEach(() => {
@@ -85,7 +116,7 @@ describe("list", () => {
     replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1, EMP_2] } } } } });
 
     const rows = await list(TOKEN);
-    expect(rows).toEqual([EMP_1, EMP_2]);
+    expect(rows).toEqual([EMP_1_MAPPED, EMP_2_MAPPED]);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("GET_WORK_EXPERIENCE");
   });
@@ -98,6 +129,30 @@ describe("show", () => {
 
     const e = await show(TOKEN, EMP_1.id);
     expect(e.id).toBe(EMP_1.id);
+  });
+
+  it("surfaces the #344 read/write-parity fields (publicationPermit, reportingTo, industries, primaryGeography)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_2] } } } } });
+
+    const e = await show(TOKEN, EMP_2.id);
+    expect(e).toEqual(EMP_2_MAPPED);
+    expect(e.publicationPermit).toBe(true);
+    expect(e.reportingTo).toBe("VP Engineering");
+    expect(e.industries).toEqual([{ id: "V1-Industry-1", name: "Software" }]);
+    expect(e.primaryGeography).toEqual({ id: "V1-Geo-1", code: "US", name: "United States" });
+  });
+
+  it("defaults the #344 fields to null/[] when the wire omits them", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+
+    const e = await show(TOKEN, EMP_1.id);
+    expect(e).toEqual(EMP_1_MAPPED);
+    expect(e.publicationPermit).toBeNull();
+    expect(e.reportingTo).toBeNull();
+    expect(e.industries).toEqual([]);
+    expect(e.primaryGeography).toBeNull();
   });
 });
 
@@ -124,6 +179,7 @@ describe("add", () => {
 
     const e = await add(TOKEN, { company: "Globex", position: "Senior Engineer", startDate: 2020 });
     expect(e.id).toBe(EMP_2.id);
+    expect(e).toEqual(EMP_2_MAPPED);
     const call = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("CreateEmployment");
     expect(call.body.variables).toEqual({
@@ -148,6 +204,62 @@ describe("update", () => {
 
     const updated = await update(TOKEN, EMP_1.id, { position: "Lead Engineer" });
     expect(updated.position).toBe("Lead Engineer");
+    expect(updated).toEqual({ ...EMP_1_MAPPED, position: "Lead Engineer" });
+  });
+
+  it("round-trips the #344 fields through the mapped UpdateEmployment response", async () => {
+    replyImpersonated({
+      body: {
+        data: {
+          updateEmployment: {
+            success: true,
+            errors: null,
+            profile: {
+              id: "p1",
+              employments: { nodes: [{ ...EMP_2, publicationPermit: false }] },
+            },
+          },
+        },
+      },
+    });
+
+    // Write side accepts the scalar `publicationPermit` (one of the 14
+    // EmploymentFields); the read side echoes it on the mapped row.
+    const updated = await update(TOKEN, EMP_2.id, { publicationPermit: false });
+    expect(updated.publicationPermit).toBe(false);
+    expect(updated.industries).toEqual([{ id: "V1-Industry-1", name: "Software" }]);
+    expect(updated.primaryGeography).toEqual({ id: "V1-Geo-1", code: "US", name: "United States" });
+    expect(updated.reportingTo).toBe("VP Engineering");
+  });
+});
+
+describe("mapEmploymentNode projection (#344)", () => {
+  it("filters malformed industry nodes and tolerates a missing connection", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            employments: {
+              nodes: [
+                {
+                  ...EMP_1,
+                  industries: { nodes: [{ id: "ok", name: "Fintech" }, { id: 42 }, { name: "noId" }] },
+                  primaryGeography: { code: "FR" },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const [e] = await list(TOKEN);
+    // Only the well-formed { id, name } node survives the flatMap.
+    expect(e?.industries).toEqual([{ id: "ok", name: "Fintech" }]);
+    // primaryGeography with no string `id` projects to null.
+    expect(e?.primaryGeography).toBeNull();
   });
 });
 

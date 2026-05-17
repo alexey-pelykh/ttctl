@@ -171,6 +171,10 @@ export const EMPLOYMENT_PRINCIPAL_ENGINEER: Employment = {
   highlight: true,
   showViaToptal: true,
   toptalRelated: false,
+  publicationPermit: true,
+  reportingTo: "VP of Engineering",
+  industries: [{ id: "ind_test_software", name: "Software" }],
+  primaryGeography: { id: "geo_test_us", code: "US", name: "United States" },
 };
 
 export const EMPLOYMENT_SENIOR_ENGINEER: Employment = {
@@ -188,6 +192,10 @@ export const EMPLOYMENT_SENIOR_ENGINEER: Employment = {
   highlight: true,
   showViaToptal: true,
   toptalRelated: false,
+  publicationPermit: true,
+  reportingTo: "Director of Engineering",
+  industries: [{ id: "ind_test_health", name: "Healthcare" }],
+  primaryGeography: { id: "geo_test_us", code: "US", name: "United States" },
 };
 
 // -----------------------------------------------------------------------

@@ -93,7 +93,10 @@ export const profileRowRemoveOutputSchema = z.object({
 
 /**
  * Shape returned by `profile.employment.add()` / `update()` — mirrors
- * `Employment` from `@ttctl/core`.
+ * `Employment` from `@ttctl/core`. The last four fields were added in
+ * #344 to close the write/read asymmetry; they MUST stay in sync with
+ * the `Employment` interface or the `add`/`update` tools' declared
+ * output schema would under-report the rows they actually return.
  */
 export const profileEmploymentRowOutputSchema = z.object({
   id: z.string(),
@@ -107,6 +110,10 @@ export const profileEmploymentRowOutputSchema = z.object({
   highlight: z.boolean(),
   showViaToptal: z.boolean(),
   toptalRelated: z.boolean(),
+  publicationPermit: z.boolean().nullable(),
+  reportingTo: z.string().nullable(),
+  industries: z.array(z.object({ id: z.string(), name: z.string() })),
+  primaryGeography: z.object({ id: z.string(), code: z.string().nullable(), name: z.string().nullable() }).nullable(),
 });
 
 /**
