@@ -72,9 +72,13 @@
  *
  * Mutation input shapes follow Pattern 1 of
  * `research/notes/10-mutation-input-patterns.md` (`{ input: { profileId,
- * <wrapper>: { … } } }`). The wrapper key is `externalProfiles` for
- * `UpdateExternalProfiles` and `customRequirements` for
- * `updateCustomRequirements` (the latter is empirically validated by
+ * <wrapper>: { … } } }`). The wrapper key is `profile` for
+ * `UpdateExternalProfiles` (validated 2026-05-17 via the
+ * 42-profile-external-show E2E round-trip — the previously inferred
+ * `externalProfiles` wrapper was wrong; same exception class as
+ * `UPDATE_BASIC_INFO` and `updateTimeZoneWorkingHours`, both of which write
+ * fields directly on the Profile entity) and `customRequirements` for
+ * `updateCustomRequirements` (empirically validated by
  * `research/captures/web/inputs/UpdateCustomRequirementsInput.json`).
  */
 
@@ -257,7 +261,7 @@ const UPDATE_EXTERNAL_PROFILES_MUTATION = `mutation UpdateExternalProfiles($inpu
 
 interface UpdateExternalProfilesInput {
   profileId: string;
-  externalProfiles: {
+  profile: {
     linkedin?: string;
     github?: string;
     website?: string;
@@ -288,10 +292,14 @@ interface UpdateExternalProfilesPayload {
  * least one. Unknown / extraneous fields are rejected at compile time by
  * the {@link ExternalProfilesUpdate} type.
  *
- * Wire shape follows Pattern 1 of `research/notes/10-mutation-input-patterns.md`
- * with the wrapper key `externalProfiles`. **INFERRED — UNVERIFIED**: no
- * live curl capture exists in `research/captures/web/inputs/` for this
- * mutation; deviations would surface as `USER_ERROR` at runtime.
+ * Wire shape: `{ input: { profileId, profile: { …urls } } }`. Validated
+ * 2026-05-17 via the round-trip E2E at
+ * `packages/e2e/src/42-profile-external-show.e2e.test.ts`. The
+ * previously-inferred `externalProfiles:` wrapper (per Pattern 1 in
+ * `research/notes/10-mutation-input-patterns.md`) was incorrect — same
+ * exception class as `UPDATE_BASIC_INFO` and `updateTimeZoneWorkingHours`,
+ * both of which use `profile:` because they write fields directly on the
+ * Profile entity.
  *
  * Errors:
  *   - `ProfileError("VALIDATION_ERROR")` when no fields are supplied
@@ -301,7 +309,7 @@ interface UpdateExternalProfilesPayload {
  *     propagate verbatim
  */
 export async function update(token: string, changes: ExternalProfilesUpdate): Promise<UpdateExternalProfilesResult> {
-  const fields: UpdateExternalProfilesInput["externalProfiles"] = {};
+  const fields: UpdateExternalProfilesInput["profile"] = {};
   if (changes.linkedin !== undefined) fields.linkedin = changes.linkedin;
   if (changes.github !== undefined) fields.github = changes.github;
   if (changes.website !== undefined) fields.website = changes.website;
@@ -317,22 +325,24 @@ export async function update(token: string, changes: ExternalProfilesUpdate): Pr
 
   const profileId = await extractProfileId(token);
 
-  // No safe round-trip: the service has no read endpoint exposing
-  // linkedin/github/website/twitter/behance/dribbble (basic profile show
-  // does not include them; the mutation response gives POST-state only),
-  // so a sentinel value cannot be reverted without a captured pre-state.
-  // Overwriting the maintainer's real URLs is destructive. Wire shape
-  // inferred from research/notes/10 Pattern 1 (wrapper key
-  // `externalProfiles`); see packages/e2e/src/38-profile-external.e2e.test.ts.
+  // Wire shape validated 2026-05-17 via TTCTL_E2E=1 round-trip in
+  // packages/e2e/src/42-profile-external-show.e2e.test.ts (re-apply current
+  // URL via update, show echoes it). The wrapper key is `profile:`, NOT
+  // `externalProfiles:` — Pattern 1 from research/notes/10 was inferred and
+  // wrong here. This is the same exception class as UPDATE_BASIC_INFO and
+  // updateTimeZoneWorkingHours: when the mutation writes fields directly on
+  // the Profile entity (rather than on a sub-entity like
+  // `customRequirements`), the wrapper is `profile:`. The
+  // UpdateExternalProfilesInput schema is `_placeholder: String` in the
+  // synthesized SDL — the live API is the only authority on the shape.
   const res = await withNetworkErrorMapping("External profile update", () =>
     impersonatedTransport({
       surface: "talent-profile",
       authToken: token,
       body: {
-        // e2e-exempt: destructive — see comment above the withNetworkErrorMapping call.
         operationName: "UpdateExternalProfiles",
         query: UPDATE_EXTERNAL_PROFILES_MUTATION,
-        variables: { input: { profileId, externalProfiles: fields } satisfies UpdateExternalProfilesInput },
+        variables: { input: { profileId, profile: fields } satisfies UpdateExternalProfilesInput },
       },
     }),
   );

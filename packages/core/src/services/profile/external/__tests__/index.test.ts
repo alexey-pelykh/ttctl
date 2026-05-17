@@ -119,7 +119,7 @@ describe("update", () => {
       body: {
         operationName: "UpdateExternalProfiles",
         variables: {
-          input: { profileId: PROFILE_ID, externalProfiles: { linkedin: "https://linkedin.com/in/ada" } },
+          input: { profileId: PROFILE_ID, profile: { linkedin: "https://linkedin.com/in/ada" } },
         },
       },
     } satisfies Partial<TransportRequest>);
@@ -156,13 +156,12 @@ describe("update", () => {
     expect(call?.body.variables).toMatchObject({
       input: {
         profileId: PROFILE_ID,
-        externalProfiles: { github: "https://github.com/ada", website: "https://ada.dev" },
+        profile: { github: "https://github.com/ada", website: "https://ada.dev" },
       },
     });
     // linkedin / twitter / behance / dribbble must NOT be in the input.
-    const externalProfiles = (call?.body.variables as { input: { externalProfiles: Record<string, unknown> } }).input
-      .externalProfiles;
-    expect(Object.keys(externalProfiles).sort()).toEqual(["github", "website"]);
+    const profileFields = (call?.body.variables as { input: { profile: Record<string, unknown> } }).input.profile;
+    expect(Object.keys(profileFields).sort()).toEqual(["github", "website"]);
   });
 
   it("throws ProfileError USER_ERROR when payload.errors is non-empty", async () => {
