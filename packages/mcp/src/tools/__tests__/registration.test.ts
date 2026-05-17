@@ -15,7 +15,7 @@ import { TOOLS_WITH_OUTPUT_SCHEMA } from "../output-schemas.js";
  * |---------------------|-------|
  * | basic (#73)         | 4 (show, update, photo_show, photo_upload) |
  * | skills (#73)        | 7 (add, remove, update, show, list, autocomplete, readiness) |
- * | industries (#74)    | 5 (add, update, remove, list, autocomplete) |
+ * | industries (#74, +show #342) | 6 (add, update, remove, show, list, autocomplete) |
  * | education (#74)     | 5 (add, update, remove, show, highlight) |
  * | certifications (#74)| 5 (add, update, remove, show, highlight) |
  * | employment (#74)    | 6 (add, update, remove, show, highlight, employer-autocomplete) |
@@ -25,7 +25,7 @@ import { TOOLS_WITH_OUTPUT_SCHEMA } from "../output-schemas.js";
  * | external (#76)      | 6 (update, custom_requirements_show/set, readiness, recommendations, advanced_wizard_show) |
  * | reviews (#76)       | 4 (list, approve_item, approve_section, submit_for_review) |
  *
- * Total: 56 tools.
+ * Total: 57 tools.
  *
  * Per project policy (#72), MCP tool names use ONLY the canonical sub-domain
  * names — no `certs`, no `experience`. These tests assert exact tool name
@@ -46,10 +46,11 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_skills_list",
   "ttctl_profile_skills_autocomplete",
   "ttctl_profile_skills_readiness",
-  // industries (#74)
+  // industries (#74, +show #342)
   "ttctl_profile_industries_add",
   "ttctl_profile_industries_update",
   "ttctl_profile_industries_remove",
+  "ttctl_profile_industries_show",
   "ttctl_profile_industries_list",
   "ttctl_profile_industries_autocomplete",
   // education (#74)
@@ -189,7 +190,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (97 tools = 56 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (98 tools = 57 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

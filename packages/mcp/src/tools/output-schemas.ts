@@ -110,7 +110,7 @@ export const profileEmploymentRowOutputSchema = z.object({
 });
 
 /**
- * Shape returned by `profile.industries.update()` — mirrors
+ * Shape returned by `profile.industries.update()` / `show()` — mirrors
  * `IndustryProfile` from `@ttctl/core`.
  */
 export const profileIndustriesRowOutputSchema = z.object({
@@ -136,4 +136,5 @@ export const TOOLS_WITH_OUTPUT_SCHEMA = [
   "ttctl_profile_employment_update",
   "ttctl_profile_employment_remove",
   "ttctl_profile_industries_update",
+  "ttctl_profile_industries_show",
 ] as const;

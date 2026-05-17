@@ -18,10 +18,11 @@ import { loadAuthTokenOrExit, parseLimitOrExit, presentSubDomainError } from "..
 /**
  * Build the `ttctl profile industries` command tree.
  *
- * Five leaves:
+ * Six leaves:
  *   - `add <name> [--connection <type>]`
  *   - `update <id> [field-flags]`
  *   - `remove <id>`
+ *   - `show <id> [-o text|json|table]`
  *   - `list [-o text|json|table]`
  *   - `autocomplete <query>` — looks up known industry names from the
  *     Toptal catalog
@@ -34,6 +35,12 @@ import { loadAuthTokenOrExit, parseLimitOrExit, presentSubDomainError } from "..
  * `autocomplete` is a separate query against `industriesAutocomplete`
  * — the catalog of known industry names. `add` does NOT consult the
  * catalog; users supply the title directly.
+ *
+ * `show <id>` is the per-id read companion of `list`, added in #342 to
+ * close the Class A surface-shape gap (service exported a `show()` but
+ * neither CLI nor MCP exposed it). The wire call resolves the row via
+ * the schema's `node()` resolver — see
+ * `packages/core/src/services/profile/industries/index.ts:226`.
  */
 export function buildProfileIndustriesCommand(): Command {
   const industries = new Command("industries").description("View and update the industries section of your profile");
@@ -80,6 +87,19 @@ export function buildProfileIndustriesCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runRemove(id, options.output);
+    });
+
+  industries
+    .command("show")
+    .description("Show a single industry-profile entry by id")
+    .argument("<id>", "industry profile id")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runShow(id, options.output);
     });
 
   industries
@@ -189,6 +209,17 @@ async function runRemove(id: string, format: OutputFormat): Promise<void> {
     format,
     id: removedId,
   });
+}
+
+async function runShow(id: string, format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile industries show", format);
+  let result: profile.industries.IndustryProfile;
+  try {
+    result = await profile.industries.show(token, id);
+  } catch (err) {
+    presentSubDomainError("profile industries show", err, format);
+  }
+  emitResult(result, format, { pretty: formatIndustryText, table: formatIndustryTable });
 }
 
 async function runList(format: OutputFormat): Promise<void> {

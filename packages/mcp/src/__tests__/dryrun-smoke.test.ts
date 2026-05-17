@@ -184,11 +184,12 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_external_readiness: {},
   ttctl_profile_external_recommendations: {},
   ttctl_profile_external_update: { linkedin: "https://linkedin.com/in/jdoe" },
-  // profile.industries (5)
+  // profile.industries (6, +show #342)
   ttctl_profile_industries_add: { name: "Healthcare" },
   ttctl_profile_industries_autocomplete: { query: "Health" },
   ttctl_profile_industries_list: {},
   ttctl_profile_industries_remove: { id: "ind_123" },
+  ttctl_profile_industries_show: { id: "ind_123" },
   ttctl_profile_industries_update: { id: "ind_123", name: "Health Tech" },
   // profile.portfolio (8)
   ttctl_profile_portfolio_add: { title: "Smoke test item" },
@@ -261,8 +262,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 97 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(97);
+  it("registers exactly 98 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(98);
   });
 
   it("every registered tool has a fixture", () => {
