@@ -289,6 +289,23 @@ If you ever see an `error` event without a following `lock_released`, that would
 
 When `TTCTL_DEBUG_CONFIG` is unset (or set to anything other than literal `1` — `0`, `true`, empty string all count as "off"), the logger is silent and pays zero per-call overhead.
 
+### Remote kill-switch (wire-break defense)
+
+TTCtl is reverse-engineered from Toptal's APK; the wire format can change without notice. As a defense-in-depth signal, the CLI fetches a small JSON manifest at startup from `https://raw.githubusercontent.com/alexey-pelykh/ttctl/main/status/known-broken.json` and emits a warning (or refuses to run) when the running version is listed as known-broken. The MCP server does the same at `buildServer` time, plus a recurring ~24h refetch — but always warns, never refuses (refusing a long-lived server interrupts in-flight tool calls).
+
+- **Latency cost**: synchronous fetch with a 3 s timeout. Typical latency 50–200 ms against raw.githubusercontent.com; worst-case 3 s before the action runs.
+- **Privacy**: the fetch sends only the default Node `fetch` headers — no version, no account identifier, no telemetry. Install-count tracking is intentionally deferred.
+- **Fail-silent**: every error path (network, timeout, 404, malformed manifest) is swallowed. The kill-switch can NEVER itself cause a denial-of-service when the maintainer's repo is briefly unreachable.
+- **Override** — disable the check entirely with:
+
+  ```sh
+  export TTCTL_DISABLE_KILL_SWITCH=1
+  ```
+
+  Captured at module load (matches the `TTCTL_DEBUG_CONFIG` / `TTCTL_DEBUG_MCP` / `TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY` conventions). Any other value (empty string, `0`, `true`) keeps the check enabled.
+
+The detection sources, severity tiers, response cadence, and C&D / legal posture are documented in [`docs/operations/wire-breakage-runbook.md`](docs/operations/wire-breakage-runbook.md). The manifest schema and update procedure live in [`status/README.md`](status/README.md).
+
 ## How TTCtl works under the hood
 
 The Toptal Talent platform exposes three GraphQL endpoints:

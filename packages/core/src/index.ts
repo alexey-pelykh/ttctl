@@ -105,6 +105,25 @@ export {
 } from "./lib/diagnostic-log.js";
 export type { DiagnosticLevel, RequestLogInfo, ResponseLogInfo } from "./lib/diagnostic-log.js";
 
+export { readPackageVersion } from "./lib/package-version.js";
+
+export {
+  checkKillSwitch,
+  formatKillSwitchMessage,
+  KILL_SWITCH_DEFAULT_REFETCH_INTERVAL_MS,
+  KILL_SWITCH_DEFAULT_TIMEOUT_MS,
+  KILL_SWITCH_MANIFEST_URL,
+  KILL_SWITCH_OVERRIDE_ENV_VAR,
+  matchesVersion,
+} from "./kill-switch.js";
+export type {
+  CheckKillSwitchOptions,
+  FormatKillSwitchMessageOptions,
+  KillSwitchEntry,
+  KillSwitchManifest,
+  KillSwitchResult,
+} from "./kill-switch.js";
+
 export {
   BEARER_PATTERN,
   BEARER_PATTERN_SOURCE,
