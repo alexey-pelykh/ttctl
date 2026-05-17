@@ -164,8 +164,19 @@ jobs:
           # YAML block scalar (#144). Portable -i.bak form for GNU/BSD sed parity.
           sed -i.bak "s|'ttctl@[^']*'|'ttctl@$VERSION'|" smithery.yaml
           rm smithery.yaml.bak
-          # Export VERSION for downstream verification + provenance steps.
+          # Derive the npm dist-tag from the semver prerelease component.
+          # A '-' in $VERSION unambiguously signals a prerelease (build
+          # metadata '+...' is already excluded by the regex above), so
+          # prerelease tags land on `next` and never displace `latest`.
+          # `--tag latest` equals npm's default, so always passing the
+          # derived tag is safe and explicit.
+          case "$VERSION" in
+            *-*) DIST_TAG=next ;;
+            *)   DIST_TAG=latest ;;
+          esac
+          # Export VERSION + DIST_TAG for downstream verification + provenance steps.
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DIST_TAG=$DIST_TAG" >> "$GITHUB_ENV"
 
       - name: Verify stamped versions
         env:
@@ -199,6 +210,28 @@ jobs:
           if ! grep -qE "'ttctl@$EXPECTED'" smithery.yaml; then
             echo "::error file=smithery.yaml::'ttctl@$EXPECTED' not present"
             grep -nE "'ttctl@[^']*'" smithery.yaml || true
+            FAIL=1
+          fi
+          if [ $FAIL -ne 0 ]; then exit 1; fi
+
+      - name: Verify dist-tag matches GitHub release prerelease flag
+        env:
+          DIST_TAG: ${{ env.DIST_TAG }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          # Defense-in-depth: the version-derived prerelease state (DIST_TAG)
+          # must agree with the GitHub release's prerelease flag BEFORE any
+          # package is published. Catches a human cutting a -rc tag without
+          # marking the release as a pre-release (or vice versa) — either
+          # mismatch would land a prerelease on `latest` or hold a GA release
+          # off it.
+          FAIL=0
+          if [ "$DIST_TAG" = "next" ] && [ "$IS_PRERELEASE" != "true" ]; then
+            echo "::error::DIST_TAG=next (version has a prerelease component) but the GitHub release is NOT marked pre-release. Mark the release as a pre-release or cut a non-prerelease tag."
+            FAIL=1
+          fi
+          if [ "$DIST_TAG" = "latest" ] && [ "$IS_PRERELEASE" = "true" ]; then
+            echo "::error::DIST_TAG=latest (version has no prerelease component) but the GitHub release IS marked pre-release. Use a -rc/-beta tag or unmark the pre-release flag."
             FAIL=1
           fi
           if [ $FAIL -ne 0 ]; then exit 1; fi
@@ -305,14 +338,15 @@ jobs:
       - name: Publish packages (idempotent)
         env:
           EXPECTED: ${{ env.VERSION }}
+          DIST_TAG: ${{ env.DIST_TAG }}
         run: |
           for pkg in ttctl @ttctl/core @ttctl/cli @ttctl/mcp; do
             if npm view "$pkg@$EXPECTED" version >/dev/null 2>&1; then
               echo "::notice::$pkg@$EXPECTED already published, skipping"
               continue
             fi
-            echo "::notice::publishing $pkg@$EXPECTED"
-            pnpm --filter "$pkg" publish --access public --no-git-checks --provenance
+            echo "::notice::publishing $pkg@$EXPECTED to dist-tag $DIST_TAG"
+            pnpm --filter "$pkg" publish --access public --no-git-checks --provenance --tag "$DIST_TAG"
           done
 
       - name: Verify provenance attestations
