@@ -36,6 +36,9 @@ import { registerAllTools } from "../tools/index.js";
  *
  * Post-#195: + 2 contracts tools (list/show against `viewer.contracts` on
  * the portal surface) = 97 tools total.
+ *
+ * Post-#342: + 1 industries.show tool (per-id read companion of
+ * industries.list, closing the Class A surface-shape gap) = 98 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -50,7 +53,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (97 tools = 56 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (98 tools = 57 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -133,11 +136,12 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_external_readiness",
       "ttctl_profile_external_recommendations",
       "ttctl_profile_external_update",
-      // #74 — profile.industries (5)
+      // #74 — profile.industries (6, +show #342)
       "ttctl_profile_industries_add",
       "ttctl_profile_industries_autocomplete",
       "ttctl_profile_industries_list",
       "ttctl_profile_industries_remove",
+      "ttctl_profile_industries_show",
       "ttctl_profile_industries_update",
       // #75 — profile.portfolio (8 tools: 7 leaves with `upload` exposed as
       // two MCP tools per the dual `upload_cover` / `upload_file` flags)

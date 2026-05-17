@@ -107,15 +107,25 @@ describe("buildProfileEmploymentCommand (6 leaves + `experience` alias)", () => 
   });
 });
 
-describe("buildProfileIndustriesCommand (5 leaves)", () => {
+describe("buildProfileIndustriesCommand (6 leaves, +show #342)", () => {
   const cmd = buildProfileIndustriesCommand();
 
-  it("registers add / update / remove / list / autocomplete", () => {
+  it("registers add / update / remove / show / list / autocomplete", () => {
     expect(findSubcommand(cmd, "add")).toBeDefined();
     expect(findSubcommand(cmd, "update")).toBeDefined();
     expect(findSubcommand(cmd, "remove")).toBeDefined();
+    expect(findSubcommand(cmd, "show")).toBeDefined();
     expect(findSubcommand(cmd, "list")).toBeDefined();
     expect(findSubcommand(cmd, "autocomplete")).toBeDefined();
+  });
+
+  it("show takes <id> as positional and declares -o/--output", () => {
+    const show = findSubcommand(cmd, "show");
+    expect(show).toBeDefined();
+    const required = show?.registeredArguments.filter((a) => a.required) ?? [];
+    expect(required.length).toBeGreaterThanOrEqual(1);
+    const out = show?.options.find((o) => o.long === "--output");
+    expect(out?.argChoices).toEqual(["pretty", "json", "yaml"]);
   });
 
   it("add takes <name> as a positional argument and optional --connection", () => {

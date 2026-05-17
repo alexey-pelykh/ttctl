@@ -258,6 +258,33 @@ Allowed choices are pretty, json, yaml.` line.
 
 ### Added
 
+- **`profile industries show <id>` — CLI + MCP (#342)**. Closes a
+  Class A surface-shape gap surfaced by the post-#340/#341 audit
+  (`docs/briefs/2026-05-17-scope-mcp-cli-surface-shape-audit.md`): the
+  service layer exported `profile.industries.show(token, id)` but
+  neither surface exposed it (industries shipped with
+  `add`/`update`/`remove`/`list`/`autocomplete` in #74 — the inverse of
+  the #341 read-parity gap). The CLI/MCP parity contract test (#151)
+  did not catch it because both surfaces omitted symmetrically.
+  - **CLI**: `ttctl profile industries show <id> [-o pretty|json|yaml]`
+    registered in `packages/cli/src/commands/profile/industries/index.ts`,
+    mirroring the per-id `show` of every other sub-domain.
+  - **MCP**: `ttctl_profile_industries_show` registered in
+    `packages/mcp/src/tools/profile/industries.ts` with a `dryRun`
+    path and an `outputSchema` mirroring the `list` per-item
+    `IndustryProfile` shape (`profileIndustriesRowOutputSchema`).
+  - No new service code: `show()` already existed
+    (`packages/core/src/services/profile/industries/index.ts:226`,
+    resolving the row via the schema's `node()` resolver — a true
+    per-id lookup, distinct from the list-and-filter `show` of
+    certifications/education/employment). The schema/contract rule is
+    **NOT triggered** — this re-exposes an already-shipped
+    `GetIndustryProfile` query; no GraphQL inference, no schema
+    gap-filling.
+  - Tests: service-layer happy-path + not-found already covered
+    (`industries/__tests__/index.test.ts`); surface registration tests
+    extended (`wave3-tree`, MCP `registration`/`tools`/`dryrun-smoke`).
+
 - **Release-rollback runbook (#220, reworked for #267)**. Closes
   audit-confirmed CRIT-005 (release/REL-001) from
   `docs/briefs/2026-05-13-audit-everything.md`. Ships

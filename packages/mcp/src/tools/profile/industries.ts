@@ -17,16 +17,24 @@ const DRY_RUN_FIELD = z
   );
 
 /**
- * Register the five `profile.industries.*` MCP tools on `server`.
+ * Register the six `profile.industries.*` MCP tools on `server`.
  *
  * Tools:
  *   - ttctl_profile_industries_add
  *   - ttctl_profile_industries_update
  *   - ttctl_profile_industries_remove
+ *   - ttctl_profile_industries_show
  *   - ttctl_profile_industries_list
  *   - ttctl_profile_industries_autocomplete  (catalog lookup, distinct
  *     from add — the autocomplete leaf returns suggestions from the
  *     known-industry database; add does NOT consult the catalog)
+ *
+ * `show` is the per-id read companion of `list`, added in #342 to close
+ * the Class A surface-shape gap (the service exported a `show()` but
+ * neither CLI nor MCP exposed it). The underlying wire call is a true
+ * per-id `node()` lookup (`GetIndustryProfile`), distinct from the
+ * list-and-filter pattern used by `certifications.show` / `education.show` /
+ * `employment.show`.
  *
  * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`.
  * When `dryRun: true`, returns `{ ok: true, dryRun: true, preview }` via
@@ -147,6 +155,32 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
         return textSuccess(`Industry ${id} removed.`);
       } catch (err) {
         return presentToolError("profile.industries.remove", err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_profile_industries_show",
+    {
+      title: "Show industry-profile entry",
+      description:
+        "Show a single industry-profile entry by id (returns the row as JSON). Resolved via the `node()` GraphQL resolver — a true per-id lookup, distinct from certifications/education/employment `show` which list-and-filter client-side.",
+      inputSchema: { id: z.string().min(1).describe("industry profile id"), dryRun: DRY_RUN_FIELD },
+      outputSchema: profileIndustriesRowOutputSchema.shape,
+    },
+    async (input) => {
+      const auth = await ctx.resolveTokenForTool("profile.industries.show");
+      if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("GetIndustryProfile", "talent-profile", { id: input.id }, auth.token),
+        );
+      }
+      try {
+        const row = await profile.industries.show(auth.token, input.id);
+        return jsonSuccess(row);
+      } catch (err) {
+        return presentToolError("profile.industries.show", err);
       }
     },
   );
