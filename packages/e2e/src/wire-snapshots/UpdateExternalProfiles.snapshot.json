@@ -1,0 +1,44 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-18T06:27:43.622Z",
+  "operationName": "UpdateExternalProfiles",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "notice": {
+        "kind": "null"
+      },
+      "profile": {
+        "kind": "object",
+        "fields": {
+          "behance": {
+            "kind": "null"
+          },
+          "dribbble": {
+            "kind": "null"
+          },
+          "github": {
+            "kind": "string"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "linkedin": {
+            "kind": "string"
+          },
+          "twitter": {
+            "kind": "null"
+          },
+          "updatedByTalentAt": {
+            "kind": "string"
+          },
+          "website": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}
