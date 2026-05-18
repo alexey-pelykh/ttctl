@@ -17,11 +17,29 @@ const DRY_RUN_FIELD = z
   );
 
 /**
+ * Pagination input fields shared by the four paginating `ttctl_jobs_*`
+ * read tools (`list`, `saved`, `viewed`, `not_interested_list`), per
+ * issue #369. Constraints mirror the CLI's `parsePaginationFlag` (positive
+ * integer ≥ 1); the wire's per-page upper bound is server-enforced. The
+ * service-layer defaults (`page: 1, perPage: 20`) kick in when either
+ * field is omitted, so existing MCP callers see no behavioral change.
+ */
+const PAGE_FIELD = z.number().int().min(1).optional().describe("1-indexed page number (≥ 1). Default: 1.");
+
+const PER_PAGE_FIELD = z.number().int().min(1).optional().describe("Items per page (≥ 1; server-capped). Default: 20.");
+
+/**
  * Build the variables payload `core.jobs` (`buildListVariables` in
  * `core/services/jobs/index.ts`) sends to `JobsList` so a dry-run
  * preview from the MCP layer matches the apply path's wire shape.
  * Mirrors the apply-path "empty/undefined → null" coercion so listed
  * filters render the same way as the actual wire call.
+ *
+ * Pagination defaults (#369): when `opts.page` / `opts.perPage` are
+ * omitted, fall back to the same `jobs.DEFAULT_PAGE` / `jobs.DEFAULT_PER_PAGE`
+ * constants the core's `buildListVariables` uses (1, 20). The dry-run
+ * preview therefore renders the EXACT variables the apply path would
+ * send to the wire, including the resolved pagination values.
  */
 function buildJobsListVariables(
   opts: jobs.ListOptions,
@@ -38,8 +56,39 @@ function buildJobsListVariables(
     sortTarget: opts.sortTarget ?? null,
     saved: extras.saved !== undefined ? { eq: extras.saved } : null,
     notInterested: extras.notInterested !== undefined ? { eq: extras.notInterested } : null,
+    page: opts.page ?? jobs.DEFAULT_PAGE,
+    pageSize: opts.perPage ?? jobs.DEFAULT_PER_PAGE,
   };
   return variables;
+}
+
+/**
+ * Offset-style pagination metadata surfaced alongside `items` on the
+ * four paginating `ttctl_jobs_*` read tools (#369). Mirrors the CLI's
+ * `EnvelopePageInfo` shape (in `packages/cli/src/lib/envelopes.ts`) so
+ * LLM clients can detect "more pages available" via `hasNextPage`.
+ *
+ * For `ttctl_jobs_viewed` specifically: `totalCount` (and therefore
+ * `totalPages` / `hasNextPage`) reflect the underlying `eligibleJobs`
+ * fetch — i.e., the pre-filter count of ALL jobs on the page, NOT the
+ * count of jobs with `viewed: true`. The R1 caveat documented on the
+ * tool's description applies.
+ */
+interface JobsPageInfo {
+  currentPage: number;
+  perPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+}
+
+function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
+  const totalPages = Math.max(1, Math.ceil(page.totalCount / page.perPage));
+  return {
+    currentPage: page.page,
+    perPage: page.perPage,
+    totalPages,
+    hasNextPage: page.page < totalPages,
+  };
 }
 
 /**
@@ -64,9 +113,21 @@ function buildJobsListVariables(
  *   - `ttctl_jobs_search_save`
  *   - `ttctl_jobs_search_remove`
  *
- * **Wire-shape notes** (R1 / R2): `jobs_viewed` is scoped to the first
- * page (≤20 jobs, client-side filter); `jobs_search_*` operates on a
- * single subscription per user. The tool descriptions surface these.
+ * **Wire-shape notes** (R1 / R2): `jobs_viewed` filters client-side on
+ * the `viewed` boolean AFTER the page is fetched (the wire has no
+ * `viewed` filter — see #372 for the server-side fix); `jobs_search_*`
+ * operates on a single subscription per user. The tool descriptions
+ * surface these.
+ *
+ * Pagination (issue #369): the four read-list tools — `jobs_list`,
+ * `jobs_saved`, `jobs_viewed`, `jobs_not_interested_list` — accept
+ * `page?: number` (1-indexed) and `perPage?: number` (server-capped),
+ * mirroring the CLI's `--page` / `--per-page` flags that #138/#183
+ * shipped. Each list response is `{ items, pageInfo }`, where `pageInfo`
+ * mirrors the CLI's `EnvelopePageInfo` shape so LLM callers can detect
+ * `hasNextPage` and iterate. For `jobs_viewed` specifically, `pageInfo`
+ * reflects the underlying `eligibleJobs` fetch — not the post-filter
+ * `items.length`.
  *
  * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. Read
  * tools build the preview at the MCP layer; the 7 mutations (save,
@@ -83,7 +144,9 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       title: "Browse current job opportunities",
       description: [
         "Browse the user's current job opportunities on Toptal Talent.",
-        "Returns the first page of eligible jobs (≤20).",
+        "Returns one page of eligible jobs plus offset-style `pageInfo`",
+        "(`currentPage`, `perPage`, `totalPages`, `hasNextPage`) so callers",
+        "can iterate beyond the default first page (≤20).",
         "",
         "Optional filters:",
         "  - `skills` / `keywords`: AND-across filter on required skills / free text",
@@ -93,9 +156,14 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         "  - `estimatedLengths`: e.g. SHORT_TERM, LONG_TERM",
         "  - `sortTarget`: e.g. visible_at, posted_at",
         "",
+        "Pagination (#369):",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+        "",
         "Example user prompts:",
         '  - "Show me current Toptal job opportunities."',
         '  - "List remote part-time Toptal jobs with React skills."',
+        '  - "Show me page 2 of eligible jobs."',
       ].join("\n"),
       inputSchema: {
         skills: z.array(z.string()).optional().describe("Required skill names (AND across)"),
@@ -106,6 +174,8 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         workTypes: z.array(z.string()).optional().describe("JobWorkTypeSlug values"),
         estimatedLengths: z.array(z.string()).optional().describe("EstimatedLengthFilterEnum values"),
         sortTarget: z.string().optional().describe("Sort target (e.g. visible_at, posted_at)"),
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -121,19 +191,22 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       if (args.workTypes !== undefined) opts.workTypes = args.workTypes;
       if (args.estimatedLengths !== undefined) opts.estimatedLengths = args.estimatedLengths;
       if (args.sortTarget !== undefined) opts.sortTarget = args.sortTarget;
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         return dryRunResponse(
           buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables(opts, {}), auth.token),
         );
       }
       try {
-        // MCP unwraps the JobListPage to items only (issue #138 wires
-        // pagination on the CLI surface; MCP pagination is a separate
-        // follow-up). The wire still returns totalCount + page/perPage
-        // — those are discarded here to preserve the MCP output
-        // contract (`JobListItem[]`).
+        // Issue #369: surface pagination metadata alongside items so LLM
+        // callers can detect `hasNextPage` and iterate. Pre-#369 the
+        // MCP tool returned the bare `items[]` array (discarding
+        // `totalCount` / `page` / `perPage`); the wrapped shape is a
+        // payload addition — `result.items` is byte-identical to the
+        // prior payload.
         const page = await jobs.list(auth.token, opts);
-        return successResponse(page.items);
+        return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
       } catch (err) {
         return mapJobsError(err);
       }
@@ -227,22 +300,43 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
     "ttctl_jobs_saved",
     {
       title: "List saved jobs",
-      description: "List the user's saved (bookmarked) Toptal jobs.",
-      inputSchema: { dryRun: DRY_RUN_FIELD },
+      description: [
+        "List the user's saved (bookmarked) Toptal jobs.",
+        "Returns one page of saved jobs plus offset-style `pageInfo`",
+        "(`currentPage`, `perPage`, `totalPages`, `hasNextPage`) so callers",
+        "can iterate beyond the default first page (≤20).",
+        "",
+        "Pagination (#369):",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+      ].join("\n"),
+      inputSchema: {
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
+        dryRun: DRY_RUN_FIELD,
+      },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const opts: jobs.ListOptions = {};
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         return dryRunResponse(
-          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables({}, { saved: true }), auth.token),
+          buildMcpDryRunPreview(
+            "JobsList",
+            "mobile-gateway",
+            buildJobsListVariables(opts, { saved: true }),
+            auth.token,
+          ),
         );
       }
       try {
-        // MCP unwraps the JobListPage to items only (issue #138; see
-        // jobs_list for rationale).
-        const page = await jobs.saved(auth.token);
-        return successResponse(page.items);
+        // Issue #369: surface pagination metadata alongside items. See
+        // `ttctl_jobs_list` for the payload-addition rationale.
+        const page = await jobs.saved(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
       } catch (err) {
         return mapJobsError(err);
       }
@@ -253,34 +347,52 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
   server.registerTool(
     "ttctl_jobs_viewed",
     {
-      title: "List viewed jobs (best-effort, first page only)",
+      title: "List viewed jobs (best-effort, client-side filter)",
       description: [
         "List Toptal jobs the user has marked as viewed.",
         "",
         "**Limitation (R1)**: the wire has no `viewed` filter on eligibleJobs.",
-        "This tool fetches the first page of eligible jobs (≤20) and filters",
-        "client-side on the `viewed` boolean. Jobs viewed but on subsequent",
-        "pages will not appear.",
+        "This tool fetches the requested page of eligible jobs and filters",
+        "client-side on the `viewed` boolean. Items on later pages will not",
+        "appear unless the caller iterates pagination explicitly. Use `page` /",
+        "`perPage` to shift the underlying fetch window. R1 is tracked",
+        "separately at issue #372 (server-side viewed filter).",
+        "",
+        "Pagination (#369):",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+        "",
+        "Note on `pageInfo`: `totalCount` / `totalPages` / `hasNextPage`",
+        "reflect the underlying eligibleJobs fetch (pre-`viewed` filter),",
+        "NOT `items.length` after the client-side filter. `items.length` can",
+        "be smaller than `perPage`.",
         "",
         "Dry-run note: the apply path issues `JobsList` (the same query used by `ttctl_jobs_list`) and filters client-side on `viewed` — the preview reflects the wire call accordingly.",
       ].join("\n"),
-      inputSchema: { dryRun: DRY_RUN_FIELD },
+      inputSchema: {
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
+        dryRun: DRY_RUN_FIELD,
+      },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const opts: jobs.ListOptions = {};
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         return dryRunResponse(
-          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables({}, {}), auth.token),
+          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables(opts, {}), auth.token),
         );
       }
       try {
-        // MCP unwraps the JobListPage to items only (issue #138; see
-        // jobs_list for rationale). totalCount here reflects the
-        // underlying eligibleJobs fetch (pre-`viewed` filter), not the
-        // returned items.length.
-        const page = await jobs.viewedList(auth.token);
-        return successResponse(page.items);
+        // Issue #369: surface pagination metadata alongside items. See
+        // `ttctl_jobs_list` for the payload-addition rationale.
+        // pageInfo reflects the underlying fetch (pre-`viewed` filter)
+        // per the R1 caveat in the tool description.
+        const page = await jobs.viewedList(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
       } catch (err) {
         return mapJobsError(err);
       }
@@ -351,27 +463,43 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
     "ttctl_jobs_not_interested_list",
     {
       title: "List jobs marked as not-interested",
-      description: "List Toptal jobs the user marked as not-interested.",
-      inputSchema: { dryRun: DRY_RUN_FIELD },
+      description: [
+        "List Toptal jobs the user marked as not-interested.",
+        "Returns one page of dismissed jobs plus offset-style `pageInfo`",
+        "(`currentPage`, `perPage`, `totalPages`, `hasNextPage`) so callers",
+        "can iterate beyond the default first page (≤20).",
+        "",
+        "Pagination (#369):",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+      ].join("\n"),
+      inputSchema: {
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
+        dryRun: DRY_RUN_FIELD,
+      },
     },
     async (args) => {
       const auth = await ctx.resolveToolAuth();
       if (!auth.ok) return auth.response;
+      const opts: jobs.ListOptions = {};
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         return dryRunResponse(
           buildMcpDryRunPreview(
             "JobsList",
             "mobile-gateway",
-            buildJobsListVariables({}, { notInterested: true }),
+            buildJobsListVariables(opts, { notInterested: true }),
             auth.token,
           ),
         );
       }
       try {
-        // MCP unwraps the JobListPage to items only (issue #138; see
-        // jobs_list for rationale).
-        const page = await jobs.notInterestedList(auth.token);
-        return successResponse(page.items);
+        // Issue #369: surface pagination metadata alongside items. See
+        // `ttctl_jobs_list` for the payload-addition rationale.
+        const page = await jobs.notInterestedList(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
       } catch (err) {
         return mapJobsError(err);
       }
