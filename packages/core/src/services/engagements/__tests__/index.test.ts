@@ -130,16 +130,21 @@ describe("engagements.list", () => {
         },
       },
     });
-    const items = await list(TOKEN);
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe("act-eng-1");
-    expect(items[0]?.engagementId).toBe("eng-1");
-    expect(items[0]?.startDate).toBe("2026-02-01");
-    expect(items[0]?.expectedHours).toBe(40);
+    const result = await list(TOKEN);
+    // #375: list() now returns an EngagementListPage envelope.
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe("act-eng-1");
+    expect(result.items[0]?.engagementId).toBe("eng-1");
+    expect(result.items[0]?.startDate).toBe("2026-02-01");
+    expect(result.items[0]?.expectedHours).toBe(40);
+    expect(result.totalCount).toBe(1);
+    expect(result.page).toBe(1);
+    expect(result.perPage).toBe(20);
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "JobActivityItems",
-      variables: { keywords: null, onlyStatusGroupFilter: ["ACTIVE_ENGAGEMENT"] },
+      // #375: default page/pageSize threaded to the wire.
+      variables: { keywords: null, onlyStatusGroupFilter: ["ACTIVE_ENGAGEMENT"], page: 1, pageSize: 20 },
     });
   });
 
@@ -176,10 +181,38 @@ describe("engagements.list", () => {
     });
   });
 
-  it("returns [] when jobActivityList is null", async () => {
+  it("returns an empty-items envelope when jobActivityList is null", async () => {
     reply({ body: { data: { viewer: { id: "v1", jobActivityList: null } } } });
-    const items = await list(TOKEN);
-    expect(items).toEqual([]);
+    const result = await list(TOKEN);
+    expect(result).toEqual({ items: [], totalCount: 0, page: 1, perPage: 20 });
+  });
+
+  it("threads explicit page/perPage verbatim to the wire and echoes them on the envelope (#375)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityList: { entities: [ENGAGEMENT_LIST_ENTITY], totalCount: 57 },
+          },
+        },
+      },
+    });
+    const result = await list(TOKEN, { status: "all", page: 3, perPage: 15 });
+    // INFERRED 1-indexed (no -1 subtraction), mirroring the eligibleJobs
+    // sibling empirically verified in #138. Verbatim threading.
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      variables: {
+        onlyStatusGroupFilter: ["ACTIVE_ENGAGEMENT", "CLOSED_ENGAGEMENT"],
+        page: 3,
+        pageSize: 15,
+      },
+    });
+    expect(result.page).toBe(3);
+    expect(result.perPage).toBe(15);
+    expect(result.totalCount).toBe(57);
+    expect(result.items).toHaveLength(1);
   });
 
   it("throws AuthRevokedError on HTTP 401", async () => {
@@ -324,6 +357,25 @@ describe("engagements.stats", () => {
     const result = await stats(TOKEN);
     expect(result.total).toBe(0);
     expect(result.groups.every((g) => g.count === 0)).toBe(true);
+  });
+
+  it("pagination-safe: stats sends NO page/pageSize despite the shared query declaring them (#375)", async () => {
+    for (let i = 0; i < ENGAGEMENT_STATUS_GROUPS.length; i++) {
+      reply({
+        body: { data: { viewer: { id: "v1", jobActivityList: { entities: [], totalCount: i + 5 } } } },
+      });
+    }
+    const result = await stats(TOKEN);
+    // totalCount is the full per-filter count, page-independent — the
+    // aggregate is unaffected by the #375 pagination wiring.
+    expect(result.total).toBe(ENGAGEMENT_STATUS_GROUPS.reduce((s, _, i) => s + (i + 5), 0));
+    for (const call of mockedStock.mock.calls) {
+      const body = call[0]?.body as { variables?: Record<string, unknown> };
+      // stats intentionally passes neither — they are absent from the
+      // variables object (server applies its default slice).
+      expect(body.variables).not.toHaveProperty("page");
+      expect(body.variables).not.toHaveProperty("pageSize");
+    }
   });
 });
 

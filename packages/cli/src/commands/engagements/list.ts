@@ -7,7 +7,7 @@ import { engagements } from "@ttctl/core";
 import { wrapListEnvelope } from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { handleEngagementsError, loadAuthTokenOrExit } from "./shared.js";
+import { buildEngagementsPageInfo, formatPageFooter, handleEngagementsError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl engagements list`. Lists the user's
@@ -17,18 +17,20 @@ import { handleEngagementsError, loadAuthTokenOrExit } from "./shared.js";
  * Filters: `--status active|past|all` (default `active`) and
  * `--keywords` (free-text, repeatable; passed through to the gateway).
  *
- * **Pagination not supported** — the captured `JobActivityItems`
- * operation has no `page` / `pageSize` args. Per #183, pagination
- * flags are declared PER paginating leaf; this leaf does not declare
- * `--page` / `--per-page`, so Commander emits its standard
- * `error: unknown option '--page'` (exit 1) when a user passes
- * either flag. If the wire ever gains pagination args, declare the
- * flags on this leaf and extend `engagements.list()` to accept
- * `{page?, perPage?}`.
+ * Pagination (#375): `--page` (1-indexed) / `--per-page` are declared
+ * on this leaf (per #183, per paginating leaf) and threaded to the
+ * service's `jobActivityList.page` / `pageSize` wire args. When
+ * neither flag is set, the service applies defaults
+ * (`page: 1, perPage: 20`). The JSON / YAML envelope carries
+ * `pageInfo` (`currentPage`, `perPage`, `totalPages`, `hasNextPage`);
+ * the pretty / table footer renders "Page X of Y (per_page=Z)" when
+ * `totalCount > 0`.
  */
 export interface EngagementsListOptions {
   status?: engagements.EngagementListStatus;
   keywords?: string[];
+  page?: number;
+  perPage?: number;
   output: OutputFormat;
 }
 
@@ -38,19 +40,39 @@ export async function runEngagementsList(opts: EngagementsListOptions): Promise<
   const listOpts: engagements.ListOptions = {};
   if (opts.status !== undefined) listOpts.status = opts.status;
   if (opts.keywords !== undefined) listOpts.keywords = opts.keywords;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
-  let items: engagements.EngagementListItem[];
+  let page: engagements.EngagementListPage;
   try {
-    items = await engagements.list(token, listOpts);
+    page = await engagements.list(token, listOpts);
   } catch (err) {
     handleEngagementsError("engagements list", err, opts.output);
   }
 
-  emitResult(wrapListEnvelope(items), opts.output, {
-    pretty: (data) => formatEngagementsTable(data.items),
-    table: (data) => formatEngagementsTable(data.items),
+  const pageInfo = buildEngagementsPageInfo(page);
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
+    pretty: (data) => renderEngagementsListPretty(data.items, page),
+    table: (data) => renderEngagementsListPretty(data.items, page),
     empty: { command: "engagements.list" },
   });
+}
+
+/**
+ * Render the engagements table plus the pretty-mode pagination footer
+ * underneath (#375). Mirrors `renderJobsListPretty` in
+ * `jobs/list.ts`: the footer is appended only when `totalCount > 0` —
+ * empty pages route through the empty-state CTA wrapper BEFORE this
+ * renderer fires, so the defensive `if` here preserves the
+ * direct-call surface (tests, future programmatic use).
+ */
+function renderEngagementsListPretty(
+  items: engagements.EngagementListItem[],
+  page: engagements.EngagementListPage,
+): string {
+  const table = formatEngagementsTable(items);
+  if (page.totalCount <= 0) return table;
+  return `${table}\n${formatPageFooter(page.page, page.perPage, page.totalCount)}`;
 }
 
 /**

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+// e2e-covers: JobActivityItems
+
 /**
- * E2E coverage for `ttctl engagements list` (#147).
+ * E2E coverage for `ttctl engagements list` (#147, extended for
+ * pagination in #375).
  *
  * Mandatory per the project's schema/contract validation rule: the
  * engagements service hand-authors the `JobActivityItems` operation
@@ -12,6 +15,14 @@
  * so the codegen pipeline cannot validate the operation's args.
  * Live-API verification is the only authority.
  *
+ * #375 adds `$page: Int, $pageSize: PageSize` to the hand-authored
+ * `ENGAGEMENTS_LIST_QUERY` and threads them to the wire's
+ * `jobActivityList.page` / `pageSize` arguments. The synthesized SDL
+ * declares neither arg on `jobActivityList: JobActivityList!`. The
+ * argument acceptance + the 1-indexed page semantic are INFERRED from
+ * the `eligibleJobs` sibling (empirical #138); this round-trip is the
+ * load-bearing verification that the inference holds.
+ *
  * Coverage:
  *   - Status filter `active` returns rows whose `statusGroupV2.value`
  *     is `ACTIVE_ENGAGEMENT`.
@@ -20,6 +31,11 @@
  *   - Status filter `all` returns rows from both groups.
  *   - Each row carries the engagement-extended projection
  *     (startDate, expectedHours, commitment, etc.).
+ *   - **Pagination (#375)**: `--page` / `--per-page` are accepted by
+ *     the wire; the envelope's `pageInfo` carries
+ *     `currentPage` / `perPage` / `totalPages` / `hasNextPage`; an
+ *     explicit `--per-page 1 --page 1` request returns at most one
+ *     item; consecutive pages do not overlap on the row `id`s.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -112,5 +128,109 @@ describe("engagements list (live mobile-gateway)", () => {
     for (const row of payload.items) {
       expect(row.statusGroupV2?.value).toBe("CLOSED_ENGAGEMENT");
     }
+  });
+
+  // -------------------------------------------------------------------
+  // Pagination (#375) — schema/contract rule's load-bearing
+  // verification that `$page` / `$pageSize` are accepted by the wire
+  // on `jobActivityList`. Without this round-trip, the implementation
+  // ships on an INFERRED contract (synthesized SDL declares the field
+  // with NO arguments; argument acceptance is inferred from the
+  // `eligibleJobs` / `JobsList` sibling).
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("accepts --page / --per-page and surfaces pageInfo (#375)", async () => {
+    // `--status all` to maximize available rows on accounts with mixed history.
+    const result = await cli.run([
+      "engagements",
+      "list",
+      "--status",
+      "all",
+      "--page",
+      "1",
+      "--per-page",
+      "5",
+      "-o",
+      "json",
+    ]);
+    expect(result.exitCode).toBe(0);
+
+    const payload = JSON.parse(result.stdout) as {
+      items: unknown[];
+      pageInfo?: {
+        currentPage?: number;
+        perPage?: number;
+        totalPages?: number;
+        hasNextPage?: boolean;
+      };
+    };
+
+    // Envelope shape: pageInfo present with the requested page/perPage echoed back.
+    expect(payload.pageInfo).toBeDefined();
+    expect(payload.pageInfo?.currentPage).toBe(1);
+    expect(payload.pageInfo?.perPage).toBe(5);
+
+    // Page-size enforcement: server returns at most `perPage` rows.
+    // (May be fewer on a thin account; never more.)
+    expect(payload.items.length).toBeLessThanOrEqual(5);
+
+    // totalPages derivation is consistent with hasNextPage.
+    const totalPages = payload.pageInfo?.totalPages;
+    const hasNextPage = payload.pageInfo?.hasNextPage;
+    if (typeof totalPages === "number" && typeof hasNextPage === "boolean") {
+      expect(hasNextPage).toBe(1 < totalPages);
+    }
+  });
+
+  it.skipIf(!e2eEnabled)("page 2 does not overlap page 1 on row ids when totalCount > perPage (#375)", async () => {
+    const p1 = await cli.run([
+      "engagements",
+      "list",
+      "--status",
+      "all",
+      "--page",
+      "1",
+      "--per-page",
+      "1",
+      "-o",
+      "json",
+    ]);
+    expect(p1.exitCode).toBe(0);
+    const page1 = JSON.parse(p1.stdout) as {
+      items: Array<{ id: string }>;
+      pageInfo?: { totalPages?: number };
+    };
+    if ((page1.pageInfo?.totalPages ?? 0) < 2) {
+      process.stderr.write(
+        "warning: account has < 2 engagement rows across all statuses — page-overlap assertion skipped\n",
+      );
+      return;
+    }
+
+    const p2 = await cli.run([
+      "engagements",
+      "list",
+      "--status",
+      "all",
+      "--page",
+      "2",
+      "--per-page",
+      "1",
+      "-o",
+      "json",
+    ]);
+    expect(p2.exitCode).toBe(0);
+    const page2 = JSON.parse(p2.stdout) as { items: Array<{ id: string }> };
+
+    const id1 = page1.items[0]?.id;
+    const id2 = page2.items[0]?.id;
+    expect(id1).toBeDefined();
+    expect(id2).toBeDefined();
+    // 1-indexed page semantic (INFERRED from eligibleJobs #138): page 1
+    // and page 2 must return DIFFERENT rows. If id1 === id2, either the
+    // wire ignores `$page` (no pagination), or the page base differs
+    // from the eligibleJobs sibling — both are blocking schema/contract
+    // findings the manual E2E run must surface before merge.
+    expect(id1).not.toBe(id2);
   });
 });

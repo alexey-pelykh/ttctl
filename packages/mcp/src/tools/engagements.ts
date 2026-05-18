@@ -18,6 +18,42 @@ const DRY_RUN_FIELD = z
   );
 
 /**
+ * Pagination input fields for `ttctl_engagements_list` (issue #375),
+ * mirroring the four paginating `ttctl_jobs_*` tools (#369).
+ * Constraints match the CLI's `parsePaginationFlag` (positive integer
+ * ≥ 1); the wire's per-page upper bound is server-enforced. The
+ * service-layer defaults (`page: 1, perPage: 20`) kick in when either
+ * field is omitted, so existing MCP callers see no behavioral change.
+ */
+const PAGE_FIELD = z.number().int().min(1).optional().describe("1-indexed page number (≥ 1). Default: 1.");
+
+const PER_PAGE_FIELD = z.number().int().min(1).optional().describe("Items per page (≥ 1; server-capped). Default: 20.");
+
+/**
+ * Offset-style pagination metadata surfaced alongside `items` on
+ * `ttctl_engagements_list` (#375). Mirrors the CLI's
+ * `EnvelopePageInfo` shape (`packages/cli/src/lib/envelopes.ts`) and
+ * the `ttctl_jobs_*` `JobsPageInfo` shape so LLM clients can detect
+ * "more pages available" via `hasNextPage` and iterate.
+ */
+interface EngagementsPageInfo {
+  currentPage: number;
+  perPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+}
+
+function buildEngagementsPageInfo(page: engagements.EngagementListPage): EngagementsPageInfo {
+  const totalPages = Math.max(1, Math.ceil(page.totalCount / page.perPage));
+  return {
+    currentPage: page.page,
+    perPage: page.perPage,
+    totalPages,
+    hasNextPage: page.page < totalPages,
+  };
+}
+
+/**
  * Register the `ttctl_engagements_*` MCP tools (initial #147 spec
  * extended by #155 with `breaks_reschedule`). Tool names use the
  * `ttctl_` prefix and the canonical CLI path joined with `_`:
@@ -66,10 +102,16 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
         "",
         "Optional `keywords` is a free-text filter (AND across multiple).",
         "",
+        "Pagination (#375): pass `page` (1-indexed) / `perPage` to walk",
+        "beyond the default first slice. Returns `{ items, pageInfo }`",
+        "where `pageInfo` is `{ currentPage, perPage, totalPages,",
+        "hasNextPage }` — iterate while `hasNextPage` is true.",
+        "",
         "Example user prompts:",
         '  - "What are my active Toptal engagements?"',
         '  - "Show me my past Toptal contracts."',
         '  - "List all my Toptal jobs, current and past."',
+        '  - "Show me page 2 of my past engagements."',
       ].join("\n"),
       inputSchema: {
         status: z
@@ -77,6 +119,8 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
           .optional()
           .describe("Filter by engagement status: active (default), past, or all"),
         keywords: z.array(z.string()).optional().describe("Free-text keyword filter (AND across multiple)"),
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -86,6 +130,8 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
       const opts: engagements.ListOptions = {};
       if (args.status !== undefined) opts.status = args.status;
       if (args.keywords !== undefined) opts.keywords = args.keywords;
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         // Mirror the apply-path mapping from `--status` to
         // JobActivityItemStatusGroupEnum so the preview's
@@ -98,15 +144,26 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
             : status === "past"
               ? ["CLOSED_ENGAGEMENT"]
               : ["ACTIVE_ENGAGEMENT", "CLOSED_ENGAGEMENT"];
+        // Resolve page/pageSize to the same DEFAULT_* constants the
+        // core's apply path uses (#375), so the dry-run preview renders
+        // the EXACT variables the live call would send — mirroring
+        // `buildJobsListVariables` in `tools/jobs.ts`.
         const variables: Record<string, unknown> = {
           keywords: opts.keywords !== undefined && opts.keywords.length > 0 ? opts.keywords : null,
           onlyStatusGroupFilter: statusGroups,
+          page: opts.page ?? engagements.DEFAULT_PAGE,
+          pageSize: opts.perPage ?? engagements.DEFAULT_PER_PAGE,
         };
         return dryRunResponse(buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", variables, auth.token));
       }
       try {
-        const items = await engagements.list(auth.token, opts);
-        return successResponse(items);
+        // Issue #375: surface pagination metadata alongside items so
+        // LLM callers can detect `hasNextPage` and iterate. The wrapped
+        // `{ items, pageInfo }` shape mirrors the `ttctl_jobs_*` tools
+        // (#369); `result.items` is byte-identical to the pre-#375
+        // bare-array payload (payload addition, not a shape break).
+        const page = await engagements.list(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildEngagementsPageInfo(page) });
       } catch (err) {
         return mapEngagementsError(err);
       }

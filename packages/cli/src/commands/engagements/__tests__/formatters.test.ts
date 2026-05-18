@@ -7,6 +7,7 @@ import type { engagements } from "@ttctl/core";
 
 import { formatBreakEntity, formatBreaksTable, formatReasonsTable } from "../breaks.js";
 import { formatDate, formatEngagementsTable, shortenEngagementStatus } from "../list.js";
+import { buildEngagementsPageInfo, formatPageFooter } from "../shared.js";
 import { formatEngagementDetail } from "../show.js";
 import { formatStatsPretty } from "../stats.js";
 
@@ -258,5 +259,85 @@ describe("formatReasonsTable", () => {
     const long = "very_long_break_reason_identifier_xx";
     const out = formatReasonsTable([{ identifier: long, nameForRole: "Long label" }]);
     expect(out).toContain(long);
+  });
+});
+
+// =======================================================================
+// formatPageFooter — pretty-mode pagination footer (issue #375)
+// =======================================================================
+// Mirrors the jobs precedent (`packages/cli/src/commands/jobs/__tests__/
+// formatters.test.ts`) for the domain-local engagement copy of the
+// formatter. Same shape, same edge cases.
+
+describe("formatPageFooter", () => {
+  it('renders "Page X of Y (per_page=Z)" for a typical mid-list page', () => {
+    expect(formatPageFooter(2, 20, 100)).toBe("Page 2 of 5 (per_page=20)");
+  });
+
+  it("rounds totalPages UP via Math.ceil (partial last page)", () => {
+    // 47 / 20 = 2.35 → ceil → 3 pages
+    expect(formatPageFooter(1, 20, 47)).toBe("Page 1 of 3 (per_page=20)");
+  });
+
+  it("renders 'Page 1 of 1' for a single-page result (totalCount > 0)", () => {
+    expect(formatPageFooter(1, 20, 5)).toBe("Page 1 of 1 (per_page=20)");
+  });
+
+  it("floors totalPages to 1 when totalCount is 0 (defensive; caller routes via empty-state)", () => {
+    expect(formatPageFooter(1, 20, 0)).toBe("Page 1 of 1 (per_page=20)");
+  });
+});
+
+// =======================================================================
+// buildEngagementsPageInfo — envelope pageInfo derivation (issue #375)
+// =======================================================================
+
+describe("buildEngagementsPageInfo", () => {
+  it("derives currentPage/perPage/totalPages/hasNextPage from an EngagementListPage", () => {
+    const pageInfo = buildEngagementsPageInfo({
+      items: [],
+      totalCount: 100,
+      page: 2,
+      perPage: 20,
+    });
+    expect(pageInfo).toEqual({
+      currentPage: 2,
+      perPage: 20,
+      totalPages: 5,
+      hasNextPage: true,
+    });
+  });
+
+  it("hasNextPage=false on the last page", () => {
+    const pageInfo = buildEngagementsPageInfo({
+      items: [],
+      totalCount: 100,
+      page: 5,
+      perPage: 20,
+    });
+    expect(pageInfo.hasNextPage).toBe(false);
+    expect(pageInfo.totalPages).toBe(5);
+  });
+
+  it("hasNextPage=false when current page exceeds totalPages (user overshot)", () => {
+    const pageInfo = buildEngagementsPageInfo({
+      items: [],
+      totalCount: 100,
+      page: 10,
+      perPage: 20,
+    });
+    expect(pageInfo.hasNextPage).toBe(false);
+    expect(pageInfo.totalPages).toBe(5);
+  });
+
+  it("totalPages=1 when totalCount=0 (defensive minimum)", () => {
+    const pageInfo = buildEngagementsPageInfo({
+      items: [],
+      totalCount: 0,
+      page: 1,
+      perPage: 20,
+    });
+    expect(pageInfo.totalPages).toBe(1);
+    expect(pageInfo.hasNextPage).toBe(false);
   });
 });

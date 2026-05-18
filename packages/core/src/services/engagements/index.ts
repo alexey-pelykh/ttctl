@@ -303,7 +303,65 @@ export interface ListOptions {
    * the others.
    */
   keywords?: string[];
+  /**
+   * 1-indexed page number (issue #375). Forwarded verbatim to the
+   * wire's `jobActivityList.page` argument. Default `1` when omitted.
+   *
+   * The `jobActivityList` paginator's page-index base is **INFERRED**
+   * from the sibling `eligibleJobs` paginator (`JobsList`, #138), which
+   * E2E verification empirically proved is **1-indexed** (verbatim
+   * threading, no `-1` subtraction). The synthesized SDL declares
+   * `viewer.jobActivityList: JobActivityList!` with NO arguments
+   * (the captured operations never declared them), so live-API E2E is
+   * the only authority — see `packages/e2e/src/18-engagements-list.e2e.test.ts`.
+   */
+  page?: number;
+  /**
+   * Items per page (issue #375). Forwarded to the wire's
+   * `jobActivityList.pageSize` argument. Default `20` when omitted.
+   * Upper bound is server-enforced.
+   */
+  perPage?: number;
 }
+
+/**
+ * Page wrapper returned by {@link list}. Carries the projected items
+ * plus the server-reported `totalCount` and the resolved `page` /
+ * `perPage` (the effective values used in the query, after defaults).
+ *
+ * The CLI / MCP layers use `totalCount` to derive offset-style
+ * pagination metadata (`totalPages`, `hasNextPage`) for the list
+ * envelope (issue #375), mirroring the `jobs.JobListPage` shape
+ * shipped in #138 / #183 / #369.
+ *
+ * Why not return `EngagementListItem[]` directly: pre-#375 the captured
+ * `JobActivityItems` operation had no `page` / `pageSize` args, so the
+ * caller could not present pagination metadata. With the wiring change,
+ * callers MUST have access to `totalCount` to render the "Page X of Y"
+ * footer and populate the JSON envelope's `pageInfo`. The envelope ABI
+ * (#128) is pre-1.0, so this return-shape change is forward-evolution,
+ * not a breaking-change release.
+ */
+export interface EngagementListPage {
+  items: EngagementListItem[];
+  totalCount: number;
+  /** 1-indexed page number actually requested. */
+  page: number;
+  /** Items per page actually requested. */
+  perPage: number;
+}
+
+/**
+ * Default values for {@link ListOptions} pagination fields when the
+ * caller does not specify them. Mirrors the pre-#375 implicit wire
+ * behavior (`jobActivityList` returned the server's default first
+ * slice). Exposed so the CLI / MCP dry-run paths can render the exact
+ * variables the apply path sends, and so tests assert against the
+ * same constants the production code uses. Values match the
+ * `jobs.DEFAULT_PAGE` / `jobs.DEFAULT_PER_PAGE` precedent (1 / 20).
+ */
+export const DEFAULT_PAGE = 1 as const;
+export const DEFAULT_PER_PAGE = 20 as const;
 
 /**
  * Input for `breaks.add`. `reasonIdentifier` is the server-side break
@@ -456,13 +514,39 @@ export type RescheduleBreakOutcome = EngagementBreakRescheduleAppliedOutcome | E
 //
 // Break operations are used VERBATIM from the captured documents in
 // `../research/graphql/gateway/operations/mobile/`.
+//
+// Pagination variable types (issue #375):
+//
+// - `$page: Int` — nullable Int; omitted → server applies its default
+//   first slice. Mirrors the `JobsList` precedent (#138), where
+//   `BlogPosts`, `GetJobsForDashboard`, and `GetTalentReferralTrackers`
+//   in `research/graphql/gateway/operations/` all declare `$page: Int`.
+//   The page-index base for `jobActivityList` is INFERRED 1-indexed
+//   from the `eligibleJobs` sibling (empirically verified 1-indexed in
+//   #138 E2E) — see {@link ListOptions.page}. Live-API E2E is the
+//   authority (`packages/e2e/src/18-engagements-list.e2e.test.ts`).
+//
+// - `$pageSize: PageSize` — CUSTOM SCALAR, NOT `Int`. The `JobsList`
+//   precedent (#138) empirically established this: the live API
+//   returned HTTP 400 `Variable "$pageSize" of type "Int!" used in
+//   position expecting type "PageSize"` when declared as `Int!`. The
+//   schema/contract validation rule caught it during E2E pre-merge
+//   verification. `PageSize` is declared in the synthesized gateway
+//   SDL (`scalar PageSize`).
+//
+// The synthesized SDL declares `viewer.jobActivityList: JobActivityList!`
+// with NO arguments (captured operations never declared `page` /
+// `pageSize`); `totalCount` on `JobActivityList` strongly implies
+// wire-level pagination exists. Adding these args is a hand-authored
+// operation modification → CLAUDE.md § Schema/contract validation rule
+// triggered → mandatory `TTCTL_E2E=1` round-trip before merge.
 // ---------------------------------------------------------------------
 
-const ENGAGEMENTS_LIST_QUERY = `query JobActivityItems($keywords: [String!], $onlyStatusGroupFilter: [JobActivityItemStatusGroupEnum!]) {
+const ENGAGEMENTS_LIST_QUERY = `query JobActivityItems($keywords: [String!], $onlyStatusGroupFilter: [JobActivityItemStatusGroupEnum!], $page: Int, $pageSize: PageSize) {
   viewer {
     __typename
     id
-    jobActivityList(keywords: $keywords, statusGroupV2: { only: $onlyStatusGroupFilter }) {
+    jobActivityList(keywords: $keywords, statusGroupV2: { only: $onlyStatusGroupFilter }, page: $page, pageSize: $pageSize) {
       __typename
       entities {
         __typename
@@ -762,25 +846,40 @@ function projectListItem(entity: EngagementsListEntity): EngagementListItem {
  * `ACTIVE_ENGAGEMENT`). `status: "past"` returns closed engagements
  * (`CLOSED_ENGAGEMENT`); `status: "all"` returns both.
  *
- * The returned array preserves server order; the CLI / MCP do not
+ * The returned items preserve server order; the CLI / MCP do not
  * re-sort.
+ *
+ * Pagination (#375): `opts.page` (1-indexed) and `opts.perPage` are
+ * forwarded to the wire's `jobActivityList.page` / `pageSize`
+ * arguments. Defaults: `page: 1, perPage: 20` ({@link DEFAULT_PAGE} /
+ * {@link DEFAULT_PER_PAGE}). The wire's `page` base is INFERRED
+ * 1-indexed from the `eligibleJobs` sibling (#138) — see
+ * {@link ListOptions.page}. Returns an {@link EngagementListPage}
+ * carrying `totalCount` so callers can render offset-style pagination
+ * metadata. `totalCount` is the full server-side count for the filter
+ * (page-independent), the same field {@link stats} reads.
  */
-export async function list(token: string, opts: ListOptions = {}): Promise<EngagementListItem[]> {
+export async function list(token: string, opts: ListOptions = {}): Promise<EngagementListPage> {
   const status = opts.status ?? "active";
   const groups = listStatusToGroups(status);
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
 
   const variables: Record<string, unknown> = {
     keywords: opts.keywords !== undefined && opts.keywords.length > 0 ? opts.keywords : null,
     onlyStatusGroupFilter: groups,
+    page,
+    pageSize: perPage,
   };
   const data = await callGateway<EngagementsListResponse>(token, "JobActivityItems", ENGAGEMENTS_LIST_QUERY, variables);
   if (data.viewer === null) {
     throw new EngagementsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
   }
   if (data.viewer.jobActivityList === null) {
-    return [];
+    return { items: [], totalCount: 0, page, perPage };
   }
-  return (data.viewer.jobActivityList.entities ?? []).map(projectListItem);
+  const items = (data.viewer.jobActivityList.entities ?? []).map(projectListItem);
+  return { items, totalCount: data.viewer.jobActivityList.totalCount, page, perPage };
 }
 
 /**
@@ -854,6 +953,14 @@ export async function show(token: string, id: string): Promise<EngagementDetail>
  *
  * Each `count` is server-provided (`totalCount`), no client-side
  * synthesis.
+ *
+ * Pagination-safe (#375): this reuses the shared
+ * {@link ENGAGEMENTS_LIST_QUERY}, which post-#375 declares the nullable
+ * `$page` / `$pageSize` variables. `stats` intentionally passes
+ * NEITHER — they resolve to `null`, so the server applies its default
+ * slice. `totalCount` is the full per-filter count regardless of which
+ * page is materialized, so the aggregate is unaffected by the
+ * pagination wiring.
  */
 export async function stats(token: string): Promise<EngagementsStats> {
   const groupResults = await Promise.all(

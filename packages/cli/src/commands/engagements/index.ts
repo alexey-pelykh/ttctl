@@ -8,6 +8,7 @@ import { engagements } from "@ttctl/core";
 import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
+import { parsePaginationFlag } from "../../lib/pagination.js";
 import {
   runEngagementsBreaksAdd,
   runEngagementsBreaksList,
@@ -18,6 +19,24 @@ import {
 import { runEngagementsList } from "./list.js";
 import { runEngagementsShow } from "./show.js";
 import { runEngagementsStats } from "./stats.js";
+
+/**
+ * Page-number / page-size option factories (#375, following the #183
+ * per-leaf pattern). The `list` leaf declares its own copy of
+ * `--page` / `--per-page`; the parser (`parsePaginationFlag`) and
+ * descriptions are shared via these factories so the engagements
+ * surface stays byte-identical with the jobs surface in `--help`
+ * output.
+ */
+function pageOption(): Option {
+  return new Option("--page <number>", "page number (1-indexed)").argParser((raw) =>
+    parsePaginationFlag("--page", raw),
+  );
+}
+
+function perPageOption(): Option {
+  return new Option("--per-page <number>", "items per page").argParser((raw) => parsePaginationFlag("--per-page", raw));
+}
 
 /**
  * Build the `ttctl engagements` command tree (#147, extended by #155).
@@ -57,18 +76,28 @@ export function buildEngagementsCommand(): Command {
         .default("active" satisfies engagements.EngagementListStatus),
     )
     .option("--keywords <keyword...>", "free-text keyword filter (repeatable; AND across keywords)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
     .action(
-      async (options: { status: engagements.EngagementListStatus; keywords?: string[]; output: OutputFormat }) => {
+      async (options: {
+        status: engagements.EngagementListStatus;
+        keywords?: string[];
+        page?: number;
+        perPage?: number;
+        output: OutputFormat;
+      }) => {
         const listOpts: import("./list.js").EngagementsListOptions = {
           status: options.status,
           output: options.output,
         };
         if (options.keywords !== undefined) listOpts.keywords = options.keywords;
+        if (options.page !== undefined) listOpts.page = options.page;
+        if (options.perPage !== undefined) listOpts.perPage = options.perPage;
         await runEngagementsList(listOpts);
       },
     );
