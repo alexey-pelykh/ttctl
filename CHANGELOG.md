@@ -50,6 +50,59 @@ certifications list` (alias `certs list`). Empty-list output goes
 
 ### Fixed
 
+- **`dryRun: true` preview no longer fails MCP output validation on
+  write-capable tools (#379)**. MCP SDK ≥1.29
+  (`@modelcontextprotocol/sdk` resolves to 1.29.0 via the `^1.28.0`
+  catalog range) tightened server-side `validateToolOutput`
+  (`mcp.js`): when a tool declares an `outputSchema` and a result omits
+  `structuredContent`, the SDK now HARD-THROWS
+  `Output validation error: Tool <name> has an output schema but no
+structured content was provided` (earlier SDKs skipped validation in
+  that case). Every write tool's `dryRun: true` branch returns the
+  uniform `{ ok, dryRun, preview }` envelope with NO `structuredContent`
+  by design (issue #165) — a shape that does not, and cannot, match the
+  success-path `outputSchema` added in #226. The result: every MCP
+  client (Claude Desktop / Claude Code) hit the error on every
+  `dryRun: true` call against `ttctl_profile_basic_update`,
+  `ttctl_profile_employment_add/update`, and the other 8 tools that
+  carried an `outputSchema`. Server-side mutation logic was unaffected —
+  only the MCP output-validation layer rejected the preview.
+  - **Fix**: `outputSchema` removed from all 11 tools that declared one
+    (basic_update, basic_photo_upload, resume_upload, education
+    add/update/remove, employment add/update/remove, industries
+    update/show) — aligning with the tools that never declared one
+    (`industries_add`, `skills_add`, …). A single ZodObject
+    `outputSchema` cannot describe both the success shape and the
+    dry-run envelope, and the SDK silently drops union / `oneOf` output
+    schemas (`normalizeObjectSchema` → `undefined`), so the
+    success-path schema and the universal dry-run envelope are
+    irreconcilable under one declared schema. The `text` content slot
+    still carries the JSON payload (LLM clients parse it client-side);
+    `@ttctl/core` TypeScript types remain the success-shape contract for
+    code-level consumers.
+  - **Supersedes the #226 / #342 / #344 `outputSchema` prose in
+    this same Unreleased cycle.** Those entries describe declaring /
+    extending `profileIndustriesRowOutputSchema` /
+    `profileEmploymentRowOutputSchema` and the "top-10 write-capable
+    tools carry an `outputSchema`" scope — post-#379 NO tool declares an
+    `outputSchema`, `packages/mcp/src/tools/output-schemas.ts` is
+    deleted, and the per-item-shape claims there no longer hold. Read
+    those bullets as the development history that this entry resolves.
+  - **Tests**: the #226 `registration.test.ts` presence-check is
+    inverted into a #379 regression guard ("no registered tool declares
+    an `outputSchema`"); a new
+    `packages/mcp/src/__tests__/dryrun-output-validation.test.ts` drives
+    a real `Client`↔`Server` over `InMemoryTransport` so `tools/call`
+    round-trips through the SDK's `validateToolOutput` — the layer the
+    pre-existing `dryrun-smoke.test.ts` bypasses by calling `handler()`
+    directly (the blind spot that let this ship). Empirically confirmed
+    RED with an `outputSchema` reintroduced, GREEN without.
+  - **Schema/contract rule: NOT triggered** — MCP-layer only (Zod
+    `outputSchema` removals + docstrings + tests); no new GraphQL
+    operation; no `packages/core/src/auth.ts` or
+    `packages/core/src/services/profile/**` change; no inferred wire
+    contract. Track 1/2 disposition N/A (no new op).
+
 - **`profile.external.update` mutation response now echoes `twitter`
   (#345)**. Closes a MINOR Class B (write-only-echo) gap surfaced by the
   MCP/CLI surface-shape audit (`docs/briefs/2026-05-17-scope-mcp-cli-surface-shape-audit.md`):

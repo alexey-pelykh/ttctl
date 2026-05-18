@@ -6,7 +6,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
-import { profileIndustriesRowOutputSchema } from "../output-schemas.js";
 import { jsonSuccess, presentToolError, textSuccess } from "./shared.js";
 
 const DRY_RUN_FIELD = z
@@ -96,7 +95,6 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
         about: z.string().optional(),
         dryRun: DRY_RUN_FIELD,
       },
-      outputSchema: profileIndustriesRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.industries.update");
@@ -166,7 +164,6 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
       description:
         "Show a single industry-profile entry by id (returns the row as JSON). Resolved via the `node()` GraphQL resolver — a true per-id lookup, distinct from certifications/education/employment `show` which list-and-filter client-side.",
       inputSchema: { id: z.string().min(1).describe("industry profile id"), dryRun: DRY_RUN_FIELD },
-      outputSchema: profileIndustriesRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.industries.show");
