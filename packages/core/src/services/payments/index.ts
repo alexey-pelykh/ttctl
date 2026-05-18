@@ -297,6 +297,16 @@ const RATE_CHANGE_STATUS_VERBOSE: Record<string, string> = {
  * `engagementId` / `engagementTitle` are populated only when
  * `requestType` references an engagement (i.e., not for
  * `FUTURE_ENGAGEMENTS` or `CONSULTATION`).
+ *
+ * **Platform-level write-only asymmetry**: the matching {@link RateChangeOptions}
+ * input carries an `answers: RateChangeAnswerInput[]` that is NOT echoed
+ * here. The wire-level `RateChangeRequest` type has no `answers` field
+ * (`research/graphql/gateway/schema.graphql:1373-1382`), every captured
+ * Toptal op (mobile `LastRateChangeRequest`, portal `OngoingRateChangeRequest`,
+ * portal+mobile `CreateRateChangeRequest` mutation response) omits answers
+ * from the selection set, and the answers persist server-side as
+ * form-submission audit metadata rather than display data. See `RateChangeOptions.answers`
+ * `// write-only:` marker and issue #347.
  */
 export interface RateChangeRequest {
   id: string;
@@ -413,6 +423,7 @@ export interface RateChangeOptions {
   desiredRate: string;
   engagementId?: string;
   talentComment?: string;
+  // write-only: platform-level Class B asymmetry. The wire-level `RateChangeRequest` type has no read-side `answers` field — the synthesized SDL at research/graphql/gateway/schema.graphql:1373-1382 lists only id/createdAt/desiredRate/engagement/outcomeRate/requestType/status/talentComment, and every captured Toptal op omits answers from the selection set: the mobile `LastRateChangeRequest` query (research/graphql/gateway/operations/mobile/LastRateChangeRequest.graphql), the portal `OngoingRateChangeRequest` fragment (research/graphql/gateway/fragments/portal/OngoingRateChangeRequest.graphql), and both the mobile and portal `CreateRateChangeRequest` mutation responses. Toptal's own first-party clients never read answers back — they persist server-side as form-submission audit metadata (immutable trail, not display data). See #347.
   answers: RateChangeAnswerInput[];
 }
 
