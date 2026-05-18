@@ -1,0 +1,102 @@
+name: "Wire broke for me"
+description: "I ran a TTCtl command and got an error / unexpected response — the Toptal wire format may have changed."
+title: "(wire-broke) <one-line summary of the failing command>"
+labels: ["wire-breakage", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing this — TTCtl is reverse-engineered from Toptal's wire format, and the format can change without notice.
+        Your report is the maintainer's primary signal that something has shifted on Toptal's side.
+
+        Before submitting:
+
+        - Check the kill-switch manifest at <https://raw.githubusercontent.com/alexey-pelykh/ttctl/main/status/known-broken.json> — if your version is listed, the maintainer is already aware.
+        - Browse the runbook at <https://github.com/alexey-pelykh/ttctl/blob/main/docs/operations/wire-breakage-runbook.md> for severity tiers and the response process.
+        - Open Discussions at <https://github.com/alexey-pelykh/ttctl/discussions> if you only have a question, not a confirmed breakage.
+
+        ## Privacy
+
+        **Do not paste your `~/.ttctl.yaml` contents or any value that looks like a bearer token (`user_<24hex>_<20alnum>`).** Redact them as `<REDACTED>`.
+        TTCtl's debug output (`TTCTL_DEBUG_CONFIG`, `TTCTL_DEBUG_MCP`) is designed to never print bearer values, but transcripts from your shell may include them — please scan before pasting.
+
+  - type: input
+    id: version
+    attributes:
+      label: TTCtl version
+      description: "Output of `ttctl --version`"
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Exact command that failed
+      description: "Paste the command verbatim. Redact any account/identity values if applicable."
+      placeholder: "ttctl profile basic show --output json"
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error output (stderr + stdout)
+      description: |
+        Capture stderr and stdout:
+
+        ```sh
+        ttctl <command> 2>&1 | tee /tmp/ttctl-error.log
+        ```
+
+        For `auth signin` / `auth signout` failures specifically, prepend `TTCTL_DEBUG_CONFIG=1` to capture the config-write trace. For MCP-server issues, use the `mcp-tool-issue` template (which asks for `TTCTL_DEBUG_MCP=1` output) instead.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: auth-status
+    attributes:
+      label: Does `ttctl auth status` succeed?
+      description: "Run `ttctl auth status` separately — this isolates auth-token validity from command-specific wire breakage."
+      options:
+        - "Yes — `auth status` returns `valid`"
+        - "No — `auth status` returns `invalid` / `unauthenticated`"
+        - "No — `auth status` itself errors"
+        - "Did not run"
+    validations:
+      required: true
+
+  - type: input
+    id: surface
+    attributes:
+      label: Which Toptal surface? (if known)
+      description: "`mobile-gateway`, `talent-profile`, `scheduler`, or `unknown`. Cloudflare 403 and redirect errors mention the surface name verbatim in the error message."
+      placeholder: "unknown"
+    validations:
+      required: false
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: "Output of `node --version`. TTCtl requires Node.js >= 22.19.0."
+      placeholder: "v22.19.0"
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: "e.g. `macOS 15.1`, `Ubuntu 24.04`, `Windows 11`."
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: "When did it last work? Any platform-side changes you noticed (UI update, new auth challenge, etc.)?"
+    validations:
+      required: false

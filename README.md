@@ -335,6 +335,36 @@ The maintainer disclaims any warranty and accepts no liability for use that viol
 
 For a longer write-up of the project's posture on trademark use, Terms of Service, the AGPL choice, and the fair-use tradition this kind of tool sits in, see [`docs/legitimacy.md`](docs/legitimacy.md).
 
+## Support
+
+TTCtl is reverse-engineered from Toptal's APK; the wire format can change without notice, and the maintainer's only signal that something has shifted is **your report**. There is no telemetry, no error-reporting endpoint, no install-count tracking — the channels below are the entire return path.
+
+### Wire broke for you — `ttctl <command>` failing
+
+If a TTCtl command errors or returns an unexpected response (404, cryptic GraphQL error, `WIRE_SHAPE_ERROR` envelope, etc.), open a [**Wire broke for me**](https://github.com/alexey-pelykh/ttctl/issues/new?template=wire-broke-for-me.yml) issue. The template captures `ttctl --version`, the failing command, the error text, and whether `ttctl auth status` still succeeds — enough for the maintainer to triage against the kill-switch manifest at [`status/known-broken.json`](status/known-broken.json) and the [wire-breakage runbook](docs/operations/wire-breakage-runbook.md).
+
+Before filing, check the kill-switch manifest at <https://raw.githubusercontent.com/alexey-pelykh/ttctl/main/status/known-broken.json> — if your version is listed, the maintainer is already aware.
+
+### MCP host failed to invoke a tool
+
+If an MCP host (Claude Desktop, Claude Code, Cursor, Windsurf, etc.) could not surface or invoke a TTCtl tool — the failure is at the **host ↔ server boundary**, not the Toptal wire — open an [**MCP host failed to invoke a tool**](https://github.com/alexey-pelykh/ttctl/issues/new?template=mcp-tool-issue.yml) issue. The template captures host product + version, the failing tool name, the host's surfacing of the error, and the optional `TTCTL_DEBUG_MCP=1` server-side trace.
+
+### Questions, ideas, "is this expected?"
+
+Use [Discussions](https://github.com/alexey-pelykh/ttctl/discussions) for questions, usage help, ideas, or "did anyone else see this?" — the issue tracker is reserved for confirmed breakages and feature requests.
+
+### Security vulnerabilities
+
+**Do not** open a public issue for security vulnerabilities. See [SECURITY.md § Reporting a Vulnerability](SECURITY.md#reporting-a-vulnerability) for the coordinated-disclosure channel.
+
+### Abuse reporting
+
+See [SECURITY.md § Abuse reporting](SECURITY.md#abuse-reporting) if you've observed TTCtl being used in ways that violate Toptal's Terms of Service (mass automation, recruiter scraping, engagement-signal manipulation, etc.).
+
+### Privacy when reporting
+
+`~/.ttctl.yaml` carries your captured bearer token (`auth.token`, shape `user_<24hex>_<20alnum>`). **Never paste it in a public issue or Discussions thread.** TTCtl's debug emitters (`TTCTL_DEBUG_CONFIG`, `TTCTL_DEBUG_MCP`) are designed to never print bearer values, but transcripts from your shell may include them — scan before pasting and redact as `<REDACTED>`.
+
 ## Code of Conduct
 
 This project adopts the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md) (version 3.0). The Code applies to all project spaces and to anyone interacting with the project — issue tracker, pull requests, MCP server interactions, and any other channel.

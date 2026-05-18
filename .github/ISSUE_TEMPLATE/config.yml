@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions — questions, ideas, "is this expected?"
+    url: https://github.com/alexey-pelykh/ttctl/discussions
+    about: |
+      For questions, usage help, ideas, or "did anyone else see this?" — use Discussions instead of an issue.
+      Wire-breakage incidents and MCP-host failures should still use the dedicated issue templates above.
+  - name: Security vulnerability — coordinated disclosure
+    url: https://github.com/alexey-pelykh/ttctl/security/policy
+    about: |
+      Do NOT open a public issue for security vulnerabilities. See SECURITY.md for the coordinated-disclosure
+      channel (email + GPG-encrypted body when applicable).
+  - name: Abuse report — misuse of TTCtl
+    url: https://github.com/alexey-pelykh/ttctl/blob/main/SECURITY.md#abuse-reporting
+    about: |
+      If you've observed TTCtl being used to spam, scrape, or otherwise abuse Toptal's platform, see
+      SECURITY.md § Abuse reporting for the maintainer's contact channel.
