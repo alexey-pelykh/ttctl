@@ -68,6 +68,7 @@ export interface EmploymentFields {
   industryIds?: string[];
   primaryGeographyId?: string | null;
   reportingTo?: string | null;
+  skills?: string[];
 }
 
 /**
@@ -290,11 +291,23 @@ export async function add(token: string, fields: EmploymentFields): Promise<Empl
   const profileId = await extractProfileId(token);
   const before = await listByProfileId(token, profileId);
   const beforeIds = new Set(before.map((e) => e.id));
+  // The wire requires `experienceItems`, `skills`, and `showViaToptal` to
+  // be non-null on `CreateEmployment` (live API rejects with
+  // "Expected value to not be null" otherwise). The synthesized SDL marks
+  // `CreateEmploymentInput` as `{ _placeholder: String }` — these defaults
+  // were established empirically via the #344 E2E. Callers may still
+  // override.
+  const employment: EmploymentFields = {
+    experienceItems: [],
+    skills: [],
+    showViaToptal: true,
+    ...fields,
+  };
   const res = await callTalentProfile(
     token,
     "CreateEmployment",
     CREATE_EMPLOYMENT_MUTATION,
-    { input: { profileId, employment: fields } },
+    { input: { profileId, employment } },
     "employment add",
   );
   const payload = unwrapMutation(res, "createEmployment", "employment add");

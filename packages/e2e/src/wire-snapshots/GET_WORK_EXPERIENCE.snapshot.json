@@ -1,0 +1,80 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-18T07:30:54.820Z",
+  "operationName": "GET_WORK_EXPERIENCE",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "company": {
+          "kind": "string"
+        },
+        "companyWebsite": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
+        "endDate": {
+          "kind": "number"
+        },
+        "experienceItems": {
+          "kind": "array",
+          "item": {
+            "kind": "string"
+          }
+        },
+        "highlight": {
+          "kind": "boolean"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "industries": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "noWebsite": {
+          "kind": "boolean"
+        },
+        "position": {
+          "kind": "string"
+        },
+        "primaryGeography": {
+          "kind": "null"
+        },
+        "publicationPermit": {
+          "kind": "boolean"
+        },
+        "reportingTo": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
+        },
+        "showViaToptal": {
+          "kind": "boolean"
+        },
+        "startDate": {
+          "kind": "number"
+        },
+        "toptalRelated": {
+          "kind": "boolean"
+        }
+      }
+    }
+  }
+}
