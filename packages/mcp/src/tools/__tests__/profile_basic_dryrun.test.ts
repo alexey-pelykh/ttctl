@@ -16,6 +16,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
       basic: {
         ...actual.profile.basic,
         show: vi.fn(),
+        getBasicInfo: vi.fn(),
         photoShow: vi.fn(),
         photoUpload: vi.fn(),
       },
@@ -48,6 +49,7 @@ import { registerProfileBasicShowTool } from "../profile_basic_show.js";
  */
 
 const MOCKED_SHOW = profile.basic.show as ReturnType<typeof vi.fn>;
+const MOCKED_GET_BASIC_INFO = profile.basic.getBasicInfo as ReturnType<typeof vi.fn>;
 const MOCKED_PHOTO_SHOW = profile.basic.photoShow as ReturnType<typeof vi.fn>;
 const MOCKED_PHOTO_UPLOAD = profile.basic.photoUpload as ReturnType<typeof vi.fn>;
 
@@ -85,6 +87,7 @@ describe("profile.basic MCP tools — dry-run paths (#165)", () => {
 
   beforeEach(() => {
     MOCKED_SHOW.mockReset();
+    MOCKED_GET_BASIC_INFO.mockReset();
     MOCKED_PHOTO_SHOW.mockReset();
     MOCKED_PHOTO_UPLOAD.mockReset();
     server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
@@ -94,12 +97,13 @@ describe("profile.basic MCP tools — dry-run paths (#165)", () => {
     vi.restoreAllMocks();
   });
 
-  it("ttctl_profile_basic_show emits the dry-run envelope and skips the show() call", async () => {
+  it("ttctl_profile_basic_show emits the dry-run envelope and skips both apply-path calls", async () => {
     registerProfileBasicShowTool(server, buildTokenSuccessCtx("tok_show"));
     const handler = getToolHandler(server, "ttctl_profile_basic_show");
     const result = (await handler({ dryRun: true }, {})) as ToolSuccessShape;
 
     expect(MOCKED_SHOW).not.toHaveBeenCalled();
+    expect(MOCKED_GET_BASIC_INFO).not.toHaveBeenCalled();
 
     const parsed = JSON.parse(result.content[0]?.text ?? "") as DryRunEnvelope;
     expect(parsed.ok).toBe(true);
@@ -147,14 +151,46 @@ describe("profile.basic MCP tools — dry-run paths (#165)", () => {
     expect(parsed.preview.headers["authorization"]).toBe("Token token=<redacted>");
   });
 
-  it("ttctl_profile_basic_show apply path (dryRun omitted) still calls show() and returns its payload", async () => {
+  it("ttctl_profile_basic_show apply path calls both show() and getBasicInfo() and returns the merged payload", async () => {
     MOCKED_SHOW.mockResolvedValueOnce({ viewer: { viewerRole: { profileId: "p1" } } });
+    MOCKED_GET_BASIC_INFO.mockResolvedValueOnce({
+      profileId: "p1",
+      bio: "Senior engineer.",
+      headline: "Reliable systems.",
+      languages: [{ id: "lang_en", name: "English" }],
+    });
     registerProfileBasicShowTool(server, buildTokenSuccessCtx());
     const handler = getToolHandler(server, "ttctl_profile_basic_show");
     const result = (await handler({}, {})) as ToolSuccessShape;
 
     expect(MOCKED_SHOW).toHaveBeenCalledTimes(1);
-    const parsed = JSON.parse(result.content[0]?.text ?? "") as { viewer: { viewerRole: { profileId: string } } };
-    expect(parsed.viewer.viewerRole.profileId).toBe("p1");
+    expect(MOCKED_GET_BASIC_INFO).toHaveBeenCalledTimes(1);
+
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as {
+      profile: { viewer: { viewerRole: { profileId: string } } };
+      basicInfo: { bio: string | null; headline: string | null; languages: { id: string; name: string }[] } | null;
+    };
+    expect(parsed.profile.viewer.viewerRole.profileId).toBe("p1");
+    expect(parsed.basicInfo?.bio).toBe("Senior engineer.");
+    expect(parsed.basicInfo?.headline).toBe("Reliable systems.");
+    expect(parsed.basicInfo?.languages).toEqual([{ id: "lang_en", name: "English" }]);
+  });
+
+  it("ttctl_profile_basic_show apply path degrades to basicInfo: null when getBasicInfo() throws a non-session error", async () => {
+    MOCKED_SHOW.mockResolvedValueOnce({ viewer: { viewerRole: { profileId: "p1" } } });
+    MOCKED_GET_BASIC_INFO.mockRejectedValueOnce(new profile.basic.ProfileError("GRAPHQL_ERROR", "talent-profile blip"));
+    registerProfileBasicShowTool(server, buildTokenSuccessCtx());
+    const handler = getToolHandler(server, "ttctl_profile_basic_show");
+    const result = (await handler({}, {})) as ToolSuccessShape;
+
+    expect(MOCKED_SHOW).toHaveBeenCalledTimes(1);
+    expect(MOCKED_GET_BASIC_INFO).toHaveBeenCalledTimes(1);
+
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as {
+      profile: { viewer: { viewerRole: { profileId: string } } };
+      basicInfo: unknown;
+    };
+    expect(parsed.profile.viewer.viewerRole.profileId).toBe("p1");
+    expect(parsed.basicInfo).toBeNull();
   });
 });
