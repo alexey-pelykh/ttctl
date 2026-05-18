@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { timesheet } from "@ttctl/core";
 
-import { formatTimesheetsTable, formatWeek } from "../list.js";
+import { buildTimesheetPageInfo, formatTimesheetsTable, formatWeek } from "../list.js";
 import { formatTimesheetDetail } from "../show.js";
 
 const LIST_FIXTURE: timesheet.TimesheetListItem = {
@@ -44,6 +44,36 @@ const DETAIL_FIXTURE: timesheet.TimesheetDetail = {
     expectedHours: 40,
   },
 };
+
+describe("buildTimesheetPageInfo (#374)", () => {
+  function pageOf(items: timesheet.TimesheetListItem[], page: number, perPage: number): timesheet.TimesheetListPage {
+    return { items, page, perPage };
+  }
+
+  it("passes through currentPage/perPage and OMITS totalPages (no wire totalCount)", () => {
+    const info = buildTimesheetPageInfo(pageOf([LIST_FIXTURE], 2, 10));
+    expect(info).toEqual({ currentPage: 2, perPage: 10, hasNextPage: false });
+    // totalPages MUST be absent — the wire BillingCycleConnection has
+    // no totalCount, so the offset envelope is the documented subset.
+    expect("totalPages" in info).toBe(false);
+  });
+
+  it("hasNextPage is true when the page is full (items.length === perPage)", () => {
+    const full = Array.from({ length: 3 }, (_, i) => ({ ...LIST_FIXTURE, id: `bc-${i.toString()}` }));
+    const info = buildTimesheetPageInfo(pageOf(full, 1, 3));
+    expect(info.hasNextPage).toBe(true);
+  });
+
+  it("hasNextPage is false on a short page (definitively last)", () => {
+    const info = buildTimesheetPageInfo(pageOf([LIST_FIXTURE], 1, 50));
+    expect(info.hasNextPage).toBe(false);
+  });
+
+  it("hasNextPage is false on an empty page", () => {
+    const info = buildTimesheetPageInfo(pageOf([], 1, 50));
+    expect(info).toEqual({ currentPage: 1, perPage: 50, hasNextPage: false });
+  });
+});
 
 describe("formatWeek", () => {
   it("joins start and end with an arrow", () => {

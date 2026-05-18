@@ -171,8 +171,14 @@ describe("timesheet list (live mobile-gateway)", () => {
 
   it.skipIf(!e2eEnabled)("PendingTimesheets wire shape matches snapshot", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
+    // #374: `timesheet.list()` now returns a `TimesheetListPage` wrapper
+    // (`{items, page, perPage}`). The committed snapshot captures the
+    // PRE-#374 array shape (top-level `{kind: "array", item: ...}`), so
+    // we pass `response.items` — wire RESPONSE projection is unchanged
+    // (`viewer.billingCycles.nodes` is still an array of `BillingCycle`),
+    // only the SERVICE wrapper is new.
     const response = await timesheet.list(token);
-    if (response.length === 0) {
+    if (response.items.length === 0) {
       process.stderr.write(
         "warning: PendingTimesheets returned 0 rows (test account has no pending cycles) — wire-shape assertion skipped\n",
       );
@@ -183,7 +189,7 @@ describe("timesheet list (live mobile-gateway)", () => {
         operationName: "PendingTimesheets",
         surface: "mobile-gateway",
         transport: "stock",
-        response,
+        response: response.items,
       }),
     ).not.toThrow();
   });
@@ -199,8 +205,9 @@ describe("timesheet list (live mobile-gateway)", () => {
     }
     const engagementId = engs[0]?.id;
     if (engagementId === undefined) return;
+    // #374: same wrapper unwrap as the PendingTimesheets case above.
     const response = await timesheet.list(token, { engagement: engagementId });
-    if (response.length === 0) {
+    if (response.items.length === 0) {
       process.stderr.write(
         `warning: Timesheets returned 0 rows for engagement ${engagementId} — wire-shape assertion skipped\n`,
       );
@@ -211,8 +218,76 @@ describe("timesheet list (live mobile-gateway)", () => {
         operationName: "Timesheets",
         surface: "mobile-gateway",
         transport: "stock",
-        response,
+        response: response.items,
       }),
     ).not.toThrow();
   });
+
+  // ---------------------------------------------------------------------
+  // Pagination round-trip (#374) — schema/contract validation rule.
+  //
+  // The captured `PendingTimesheets` document hardcoded `pagination: {
+  // limit: 50 }` (only `limit` wire-proven); the captured `Timesheets`
+  // document carried NO pagination input at all. #374 adds `$limit` /
+  // `$offset` variables to BOTH operations and threads them as
+  // `pagination: { limit: $limit, offset: $offset }`. Live E2E is the
+  // ONLY authoritative verification per CLAUDE.md § Schema/contract
+  // validation rule — both subtests below MUST pass on a live session
+  // before the PR can merge.
+  //
+  // Skip conditions are silent (stderr warning) when the test account
+  // can't exercise the path (no pending timesheets / no active
+  // engagement) — pagination shape is wire-asserted whenever data is
+  // available; absent data is not a #374 regression.
+  // ---------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "pagination round-trip: PendingTimesheets accepts $limit / $offset variables (#374)",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+      // Request page 1 with a tiny perPage to force `offset: 0`,
+      // `limit: 1` on the wire. The test account need only have ≥1
+      // pending cycle for the assertion to fire.
+      const page1 = await timesheet.list(token, { page: 1, perPage: 1 });
+      if (page1.items.length === 0) {
+        process.stderr.write(
+          "warning: PendingTimesheets pagination round-trip — 0 rows (test account has no pending cycles); pagination shape verification skipped\n",
+        );
+        return;
+      }
+      // Page wrapper carries the requested page/perPage verbatim.
+      expect(page1.page).toBe(1);
+      expect(page1.perPage).toBe(1);
+      // Server respected `limit: 1` — at most one row returned.
+      expect(page1.items.length).toBeLessThanOrEqual(1);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "pagination round-trip: Timesheets (engagement-scoped) accepts $limit / $offset (#374)",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+      const engs = await engagements.list(token, { status: "active" });
+      if (engs.length === 0) {
+        process.stderr.write("warning: no active engagements — Timesheets pagination round-trip skipped\n");
+        return;
+      }
+      const engagementId = engs[0]?.id;
+      if (engagementId === undefined) return;
+      // RISKIER inference: the captured `Timesheets` operation had NO
+      // pagination input on `engagement.billingCycles`. This subtest is
+      // the live-API authority for the #374 claim that the field accepts
+      // the generic `pagination: { limit, offset }` shape.
+      const page1 = await timesheet.list(token, { engagement: engagementId, page: 1, perPage: 1 });
+      if (page1.items.length === 0) {
+        process.stderr.write(
+          `warning: Timesheets pagination round-trip — 0 rows for engagement ${engagementId}; pagination shape verification skipped\n`,
+        );
+        return;
+      }
+      expect(page1.page).toBe(1);
+      expect(page1.perPage).toBe(1);
+      expect(page1.items.length).toBeLessThanOrEqual(1);
+    },
+  );
 });

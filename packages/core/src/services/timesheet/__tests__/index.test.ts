@@ -90,36 +90,62 @@ beforeEach(() => {
 });
 
 describe("timesheet.list", () => {
-  it("default scope → PendingTimesheets (no args), returns pending cycles", async () => {
+  it("default scope → PendingTimesheets, returns a TimesheetListPage (page 1, perPage 50)", async () => {
     reply({
       body: {
         data: { viewer: { id: "v1", billingCycles: { nodes: [LIST_WIRE_ITEM] } } },
       },
     });
-    const items = await list(TOKEN);
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe("bc-1");
-    expect(items[0]?.timesheetSubmitted).toBe(false);
-    expect(items[0]?.engagement.job.client?.fullName).toBe("Acme Inc.");
+    const result = await list(TOKEN);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe("bc-1");
+    expect(result.items[0]?.timesheetSubmitted).toBe(false);
+    expect(result.items[0]?.engagement.job.client?.fullName).toBe("Acme Inc.");
+    // #374: page/perPage default to 1/50; `totalCount` is OMITTED
+    // (wire `BillingCycleConnection` has no totalCount).
+    expect(result.page).toBe(1);
+    expect(result.perPage).toBe(50);
+    expect("totalCount" in result).toBe(false);
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "PendingTimesheets",
-      variables: {},
+      // #374: default page 1, perPage 50 → wire `limit: 50, offset: 0`
+      // (offset = (page - 1) * perPage). Preserves the pre-#374
+      // hardcoded `pagination: { limit: 50 }` window.
+      variables: { limit: 50, offset: 0 },
     });
     expect(call?.surface).toBe("mobile-gateway");
     expect(call?.authToken).toBe(TOKEN);
   });
 
-  it("returns [] when PendingTimesheets has no nodes", async () => {
-    reply({ body: { data: { viewer: { id: "v1", billingCycles: { nodes: [] } } } } });
-    const items = await list(TOKEN);
-    expect(items).toEqual([]);
+  it("explicit page/perPage → wire limit/offset translation (offset = (page-1)*perPage)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", billingCycles: { nodes: [LIST_WIRE_ITEM] } } } },
+    });
+    const result = await list(TOKEN, { page: 3, perPage: 10 });
+    expect(result.items).toHaveLength(1);
+    expect(result.page).toBe(3);
+    expect(result.perPage).toBe(10);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "PendingTimesheets",
+      // page 3, perPage 10 → offset = (3-1)*10 = 20, limit = 10
+      variables: { limit: 10, offset: 20 },
+    });
   });
 
-  it("returns [] when PendingTimesheets has null billingCycles container", async () => {
+  it("returns { items: [] } when PendingTimesheets has no nodes", async () => {
+    reply({ body: { data: { viewer: { id: "v1", billingCycles: { nodes: [] } } } } });
+    const result = await list(TOKEN);
+    expect(result.items).toEqual([]);
+    expect(result.page).toBe(1);
+    expect(result.perPage).toBe(50);
+  });
+
+  it("returns { items: [] } when PendingTimesheets has null billingCycles container", async () => {
     reply({ body: { data: { viewer: { id: "v1", billingCycles: null } } } });
-    const items = await list(TOKEN);
-    expect(items).toEqual([]);
+    const result = await list(TOKEN);
+    expect(result.items).toEqual([]);
   });
 
   it("with engagement option → Timesheets(jobActivityItemId)", async () => {
@@ -139,13 +165,43 @@ describe("timesheet.list", () => {
         },
       },
     });
-    const items = await list(TOKEN, { engagement: "act-1" });
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe("bc-1");
+    const result = await list(TOKEN, { engagement: "act-1" });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe("bc-1");
+    expect(result.page).toBe(1);
+    expect(result.perPage).toBe(50);
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "Timesheets",
-      variables: { jobActivityItemId: "act-1" },
+      // #374: per-engagement variant now ALSO threads pagination
+      // (the captured `Timesheets` document had NO pagination input —
+      // this is the riskier inference; gated E2E is authoritative).
+      variables: { jobActivityItemId: "act-1", limit: 50, offset: 0 },
+    });
+  });
+
+  it("engagement-scoped explicit page/perPage → wire limit/offset translation", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityItem: {
+              id: "act-1",
+              engagement: { id: "eng-1", billingCycles: { ids: ["bc-1"], nodes: [LIST_WIRE_ITEM] } },
+            },
+          },
+        },
+      },
+    });
+    const result = await list(TOKEN, { engagement: "act-1", page: 2, perPage: 25 });
+    expect(result.page).toBe(2);
+    expect(result.perPage).toBe(25);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "Timesheets",
+      // page 2, perPage 25 → offset = (2-1)*25 = 25, limit = 25
+      variables: { jobActivityItemId: "act-1", limit: 25, offset: 25 },
     });
   });
 
@@ -510,7 +566,10 @@ describe("timesheet.resolveCurrentCycle", () => {
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "Timesheets",
-      variables: { jobActivityItemId: "act-1" },
+      // #374: resolveCurrentCycle → listPending → list() with no
+      // pagination opts → defaults (page 1, perPage 50 → limit 50,
+      // offset 0). Preserves pre-#374 behaviour.
+      variables: { jobActivityItemId: "act-1", limit: 50, offset: 0 },
     });
   });
 

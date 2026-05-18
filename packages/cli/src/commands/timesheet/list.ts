@@ -18,14 +18,25 @@ import { handleTimesheetError, loadAuthTokenOrExit } from "./shared.js";
  * Pretty rendering: column-aligned table; pretty empty-state CTA via
  * the `empty` opt-in in `emitResult` (#122 reframe).
  *
- * **Pagination not supported** — the captured wire ops have no
- * pagination args (`PendingTimesheets` has a hard `limit: 50` inline
- * in its document; `Timesheets($jobActivityItemId)` has none). Per
- * #183, pagination flags are declared PER paginating leaf; this leaf
- * does not declare `--page` / `--per-page`.
+ * **Pagination (#374)**: `--page` / `--per-page` thread through to the
+ * wire's offset-style `billingCycles(pagination: { limit, offset })`
+ * input on BOTH variants (viewer-wide `PendingTimesheets` and
+ * per-engagement `Timesheets`). When omitted, the service applies
+ * defaults (`page: 1, perPage: 50`) — `50` preserves the pre-#374
+ * hardcoded viewer-wide window, so flag-less behaviour is unchanged.
+ *
+ * **`pageInfo` is a SUBSET** of the offset-style envelope: the wire
+ * `BillingCycleConnection` exposes no `totalCount`, so `pageInfo`
+ * carries `currentPage` + `perPage` + `hasNextPage` but NOT
+ * `totalPages`. `hasNextPage` is the heuristic `items.length ===
+ * perPage` (a full page implies a possible next page). This diverges
+ * from `jobs list` (whose wire reports `totalCount`); see
+ * {@link timesheet.TimesheetListPage}.
  */
 export interface TimesheetListOptions {
   engagement?: string;
+  page?: number;
+  perPage?: number;
   output: OutputFormat;
 }
 
@@ -34,19 +45,65 @@ export async function runTimesheetList(opts: TimesheetListOptions): Promise<void
 
   const listOpts: timesheet.ListOptions = {};
   if (opts.engagement !== undefined) listOpts.engagement = opts.engagement;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
-  let items: timesheet.TimesheetListItem[];
+  let page: timesheet.TimesheetListPage;
   try {
-    items = await timesheet.list(token, listOpts);
+    page = await timesheet.list(token, listOpts);
   } catch (err) {
     handleTimesheetError("timesheet list", err, opts.output);
   }
 
-  emitResult(wrapListEnvelope(items), opts.output, {
-    pretty: (data) => formatTimesheetsTable(data.items),
-    table: (data) => formatTimesheetsTable(data.items),
+  const pageInfo = buildTimesheetPageInfo(page);
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
+    pretty: (data) => renderTimesheetsListPretty(data.items, page),
+    table: (data) => renderTimesheetsListPretty(data.items, page),
     empty: { command: "timesheet.list" },
   });
+}
+
+/**
+ * Build the offset-style `pageInfo` block for the list envelope from
+ * the service-layer {@link timesheet.TimesheetListPage}.
+ *
+ * **Subset of {@link import("../../lib/envelopes.js").EnvelopePageInfo}**:
+ * the wire `BillingCycleConnection` ({ ids, nodes }) carries no
+ * `totalCount`, so `totalPages` is intentionally OMITTED (with
+ * `exactOptionalPropertyTypes`, an absent optional is omitted, not set
+ * to `undefined`). `hasNextPage` is derived heuristically — a full
+ * page (`items.length === perPage`) implies a possible next page;
+ * a short page is definitively the last. This is the standard
+ * offset-without-total pattern (`EnvelopePageInfo` documents the
+ * cursor-style / no-`totalCount` subset case explicitly).
+ *
+ * Pure — directly unit-testable.
+ */
+export function buildTimesheetPageInfo(page: timesheet.TimesheetListPage): {
+  currentPage: number;
+  perPage: number;
+  hasNextPage: boolean;
+} {
+  return {
+    currentPage: page.page,
+    perPage: page.perPage,
+    hasNextPage: page.items.length === page.perPage,
+  };
+}
+
+/**
+ * Render the timesheet table plus a pretty-mode pagination footer.
+ * The footer omits the "of Y" total (no wire `totalCount`); it shows
+ * the current page, the page size, and a `(more available)` hint when
+ * the page is full. The footer is appended only when the page is
+ * non-empty — empty pages route through the empty-state CTA wrapper
+ * BEFORE this renderer fires.
+ */
+function renderTimesheetsListPretty(items: timesheet.TimesheetListItem[], page: timesheet.TimesheetListPage): string {
+  const table = formatTimesheetsTable(items);
+  if (items.length === 0) return table;
+  const more = items.length === page.perPage ? " (more available — use --page)" : "";
+  return `${table}\nPage ${page.page.toString()} (per_page=${page.perPage.toString()})${more}`;
 }
 
 /**

@@ -182,6 +182,43 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     expect(helpText).toMatch(/--per-page <number>/);
   });
 
+  it("--page DOES appear in `timesheet list --help` (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["timesheet", "list", "--help"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--page <number>/);
+    expect(helpText).toMatch(/--per-page <number>/);
+  });
+
+  it("--page does NOT appear on `timesheet show` / `timesheet submit` (#374 — list-only leaf)", async () => {
+    for (const leaf of [
+      ["timesheet", "show", "--help"],
+      ["timesheet", "submit", "--help"],
+    ]) {
+      const program = buildProgram();
+      program.exitOverride();
+      const stdout = captureStdout();
+      captureStderr();
+      captureExit();
+      try {
+        await program.parseAsync(leaf, { from: "user" });
+      } catch {
+        // expected (help throws under exitOverride)
+      }
+      const helpText = stdout.lines.join("");
+      expect(helpText).not.toMatch(/--page <number>/);
+      expect(helpText).not.toMatch(/--per-page <number>/);
+    }
+  });
+
   // -------------------------------------------------------------------
   // Parser: positive-integer enforcement on the leaves themselves
   // -------------------------------------------------------------------
@@ -239,6 +276,36 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     captureExit();
     try {
       await program.parseAsync(["jobs", "viewed", "--page", "abc"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--page must be a positive integer");
+  });
+
+  it("--per-page 0 is rejected on `timesheet list` (must be ≥ 1) (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["timesheet", "list", "--per-page", "0"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--per-page must be a positive integer");
+  });
+
+  it("--page abc is rejected on `timesheet list` (non-numeric) (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["timesheet", "list", "--page", "abc"], { from: "user" });
     } catch {
       // expected
     }

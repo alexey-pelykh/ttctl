@@ -17,6 +17,41 @@ const DRY_RUN_FIELD = z
   );
 
 /**
+ * Pagination input fields for `ttctl_timesheet_list` (#374). Constraints
+ * mirror the CLI's `parsePaginationFlag` (positive integer ≥ 1); the
+ * wire's per-page upper bound is server-enforced. The service-layer
+ * defaults (`page: 1, perPage: 50`) kick in when either field is
+ * omitted, preserving the pre-#374 hardcoded viewer-wide window.
+ */
+const PAGE_FIELD = z.number().int().min(1).optional().describe("1-indexed page number (≥ 1). Default: 1.");
+
+const PER_PAGE_FIELD = z.number().int().min(1).optional().describe("Items per page (≥ 1; server-capped). Default: 50.");
+
+/**
+ * Offset-style pagination metadata surfaced alongside `items` on
+ * `ttctl_timesheet_list` (#374). **Subset of the jobs MCP
+ * `JobsPageInfo`**: the wire `BillingCycleConnection` ({ ids, nodes })
+ * carries NO `totalCount`, so `totalPages` is intentionally OMITTED.
+ * `hasNextPage` is derived heuristically — a full page (`items.length
+ * === perPage`) implies a possible next page; a short page is
+ * definitively the last. Same shape as the CLI's `buildTimesheetPageInfo`
+ * (`packages/cli/src/commands/timesheet/list.ts`).
+ */
+interface TimesheetPageInfo {
+  currentPage: number;
+  perPage: number;
+  hasNextPage: boolean;
+}
+
+function buildTimesheetPageInfo(page: timesheet.TimesheetListPage): TimesheetPageInfo {
+  return {
+    currentPage: page.page,
+    perPage: page.perPage,
+    hasNextPage: page.items.length === page.perPage,
+  };
+}
+
+/**
  * Placeholder cycle id used in the `timesheet_submit` dry-run preview
  * when the caller omits `id` (auto-resolve at apply time). Apply path
  * resolves the real id via {@link timesheet.resolveCurrentCycle};
@@ -66,10 +101,22 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
         "`engagements_list`) to scope to one engagement (returns ALL cycles for",
         "that engagement, regardless of submission state).",
         "",
+        "Returns one page of billing cycles plus offset-style `pageInfo`",
+        "(`currentPage`, `perPage`, `hasNextPage`) so callers can iterate",
+        "beyond the default first page (≤50). Pagination args (#374):",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 50.",
+        "",
+        "Caveat: the wire `BillingCycleConnection` exposes NO `totalCount`,",
+        "so `pageInfo` is a SUBSET of the jobs envelope — no `totalPages`.",
+        "`hasNextPage` is the heuristic `items.length === perPage`",
+        "(a full page implies a possible next; a short page is the last).",
+        "",
         "Example user prompts:",
         '  - "Show my pending Toptal timesheets."',
         '  - "What timesheets do I need to submit?"',
         '  - "List all timesheets for engagement act_xyz."',
+        '  - "Show me page 2 of timesheets for engagement act_xyz."',
       ].join("\n"),
       inputSchema: {
         engagement: z
@@ -78,6 +125,8 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
           .describe(
             "Scope to one engagement (jobActivityItem.id from `engagements_list`). Omit for viewer-wide pending.",
           ),
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -86,21 +135,43 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
       if (!auth.ok) return auth.response;
       const opts: timesheet.ListOptions = {};
       if (args.engagement !== undefined) opts.engagement = args.engagement;
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         // Apply path picks PendingTimesheets (no engagement) or
         // Timesheets($jobActivityItemId) (engagement scoped); mirror
         // that branch in the preview so callers see the exact wire
-        // operation that would fire.
+        // operation that would fire. Pagination (#374): both branches
+        // carry `limit` / `offset` derived from page/perPage (defaults
+        // applied here to mirror the apply path's
+        // `core.timesheet.list` translation `limit = perPage`,
+        // `offset = (page - 1) * perPage`).
+        const page = args.page ?? timesheet.DEFAULT_PAGE;
+        const perPage = args.perPage ?? timesheet.DEFAULT_PER_PAGE;
+        const limit = perPage;
+        const offset = (page - 1) * perPage;
         if (opts.engagement === undefined) {
-          return dryRunResponse(buildMcpDryRunPreview("PendingTimesheets", "mobile-gateway", {}, auth.token));
+          return dryRunResponse(
+            buildMcpDryRunPreview("PendingTimesheets", "mobile-gateway", { limit, offset }, auth.token),
+          );
         }
         return dryRunResponse(
-          buildMcpDryRunPreview("Timesheets", "mobile-gateway", { jobActivityItemId: opts.engagement }, auth.token),
+          buildMcpDryRunPreview(
+            "Timesheets",
+            "mobile-gateway",
+            { jobActivityItemId: opts.engagement, limit, offset },
+            auth.token,
+          ),
         );
       }
       try {
-        const items = await timesheet.list(auth.token, opts);
-        return successResponse(items);
+        // Issue #374: surface pagination metadata alongside items so
+        // LLM callers can detect `hasNextPage` and iterate. Pre-#374
+        // the MCP tool returned the bare `items[]` array; the wrapped
+        // shape is a payload addition — `result.items` is byte-identical
+        // to the prior payload.
+        const page = await timesheet.list(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildTimesheetPageInfo(page) });
       } catch (err) {
         return mapTimesheetError(err);
       }

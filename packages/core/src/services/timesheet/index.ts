@@ -35,8 +35,15 @@
  * **Operations are inlined as strings** (not codegen-driven) — same
  * pattern as `engagements` and `applications`. The captured operations
  * live in `../research/graphql/gateway/operations/mobile/`:
- *   - `PendingTimesheets.graphql`   — used verbatim
- *   - `Timesheets.graphql`          — used verbatim
+ *   - `PendingTimesheets.graphql`   — captured + PARAMETERIZED for
+ *                                     pagination (#374): `pagination: {
+ *                                     limit: 50 }` → `pagination: {
+ *                                     limit: $limit, offset: $offset }`
+ *   - `Timesheets.graphql`          — captured + PARAMETERIZED for
+ *                                     pagination (#374): pagination
+ *                                     input ADDED to
+ *                                     `engagement.billingCycles` (none
+ *                                     was captured)
  *   - `TimesheetDetails.graphql`    — used verbatim
  *   - `SubmitTimesheet.graphql`     — used verbatim
  *
@@ -47,7 +54,13 @@
  * are not in `codegen.config.ts` and the wire response shapes are
  * hand-written rather than codegen-generated. The `SubmitTimesheet`
  * mutation specifically triggers the rule's mutation clause: live E2E
- * is the only authoritative verification.
+ * is the only authoritative verification. **#374 specifically**: the
+ * `$limit`/`$offset` pagination inputs added to `PendingTimesheets`
+ * and `Timesheets` are INFERRED — `limit` on `viewer.billingCycles` is
+ * wire-proven (captured hardcode), but `offset` there and ALL
+ * pagination on the per-engagement `engagement.billingCycles` are
+ * NOT wire-proven. A manual `TTCTL_E2E=1` run of
+ * `25-timesheet-list.e2e.test.ts` is REQUIRED before merge.
  *
  * **Submit is destructive**: the CLI surface gates submission behind a
  * `--confirm` flag and a TTY confirmation prompt; the core service
@@ -221,7 +234,7 @@ export interface TimesheetDetail extends TimesheetListItem {
 }
 
 /**
- * Optional list filter.
+ * Optional list filter + pagination (issue #374).
  */
 export interface ListOptions {
   /**
@@ -233,6 +246,67 @@ export interface ListOptions {
    * regardless of submission state).
    */
   engagement?: string;
+  /**
+   * 1-indexed page number (issue #374). Translated to the wire's
+   * offset-style `billingCycles(pagination: { limit, offset })` input
+   * by {@link list} as `offset = (page - 1) * perPage`. Default `1`
+   * when omitted. Mirrors the `jobs` service `ListOptions.page`
+   * convention (#138/#183).
+   */
+  page?: number;
+  /**
+   * Items per page (issue #374). Forwarded verbatim to the wire's
+   * `billingCycles(pagination: { limit })` argument. Default `50` when
+   * omitted — preserving the pre-#374 hardcoded viewer-wide
+   * `pagination: { limit: 50 }` so behaviour is unchanged when callers
+   * pass no pagination. Upper bound is server-enforced.
+   */
+  perPage?: number;
+}
+
+/**
+ * Default values for {@link ListOptions} pagination fields when the
+ * caller does not specify them. `DEFAULT_PER_PAGE` is `50` (NOT the
+ * `jobs` service's `20`) because the pre-#374 `PendingTimesheets`
+ * document hardcoded `pagination: { limit: 50 }` — preserving `50`
+ * keeps the default viewer-wide window identical to the pre-pagination
+ * behaviour. The per-engagement `Timesheets` document carried NO
+ * pagination input at all (relied on an implicit server cap); `50` is
+ * a safe explicit default there too. Exposed so tests / CLI / MCP
+ * assert against the same constants the production code uses.
+ */
+export const DEFAULT_PAGE = 1 as const;
+export const DEFAULT_PER_PAGE = 50 as const;
+
+/**
+ * Page wrapper returned by {@link list} (issue #374). Carries the
+ * projected items plus the resolved `page` / `perPage` (the effective
+ * values used in the query, after defaults).
+ *
+ * **`totalCount` is intentionally optional and ALWAYS omitted today.**
+ * The mobile-gateway `BillingCycleConnection` is `{ ids, nodes }` —
+ * the synthesized SDL (`../research/graphql/gateway/schema.graphql`,
+ * `type BillingCycleConnection { ids: [ID]! nodes: [BillingCycle]! }`)
+ * exposes NO `totalCount` field, and neither captured operation
+ * (`PendingTimesheets`, `Timesheets`) selects one. This diverges from
+ * the `jobs` service's {@link jobs.JobListPage} (whose `eligibleJobs`
+ * wire DOES report `totalCount`): callers MUST derive `hasNextPage`
+ * heuristically (`items.length === perPage`) rather than from a total,
+ * and cannot render a "Page X of Y" footer. The field is kept (a)
+ * forward-compatible if Toptal ever adds `totalCount` to the
+ * connection, and (b) to mirror the issue #374 proposed
+ * `{ items, totalCount?, page, perPage }` shape. With
+ * `exactOptionalPropertyTypes`, the key is OMITTED (not set to
+ * `undefined`) when absent.
+ */
+export interface TimesheetListPage {
+  items: TimesheetListItem[];
+  /** 1-indexed page number actually requested. */
+  page: number;
+  /** Items per page actually requested (= wire `pagination.limit`). */
+  perPage: number;
+  /** Total cycle count — ALWAYS omitted today (wire has no `totalCount`). */
+  totalCount?: number;
 }
 
 /**
@@ -323,11 +397,31 @@ export interface ResolveCurrentCycleOptions {
 
 // ---------------------------------------------------------------------
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/PendingTimesheets.graphql`.
-const PENDING_TIMESHEETS_QUERY = `query PendingTimesheets { viewer { __typename id ...pendingTimesheets } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment pendingTimesheets on Viewer { __typename billingCycles(filters: { pendingTimesheetOnly: true } , pagination: { limit: 50 } ) { __typename nodes { __typename ...timesheetListFields } } }`;
+// Captured from `../research/graphql/gateway/operations/mobile/PendingTimesheets.graphql`,
+// then PARAMETERIZED for pagination per #374 [INFERRED — UNVERIFIED until the
+// gated `*.e2e.test.ts` passes]: the captured document hardcoded
+// `pagination: { limit: 50 }`. We promote `limit` to `$limit` and ADD
+// `offset: $offset`. `limit` is wire-proven (the captured hardcode);
+// `offset` on this `viewer.billingCycles` field is INFERRED — the
+// `pagination: { limit, offset }` input is a well-attested generic
+// gateway shape (portal `GetGigs` `pagination: {limit:10, offset:0}`,
+// `GetTalentCommunitySlackChannels($offset, $limit)`), but its
+// acceptance on THIS field is only authoritative via live E2E.
+const PENDING_TIMESHEETS_QUERY = `query PendingTimesheets($limit: Int, $offset: Int) { viewer { __typename id ...pendingTimesheets } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment pendingTimesheets on Viewer { __typename billingCycles(filters: { pendingTimesheetOnly: true } , pagination: { limit: $limit, offset: $offset } ) { __typename nodes { __typename ...timesheetListFields } } }`;
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/Timesheets.graphql`.
-const TIMESHEETS_QUERY = `query Timesheets($jobActivityItemId: ID!) { viewer { __typename id jobActivityItem(id: $jobActivityItemId) { __typename id engagement { __typename id billingCycles(filters: { onlyTimesheets: true } ) { __typename ids nodes { __typename ...timesheetListFields } } } } } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }`;
+// Captured from `../research/graphql/gateway/operations/mobile/Timesheets.graphql`,
+// then PARAMETERIZED for pagination per #374 [INFERRED — UNVERIFIED until the
+// gated `*.e2e.test.ts` passes]: the captured document carried NO
+// pagination input on `engagement.billingCycles` at all (relied on an
+// implicit server cap). We ADD `pagination: { limit: $limit, offset:
+// $offset }`. This is the RISKIER inference of the two — the field had
+// no pagination arg captured. Structural evidence: the synthesized SDL
+// gives `Viewer.billingCycles` AND `TalentEngagement.billingCycles` the
+// identical `BillingCycleConnection!` return type, and portal
+// `engagement.payments(pagination: {...})` proves engagement-scoped
+// connections accept the generic pagination input — but acceptance on
+// THIS field is only authoritative via live E2E.
+const TIMESHEETS_QUERY = `query Timesheets($jobActivityItemId: ID!, $limit: Int, $offset: Int) { viewer { __typename id jobActivityItem(id: $jobActivityItemId) { __typename id engagement { __typename id billingCycles(filters: { onlyTimesheets: true } , pagination: { limit: $limit, offset: $offset } ) { __typename ids nodes { __typename ...timesheetListFields } } } } } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }`;
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/TimesheetDetails.graphql`.
 const TIMESHEET_DETAILS_QUERY = `query TimesheetDetails($id: ID!) { node(id: $id) { __typename ...timesheetDetailsFields } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment contactFieldsData on ContactFields { __typename communitySlackId email phoneNumber skype }  fragment timeZoneFields on TimeZone { __typename location value }  fragment recruiterData on Recruiter { __typename id fullName contactFields { __typename ...contactFieldsData } photo { __typename small } vacation { __typename id startDate endDate } timeZone { __typename ...timeZoneFields } }  fragment pointOfContactData on PointsOfContact { __typename current { __typename ...recruiterData } handoff { __typename ...recruiterData } kind }  fragment deliveryModelData on TalentEngagementDeliveryModel { __typename id identifier }  fragment timesheetDetailsFields on BillingCycle { __typename ...timesheetListFields timesheetUrl actualAgreement { __typename applicationRate talentHourlyRate marketplaceMargin } engagement { __typename id expectedHours job { __typename id pointsOfContact { __typename ...pointOfContactData } engagementDeliveryModel { __typename ...deliveryModelData } } } timesheetComment timesheetRecords { __typename date duration isDayOff note } }`;
@@ -516,22 +610,43 @@ function projectDetailItem(wire: TimesheetDetailWireItem): TimesheetDetail {
  * state). The argument is the public `JobActivityItem.id` exposed by
  * `engagements list`.
  *
- * The returned array preserves server order; the CLI / MCP do not
+ * Pagination (#374): `opts.page` (1-indexed) and `opts.perPage` are
+ * translated to the wire's offset-style `billingCycles(pagination: {
+ * limit, offset })` input where `limit = perPage` and `offset =
+ * (page - 1) * perPage`. Defaults: `page: 1, perPage: 50` (50
+ * preserves the pre-#374 hardcoded viewer-wide window). Returns a
+ * {@link TimesheetListPage} carrying the resolved `page` / `perPage`;
+ * `totalCount` is NOT populated (the wire `BillingCycleConnection`
+ * exposes none — see {@link TimesheetListPage}).
+ *
+ * The returned items preserve server order; the CLI / MCP do not
  * re-sort.
  */
-export async function list(token: string, opts: ListOptions = {}): Promise<TimesheetListItem[]> {
+export async function list(token: string, opts: ListOptions = {}): Promise<TimesheetListPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
+  // Offset-style translation (#374): page 1 → offset 0. Mirrors the
+  // generic gateway `pagination: { limit, offset }` shape.
+  const limit = perPage;
+  const offset = (page - 1) * perPage;
+
   if (opts.engagement === undefined) {
-    const data = await callGateway<PendingTimesheetsResponse>(token, "PendingTimesheets", PENDING_TIMESHEETS_QUERY, {});
+    const data = await callGateway<PendingTimesheetsResponse>(token, "PendingTimesheets", PENDING_TIMESHEETS_QUERY, {
+      limit,
+      offset,
+    });
     if (data.viewer === null) {
       throw new TimesheetError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
     }
-    return (data.viewer.billingCycles?.nodes ?? []).map(projectListItem);
+    return { items: (data.viewer.billingCycles?.nodes ?? []).map(projectListItem), page, perPage };
   }
 
   let data: TimesheetsResponse;
   try {
     data = await callGateway<TimesheetsResponse>(token, "Timesheets", TIMESHEETS_QUERY, {
       jobActivityItemId: opts.engagement,
+      limit,
+      offset,
     });
   } catch (err) {
     if (err instanceof TimesheetError && err.code === "GRAPHQL_ERROR" && NOT_FOUND_MESSAGE_PATTERN.test(err.message)) {
@@ -558,7 +673,11 @@ export async function list(token: string, opts: ListOptions = {}): Promise<Times
       `Activity item "${opts.engagement}" exists but has no engagement (likely an application or interview).`,
     );
   }
-  return (data.viewer.jobActivityItem.engagement.billingCycles?.nodes ?? []).map(projectListItem);
+  return {
+    items: (data.viewer.jobActivityItem.engagement.billingCycles?.nodes ?? []).map(projectListItem),
+    page,
+    perPage,
+  };
 }
 
 /**
@@ -648,10 +767,16 @@ export async function resolveCurrentCycle(
  * callers wanting the same pre-filtered list.
  */
 async function listPending(token: string, engagement: string | undefined): Promise<TimesheetListItem[]> {
+  // #374: `list()` now returns a {@link TimesheetListPage} wrapper —
+  // unwrap `.items`. No pagination opts passed → defaults (page 1,
+  // perPage 50) preserve the pre-#374 hardcoded `limit: 50` window, so
+  // `resolveCurrentCycle` / submit auto-resolve behaviour is unchanged.
+  // (>50 pending cycles would miss some — a pre-existing limitation of
+  // the hardcoded cap, NOT a #374 regression.)
   if (engagement === undefined) {
-    return list(token);
+    return (await list(token)).items;
   }
-  const all = await list(token, { engagement });
+  const all = (await list(token, { engagement })).items;
   return all.filter((c) => !c.timesheetSubmitted);
 }
 
