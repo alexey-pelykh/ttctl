@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import Table from "cli-table3";
 import { DateInputError, parseDateInput, profile } from "@ttctl/core";
 import { Command, Option } from "commander";
 
-import { emitAddSuccess, emitErrorAndExit, emitRemoveSuccess, emitUpdateSuccess } from "../../../lib/envelopes.js";
+import {
+  emitAddSuccess,
+  emitErrorAndExit,
+  emitRemoveSuccess,
+  emitUpdateSuccess,
+  wrapListEnvelope,
+} from "../../../lib/envelopes.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, presentSubDomainError } from "../shared.js";
@@ -91,6 +98,18 @@ export function buildProfileEducationCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runShow(id, options.output);
+    });
+
+  education
+    .command("list")
+    .description("List every education entry on your profile")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runList(options.output);
     });
 
   education
@@ -234,6 +253,21 @@ async function runShow(id: string, format: OutputFormat): Promise<void> {
   emitResult(result, format, { pretty: formatEducationText, table: formatEducationTable });
 }
 
+async function runList(format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile education list", format);
+  let rows: profile.education.Education[];
+  try {
+    rows = await profile.education.list(token);
+  } catch (err) {
+    presentSubDomainError("profile education list", err, format);
+  }
+  emitResult(wrapListEnvelope(rows), format, {
+    pretty: (data) => formatEducationListText(data.items),
+    table: (data) => formatEducationListTable(data.items),
+    empty: { command: "profile.education.list" },
+  });
+}
+
 async function runHighlight(id: string, value: boolean, format: OutputFormat): Promise<void> {
   const token = await loadAuthTokenOrExit("profile education highlight", format);
   let result: { id: string; highlight: boolean };
@@ -325,4 +359,24 @@ function formatYearRange(from: number | null, to: number | null): string {
   if (from !== null && to === null) return `${from.toString()}–present`;
   if (from === null && to !== null) return `?–${to.toString()}`;
   return `${(from ?? 0).toString()}–${(to ?? 0).toString()}`;
+}
+
+/**
+ * Pretty-print a list of Education rows. One row per line, tab-separated:
+ * degree, institution, years, id.
+ */
+export function formatEducationListText(rows: profile.education.Education[]): string {
+  if (rows.length === 0) return "(no education entries on profile)";
+  return rows.map((e) => `${e.degree}\t${e.institution}\t${formatYearRange(e.yearFrom, e.yearTo)}\t${e.id}`).join("\n");
+}
+
+/**
+ * Pretty-print a list of Education rows as a cli-table3 table.
+ */
+export function formatEducationListTable(rows: profile.education.Education[]): string {
+  const table = new Table({ head: ["Degree", "Institution", "Years", "Highlight", "Id"], wordWrap: true });
+  for (const e of rows) {
+    table.push([e.degree, e.institution, formatYearRange(e.yearFrom, e.yearTo), e.highlight ? "yes" : "no", e.id]);
+  }
+  return table.toString();
 }

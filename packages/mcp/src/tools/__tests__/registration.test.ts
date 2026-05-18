@@ -16,16 +16,16 @@ import { TOOLS_WITH_OUTPUT_SCHEMA } from "../output-schemas.js";
  * | basic (#73)         | 4 (show, update, photo_show, photo_upload) |
  * | skills (#73)        | 7 (add, remove, update, show, list, autocomplete, readiness) |
  * | industries (#74, +show #342) | 6 (add, update, remove, show, list, autocomplete) |
- * | education (#74)     | 5 (add, update, remove, show, highlight) |
- * | certifications (#74)| 5 (add, update, remove, show, highlight) |
- * | employment (#74)    | 6 (add, update, remove, show, highlight, employer-autocomplete) |
+ * | education (#74, +list #341)  | 6 (add, update, remove, show, highlight, list) |
+ * | certifications (#74, +list #341) | 6 (add, update, remove, show, highlight, list) |
+ * | employment (#74, +list #341) | 7 (add, update, remove, show, highlight, employer-autocomplete, list) |
  * | portfolio (#75)     | 8 (add, update, remove, list, reorder, highlight, upload_cover, upload_file) |
  * | visas (#75)         | 4 (add, update, remove, list) |
  * | resume (#75)        | 2 (upload, cancel_upload) |
  * | external (#76)      | 7 (show, update, custom_requirements_show/set, readiness, recommendations, advanced_wizard_show) |
  * | reviews (#76)       | 4 (list, approve_item, approve_section, submit_for_review) |
  *
- * Total: 58 tools.
+ * Total: 61 profile tools (was 58 before #341 added 3 list tools).
  *
  * Per project policy (#72), MCP tool names use ONLY the canonical sub-domain
  * names — no `certs`, no `experience`. These tests assert exact tool name
@@ -53,25 +53,28 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_industries_show",
   "ttctl_profile_industries_list",
   "ttctl_profile_industries_autocomplete",
-  // education (#74)
+  // education (#74, +list #341)
   "ttctl_profile_education_add",
   "ttctl_profile_education_update",
   "ttctl_profile_education_remove",
   "ttctl_profile_education_show",
   "ttctl_profile_education_highlight",
-  // certifications (#74)
+  "ttctl_profile_education_list",
+  // certifications (#74, +list #341)
   "ttctl_profile_certifications_add",
   "ttctl_profile_certifications_update",
   "ttctl_profile_certifications_remove",
   "ttctl_profile_certifications_show",
   "ttctl_profile_certifications_highlight",
-  // employment (#74, note: 6 tools — adds employer_autocomplete catalog leaf)
+  "ttctl_profile_certifications_list",
+  // employment (#74, +list #341, note: 7 tools — includes employer_autocomplete catalog leaf)
   "ttctl_profile_employment_add",
   "ttctl_profile_employment_update",
   "ttctl_profile_employment_remove",
   "ttctl_profile_employment_show",
   "ttctl_profile_employment_highlight",
   "ttctl_profile_employment_employer_autocomplete",
+  "ttctl_profile_employment_list",
   // portfolio (#75, 8 tools — `upload` exposed as two MCP tools)
   "ttctl_profile_portfolio_add",
   "ttctl_profile_portfolio_update",
@@ -191,7 +194,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (99 tools = 58 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (102 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

@@ -4,7 +4,12 @@
 import type { profile } from "@ttctl/core";
 import { describe, expect, it } from "vitest";
 
-import { formatEmploymentTable, formatEmploymentText } from "../index.js";
+import {
+  formatEmploymentListTable,
+  formatEmploymentListText,
+  formatEmploymentTable,
+  formatEmploymentText,
+} from "../index.js";
 
 /**
  * Pure-formatter unit tests for the `employment show` pretty + table
@@ -113,5 +118,41 @@ describe("formatEmploymentTable (#344 fields)", () => {
       primaryGeography: { id: "V1-Geo-3", code: null, name: null },
     });
     expect(out).toContain("primaryGeography\tV1-Geo-3");
+  });
+});
+
+/**
+ * Pure-formatter unit tests for the `employment list` pretty + table
+ * renderers (#341). Covers happy path (multi-row) and empty list — both
+ * shapes that the CLI list sub-command emits via `emitResult` after
+ * wrapping the result in a `wrapListEnvelope`.
+ */
+describe("formatEmploymentListText (#341)", () => {
+  it("renders one tab-separated line per row, ending with the id", () => {
+    const out = formatEmploymentListText([FULL, BARE]);
+    const lines = out.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe("Staff Engineer\tGlobex\t2019–present\tV1-Employment-9");
+    expect(lines[1]).toBe("Engineer\tAcme\t2015–2018\tV1-Employment-10");
+  });
+
+  it("renders an empty-list sentinel when the list is empty", () => {
+    expect(formatEmploymentListText([])).toBe("(no employment entries on profile)");
+  });
+});
+
+describe("formatEmploymentListTable (#341)", () => {
+  it("emits a cli-table3 table with one data row per entry plus a highlight column", () => {
+    const out = formatEmploymentListTable([FULL, BARE]);
+    expect(out).toContain("Position");
+    expect(out).toContain("Company");
+    expect(out).toContain("Highlight");
+    expect(out).toContain("Staff Engineer");
+    expect(out).toContain("Globex");
+    expect(out).toContain("2019–present");
+    expect(out).toContain("yes");
+    expect(out).toContain("Acme");
+    expect(out).toContain("2015–2018");
+    expect(out).toContain("no");
   });
 });

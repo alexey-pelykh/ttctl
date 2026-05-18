@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`employment` / `education` / `certifications` `list` operation surfaced
+  on CLI + MCP (#341)**. Closes the Class A surface-coverage gap caught
+  by `scripts/check-surface-coverage.ts`: the three sub-domains exported
+  `list(token)` from `@ttctl/core` but had registered NEITHER a CLI
+  command NOR an MCP tool, so an agent could not enumerate employment /
+  education / certification IDs at all from within ttctl. The underlying
+  GraphQL queries (`GET_WORK_EXPERIENCE` / `GET_EDUCATION` /
+  `GET_CERTIFICATION`) were already firing client-side from the existing
+  `_show` paths (which internally list-then-filter); this change exposes
+  the unfiltered list at the MCP / CLI boundary without touching any
+  wire format.
+  - **CLI**: `ttctl profile employment list [-o text|json|table]` (alias
+    `experience list`), `ttctl profile education list`, `ttctl profile
+certifications list` (alias `certs list`). Empty-list output goes
+    through the `emptyStateProse` CTA wrapper (#122). New
+    `format{Employment,Education,Certification}List{Text,Table}`
+    formatters render one-line-per-row (`text`) or a `cli-table3` table
+    with `Highlight` column (`table`).
+  - **MCP**: `ttctl_profile_employment_list` / `_education_list` /
+    `_certifications_list` registered on the talent-profile surface.
+    Each returns the same per-item shape as the corresponding `_show`
+    tool (since `_show` filters `_list` client-side). Dry-run path
+    previews `GET_WORK_EXPERIENCE` / `GET_EDUCATION` / `GET_CERTIFICATION`
+    with `profileId: <DRY_RUN_PROFILE_ID_PLACEHOLDER>` — matches the
+    existing `_show` dry-run preview verbatim (same wire call).
+  - **Registration test**: `EXPECTED_TOOLS` grows by 3 (102 total profile
+    tools, was 99); the per-domain comment table reflects the new counts
+    (education 5→6, certifications 5→6, employment 6→7).
+  - **Schema/contract rule**: NOT triggered — no new GraphQL operation,
+    no `auth.ts` change, no modification to any file under
+    `packages/core/src/services/profile/` (the existing `list()` exports
+    are reused as-is). E2E coverage is unchanged: `GET_WORK_EXPERIENCE`
+    already e2e-covered via `43-profile-employment.e2e.test.ts`;
+    `GET_EDUCATION` and `GET_CERTIFICATION` remain in the pre-existing
+    UNCOVERED warn-mode set (no delta).
+  - **Tests**: new formatter unit tests for all three sub-domains
+    (`__tests__/formatters.test.ts`) covering happy path (multi-row)
+    - empty list + cli-table3 rendering.
+
 ### Fixed
 
 - **`profile.external.update` mutation response now echoes `twitter`

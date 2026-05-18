@@ -213,6 +213,42 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
   );
 
   server.registerTool(
+    "ttctl_profile_certifications_list",
+    {
+      title: "List certification entries",
+      description: [
+        "List every certification entry on the signed-in user's Toptal profile, with each row's full per-item shape (mirrors `ttctl_profile_certifications_show`).",
+        "",
+        "Example user prompts that should map to this tool:",
+        '  - "What certifications do I have on my Toptal profile?"',
+        '  - "Show me all my Toptal certifications."',
+        '  - "List my Toptal certification IDs so I can edit one."',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (input) => {
+      const auth = await ctx.resolveTokenForTool("profile.certifications.list");
+      if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_CERTIFICATION",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
+      try {
+        const rows = await profile.certifications.list(auth.token);
+        return jsonSuccess(rows);
+      } catch (err) {
+        return presentToolError("profile.certifications.list", err);
+      }
+    },
+  );
+
+  server.registerTool(
     "ttctl_profile_certifications_highlight",
     {
       title: "Toggle certification highlight",

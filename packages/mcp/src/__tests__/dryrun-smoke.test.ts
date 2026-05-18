@@ -158,22 +158,25 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_basic_photo_upload: { filePath: "/tmp/photo.jpg" },
   ttctl_profile_basic_show: {},
   ttctl_profile_basic_update: { bio: "smoke test bio" },
-  // profile.certifications (5)
+  // profile.certifications (6, +list #341)
   ttctl_profile_certifications_add: { name: "AWS Cert", issuer: "Amazon" },
   ttctl_profile_certifications_highlight: { id: "cert_123" },
+  ttctl_profile_certifications_list: {},
   ttctl_profile_certifications_remove: { id: "cert_123" },
   ttctl_profile_certifications_show: { id: "cert_123" },
   ttctl_profile_certifications_update: { id: "cert_123", name: "AWS Pro" },
-  // profile.education (5)
+  // profile.education (6, +list #341)
   ttctl_profile_education_add: { institution: "MIT", degree: "BSc" },
   ttctl_profile_education_highlight: { id: "edu_123" },
+  ttctl_profile_education_list: {},
   ttctl_profile_education_remove: { id: "edu_123" },
   ttctl_profile_education_show: { id: "edu_123" },
   ttctl_profile_education_update: { id: "edu_123", degree: "MSc" },
-  // profile.employment (6)
+  // profile.employment (7, +list #341)
   ttctl_profile_employment_add: { company: "Toptal", role: "Engineer" },
   ttctl_profile_employment_employer_autocomplete: { query: "Google" },
   ttctl_profile_employment_highlight: { id: "emp_123" },
+  ttctl_profile_employment_list: {},
   ttctl_profile_employment_remove: { id: "emp_123" },
   ttctl_profile_employment_show: { id: "emp_123" },
   ttctl_profile_employment_update: { id: "emp_123", company: "Anthropic" },
@@ -263,8 +266,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 99 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(99);
+  it("registers exactly 102 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(102);
   });
 
   it("every registered tool has a fixture", () => {
