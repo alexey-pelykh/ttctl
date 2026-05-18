@@ -16,7 +16,6 @@ import {
   type ToolRegistrationContext,
 } from "./_shared.js";
 import { UPLOAD_CATEGORIES, validateUploadPath } from "./file-upload.js";
-import { profileBasicPhotoUploadOutputSchema } from "./output-schemas.js";
 
 const TOOL_NAME = "ttctl_profile_basic_photo_upload";
 
@@ -68,7 +67,6 @@ export function registerProfileBasicPhotoUploadTool(server: McpServer, ctx: Tool
             "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview }` for the UploadProfilePhoto operation; the multipart binary body is NOT enumerated (only the GraphQL operations envelope). Default: false.",
           ),
       },
-      outputSchema: profileBasicPhotoUploadOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);

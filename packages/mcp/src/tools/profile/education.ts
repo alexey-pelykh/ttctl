@@ -6,7 +6,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { buildMcpDryRunPreview, dryRunResponse, type ToolRegistrationContext } from "../_shared.js";
-import { profileEducationRowOutputSchema, profileRowRemoveOutputSchema } from "../output-schemas.js";
 import { dateInput, jsonSuccess, presentToolError, textWithStructuredSuccess } from "./shared.js";
 
 const DRY_RUN_FIELD = z
@@ -52,7 +51,6 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         title: z.string().optional(),
         dryRun: DRY_RUN_FIELD,
       },
-      outputSchema: profileEducationRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.education.add");
@@ -109,7 +107,6 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         highlight: z.boolean().optional(),
         dryRun: DRY_RUN_FIELD,
       },
-      outputSchema: profileEducationRowOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.education.update");
@@ -155,7 +152,6 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       title: "Remove education entry",
       description: "Remove an education entry by id.",
       inputSchema: { id: z.string().min(1).describe("education id"), dryRun: DRY_RUN_FIELD },
-      outputSchema: profileRowRemoveOutputSchema.shape,
     },
     async (input) => {
       const auth = await ctx.resolveTokenForTool("profile.education.remove");

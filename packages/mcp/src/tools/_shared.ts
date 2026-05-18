@@ -39,11 +39,11 @@ import type { ToolErrorResponse } from "../errors.js";
  * structurally compatible with the SDK's `CallToolResult` (whose own type
  * carries the same signature for forward-compatibility with new optional
  * fields). The `structuredContent` field is populated by
- * {@link jsonResponse} so tools that declare an `outputSchema` (#226) get
- * SDK-validated structured payload alongside the `text` slot.
- * `structuredContent` is harmless metadata for tools without
- * `outputSchema` — the SDK skips validation when `outputSchema` is
- * absent.
+ * {@link jsonResponse} as advisory metadata for MCP clients that prefer a
+ * pre-parsed object over decoding the `text` slot. No tool declares an
+ * `outputSchema` (removed in #379 — see {@link dryRunResponse}), so the
+ * SDK never validates `structuredContent` against a schema; it is
+ * convenience data, not a validated contract.
  */
 export interface ToolSuccessResponse {
   content: [{ type: "text"; text: string }];
@@ -54,14 +54,15 @@ export interface ToolSuccessResponse {
 /**
  * Render a JSON-shaped payload as a tool-success response. Stringifies
  * with two-space indentation so LLM clients see an easy-to-read response,
- * and mirrors the payload into `structuredContent` so tools that declare
- * an `outputSchema` (#226) get SDK-validated structured output without
- * each tool having to plumb the field manually.
+ * and mirrors the payload into `structuredContent` as advisory pre-parsed
+ * metadata (no tool declares an `outputSchema` post-#379, so the SDK does
+ * not validate it — it is a convenience for clients that prefer an object
+ * over decoding the `text` slot).
  *
  * `structuredContent` is only populated when `payload` is an object — the
  * MCP SDK's `structuredContent` slot expects an object shape per
  * `CallToolResult`, and arrays / primitives are encoded only via the
- * `text` slot (callers that emit array payloads can still validate the
+ * `text` slot (callers that emit array payloads can still parse the
  * JSON-decoded `text` field client-side).
  */
 export function jsonResponse(payload: unknown): ToolSuccessResponse {
@@ -78,7 +79,7 @@ export function jsonResponse(payload: unknown): ToolSuccessResponse {
  * Render a plain string as a tool-success response (e.g., for tools that
  * return a confirmation rather than structured data). Use
  * {@link textWithStructuredResponse} when both a human-readable line and
- * a typed acknowledgment are desired (e.g., `*_remove` tools per #226).
+ * a structured acknowledgment are desired (e.g., `*_remove` tools).
  */
 export function textResponse(text: string): ToolSuccessResponse {
   return { content: [{ type: "text", text }] };
@@ -86,10 +87,11 @@ export function textResponse(text: string): ToolSuccessResponse {
 
 /**
  * Render a confirmation line as the `text` content slot while also
- * publishing a typed acknowledgment via `structuredContent`. Used by
- * `*_remove` tools (#226) where the human-readable text stays for
- * compatibility and the structured payload is `{ id, removed: true }`
- * matching the tool's declared `outputSchema`.
+ * publishing an advisory structured acknowledgment via
+ * `structuredContent`. Used by `*_remove` tools where the human-readable
+ * text stays for compatibility and the structured payload is
+ * `{ id, removed: true }` for clients that prefer a pre-parsed object.
+ * Not SDK-validated (no tool declares an `outputSchema` post-#379).
  */
 export function textWithStructuredResponse(
   text: string,
@@ -115,15 +117,25 @@ export function textWithStructuredResponse(
  * `availability.*Set`).
  */
 export function dryRunResponse(preview: DryRunPreview): ToolSuccessResponse {
-  // Intentionally emits ONLY the `text` content slot — no
-  // `structuredContent`. The dry-run envelope shape does NOT match the
-  // success-path `outputSchema` declared by #226 tools, and the MCP SDK
-  // validates `structuredContent` against `outputSchema` when both are
-  // present. Leaving `structuredContent` absent lets the SDK skip
-  // validation for dry-run responses (per `_validateOutput`: "if
-  // `!result.structuredContent` return"), preserving the universal
-  // `{ ok, dryRun, preview }` envelope contract without forcing every
-  // tool's `outputSchema` to absorb the dry-run shape.
+  // Emits ONLY the `text` content slot — no `structuredContent`. The
+  // dry-run envelope shape (`{ ok, dryRun, preview }`) is distinct from
+  // every tool's success-path payload by design.
+  //
+  // #379 history: #226 added strict success-shape `outputSchema`s to the
+  // write tools. MCP SDK ≥1.29 then HARD-THROWS
+  // `Output validation error: Tool <name> has an output schema but no
+  // structured content was provided` whenever an `outputSchema` is
+  // declared and a result omits `structuredContent` — which this
+  // (correctly) does for the dry-run envelope. Earlier SDKs skipped
+  // validation in that case; ≥1.29 does not. The fix removed
+  // `outputSchema` from every tool (the dry-run envelope cannot share a
+  // single ZodObject schema with the success shape, and the SDK does not
+  // support union/`oneOf` output schemas). So this helper stays
+  // structuredContent-free and the absence of any `outputSchema` keeps
+  // the universal `{ ok, dryRun, preview }` envelope contract intact.
+  // A `registration.test.ts` guard fails if any tool re-declares an
+  // `outputSchema`; an end-to-end client round-trip
+  // (`dryrun-output-validation.test.ts`) asserts this path is reachable.
   const envelope = { ok: true, dryRun: true, preview };
   return {
     content: [{ type: "text", text: JSON.stringify(envelope, null, 2) }],
@@ -147,8 +159,7 @@ export function dryRunResponse(preview: DryRunPreview): ToolSuccessResponse {
  */
 export function dryRunMultiResponse(previews: DryRunPreview[]): ToolSuccessResponse {
   // Same rationale as `dryRunResponse` — emits ONLY `content`, no
-  // `structuredContent`, so #226 tools with declared `outputSchema`
-  // don't fail validation on the dry-run shape.
+  // `structuredContent` (see that function's note re: #379 / SDK ≥1.29).
   const envelope = { ok: true, dryRun: true, previews };
   return {
     content: [{ type: "text", text: JSON.stringify(envelope, null, 2) }],

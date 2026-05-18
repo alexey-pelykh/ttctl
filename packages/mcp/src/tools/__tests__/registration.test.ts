@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ToolRegistrationContext } from "../_shared.js";
 import { registerAllTools } from "../index.js";
-import { TOOLS_WITH_OUTPUT_SCHEMA } from "../output-schemas.js";
 
 /**
  * Verify the wave-3 tool registration:
@@ -222,33 +221,36 @@ describe("registerAllTools", () => {
   });
 
   /**
-   * #226 AC #4 — assert every write-capable MCP tool tracked in
-   * `TOOLS_WITH_OUTPUT_SCHEMA` carries a populated `outputSchema` field
-   * on the SDK's registered-tool record. This is a structural-presence
-   * check, not a wire-shape assertion — the schema contents are
-   * exercised by per-tool runtime tests (e.g. `profile_basic_dryrun`,
-   * `profile_basic_update`).
+   * #379 regression guard — assert NO registered tool declares an
+   * `outputSchema`.
    *
-   * LLM clients reading the tool registry use this field to validate
-   * tool responses; a missing `outputSchema` means they have to fall
-   * back to ad-hoc parsing, which the audit finding (API-DX-002 +
-   * F-D1-M1) flagged as a gap.
+   * Background: #226 added strict success-shape `outputSchema`s to the
+   * write-capable tools. Every one of those tools ALSO supports
+   * `dryRun: true`, which returns the uniform `{ ok, dryRun, preview }`
+   * envelope (issue #165) — a shape that does NOT match the success
+   * schema. MCP SDK ≥1.29 hard-throws
+   * `Output validation error: … has an output schema but no structured
+   * content was provided` when an `outputSchema` is declared and the
+   * dry-run branch (correctly) omits `structuredContent`. That broke the
+   * dry-run preview for every write tool (#379).
+   *
+   * The fix removes `outputSchema` from every tool (aligning with the
+   * tools that never declared one — `industries_add`, `skills_add`, …).
+   * This guard fails loudly if a future change re-introduces an
+   * `outputSchema` on any tool: while EVERY current tool supports
+   * `dryRun`, declaring an `outputSchema` re-opens the #379 failure.
+   * A future tool that genuinely has no `dryRun` branch may declare one
+   * — at which point this assertion should be narrowed to "no
+   * dryRun-capable tool declares an outputSchema" rather than relaxed
+   * away.
    */
-  it("declares outputSchema on every write-capable tool listed in TOOLS_WITH_OUTPUT_SCHEMA (#226)", () => {
+  it("declares no outputSchema on any registered tool (#379 — dry-run/output-schema incompatibility)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const tools = getRegisteredTools(server);
-    const missing: string[] = [];
-    for (const name of TOOLS_WITH_OUTPUT_SCHEMA) {
-      const tool = tools[name];
-      if (!tool) {
-        missing.push(`${name} (not registered)`);
-        continue;
-      }
-      if (!tool.outputSchema) {
-        missing.push(`${name} (no outputSchema)`);
-      }
-    }
-    expect(missing).toEqual([]);
+    const offenders = Object.entries(tools)
+      .filter(([, tool]) => tool.outputSchema)
+      .map(([name]) => name);
+    expect(offenders).toEqual([]);
   });
 });
