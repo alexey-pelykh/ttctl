@@ -24,15 +24,35 @@ export interface ConfigLockHandle {
 }
 
 /**
- * Wall-clock budget for `acquireConfigLock` contention timeout. The chosen
- * configuration produces ≤1.0s total wait: 5 retries × max 250ms backoff =
- * 1250ms ceiling, but with `factor: 1` the backoff stays flat at
- * `minTimeout`-`maxTimeout` so the practical envelope is closer to 5×100ms
- * to 5×250ms = 500ms-1250ms with jitter. Tightens the upper bound below
- * NFR-LOCK-1's 1.0s plan.
+ * Wall-clock budget for `acquireConfigLock` contention timeout. The macOS /
+ * Linux baseline configuration produces ≤1.0s total wait: 5 retries × max
+ * 250ms backoff = 1250ms ceiling, but with `factor: 1` the backoff stays
+ * flat at `minTimeout`-`maxTimeout` so the practical envelope is closer to
+ * 5×100ms to 5×250ms = 500ms-1250ms with jitter. Tightens the upper bound
+ * below NFR-LOCK-1's 1.0s plan on the OSes the NFR was authored against.
+ * Windows operates on a 3x carve-out — see the Windows section below.
+ *
+ * Windows carve-out (#362): on Windows CI runners (Azure-hosted, shared,
+ * higher scheduler variance than Linux/macOS), the 1.0s envelope is too
+ * tight for the cross-process serialization test pair in
+ * `configLock-cross-process.test.ts` — both `staged race` and the 2-worker
+ * `serialize cleanly` variant have flaked when the second worker loses its
+ * scheduling slice long enough for its mkdir contention budget to expire
+ * before the first worker releases. Sibling prior art: #171, #180, #270
+ * (all Windows-specific timing fixes for the same `persistAuthToken`
+ * cross-process write path). Extending Windows to ~3.0s (15 retries × 100-
+ * 250ms = 1500-3750ms practical envelope) absorbs the variance without
+ * changing the NFR-LOCK-1 invariant on the OSes where it applies.
+ *
+ * Production impact: a real LOCKED contention surfaces in ~3s on Windows
+ * (vs ~1s elsewhere). The user-facing message already says "typically ≤2s"
+ * — the 3s ceiling does not contradict it, and contended writes are rare
+ * (CLI signin + concurrent MCP tool call on the same config).
  */
+const WINDOWS_BUDGET_MULTIPLIER = process.platform === "win32" ? 3 : 1;
+
 const LOCK_RETRY_OPTIONS = {
-  retries: 5,
+  retries: 5 * WINDOWS_BUDGET_MULTIPLIER,
   factor: 1,
   minTimeout: 100,
   maxTimeout: 250,
@@ -70,9 +90,11 @@ const LOCK_STALE_MS = 10_000;
  * existing POSIX-mode logic in `loadConfigFile` and `performYamlMutation`,
  * which IS Windows-skipped because mode bits aren't meaningful).
  *
- * Contention: ≤1.0s wall-clock budget per `LOCK_RETRY_OPTIONS`. On timeout,
- * throws `ConfigError(LOCKED)` naming the path and suggesting retry — never
- * blocks indefinitely.
+ * Contention: ≤1.0s wall-clock budget per `LOCK_RETRY_OPTIONS` on macOS /
+ * Linux, ≤3.0s on Windows (Windows scheduler-variance carve-out — see
+ * `LOCK_RETRY_OPTIONS` JSDoc + #362). On timeout, throws
+ * `ConfigError(LOCKED)` naming the path and suggesting retry — never blocks
+ * indefinitely.
  *
  * `realpath: false` skips proper-lockfile's pre-flight `realpath()` check.
  * The caller has already resolved `configPath` to an absolute, symlink-free

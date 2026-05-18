@@ -107,7 +107,10 @@ describe("persistAuthToken — advisory lock interaction", () => {
     const configPath = join(tmpRoot, ".ttctl.yaml");
     writeFileSync(configPath, "auth:\n  credentials: op://Personal/ttctl\n", { mode: 0o600 });
 
-    // Hold the lock manually for longer than the retry budget (≤1.25s).
+    // Hold the lock for the duration of the inner await — persistAuthToken
+    // exhausts its internal retry budget (≤1.25s on macOS/Linux, ≤3.75s on
+    // Windows — see configLock.ts LOCK_RETRY_OPTIONS) and throws LOCKED
+    // before we release in `finally`. No manual timing needed at this layer.
     const externalLock = await acquireConfigLock(configPath);
     try {
       await expect(persistAuthToken(configPath, "user_blocked_xxx")).rejects.toMatchObject({

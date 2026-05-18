@@ -897,7 +897,9 @@ error handlers can branch on the code rather than string-match the message.
 The CLI surfaces it as the JSON wire-format `code` field; the MCP server
 includes it in the rendered tool-error text. `LOCKED` fires when the
 write-back lock is held by another ttctl process longer than the ≤1s
-contention budget — the recommended UX response is "wait briefly and retry".
+contention budget on macOS/Linux (≤3s on Windows — Windows scheduler-
+variance carve-out per #362) — the recommended UX response is "wait
+briefly and retry".
 
 `loadConfigFile` emits a stderr warning when the config file is group-
 or other-readable on POSIX (`mode & 0o077 != 0` AND not world-writable).

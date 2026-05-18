@@ -456,7 +456,8 @@ async function writeAtomicAt0600(absolutePath: string, content: string, opts: At
  *   1. Acquire advisory write-back lock via `acquireConfigLock` (sibling
  *      `<path>.lock` directory, atomic `mkdir`-based, cross-platform).
  *      Released in `finally` regardless of error path. Lock contention
- *      timeout is ≤1s — never blocks indefinitely.
+ *      timeout is ≤1s on macOS/Linux, ≤3s on Windows (Windows scheduler-
+ *      variance carve-out per #362) — never blocks indefinitely.
  *   2. Stat baseline — captures mtime so a concurrent overwrite can be
  *      detected before we commit our changes. The lock prevents another
  *      ttctl process from racing here, but the mtime check is preserved
