@@ -597,6 +597,17 @@ export async function show(token: string, id: string): Promise<TimesheetDetail> 
  * Resolve the "current" pending timesheet — the billing cycle whose
  * submission window contains `now` AND which is not yet submitted.
  *
+ * **Internal helper, not exposed as its own standalone CLI command or
+ * MCP tool by design** (see #348). Used by the `submit` flows on both
+ * surfaces (CLI: `ttctl timesheet submit` without `--id`; MCP:
+ * `ttctl_timesheet_submit` without `id`) to auto-resolve the cycle id
+ * when the caller omits it. A standalone "what's my current cycle?"
+ * query offers little marginal value over `ttctl timesheet list`,
+ * which already filters to pending cycles — the surface-coverage gate
+ * carries an `// surface-exempt:` marker (`scripts/check-surface-coverage.ts`)
+ * to document this disposition explicitly and remain future-proof if
+ * the internal call sites are ever inlined.
+ *
  * - `kind: "found"`: exactly one cycle matches.
  * - `kind: "none"`: zero cycles match (too early before next window,
  *   too late after every cycle's deadline, or no engagements have
@@ -612,6 +623,7 @@ export async function show(token: string, id: string): Promise<TimesheetDetail> 
  * The `now` option exists for deterministic testing; production code
  * paths pass nothing and the helper uses `new Date()`.
  */
+// surface-exempt: internal helper for `submit` flows (CLI + MCP) cycle resolution; see #348
 export async function resolveCurrentCycle(
   token: string,
   opts: ResolveCurrentCycleOptions = {},
