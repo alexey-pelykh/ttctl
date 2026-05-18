@@ -351,24 +351,11 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
   });
 
   // -------------------------------------------------------------------
-  // Commander's standard "unknown option" fires on non-paginated leaves
-  // (engagements `list` still rejects --per-page until #375 lands.)
+  // Note (#375): `engagements list` became a paginating leaf — its
+  // accepted-flags / help-visibility / parser coverage lives in the
+  // sections below alongside the jobs leaves. `auth status` remains
+  // non-paginated and keeps its "unknown option" assertion below.
   // -------------------------------------------------------------------
-
-  it("--per-page on `engagements list` fails with Commander's standard error (#183)", async () => {
-    const program = buildProgram();
-    program.exitOverride();
-    captureStdout();
-    const stderr = captureStderr();
-    captureExit();
-    try {
-      await program.parseAsync(["engagements", "list", "--per-page", "10"], { from: "user" });
-    } catch {
-      // expected
-    }
-    const errOut = stderr.lines.join("");
-    expect(errOut).toMatch(/error: unknown option '--per-page'/);
-  });
 
   it("--page on `auth status` fails with Commander's standard error (#183)", async () => {
     const program = buildProgram();
@@ -500,5 +487,63 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     const opts = list.opts<{ page?: number; perPage?: number }>();
     expect(opts.page).toBe(2);
     expect(opts.perPage).toBe(50);
+  });
+
+  // -------------------------------------------------------------------
+  // engagements list (#375) — joined the paginating-leaf set
+  // -------------------------------------------------------------------
+
+  it("--page DOES appear in `engagements list --help` (#375)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["engagements", "list", "--help"], { from: "user" });
+    } catch {
+      // expected — help exits via exitOverride
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--page <number>/);
+    expect(helpText).toMatch(/--per-page <number>/);
+  });
+
+  it("--page 0 is rejected on `engagements list` (must be ≥ 1) (#375)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["engagements", "list", "--page", "0"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--page must be a positive integer");
+  });
+
+  it("--page 2 --per-page 7 on `engagements list` carries both (#375)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureStderr();
+    captureExit();
+
+    const engagements = program.commands.find((c) => c.name() === "engagements");
+    expect(engagements).toBeDefined();
+    const list = engagements?.commands.find((c) => c.name() === "list");
+    expect(list).toBeDefined();
+    if (!list) return;
+
+    try {
+      await program.parseAsync(["engagements", "list", "--page", "2", "--per-page", "7"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    const opts = list.opts<{ page?: number; perPage?: number }>();
+    expect(opts.page).toBe(2);
+    expect(opts.perPage).toBe(7);
   });
 });

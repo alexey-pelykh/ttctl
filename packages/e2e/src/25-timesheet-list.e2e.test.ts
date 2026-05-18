@@ -190,14 +190,17 @@ describe("timesheet list (live mobile-gateway)", () => {
 
   it.skipIf(!e2eEnabled)("Timesheets wire shape matches snapshot (--engagement scope)", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
+    // #375: `engagements.list` now returns an `EngagementListPage`
+    // envelope `{ items, totalCount, page, perPage }` rather than a
+    // bare array. Read `.items` for the rows.
     const engs = await engagements.list(token, { status: "active" });
-    if (engs.length === 0) {
+    if (engs.items.length === 0) {
       process.stderr.write(
         "warning: no active engagements (test account has none currently) — Timesheets wire-shape assertion skipped\n",
       );
       return;
     }
-    const engagementId = engs[0]?.id;
+    const engagementId = engs.items[0]?.id;
     if (engagementId === undefined) return;
     const response = await timesheet.list(token, { engagement: engagementId });
     if (response.length === 0) {
