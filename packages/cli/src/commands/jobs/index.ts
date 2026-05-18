@@ -45,7 +45,7 @@ function perPageOption(): Option {
  * | `save <id>`                                           | Mark a job as saved (bookmark)             |
  * | `unsave <id>`                                         | Clear interest flags (the wire's only unsave path; also clears not-interested) |
  * | `saved`                                               | List saved jobs                            |
- * | `viewed`                                              | List jobs marked as viewed (first page, see R1) |
+ * | `viewed`                                              | List jobs marked as viewed (full-pool aggregation, see R1) |
  * | `mark-viewed <id>`                                    | Explicitly mark a job as viewed            |
  * | `not-interested <id> --reason <text>`                 | Mark a job as not-interested with reason   |
  * | `not-interested-list`                                 | List jobs marked as not-interested         |
@@ -61,11 +61,14 @@ function perPageOption(): Option {
  *
  * **Wire-shape notes**:
  *
- * - **R1**: `jobs viewed` is scoped to the requested page (default
- *   ≤20 jobs) and filtered client-side AFTER the page is returned.
- *   The wire has no `viewed: BooleanFilter`. Pagination (#138) shifts
- *   the underlying fetch window; the post-filter list can be shorter
- *   than `--per-page`.
+ * - **R1**: `jobs viewed` iterates the FULL eligibleJobs pool and
+ *   applies a client-side filter on `viewed` (the wire has no
+ *   `viewed: BooleanFilter`; empirical from Toptal mobile-app
+ *   decompile, see #372). `--page` / `--per-page` slice the
+ *   POST-FILTER list; `pageInfo.totalCount` is the real count of
+ *   viewed jobs. Cost: O(N/20) wire calls (capped at 50 internal
+ *   pages); acceptable as a stop-gap until Toptal exposes a wire-
+ *   level filter.
  * - **R2**: `jobs search` operates on a single subscription per user.
  *   `--name` and remove-`<id>` are advisory/ignored. `search list` is
  *   NOT a paginated leaf (returns 0-or-1 envelope).
@@ -201,7 +204,7 @@ export function buildJobsCommand(): Command {
 
   cmd
     .command("viewed")
-    .description("List jobs marked as viewed (paginated; client-side filter after page fetch — see R1)")
+    .description("List jobs marked as viewed (full-pool aggregation + client-side filter — see R1)")
     .addOption(pageOption())
     .addOption(perPageOption())
     .addOption(

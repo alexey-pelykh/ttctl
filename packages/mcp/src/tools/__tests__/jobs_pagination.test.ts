@@ -138,6 +138,15 @@ interface PaginatingToolSpec {
    * the apply-path wire shape).
    */
   expectedDryRunFilter: { saved: { eq: boolean } | null; notInterested: { eq: boolean } | null };
+  /**
+   * For the dry-run path: whether the caller's `page` / `perPage` thread
+   * into the preview's wire variables. True for `list` / `saved` /
+   * `not_interested_list` — those single-call tools forward verbatim.
+   * False for `viewed` (#372) — the apply path's underlying fetch always
+   * uses `page: 1, pageSize: 20`; caller `page` / `perPage` slice the
+   * POST-FILTER aggregated list, never reaching the wire.
+   */
+  dryRunForwardsCallerPagination: boolean;
 }
 
 const TOOL_SPECS: PaginatingToolSpec[] = [
@@ -145,21 +154,25 @@ const TOOL_SPECS: PaginatingToolSpec[] = [
     toolName: "ttctl_jobs_list",
     serviceMock: MOCKED_LIST,
     expectedDryRunFilter: { saved: null, notInterested: null },
+    dryRunForwardsCallerPagination: true,
   },
   {
     toolName: "ttctl_jobs_saved",
     serviceMock: MOCKED_SAVED,
     expectedDryRunFilter: { saved: { eq: true }, notInterested: null },
+    dryRunForwardsCallerPagination: true,
   },
   {
     toolName: "ttctl_jobs_viewed",
     serviceMock: MOCKED_VIEWED_LIST,
     expectedDryRunFilter: { saved: null, notInterested: null },
+    dryRunForwardsCallerPagination: false,
   },
   {
     toolName: "ttctl_jobs_not_interested_list",
     serviceMock: MOCKED_NOT_INTERESTED_LIST,
     expectedDryRunFilter: { saved: null, notInterested: { eq: true } },
+    dryRunForwardsCallerPagination: true,
   },
 ];
 
@@ -179,115 +192,124 @@ describe("ttctl_jobs_* MCP tools — pagination (#369)", () => {
     vi.restoreAllMocks();
   });
 
-  describe.each(TOOL_SPECS)("$toolName", ({ toolName, serviceMock, expectedDryRunFilter }) => {
-    it("registers `page` and `perPage` optional integer fields on the input schema", () => {
-      const internals = server as unknown as {
-        _registeredTools: Record<string, { inputSchema?: unknown }>;
-      };
-      const entry = internals._registeredTools[toolName];
-      expect(entry).toBeDefined();
-      const inputSchema = entry?.inputSchema as { shape: Record<string, unknown> } | undefined;
-      expect(inputSchema?.shape["page"]).toBeDefined();
-      expect(inputSchema?.shape["perPage"]).toBeDefined();
-    });
-
-    it("forwards `page` / `perPage` to the service when supplied and wraps the response as { items, pageInfo }", async () => {
-      serviceMock.mockResolvedValueOnce(buildPageFixture({ page: 2, perPage: 10, totalCount: 37 }));
-
-      const handler = getToolHandler(server, toolName);
-      const result = (await handler({ page: 2, perPage: 10 }, {})) as ToolSuccessShape;
-
-      // Service received the forwarded pagination opts (last positional
-      // arg is `ListOptions`; first is the bearer token).
-      expect(serviceMock).toHaveBeenCalledTimes(1);
-      const call = serviceMock.mock.calls[0];
-      const opts = call?.[1] as jobs.ListOptions;
-      expect(opts.page).toBe(2);
-      expect(opts.perPage).toBe(10);
-
-      // Tool result is the `{ items, pageInfo }` wrapper. `totalPages`
-      // = ceil(37/10) = 4; `hasNextPage` = page(2) < totalPages(4) = true.
-      const parsed = parseToolPayload<ListResponsePayload>(result);
-      expect(parsed.items).toHaveLength(1);
-      expect(parsed.items[0]?.id).toBe(ITEM_FIXTURE.id);
-      expect(parsed.pageInfo).toEqual({
-        currentPage: 2,
-        perPage: 10,
-        totalPages: 4,
-        hasNextPage: true,
+  describe.each(TOOL_SPECS)(
+    "$toolName",
+    ({ toolName, serviceMock, expectedDryRunFilter, dryRunForwardsCallerPagination }) => {
+      it("registers `page` and `perPage` optional integer fields on the input schema", () => {
+        const internals = server as unknown as {
+          _registeredTools: Record<string, { inputSchema?: unknown }>;
+        };
+        const entry = internals._registeredTools[toolName];
+        expect(entry).toBeDefined();
+        const inputSchema = entry?.inputSchema as { shape: Record<string, unknown> } | undefined;
+        expect(inputSchema?.shape["page"]).toBeDefined();
+        expect(inputSchema?.shape["perPage"]).toBeDefined();
       });
-    });
 
-    it("omits `page` / `perPage` from the forwarded service opts when neither input is supplied (defaults applied server-side)", async () => {
-      serviceMock.mockResolvedValueOnce(buildPageFixture());
+      it("forwards `page` / `perPage` to the service when supplied and wraps the response as { items, pageInfo }", async () => {
+        serviceMock.mockResolvedValueOnce(buildPageFixture({ page: 2, perPage: 10, totalCount: 37 }));
 
-      const handler = getToolHandler(server, toolName);
-      await handler({}, {});
+        const handler = getToolHandler(server, toolName);
+        const result = (await handler({ page: 2, perPage: 10 }, {})) as ToolSuccessShape;
 
-      const opts = serviceMock.mock.calls[0]?.[1] as jobs.ListOptions;
-      expect(opts.page).toBeUndefined();
-      expect(opts.perPage).toBeUndefined();
-    });
+        // Service received the forwarded pagination opts (last positional
+        // arg is `ListOptions`; first is the bearer token).
+        expect(serviceMock).toHaveBeenCalledTimes(1);
+        const call = serviceMock.mock.calls[0];
+        const opts = call?.[1] as jobs.ListOptions;
+        expect(opts.page).toBe(2);
+        expect(opts.perPage).toBe(10);
 
-    it("derives `hasNextPage: false` when totalPages == currentPage (last page)", async () => {
-      // 21 items, perPage 20 → totalPages = ceil(21/20) = 2, page 2 = last.
-      serviceMock.mockResolvedValueOnce(buildPageFixture({ page: 2, perPage: 20, totalCount: 21 }));
-
-      const handler = getToolHandler(server, toolName);
-      const result = (await handler({ page: 2, perPage: 20 }, {})) as ToolSuccessShape;
-
-      const parsed = parseToolPayload<ListResponsePayload>(result);
-      expect(parsed.pageInfo).toEqual({
-        currentPage: 2,
-        perPage: 20,
-        totalPages: 2,
-        hasNextPage: false,
+        // Tool result is the `{ items, pageInfo }` wrapper. `totalPages`
+        // = ceil(37/10) = 4; `hasNextPage` = page(2) < totalPages(4) = true.
+        const parsed = parseToolPayload<ListResponsePayload>(result);
+        expect(parsed.items).toHaveLength(1);
+        expect(parsed.items[0]?.id).toBe(ITEM_FIXTURE.id);
+        expect(parsed.pageInfo).toEqual({
+          currentPage: 2,
+          perPage: 10,
+          totalPages: 4,
+          hasNextPage: true,
+        });
       });
-    });
 
-    it("clamps `totalPages` to a minimum of 1 when totalCount is 0 (empty page)", async () => {
-      serviceMock.mockResolvedValueOnce(buildPageFixture({ items: [], totalCount: 0, page: 1, perPage: 20 }));
+      it("omits `page` / `perPage` from the forwarded service opts when neither input is supplied (defaults applied server-side)", async () => {
+        serviceMock.mockResolvedValueOnce(buildPageFixture());
 
-      const handler = getToolHandler(server, toolName);
-      const result = (await handler({}, {})) as ToolSuccessShape;
+        const handler = getToolHandler(server, toolName);
+        await handler({}, {});
 
-      const parsed = parseToolPayload<ListResponsePayload>(result);
-      expect(parsed.items).toEqual([]);
-      expect(parsed.pageInfo).toEqual({
-        currentPage: 1,
-        perPage: 20,
-        totalPages: 1,
-        hasNextPage: false,
+        const opts = serviceMock.mock.calls[0]?.[1] as jobs.ListOptions;
+        expect(opts.page).toBeUndefined();
+        expect(opts.perPage).toBeUndefined();
       });
-    });
 
-    it("emits a dry-run preview whose variables carry `page` and `pageSize` from the forwarded opts (mirroring the apply-path wire shape)", async () => {
-      const handler = getToolHandler(server, toolName);
-      const result = (await handler({ page: 3, perPage: 5, dryRun: true }, {})) as ToolSuccessShape;
+      it("derives `hasNextPage: false` when totalPages == currentPage (last page)", async () => {
+        // 21 items, perPage 20 → totalPages = ceil(21/20) = 2, page 2 = last.
+        serviceMock.mockResolvedValueOnce(buildPageFixture({ page: 2, perPage: 20, totalCount: 21 }));
 
-      // Dry-run path short-circuits before the service call — verify
-      // the service was NOT invoked.
-      expect(serviceMock).not.toHaveBeenCalled();
+        const handler = getToolHandler(server, toolName);
+        const result = (await handler({ page: 2, perPage: 20 }, {})) as ToolSuccessShape;
 
-      const parsed = parseToolPayload<DryRunEnvelope>(result);
-      expect(parsed.ok).toBe(true);
-      expect(parsed.dryRun).toBe(true);
-      expect(parsed.preview.operationName).toBe("JobsList");
-      expect(parsed.preview.variables["page"]).toBe(3);
-      expect(parsed.preview.variables["pageSize"]).toBe(5);
-      expect(parsed.preview.variables["saved"]).toEqual(expectedDryRunFilter.saved);
-      expect(parsed.preview.variables["notInterested"]).toEqual(expectedDryRunFilter.notInterested);
-    });
+        const parsed = parseToolPayload<ListResponsePayload>(result);
+        expect(parsed.pageInfo).toEqual({
+          currentPage: 2,
+          perPage: 20,
+          totalPages: 2,
+          hasNextPage: false,
+        });
+      });
 
-    it("emits a dry-run preview whose variables carry the DEFAULT `page: 1` / `pageSize: 20` when neither pagination input is supplied", async () => {
-      const handler = getToolHandler(server, toolName);
-      const result = (await handler({ dryRun: true }, {})) as ToolSuccessShape;
+      it("clamps `totalPages` to a minimum of 1 when totalCount is 0 (empty page)", async () => {
+        serviceMock.mockResolvedValueOnce(buildPageFixture({ items: [], totalCount: 0, page: 1, perPage: 20 }));
 
-      const parsed = parseToolPayload<DryRunEnvelope>(result);
-      expect(parsed.preview.variables["page"]).toBe(jobs.DEFAULT_PAGE);
-      expect(parsed.preview.variables["pageSize"]).toBe(jobs.DEFAULT_PER_PAGE);
-    });
-  });
+        const handler = getToolHandler(server, toolName);
+        const result = (await handler({}, {})) as ToolSuccessShape;
+
+        const parsed = parseToolPayload<ListResponsePayload>(result);
+        expect(parsed.items).toEqual([]);
+        expect(parsed.pageInfo).toEqual({
+          currentPage: 1,
+          perPage: 20,
+          totalPages: 1,
+          hasNextPage: false,
+        });
+      });
+
+      it("emits a dry-run preview whose variables reflect the apply-path wire shape (caller pagination forwarded iff the tool's wire fetch honors it)", async () => {
+        const handler = getToolHandler(server, toolName);
+        const result = (await handler({ page: 3, perPage: 5, dryRun: true }, {})) as ToolSuccessShape;
+
+        // Dry-run path short-circuits before the service call — verify
+        // the service was NOT invoked.
+        expect(serviceMock).not.toHaveBeenCalled();
+
+        const parsed = parseToolPayload<DryRunEnvelope>(result);
+        expect(parsed.ok).toBe(true);
+        expect(parsed.dryRun).toBe(true);
+        expect(parsed.preview.operationName).toBe("JobsList");
+        // For `viewed` (#372), the apply path's underlying fetch always
+        // uses `page: 1, pageSize: 20` — caller's `page`/`perPage` slice
+        // the post-filter list, never reaching the wire. For the other
+        // three tools, caller pagination threads through verbatim.
+        const expectedPage = dryRunForwardsCallerPagination ? 3 : jobs.DEFAULT_PAGE;
+        const expectedPageSize = dryRunForwardsCallerPagination ? 5 : jobs.DEFAULT_PER_PAGE;
+        expect(parsed.preview.variables["page"]).toBe(expectedPage);
+        expect(parsed.preview.variables["pageSize"]).toBe(expectedPageSize);
+        expect(parsed.preview.variables["saved"]).toEqual(expectedDryRunFilter.saved);
+        expect(parsed.preview.variables["notInterested"]).toEqual(expectedDryRunFilter.notInterested);
+      });
+
+      it("emits a dry-run preview whose variables carry the DEFAULT `page: 1` / `pageSize: 20` when neither pagination input is supplied", async () => {
+        const handler = getToolHandler(server, toolName);
+        const result = (await handler({ dryRun: true }, {})) as ToolSuccessShape;
+
+        const parsed = parseToolPayload<DryRunEnvelope>(result);
+        expect(parsed.preview.variables["page"]).toBe(jobs.DEFAULT_PAGE);
+        expect(parsed.preview.variables["pageSize"]).toBe(jobs.DEFAULT_PER_PAGE);
+      });
+    },
+  );
 
   // ttctl_jobs_list carries the filter fields too — pin that pagination
   // and filters co-exist on the same call. The shared tests above cover
