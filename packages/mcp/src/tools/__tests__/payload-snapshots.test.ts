@@ -37,7 +37,7 @@ import { domainErrorResponse, dryRunResponse, jsonResponse, unauthenticatedRespo
  *
  * | Sub-domain      | MCP tool                                          | Wire payload                    |
  * |-----------------|---------------------------------------------------|---------------------------------|
- * | basic           | `ttctl_profile_basic_show`                        | `ProfileShowQuery`              |
+ * | basic           | `ttctl_profile_basic_show`                        | `BasicShowPayload`              |
  * | skills          | `ttctl_profile_skills_list`                       | `ProfileSkillSet[]`             |
  * | portfolio       | (registered via `tools/profile/portfolio.ts`)     | `PortfolioItem[]`               |
  * | employment      | (registered via `tools/profile/employment.ts`)    | `Employment[]`                  |
@@ -64,8 +64,8 @@ function extractText(response: ReturnType<typeof jsonResponse>): string {
 }
 
 // =======================================================================
-// basic — show payload (raw ProfileShowQuery; the CLI's BasicShowPayload
-// wrapper is CLI-specific — MCP does not double-call talent_profile)
+// basic — show payload (merged BasicShowPayload from mobile-gateway +
+// talent-profile, matching the CLI's two-call shape; closed in #340)
 // =======================================================================
 
 describe("MCP profile_basic_show — payload snapshots", () => {
@@ -178,8 +178,32 @@ describe("MCP profile_basic_show — payload snapshots", () => {
     },
   };
 
-  it("payload: full ProfileShowQuery (jsonResponse 2-space indent)", () => {
-    expect(extractText(jsonResponse(PROFILE))).toMatchSnapshot();
+  const BASIC_INFO: profile.basic.BasicInfo = {
+    profileId: "p_test_001",
+    bio: "Senior engineer focused on developer experience.\n\nBuilt CLIs for three different startups.",
+    headline: "Reliable systems, calm rollouts.",
+    languages: [
+      { id: "lang_en", name: "English" },
+      { id: "lang_uk", name: "Ukrainian" },
+    ],
+  };
+
+  it("payload: full BasicShowPayload (profile + basicInfo with bio/headline/languages)", () => {
+    expect(extractText(jsonResponse({ profile: PROFILE, basicInfo: BASIC_INFO }))).toMatchSnapshot();
+  });
+
+  it("payload: BasicShowPayload with null bio and headline, empty languages", () => {
+    const emptyBasicInfo: profile.basic.BasicInfo = {
+      profileId: "p_test_001",
+      bio: null,
+      headline: null,
+      languages: [],
+    };
+    expect(extractText(jsonResponse({ profile: PROFILE, basicInfo: emptyBasicInfo }))).toMatchSnapshot();
+  });
+
+  it("payload: BasicShowPayload with basicInfo: null (secondary call failed non-fatally)", () => {
+    expect(extractText(jsonResponse({ profile: PROFILE, basicInfo: null }))).toMatchSnapshot();
   });
 });
 
