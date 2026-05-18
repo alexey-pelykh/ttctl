@@ -1,0 +1,129 @@
+name: "MCP host failed to invoke a tool"
+description: "An MCP host (Claude Desktop, Claude Code, Cursor, Windsurf, etc.) could not invoke a TTCtl tool."
+title: "(mcp-host) <host product> failed to invoke <tool name>"
+labels: ["mcp-host-issue", "triage", "mcp"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when the failure is at the **MCP host ↔ TTCtl server boundary** — e.g. the host did not surface the tool, the tool's schema was rejected, or the host displayed an error that did not come from Toptal's wire.
+
+        If the tool ran and Toptal returned an error, use the **"Wire broke for me"** template instead — that is a wire-format issue, not an MCP-host issue.
+
+        ## Privacy
+
+        **Do not paste your `~/.ttctl.yaml` contents or any value that looks like a bearer token (`user_<24hex>_<20alnum>`).** Redact them as `<REDACTED>`.
+        TTCtl's `TTCTL_DEBUG_MCP=1` emitter redacts bearer values by design (two-pass: field-name + value-pattern), but transcripts from your shell or host logs may include them — please scan before pasting.
+
+  - type: input
+    id: host-product
+    attributes:
+      label: MCP host product
+      description: "e.g. `Claude Desktop`, `Claude Code`, `Cursor`, `Windsurf`, custom host."
+      placeholder: "Claude Desktop"
+    validations:
+      required: true
+
+  - type: input
+    id: host-version
+    attributes:
+      label: MCP host version
+      description: "Version string the host reports (Settings → About, or the menu equivalent)."
+      placeholder: "0.7.x"
+    validations:
+      required: true
+
+  - type: input
+    id: ttctl-version
+    attributes:
+      label: TTCtl version
+      description: "Output of `ttctl --version`. If the host bundled TTCtl, paste the version it shipped with."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: tool-name
+    attributes:
+      label: Failing tool name
+      description: "The TTCtl MCP tool that failed, e.g. `ttctl_profile_basic_show`, `ttctl_timesheet_list`. Use `<unknown>` if the host did not surface a name."
+      placeholder: "ttctl_profile_basic_show"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: failure-mode
+    attributes:
+      label: Failure mode
+      description: "How did the failure surface?"
+      options:
+        - "Tool never appeared in the host's tool list"
+        - "Tool appeared but the host refused to invoke it (schema rejected, permission denied, etc.)"
+        - "Tool was invoked but the host displayed a generic error / hung / timed out"
+        - "Tool returned a result the host could not render"
+        - "Other (describe below)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: host-error
+    attributes:
+      label: Host-side error output
+      description: |
+        Paste the host's surfacing of the error (status bar text, dev-console output, log file lines).
+        For Claude Desktop, check `~/Library/Logs/Claude/mcp-server-ttctl.log` (macOS) or the equivalent on your OS.
+        For Claude Code, the MCP error appears in the chat surface.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: ttctl-debug
+    attributes:
+      label: TTCtl MCP debug trace (optional)
+      description: |
+        Set `TTCTL_DEBUG_MCP=1` in the MCP host's environment (per the host's MCP server config — typically a `env` block alongside the `ttctl mcp` command), reproduce the failure, then paste the relevant stderr lines.
+
+        ```jsonl
+        {"ts":"...","event":"mcp_tool_invoke_start","tool":"ttctl_profile_basic_show",...}
+        ```
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: ttctl-mcp-config
+    attributes:
+      label: MCP server config snippet
+      description: |
+        The host's config entry that launches TTCtl (e.g. the `mcpServers.ttctl` block). Paste the JSON/YAML verbatim, redacting any `env`-block credentials or 1Password references. Example:
+
+        ```json
+        {
+          "mcpServers": {
+            "ttctl": {
+              "command": "npx",
+              "args": ["ttctl", "mcp"]
+            }
+          }
+        }
+        ```
+      render: json
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15.1"
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: "Recent host updates, recent TTCtl upgrades, working tool calls vs failing ones, etc."
+    validations:
+      required: false
