@@ -68,11 +68,11 @@ function buildJobsListVariables(
  * `EnvelopePageInfo` shape (in `packages/cli/src/lib/envelopes.ts`) so
  * LLM clients can detect "more pages available" via `hasNextPage`.
  *
- * For `ttctl_jobs_viewed` specifically: `totalCount` (and therefore
- * `totalPages` / `hasNextPage`) reflect the underlying `eligibleJobs`
- * fetch — i.e., the pre-filter count of ALL jobs on the page, NOT the
- * count of jobs with `viewed: true`. The R1 caveat documented on the
- * tool's description applies.
+ * For `ttctl_jobs_viewed` (post-#372): `totalCount` reflects the
+ * POST-FILTER count (the real number of viewed jobs); `page` /
+ * `perPage` slice that aggregated list. The R1 wire limitation is
+ * documented on the tool's description — the underlying full-pool
+ * fetch is hidden from the surface contract.
  */
 interface JobsPageInfo {
   currentPage: number;
@@ -113,11 +113,13 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  *   - `ttctl_jobs_search_save`
  *   - `ttctl_jobs_search_remove`
  *
- * **Wire-shape notes** (R1 / R2): `jobs_viewed` filters client-side on
- * the `viewed` boolean AFTER the page is fetched (the wire has no
- * `viewed` filter — see #372 for the server-side fix); `jobs_search_*`
- * operates on a single subscription per user. The tool descriptions
- * surface these.
+ * **Wire-shape notes** (R1 / R2): `jobs_viewed` aggregates the FULL
+ * eligibleJobs pool and applies a client-side filter on the `viewed`
+ * boolean (the wire confirmed has no `viewed` filter — Toptal's own
+ * mobile app uses only `notInterested` / `saved` on the filter input;
+ * see #372 for the empirical analysis and `viewedList` doc-comment
+ * for the cost trade-off); `jobs_search_*` operates on a single
+ * subscription per user. The tool descriptions surface these.
  *
  * Pagination (issue #369): the four read-list tools — `jobs_list`,
  * `jobs_saved`, `jobs_viewed`, `jobs_not_interested_list` — accept
@@ -125,9 +127,10 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * mirroring the CLI's `--page` / `--per-page` flags that #138/#183
  * shipped. Each list response is `{ items, pageInfo }`, where `pageInfo`
  * mirrors the CLI's `EnvelopePageInfo` shape so LLM callers can detect
- * `hasNextPage` and iterate. For `jobs_viewed` specifically, `pageInfo`
- * reflects the underlying `eligibleJobs` fetch — not the post-filter
- * `items.length`.
+ * `hasNextPage` and iterate. For `jobs_viewed` specifically (post-#372),
+ * `pageInfo` reflects the POST-FILTER count (the count of viewed jobs),
+ * NOT the underlying eligibleJobs pool size — `page` / `perPage` slice
+ * the post-filter list.
  *
  * Dry-run path (issue #165): every tool accepts `dryRun?: boolean`. Read
  * tools build the preview at the MCP layer; the 7 mutations (save,
@@ -357,27 +360,34 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
   server.registerTool(
     "ttctl_jobs_viewed",
     {
-      title: "List viewed jobs (best-effort, client-side filter)",
+      title: "List viewed jobs (full-pool aggregation, client-side filter)",
       description: [
         "List Toptal jobs the user has marked as viewed.",
         "",
-        "**Limitation (R1)**: the wire has no `viewed` filter on eligibleJobs.",
-        "This tool fetches the requested page of eligible jobs and filters",
-        "client-side on the `viewed` boolean. Items on later pages will not",
-        "appear unless the caller iterates pagination explicitly. Use `page` /",
-        "`perPage` to shift the underlying fetch window. R1 is tracked",
-        "separately at issue #372 (server-side viewed filter).",
+        "**Wire limitation (R1, #372)**: the wire has no `viewed` filter",
+        "on eligibleJobs (the Toptal mobile app confirms this — its",
+        "`InitialJobs` / `SavedJobs` operations expose only `notInterested`",
+        "and `saved` on the filter input). This tool iterates the FULL",
+        "eligibleJobs pool, applies a client-side filter on the `viewed`",
+        "boolean, and dedups by job id, then slices to the requested page.",
+        "Internal fetch is capped at 50 underlying pages (~1000 jobs) for",
+        "safety; pathologically-large pools surface a stderr warning.",
         "",
-        "Pagination (#369):",
-        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
-        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+        "Cost: O(N/20) wire calls per invocation. Acceptable as a stop-gap",
+        "until Toptal exposes a wire-level viewed filter.",
         "",
-        "Note on `pageInfo`: `totalCount` / `totalPages` / `hasNextPage`",
-        "reflect the underlying eligibleJobs fetch (pre-`viewed` filter),",
-        "NOT `items.length` after the client-side filter. `items.length` can",
-        "be smaller than `perPage`.",
+        "Pagination (#369, semantics refined #372):",
+        "  - `page`: 1-indexed page number into the POST-FILTER list. Default: 1.",
+        "  - `perPage`: items per page of the POST-FILTER list. Default: 20.",
         "",
-        "Dry-run note: the apply path issues `JobsList` (the same query used by `ttctl_jobs_list`) and filters client-side on `viewed` — the preview reflects the wire call accordingly.",
+        "`pageInfo.totalCount` reflects the COUNT OF VIEWED JOBS (post-filter),",
+        "not the underlying eligibleJobs pool size. `hasNextPage` reflects",
+        "whether the post-filter list has more pages.",
+        "",
+        "Dry-run note: the apply path issues `JobsList` (same query as",
+        "`ttctl_jobs_list`). The preview reflects the FIRST wire call's",
+        "variables (`page: 1`, `pageSize: 20` — always, regardless of the",
+        "caller's `page` / `perPage`, which slice the post-filter result).",
       ].join("\n"),
       inputSchema: {
         page: PAGE_FIELD,
@@ -392,15 +402,24 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       if (args.page !== undefined) opts.page = args.page;
       if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
+        // Per #372: the apply path's wire call always uses page=1,
+        // pageSize=20 (the captured-and-verified wire defaults) on the
+        // FIRST internal fetch, then iterates internal pages. The
+        // caller's `page` / `perPage` slice the POST-FILTER list and
+        // never reach the wire. The dry-run preview reflects the
+        // first wire call's variables; filter inputs (skills, etc.)
+        // still thread through verbatim per `buildJobsListVariables`.
+        const fetchOpts: jobs.ListOptions = { ...opts, page: jobs.DEFAULT_PAGE, perPage: jobs.DEFAULT_PER_PAGE };
         return dryRunResponse(
-          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables(opts, {}), auth.token),
+          buildMcpDryRunPreview("JobsList", "mobile-gateway", buildJobsListVariables(fetchOpts, {}), auth.token),
         );
       }
       try {
-        // Issue #369: surface pagination metadata alongside items. See
-        // `ttctl_jobs_list` for the payload-addition rationale.
-        // pageInfo reflects the underlying fetch (pre-`viewed` filter)
-        // per the R1 caveat in the tool description.
+        // Issue #369: surface pagination metadata alongside items.
+        // Issue #372: pageInfo now reflects the POST-FILTER count
+        // (i.e., the real number of viewed jobs), matching what users
+        // intuitively expect from a "viewed jobs" listing. The R1
+        // caveat is documented above; semantics are aggregation-shaped.
         const page = await jobs.viewedList(auth.token, opts);
         return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
       } catch (err) {

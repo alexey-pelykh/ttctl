@@ -19,7 +19,7 @@
  * | `unsave <id>`                 | `ClearJobInterestStatus` (clears all)       |
  * | `saved`                       | `eligibleJobs` (filter saved=true)          |
  * | `markViewed <id>`             | `MarkJobAsViewed`                           |
- * | `viewedList`                  | client-side filter on `eligibleJobs` (R1)   |
+ * | `viewedList`                  | full-pool fetch + client-side filter (R1)   |
  * | `notInterested <id> <reason>` | `MarkJobAsNotInterested`                    |
  * | `notInterestedList`           | `eligibleJobs` (filter notInterested=true)  |
  * | `clearInterest <id>`          | `ClearJobInterestStatus`                    |
@@ -50,11 +50,18 @@
  *
  * **Wire-shape notes:**
  *
- * - **R1 — Viewed-list scope**: `eligibleJobs` exposes no `viewed`
- *   boolean filter, only `notInterested` and `saved`. {@link viewedList}
- *   fetches the first page of jobs and applies a client-side filter on
- *   the `viewed` field. This is best-effort and scoped to the server's
- *   default page size (20). Document in the CLI / MCP help text.
+ * - **R1 — Viewed-list aggregation**: `eligibleJobs` exposes no
+ *   `viewed` boolean filter on `BooleanFilter`, only `notInterested`
+ *   and `saved` (decompile evidence: `research/jadx/sources/fn/x4.java`
+ *   `InitialJobs` operation; `oh.java` `SavedJobs` operation — both
+ *   list filter fields exhaustively, neither uses `viewed`). Per #372,
+ *   {@link viewedList} iterates the FULL eligibleJobs pool, applies a
+ *   client-side filter on `viewed === true`, dedups by job id, and
+ *   slices to the caller's `page` / `perPage`. `JobListPage.totalCount`
+ *   reflects the post-filter total. Cost: O(N/20) wire calls per
+ *   invocation, capped at `VIEWED_LIST_MAX_INTERNAL_PAGES = 50`
+ *   internal pages (~1000 eligible jobs scanned worst-case). This is
+ *   the explicit stop-gap until Toptal exposes a wire-level filter.
  *
  * - **R2 — Search subscription cardinality**: `viewer.searchSubscription`
  *   is a single nullable object, not a list. The platform supports ONE
@@ -66,14 +73,18 @@
  *   (cosmetic, no wire field) and an optional `<id>` on remove (ignored,
  *   only one subscription exists).
  *
- * **Pagination (#138)**: `list` / `saved` / `notInterestedList` /
- * `viewedList` accept optional `{ page?, perPage? }` in {@link
- * ListOptions} (1-indexed user-facing; translated to 0-indexed wire
- * `eligibleJobs.page` inside {@link buildListVariables}). Defaults are
- * `page: 1, perPage: 20` — matching the pre-#138 hardcoded values. The
- * service returns {@link JobListPage} carrying `{items, totalCount,
- * page, perPage}` so the CLI layer can render the offset-style
- * `pageInfo` block in the list envelope.
+ * **Pagination (#138)**: `list` / `saved` / `notInterestedList` accept
+ * optional `{ page?, perPage? }` in {@link ListOptions} (1-indexed
+ * user-facing; threaded verbatim into the wire's `eligibleJobs.page`
+ * inside {@link buildListVariables}). Defaults are `page: 1, perPage:
+ * 20` — matching the pre-#138 hardcoded values. The service returns
+ * {@link JobListPage} carrying `{items, totalCount, page, perPage}`
+ * so the CLI layer can render the offset-style `pageInfo` block in
+ * the list envelope. {@link viewedList} accepts the same shape but
+ * `page` / `perPage` slice the POST-FILTER aggregated list (per #372
+ * — the wire has no `viewed` filter, so the function iterates ALL
+ * underlying pages and applies a client-side filter); `totalCount`
+ * is the post-filter total.
  *
  * **Out of scope for v1**:
  * - Application funnel (`jobs apply` etc.) — lives in `applications`
@@ -1062,26 +1073,108 @@ export async function notInterestedList(token: string, opts: ListOptions = {}): 
 }
 
 /**
+ * Safety cap on the number of underlying `JobsList` page fetches
+ * {@link viewedList} will issue while aggregating the viewed-jobs
+ * pool. With the wire's default page size (20), this caps the total
+ * pool scanned at ~`VIEWED_LIST_MAX_INTERNAL_PAGES * 20 = 1000` jobs.
+ * Pathologically-large pools cease iteration with a `console.warn`;
+ * the returned slice reflects only the pages scanned. Conservative
+ * upper bound — empirically, no test account in the project has more
+ * than a few hundred eligible jobs, so the cap is academic in
+ * practice and exists only to bound the worst case if the wire's
+ * `totalCount` ever drifts from `hasNextPage` reality.
+ */
+const VIEWED_LIST_MAX_INTERNAL_PAGES = 50;
+
+/**
  * List jobs marked as viewed.
  *
- * **R1 — Wire-shape gap**: the `eligibleJobs` query exposes filters
- * only for `saved` and `notInterested`, not `viewed`. This function
- * fetches the requested page of jobs ({@link list}) and applies a
- * client-side filter on the `viewed` boolean. The result is scoped to
- * the items the server returned on that page — pagination shifts the
- * underlying fetch window, but the client-side filter on `viewed`
- * still happens AFTER the page is returned, so the resulting list can
- * be shorter than `perPage`. A wire-level filter would be the right
- * long-term fix and is tracked as a follow-up.
+ * **R1 — Wire-shape limitation**: the `eligibleJobs` query exposes
+ * `BooleanFilter`-typed inputs only on `saved` and `notInterested`.
+ * The Toptal mobile app's `InitialJobs` and `SavedJobs` operations
+ * (decompiled from APK source — see `research/jadx/sources/fn/x4.java`
+ * and `oh.java`) confirm the filter input type carries no `viewed`
+ * field; the wire has no server-side path to filter by `viewed`.
  *
- * Pagination (#138): accepts `opts.page` / `opts.perPage`. The
- * returned {@link JobListPage} carries the `totalCount` of the
- * underlying paginated fetch (pre-filter) — `items.length` reflects
- * the post-filter shape and can be smaller.
+ * **Fallback (per #372)**: this function iterates the FULL eligible-
+ * jobs pool — fetching consecutive `eligibleJobs` pages via {@link
+ * list} until `hasNextPage` is false — applies a client-side filter
+ * on `viewed === true`, and dedups by job id (the wire can return the
+ * same id on adjacent pages near a sort-boundary; see the per-page
+ * note in `24-jobs.e2e.test.ts`). The caller's `opts.page` and
+ * `opts.perPage` then slice the POST-FILTER list, NOT the underlying
+ * fetch — so `JobListPage.totalCount` reflects the post-filter total
+ * (the real count of viewed jobs), matching what users intuitively
+ * expect from a "viewed jobs" listing.
+ *
+ * **Cost trade-off**: O(N/20) wire calls per invocation (one per
+ * underlying page of eligible jobs). Capped at {@link
+ * VIEWED_LIST_MAX_INTERNAL_PAGES} pages for safety. Acceptable as a
+ * stop-gap until Toptal exposes a wire-level `viewed` filter.
+ *
+ * **Internal fetch page size**: always {@link DEFAULT_PER_PAGE} (20),
+ * matching the Toptal mobile app's captured `pageSize`. The caller's
+ * `opts.perPage` controls the OUTPUT slice, not the wire fetch — the
+ * wire's per-page cap is server-enforced and unverified beyond 20.
  */
 export async function viewedList(token: string, opts: ListOptions = {}): Promise<JobListPage> {
-  const page = await list(token, opts);
-  return { ...page, items: page.items.filter((it) => it.viewed === true) };
+  const userPage = opts.page ?? DEFAULT_PAGE;
+  const userPerPage = opts.perPage ?? DEFAULT_PER_PAGE;
+
+  // Filter inputs that DO apply to the underlying eligibleJobs fetch
+  // (skills, keywords, commitments, …) carry through verbatim — they
+  // narrow the underlying pool before the client-side `viewed` pass.
+  // `opts.page` / `opts.perPage` do NOT thread through; they apply
+  // post-filter on the aggregated pool.
+  const fetchOpts: ListOptions = { ...opts };
+  delete fetchOpts.page;
+  delete fetchOpts.perPage;
+
+  const allViewed: JobListItem[] = [];
+  const seenIds = new Set<string>();
+  let internalPage = 1;
+  let exhausted = false;
+
+  while (internalPage <= VIEWED_LIST_MAX_INTERNAL_PAGES) {
+    const result = await list(token, { ...fetchOpts, page: internalPage, perPage: DEFAULT_PER_PAGE });
+
+    for (const item of result.items) {
+      if (item.viewed === true && !seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        allViewed.push(item);
+      }
+    }
+
+    // Two termination signals: (1) the underlying page returned fewer
+    // items than requested (final page); (2) we've scanned through
+    // `totalCount` items total. Either suffices.
+    const scannedItemCount = internalPage * DEFAULT_PER_PAGE;
+    if (result.items.length < DEFAULT_PER_PAGE || scannedItemCount >= result.totalCount) {
+      exhausted = true;
+      break;
+    }
+    internalPage += 1;
+  }
+
+  if (!exhausted) {
+    // Hit the safety cap; the aggregated slice reflects only the
+    // pages scanned. Surface a one-line warning on stderr so
+    // ops-debugging users notice the truncation; the JSON envelope
+    // is unaffected (the slice is still valid, just incomplete).
+    console.warn(
+      `[ttctl] jobs.viewedList: hit internal fetch cap (${VIEWED_LIST_MAX_INTERNAL_PAGES.toString()} pages × ${DEFAULT_PER_PAGE.toString()} items). Returning post-filter slice over the first ${(VIEWED_LIST_MAX_INTERNAL_PAGES * DEFAULT_PER_PAGE).toString()} eligible jobs only.`,
+    );
+  }
+
+  // Slice the aggregated post-filter list to the caller's requested page.
+  const start = (userPage - 1) * userPerPage;
+  const sliced = allViewed.slice(start, start + userPerPage);
+  return {
+    items: sliced,
+    totalCount: allViewed.length,
+    page: userPage,
+    perPage: userPerPage,
+  };
 }
 
 /**

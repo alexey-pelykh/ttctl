@@ -121,19 +121,25 @@ export async function runJobsSaved(opts: JobsSavedOptions): Promise<void> {
 
 /**
  * Action handler for `ttctl jobs viewed`. Wraps `jobs.viewedList()`
- * (which fetches the requested page and filters client-side on
- * `viewed`).
+ * (which aggregates the FULL eligibleJobs pool and applies a client-
+ * side filter on `viewed`, per #372).
  *
- * **Wire-shape gap (R1)**: `eligibleJobs` has no `viewed:
- * BooleanFilter`. The output is scoped to the requested page; the
- * post-filter list can be shorter than `--per-page`. A follow-up issue
- * tracks the wire-level filter.
+ * **Wire-shape limitation (R1, #372)**: `eligibleJobs` has no
+ * `viewed: BooleanFilter` (confirmed empirically — the Toptal mobile
+ * app's `InitialJobs` operation lists filter fields exhaustively, no
+ * `viewed`). The service iterates ALL underlying pages, applies the
+ * client-side filter, dedups by id, then slices to the caller's
+ * `--page` / `--per-page`.
  *
- * **Pagination (#138, refactored per-command in #183)**: the
- * `totalCount` in `pageInfo` reflects the UNDERLYING fetch (pre-
- * filter). When the post-filter `items.length` differs from
- * `pageInfo.perPage`, that's the R1 narrowing — not a pagination
- * error.
+ * **Pagination (#138, refactored per-command in #183, semantics
+ * refined in #372)**: `--page` and `--per-page` now slice the
+ * POST-FILTER list. `pageInfo.totalCount` reflects the count of
+ * viewed jobs (not the underlying pool); `items.length` matches the
+ * caller's `--per-page` request (modulo final-page truncation), no
+ * R1-style narrowing.
+ *
+ * **Cost**: O(N/20) wire calls per invocation. Acceptable as a
+ * stop-gap; tracked at #372 until Toptal exposes a wire-level filter.
  */
 export async function runJobsViewed(opts: JobsViewedOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("jobs viewed", opts.output);

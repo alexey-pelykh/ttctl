@@ -232,9 +232,10 @@ describe("jobs.saved / notInterestedList", () => {
   });
 });
 
-describe("jobs.viewedList", () => {
-  it("client-side filters on viewed=true; pagination metadata reflects underlying fetch", async () => {
+describe("jobs.viewedList (#372: full-pool aggregation + client-side filter)", () => {
+  it("filters on viewed=true and returns post-filter totalCount on a single-page pool", async () => {
     const viewedEntity = { ...JOB_LIST_ENTITY, id: "job-2", viewed: true };
+    // Single-page pool: 2 items, of which 1 viewed; totalCount=2 (less than perPage=20 → final page).
     reply({
       body: {
         data: {
@@ -248,20 +249,146 @@ describe("jobs.viewedList", () => {
     const page = await viewedList(TOKEN);
     expect(page.items).toHaveLength(1);
     expect(page.items[0]?.id).toBe("job-2");
-    // totalCount reflects the UNDERLYING fetch (pre-filter), not the post-filter count.
-    expect(page.totalCount).toBe(2);
+    // Post-#372: totalCount reflects the POST-FILTER count (the real number of viewed jobs).
+    expect(page.totalCount).toBe(1);
     expect(page.page).toBe(1);
     expect(page.perPage).toBe(20);
+    // Single underlying fetch — final page is detected via items.length < perPage.
+    expect(mockedStock.mock.calls).toHaveLength(1);
   });
 
-  it("threads --page / --per-page through to the underlying list() call", async () => {
+  it("aggregates across multiple underlying pages; dedups by job id", async () => {
+    // 3 underlying pages: page 1 (20 items, 5 viewed + 1 dup of page 2),
+    // page 2 (20 items, 3 viewed + 1 dup of page 1), page 3 (5 items, 2 viewed).
+    // Expected post-filter: 5 + 3 + 2 = 10 candidates - 1 dup = 9 viewed jobs.
+    const makePageEntities = (idPrefix: string, count: number, viewedIds: string[]): unknown[] => {
+      return Array.from({ length: count }, (_, i) => ({
+        ...JOB_LIST_ENTITY,
+        id: `${idPrefix}-${(i + 1).toString()}`,
+        viewed: viewedIds.includes(`${idPrefix}-${(i + 1).toString()}`),
+      }));
+    };
+    // Page 1: ids p1-1..p1-20. Viewed: p1-2, p1-5, p1-10, p1-15, p1-20. Total pool: 45.
+    const page1Entities = makePageEntities("p1", 20, ["p1-2", "p1-5", "p1-10", "p1-15", "p1-20"]);
+    // Page 2: ids p2-1..p2-20 plus p1-20 dup (Toptal can repeat ids near sort boundary).
+    // Viewed: p2-3, p2-7, p1-20 (dup, will be deduped).
+    const page2Entities = [
+      ...makePageEntities("p2", 19, ["p2-3", "p2-7"]),
+      { ...JOB_LIST_ENTITY, id: "p1-20", viewed: true }, // duplicate already seen on page 1
+    ];
+    // Page 3: ids p3-1..p3-5. Viewed: p3-1, p3-4.
+    const page3Entities = makePageEntities("p3", 5, ["p3-1", "p3-4"]);
+
+    reply(
+      {
+        body: {
+          data: {
+            viewer: { id: "v1", eligibleJobs: { entities: page1Entities, totalCount: 45 } },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            viewer: { id: "v1", eligibleJobs: { entities: page2Entities, totalCount: 45 } },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            viewer: { id: "v1", eligibleJobs: { entities: page3Entities, totalCount: 45 } },
+          },
+        },
+      },
+    );
+
+    const page = await viewedList(TOKEN);
+    expect(mockedStock.mock.calls).toHaveLength(3);
+    // 5 + 2 (post-dedup) + 2 = 9 distinct viewed jobs.
+    expect(page.totalCount).toBe(9);
+    // Default page=1, perPage=20 → all 9 returned (less than perPage).
+    expect(page.items).toHaveLength(9);
+    // Sanity: each id is distinct (dedup proof).
+    expect(new Set(page.items.map((it) => it.id)).size).toBe(9);
+    // Verify ordering: page 1 viewed items first (preserves wire ordering), then page 2's new viewed, then page 3's.
+    expect(page.items.map((it) => it.id)).toEqual([
+      "p1-2",
+      "p1-5",
+      "p1-10",
+      "p1-15",
+      "p1-20",
+      "p2-3",
+      "p2-7",
+      "p3-1",
+      "p3-4",
+    ]);
+  });
+
+  it("opts.page / opts.perPage slice the POST-FILTER aggregated list", async () => {
+    // Single page with 25 entities: but only 7 are viewed.
+    // Caller asks for page 2 with perPage 3 → expect items 4-6 (0-indexed 3-5) of the 7 viewed.
+    const entities: unknown[] = [];
+    for (let i = 1; i <= 25; i++) {
+      const isViewed = [2, 4, 7, 10, 13, 19, 25].includes(i);
+      entities.push({ ...JOB_LIST_ENTITY, id: `job-${i.toString()}`, viewed: isViewed });
+    }
+    // Underlying fetch returns 25 items; totalCount=25 → first call's items.length=25 < perPage=20 is FALSE,
+    // but scannedItemCount (1*20=20) < 25, so a second call happens.
+    // We need to set up two replies. Both return the same "remaining" pool — but for testing simplicity,
+    // we make page 1 return 20 items (first 20 of the 25) and page 2 return the remaining 5.
+    const page1Entities = entities.slice(0, 20);
+    const page2Entities = entities.slice(20);
+    reply(
+      {
+        body: {
+          data: { viewer: { id: "v1", eligibleJobs: { entities: page1Entities, totalCount: 25 } } },
+        },
+      },
+      {
+        body: {
+          data: { viewer: { id: "v1", eligibleJobs: { entities: page2Entities, totalCount: 25 } } },
+        },
+      },
+    );
+
+    const page = await viewedList(TOKEN, { page: 2, perPage: 3 });
+    // 7 viewed total; slice (page 2, perPage 3) = items at index 3, 4, 5 = job-10, job-13, job-19.
+    expect(page.totalCount).toBe(7);
+    expect(page.page).toBe(2);
+    expect(page.perPage).toBe(3);
+    expect(page.items.map((it) => it.id)).toEqual(["job-10", "job-13", "job-19"]);
+  });
+
+  it("threads filter inputs (skills, keywords, …) through the underlying list() call but ignores caller's page/perPage on the wire", async () => {
+    // Single underlying page so we don't need multi-reply setup.
     reply({
       body: { data: { viewer: { id: "v1", eligibleJobs: { entities: [], totalCount: 0 } } } },
     });
-    await viewedList(TOKEN, { page: 3, perPage: 7 });
+    await viewedList(TOKEN, { skills: ["React"], keywords: ["remote"], page: 3, perPage: 7 });
     const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
-    expect(body.variables["page"]).toBe(3);
-    expect(body.variables["pageSize"]).toBe(7);
+    // Filter inputs thread through verbatim.
+    expect(body.variables["skills"]).toEqual(["React"]);
+    expect(body.variables["keywords"]).toEqual(["remote"]);
+    // The caller's page/perPage do NOT thread to the wire — the internal fetch always
+    // uses page=1, pageSize=20 (the captured-and-verified wire values).
+    expect(body.variables["page"]).toBe(1);
+    expect(body.variables["pageSize"]).toBe(20);
+  });
+
+  it("returns empty post-filter list when no item has viewed=true", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { id: "v1", eligibleJobs: { entities: [JOB_LIST_ENTITY], totalCount: 1 } },
+        },
+      },
+    });
+    const page = await viewedList(TOKEN);
+    expect(page.items).toEqual([]);
+    expect(page.totalCount).toBe(0);
+    expect(page.page).toBe(1);
+    expect(page.perPage).toBe(20);
   });
 });
 
