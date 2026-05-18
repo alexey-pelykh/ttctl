@@ -8,6 +8,7 @@ import { registerApplicationsTools } from "./applications.js";
 import { registerAvailabilityTools } from "./availability.js";
 import { registerContractsTools } from "./contracts.js";
 import { registerEngagementsTools } from "./engagements.js";
+import { registerInterestRequestsTools } from "./interest_requests.js";
 import { registerJobsTools } from "./jobs.js";
 import { registerPaymentsTools } from "./payments.js";
 import { registerTimesheetTools } from "./timesheet.js";
@@ -57,8 +58,9 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * sub-domain registering its full leaf set) + 8 `profile.portfolio` +
  * 4 `profile.visas` + 2 `profile.resume` (#75) + 6 `profile.external` +
  * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
- * 3 `applications` (#15) + 8 `engagements` (#147 + #155 + #156) + 5 `availability`
- * (#146 amended) + 13 `jobs` (#148) + 3 `timesheet` (#13) = 88 tools total.
+ * 3 `applications` (#15) + 1 `interest_requests` (#371) + 8 `engagements`
+ * (#147 + #155 + #156) + 5 `availability` (#146 amended) + 13 `jobs` (#148)
+ * + 3 `timesheet` (#13) = 89 tools total.
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`
@@ -112,6 +114,12 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // Toptal Talent Activity view (TalentJobActivityItem rows). Per
   // project non-goals, no apply / withdraw / edit tools are exposed.
   registerApplicationsTools(server, ctx);
+
+  // interest_requests — 1 leaf (#371). LLM-agent affordance for the
+  // UI-level "Interest Request" concept. Thin projection over
+  // `applications.list({ statusGroups: ["ON_RECRUITER_REVIEW"] })`
+  // with an optional client-side staleness filter; no new wire op.
+  registerInterestRequestsTools(server, ctx);
 
   // contracts — 2 leaves (#195). Read-only talent-level legal documents
   // (Toptal Direct, MSA, etc.) via `viewer.contracts` on the portal

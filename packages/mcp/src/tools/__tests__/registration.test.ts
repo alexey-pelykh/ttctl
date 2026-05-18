@@ -109,6 +109,9 @@ const EXPECTED_TOOLS = [
   "ttctl_applications_list",
   "ttctl_applications_show",
   "ttctl_applications_stats",
+  // interest_requests (#371) — 1 LLM-agent affordance over the
+  // ON_RECRUITER_REVIEW status-group projection of applications.list
+  "ttctl_interest_requests_list",
   // contracts (#195) — 2 read-only tools at top-level (talent-level legal
   // documents via `viewer.contracts` on the portal surface; distinct from
   // the engagement-attached `EngagementAgreement` surfaced by engagements_show)
@@ -194,7 +197,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (102 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (103 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 1 #371 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

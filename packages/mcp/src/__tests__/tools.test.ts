@@ -46,6 +46,10 @@ import { registerAllTools } from "../tools/index.js";
  * Post-#341: + 3 list tools (employment.list / education.list /
  * certifications.list) closing the matching Class A surface-shape gaps =
  * 102 tools total.
+ *
+ * Post-#371: + 1 interest_requests.list tool (LLM-agent affordance over the
+ * ON_RECRUITER_REVIEW projection of applications.list — no new wire op,
+ * client-side staleness filter) = 103 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -60,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (102 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (103 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 1 #371 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -88,6 +92,9 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_engagements_list",
       "ttctl_engagements_show",
       "ttctl_engagements_stats",
+      // #371 — interest_requests (1, LLM-agent affordance over the
+      // ON_RECRUITER_REVIEW projection of applications.list).
+      "ttctl_interest_requests_list",
       // #148 — jobs (13, browse + interest + search subscription)
       "ttctl_jobs_clear_interest",
       "ttctl_jobs_list",
