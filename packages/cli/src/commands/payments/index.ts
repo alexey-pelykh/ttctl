@@ -8,9 +8,28 @@ import { payments } from "@ttctl/core";
 import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
+import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runPaymentsMethodsList, runPaymentsMethodsShow } from "./methods.js";
 import { runPaymentsPayoutsList, runPaymentsPayoutsShow } from "./payouts.js";
 import { runPaymentsRateChange, runPaymentsRateQuestions, runPaymentsRateShow } from "./rate.js";
+
+/**
+ * Page-number option factory (#373, mirroring jobs/index.ts #183).
+ * `payouts list` declares its own `--page` / `--per-page`; the parser
+ * (`parsePaginationFlag`) and description are shared with the jobs
+ * leaves so the surfaces stay byte-identical in `--help` output.
+ * Leaves whose wire op does not paginate simply do not declare the
+ * flags (Commander then emits `error: unknown option '--page'`).
+ */
+function pageOption(): Option {
+  return new Option("--page <number>", "page number (1-indexed)").argParser((raw) =>
+    parsePaginationFlag("--page", raw),
+  );
+}
+
+function perPageOption(): Option {
+  return new Option("--per-page <number>", "items per page").argParser((raw) => parsePaginationFlag("--per-page", raw));
+}
 
 /**
  * Build the `ttctl payments` command tree (#149). Seven leaves across
@@ -53,18 +72,24 @@ export function buildPaymentsCommand(): Command {
 
   payouts
     .command("list")
-    .description("List historical payouts (default: server order, most-recent first)")
+    .description(
+      "List historical payouts (paginated via --page / --per-page; default: server order, most-recent first)",
+    )
     .option("--from <date>", "filter by createdOn lower bound (inclusive YYYY-MM-DD)")
     .option("--to <date>", "filter by createdOn upper bound (inclusive YYYY-MM-DD)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
-    .action(async (options: { from?: string; to?: string; output: OutputFormat }) => {
+    .action(async (options: { from?: string; to?: string; page?: number; perPage?: number; output: OutputFormat }) => {
       const listOpts: import("./payouts.js").PaymentsPayoutsListOptions = { output: options.output };
       if (options.from !== undefined) listOpts.from = options.from;
       if (options.to !== undefined) listOpts.to = options.to;
+      if (options.page !== undefined) listOpts.page = options.page;
+      if (options.perPage !== undefined) listOpts.perPage = options.perPage;
       await runPaymentsPayoutsList(listOpts);
     });
 

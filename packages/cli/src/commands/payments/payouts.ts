@@ -26,6 +26,8 @@ import { handlePaymentsError, loadAuthTokenOrExit } from "./shared.js";
 export interface PaymentsPayoutsListOptions {
   from?: string;
   to?: string;
+  page?: number;
+  perPage?: number;
   output: OutputFormat;
 }
 
@@ -35,6 +37,8 @@ export async function runPaymentsPayoutsList(opts: PaymentsPayoutsListOptions): 
   const listOpts: payments.ListPayoutsOptions = {};
   if (opts.from !== undefined) listOpts.fromDate = opts.from;
   if (opts.to !== undefined) listOpts.toDate = opts.to;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
   let result: payments.PayoutsListResult;
   try {
@@ -43,11 +47,61 @@ export async function runPaymentsPayoutsList(opts: PaymentsPayoutsListOptions): 
     handlePaymentsError("payments payouts list", err, opts.output);
   }
 
-  emitResult(wrapListEnvelope(result.items), opts.output, {
-    pretty: (data) => formatPayoutsBlock(data.items, result.summary),
-    table: (data) => formatPayoutsTable(data.items),
+  const pageInfo = buildPayoutsPageInfo(result);
+  emitResult(wrapListEnvelope(result.items, pageInfo), opts.output, {
+    pretty: (data) => withPayoutsFooter(formatPayoutsBlock(data.items, result.summary), result),
+    table: (data) => withPayoutsFooter(formatPayoutsTable(data.items), result),
     empty: { command: "payments.payouts.list" },
   });
+}
+
+/**
+ * Append the offset-style pagination footer ("Page X of Y
+ * (per_page=Z)") below a rendered payouts body (#373), mirroring
+ * `renderJobsListPretty` in `commands/jobs/list.ts`. The footer is
+ * appended ONLY when `totalCount > 0` — empty pages route through the
+ * `emitResult` empty-state CTA before this closure runs, so the
+ * `<= 0` guard is belt-and-suspenders.
+ */
+function withPayoutsFooter(body: string, result: payments.PayoutsListResult): string {
+  if (result.totalCount <= 0) return body;
+  return `${body}\n${formatPayoutsPageFooter(result.page, result.perPage, result.totalCount)}`;
+}
+
+/**
+ * Render the pretty-format pagination footer for paginated payouts
+ * lists (#373). Pure — directly unit-testable. `totalPages` is derived
+ * as `Math.max(1, Math.ceil(totalCount / perPage))` so a single-page
+ * result with `totalCount > 0` renders "Page 1 of 1". Parallels
+ * `formatPageFooter` in `commands/jobs/shared.ts`.
+ */
+export function formatPayoutsPageFooter(currentPage: number, perPage: number, totalCount: number): string {
+  const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+  return `Page ${currentPage.toString()} of ${totalPages.toString()} (per_page=${perPage.toString()})`;
+}
+
+/**
+ * Build the offset-style `pageInfo` block for the list envelope (#373)
+ * from the service-layer's {@link payments.PayoutsListResult}. Wraps
+ * the `totalPages` / `hasNextPage` arithmetic so the action handler and
+ * the unit tests share one source of truth. Parallels
+ * `buildJobsPageInfo` in `commands/jobs/shared.ts`.
+ *
+ * Pure — directly unit-testable.
+ */
+export function buildPayoutsPageInfo(result: payments.PayoutsListResult): {
+  currentPage: number;
+  perPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+} {
+  const totalPages = Math.max(1, Math.ceil(result.totalCount / result.perPage));
+  return {
+    currentPage: result.page,
+    perPage: result.perPage,
+    totalPages,
+    hasNextPage: result.page < totalPages,
+  };
 }
 
 /**

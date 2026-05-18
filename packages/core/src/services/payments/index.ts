@@ -212,11 +212,23 @@ export interface PayoutsSummary {
 
 /**
  * Result of `payouts.list`. Carries the projected payout rows + the
- * server-provided summary aggregates for the same filter window.
+ * server-provided summary aggregates for the same filter window, plus
+ * the offset-style pagination metadata (#373) so the CLI / MCP layer
+ * can render `pageInfo` (mirrors {@link jobs.JobListPage}).
+ *
+ * `totalCount` is the server-reported size of the full filtered result
+ * set (NOT `items.length`, which is one page). `page` / `perPage` are
+ * the effective values used in the query after defaults were applied.
  */
 export interface PayoutsListResult {
   items: Payout[];
   summary: PayoutsSummary;
+  /** Total payouts matching the filter window, across all pages. */
+  totalCount: number;
+  /** 1-indexed page number actually requested. */
+  page: number;
+  /** Items per page actually requested. */
+  perPage: number;
 }
 
 /**
@@ -229,13 +241,40 @@ export interface PayoutsListResult {
  * `PaymentFilter` input has `Unknown`-typed fields for them so the wire
  * shape is unverified. If users ask, add them in a follow-up after a
  * live-capture confirms the value enum.
+ *
+ * Pagination (#373): `page` (1-indexed) and `perPage` are translated to
+ * the wire's `offsetPagination: { offset: (page-1)*perPage, limit:
+ * perPage }`. Defaults `page: 1, perPage: 20` reproduce the pre-#373
+ * hard-coded `offset: 0, limit: 20` behavior exactly.
  */
 export interface ListPayoutsOptions {
   /** Inclusive lower bound (YYYY-MM-DD). */
   fromDate?: string;
   /** Inclusive upper bound (YYYY-MM-DD). */
   toDate?: string;
+  /**
+   * 1-indexed page number (#373). Translated to the wire's
+   * `offsetPagination.offset` as `(page - 1) * perPage`. Default `1`.
+   */
+  page?: number;
+  /**
+   * Items per page (#373). Forwarded to the wire's
+   * `offsetPagination.limit`. Default `20`, matching the pre-#373
+   * hard-coded value.
+   */
+  perPage?: number;
 }
+
+/**
+ * Default values for {@link ListPayoutsOptions} pagination fields when
+ * the caller does not specify them. Mirrors the pre-#373 hard-coded
+ * wire literals (`offset: 0, limit: 20` → `page: 1, perPage: 20`
+ * user-facing). Exposed so tests + the MCP dry-run preview assert
+ * against the same constants the production code uses (parallels
+ * {@link jobs.DEFAULT_PAGE} / {@link jobs.DEFAULT_PER_PAGE}).
+ */
+export const DEFAULT_PAGE = 1 as const;
+export const DEFAULT_PER_PAGE = 20 as const;
 
 // ---------------------------------------------------------------------
 // Public types — methods namespace
@@ -470,8 +509,24 @@ export type RateChangeOutcome = RateChangeAppliedOutcome | RateChangeDryRunOutco
 // possible. Hand-authored ops carry a doc-string note.
 // ---------------------------------------------------------------------
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/Payments.graphql`.
-const PAYMENTS_QUERY = `query Payments($filters: PaymentFilter) { viewer { __typename id payments(offsetPagination: { offset: 0 limit: 20 } , filters: $filters) { __typename ...paymentsData } } }  fragment paymentFields on TalentPayment { __typename amount correctionAmount billingCycle { __typename id endDate startDate } description job { __typename id title client { __typename id fullName } } memorandums { __typename nodes { __typename amount balance downloadPdfUrl effectiveDate id } } kindCategory paymentGroupId createdAt updatedAt downloadPdfUrl dueDate paidAt id number status }  fragment paymentsData on PaymentsConnection { __typename ids nodes { __typename ...paymentFields } summary { __typename totalDisputed totalDue totalOnHold totalOutstanding totalOverdue totalPaid } }`;
+// Adapted from `../research/graphql/gateway/operations/mobile/Payments.graphql`
+// (#373): the captured mobile op hard-codes `offsetPagination: { offset: 0
+// limit: 20 }` and omits `totalCount`. Parameterized here to `$offset` /
+// `$limit` and `paymentsData` extended with `totalCount` so callers can
+// paginate and render `pageInfo` (mirrors the #138/#183 `eligibleJobs`
+// pattern for `jobs list`).
+//
+// The variable-driven `offsetPagination` shape and the `totalCount`
+// selection are NOT in the captured MOBILE document, BUT both are
+// directly attested by the captured PORTAL op
+// `../research/graphql/gateway/operations/portal/GetTalentPayments.graphql`,
+// which targets the SAME gateway backend's `payments` connection with
+// `payments(offsetPagination: {limit: $limit, offset: $offset}, …)`
+// (`$limit: Int!`, `$offset: Int!`) and selects `totalCount` directly on
+// the connection. Per CLAUDE.md § Schema/contract validation rule this is
+// still an INFERRED wire shape for the mobile op until a live `TTCTL_E2E=1`
+// round-trip confirms it — see `packages/e2e/src/30-payments-payouts.e2e.test.ts`.
+const PAYMENTS_QUERY = `query Payments($filters: PaymentFilter, $offset: Int!, $limit: Int!) { viewer { __typename id payments(offsetPagination: { offset: $offset limit: $limit } , filters: $filters) { __typename ...paymentsData } } }  fragment paymentFields on TalentPayment { __typename amount correctionAmount billingCycle { __typename id endDate startDate } description job { __typename id title client { __typename id fullName } } memorandums { __typename nodes { __typename amount balance downloadPdfUrl effectiveDate id } } kindCategory paymentGroupId createdAt updatedAt downloadPdfUrl dueDate paidAt id number status }  fragment paymentsData on PaymentsConnection { __typename ids nodes { __typename ...paymentFields } summary { __typename totalDisputed totalDue totalOnHold totalOutstanding totalOverdue totalPaid } totalCount }`;
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/Payment.graphql`.
 const PAYMENT_QUERY = `query Payment($id: ID!) { node(id: $id) { __typename ... on TalentPayment { ...paymentFields } } }  fragment paymentFields on TalentPayment { __typename amount correctionAmount billingCycle { __typename id endDate startDate } description job { __typename id title client { __typename id fullName } } memorandums { __typename nodes { __typename amount balance downloadPdfUrl effectiveDate id } } kindCategory paymentGroupId createdAt updatedAt downloadPdfUrl dueDate paidAt id number status }`;
@@ -566,6 +621,17 @@ interface WirePayment {
 interface WirePaymentsConnection {
   nodes: (WirePayment | null)[] | null;
   summary: PayoutsSummary | null;
+  // `ids: [ID]!` is in the captured mobile `paymentsData` fragment — the
+  // full id list across ALL pages (offset-pagination prefetch handle,
+  // per research/notes/03-applications.md §86). Non-inferred; used as the
+  // grounded `totalCount` fallback when the connection omits `totalCount`.
+  ids?: (string | null)[] | null;
+  // `totalCount` is NOT in the synthesized SDL's `PaymentsConnection`
+  // (schema.graphql) but IS selected by the captured portal op
+  // `GetTalentPayments`. INFERRED for the mobile op until E2E confirms —
+  // optional + nullable so a server omission degrades to the `ids`
+  // fallback rather than throwing.
+  totalCount?: number | null;
 }
 
 interface PaymentsListResponse {
@@ -946,37 +1012,56 @@ function projectRateQuestion(wire: WireRateChangeQuestion): RateQuestion {
  */
 export const payouts = {
   /**
-   * List historical payouts. Default pagination is the captured wire
-   * shape: `offset: 0 limit: 20` (hardcoded in the operation). The
-   * server returns the most recent 20 paid/due payouts by default;
-   * date filtering narrows the window.
+   * List historical payouts (paginated, #373). `opts.page` (1-indexed)
+   * and `opts.perPage` translate to the wire's `offsetPagination: {
+   * offset: (page-1)*perPage, limit: perPage }`. Defaults `page: 1,
+   * perPage: 20` reproduce the pre-#373 hard-coded `offset: 0, limit:
+   * 20` behavior exactly, so existing callers see no behavioral change.
    *
    * Filter map: `fromDate` / `toDate` flow into the wire's
    * `filters.createdOn` field, which expects an inclusive-on-both-ends
    * `DateFilter` shape `{from?: Date, to?: Date}`. Empty filter object
-   * (`opts === {}`) sends `filters: null` per Toptal convention.
+   * (no date fields) sends `filters: null` per Toptal convention.
    *
-   * Returns an array of {@link Payout} rows AND the server-provided
-   * {@link PayoutsSummary} aggregates for the same filter window —
-   * surfacing both lets the CLI render a summary line above the table
-   * without a second round-trip.
+   * Returns the projected {@link Payout} rows, the server-provided
+   * {@link PayoutsSummary} aggregates for the same filter window, AND
+   * the offset-style pagination metadata (`totalCount`, `page`,
+   * `perPage`) so the CLI / MCP layer can render `pageInfo` without a
+   * second round-trip.
+   *
+   * `totalCount` derivation (the wire's synthesized SDL omits it on
+   * `PaymentsConnection`, but the captured portal op selects it — see
+   * `PAYMENTS_QUERY` note): prefer the connection's `totalCount`; fall
+   * back to the captured `ids` array length (the full cross-page id
+   * list); final fallback to the current page's item count.
    */
   async list(token: string, opts: ListPayoutsOptions = {}): Promise<PayoutsListResult> {
+    const page = opts.page ?? DEFAULT_PAGE;
+    const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
     const hasFilter = opts.fromDate !== undefined || opts.toDate !== undefined;
     const variables: Record<string, unknown> = {
       filters: hasFilter ? { createdOn: { from: opts.fromDate ?? null, to: opts.toDate ?? null } } : null,
+      offset: (page - 1) * perPage,
+      limit: perPage,
     };
     const data = await callGateway<PaymentsListResponse>(token, "Payments", PAYMENTS_QUERY, variables);
     if (data.viewer === null) {
       throw new PaymentsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
     }
     if (data.viewer.payments === null) {
-      return { items: [], summary: emptyPayoutsSummary() };
+      return { items: [], summary: emptyPayoutsSummary(), totalCount: 0, page, perPage };
     }
-    const nodes = (data.viewer.payments.nodes ?? []).filter((n): n is WirePayment => n !== null);
+    const conn = data.viewer.payments;
+    const nodes = (conn.nodes ?? []).filter((n): n is WirePayment => n !== null);
+    const items = nodes.map(projectPayout);
+    const totalCount =
+      typeof conn.totalCount === "number" ? conn.totalCount : conn.ids != null ? conn.ids.length : items.length;
     return {
-      items: nodes.map(projectPayout),
-      summary: data.viewer.payments.summary ?? emptyPayoutsSummary(),
+      items,
+      summary: conn.summary ?? emptyPayoutsSummary(),
+      totalCount,
+      page,
+      perPage,
     };
   },
 
