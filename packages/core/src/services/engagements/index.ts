@@ -320,6 +320,7 @@ export interface ListOptions {
 export interface AddBreakOptions {
   startDate: string;
   endDate: string;
+  // write-only: platform-level Class B asymmetry. TalentEngagementBreak has no read-side field that surfaces this value — neither `reason`, `reasonIdentifier`, `breakReason`, `feedbackReason`, `reasonId`, nor `reasonText` are valid selections (all 6 rejected with `Cannot query field` on the live mobile-gateway, 2026-05-18). The canonical Android mobile client's captured `engagementBreakData` fragment (research/graphql/gateway/operations/mobile/EngagementBreaks.graphql) selects only id/startDate/endDate/comment/operations — confirming Toptal's own client does not echo reason either. PR #355 attempted to add a read-side echo and was reverted in #360. See #346.
   reasonIdentifier: string;
   comment?: string;
 }
