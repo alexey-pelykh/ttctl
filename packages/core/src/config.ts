@@ -174,9 +174,11 @@ export type TtctlConfigWritable = z.infer<typeof ConfigWriteSchema>;
  *                    file is at an unsafe location (sync-root, symlink) per
  *                    the security gates in the resolution chain.
  *   - `LOCKED`     — advisory write-back lock could not be acquired within
- *                    the contention budget (≤1s). Another ttctl process
- *                    (CLI signin or long-running MCP tool call) holds the
- *                    sibling lockfile. Retry the operation.
+ *                    the contention budget (≤1s on macOS/Linux, ≤3s on
+ *                    Windows — see `configLock.ts` LOCK_RETRY_OPTIONS).
+ *                    Another ttctl process (CLI signin or long-running MCP
+ *                    tool call) holds the sibling lockfile. Retry the
+ *                    operation.
  */
 export type ConfigErrorCode = "NO_CREDS" | "PARSE" | "VALIDATION" | "PERMISSION" | "LOCKED";
 

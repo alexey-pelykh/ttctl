@@ -110,8 +110,10 @@ describe("configLock — cross-process race serialization", () => {
     const T2 = "user_proc_bbb_222222222222222222222";
 
     // Both forks start in parallel via Promise.all. The OS scheduler decides
-    // which mkdir wins the race; the loser retries up to ≤1.25s. With
-    // typical persist ≤200ms, both complete well within budget.
+    // which mkdir wins the race; the loser retries up to ≤1.25s on
+    // macOS/Linux or ≤3.75s on Windows (#362 Windows scheduler-variance
+    // carve-out in `configLock.ts` LOCK_RETRY_OPTIONS). With typical
+    // persist ≤200ms, both complete well within budget.
     const [r1, r2] = await Promise.all([runWorker(configPath, T1), runWorker(configPath, T2)]);
 
     // Both workers must exit 0 — neither saw LOCKED contention timeout.
@@ -149,7 +151,9 @@ describe("configLock — cross-process race serialization", () => {
     // slower hosts (Windows CI, loaded macOS) P1's persist may take long
     // enough that P2 acquires the lock and writes last. The lock invariant
     // is "no interleaving / no corruption", not "P2 wins". Same relaxed
-    // assertion as the sibling concurrent test above.
+    // assertion as the sibling concurrent test above. Per #362 the Windows
+    // lock budget is 3x the macOS/Linux envelope, which absorbs scheduler
+    // variance that previously starved P2's mkdir retries on Windows CI.
     const [r1, r2] = await Promise.all([runWorker(configPath, T1, 0), runWorker(configPath, T2, 50)]);
 
     expect(r1.exitCode, `worker 1 stderr: ${r1.stderr}`).toBe(0);
@@ -167,19 +171,20 @@ describe("configLock — cross-process race serialization", () => {
   }, 30_000);
 
   // `retry: 3` (#270) — three concurrent OS workers contending for the same
-  // `proper-lockfile` advisory lock occasionally exhaust the ≤1.25s retry
-  // budget on Windows CI runners (Azure-hosted, shared, more variable
-  // scheduler than Linux/macOS). The lock primitive itself is correct —
-  // contention timeout surfaces as `ConfigError(LOCKED)` per the design — but
-  // for an integration test asserting the happy-path invariant ("no
-  // corruption, exactly one winner"), the LOCKED outcome is environmental
-  // noise rather than a genuine assertion failure. Re-running the test up to
-  // 3 times re-randomizes the OS scheduler race. The sibling 2-worker tests
-  // ("two concurrent ... serialize cleanly" and "staged race") are NOT
-  // marked retry — those have tighter contention windows AND are known-
-  // passing on Windows per the issue body. A real fix at the
-  // `proper-lockfile` layer (issue #270 Option B) is tracked as a follow-up;
-  // this retry is the Option A flake-buster.
+  // `proper-lockfile` advisory lock occasionally exhaust the retry budget on
+  // Windows CI runners (Azure-hosted, shared, more variable scheduler than
+  // Linux/macOS). The lock primitive itself is correct — contention timeout
+  // surfaces as `ConfigError(LOCKED)` per the design — but for an
+  // integration test asserting the happy-path invariant ("no corruption,
+  // exactly one winner"), the LOCKED outcome is environmental noise rather
+  // than a genuine assertion failure. Re-running the test up to 3 times re-
+  // randomizes the OS scheduler race. The sibling 2-worker tests ("two
+  // concurrent ... serialize cleanly" and "staged race") are NOT marked
+  // retry — those flaked separately under the older ≤1.25s budget and
+  // were addressed in #362 by raising the underlying Windows lock budget
+  // to ≤3.75s (see `configLock.ts` LOCK_RETRY_OPTIONS). The 3-worker race
+  // retains `retry: 3` because contention is denser (3 workers vs 2) and
+  // the absorbed-variance margin shrinks accordingly.
   it(
     "file remains well-formed after concurrent persist (no truncated/half-written state)",
     { timeout: 60_000, retry: 3 },

@@ -179,13 +179,13 @@ Each config carries its own captured bearer inline (`auth.token`); they cannot c
 
 `ConfigError` carries a discriminator `code` so handlers can branch on the code rather than pattern-match prose messages:
 
-| Code         | When it fires                                                                                                                                 |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NO_CREDS`   | Resolution chain returns nothing, OR the chosen path doesn't exist on disk (`ENOENT`).                                                        |
-| `PARSE`      | YAML parse error (malformed file).                                                                                                            |
-| `VALIDATION` | Schema validation error (wrong shape, missing fields, unknown keys, legacy pre-#107 shape — see [Migration](#migration-from-pre-107-shapes)). |
-| `PERMISSION` | File exists but is inaccessible (`EACCES` / `EPERM`), OR is at an unsafe location (sync-root, symlink, world-writable mode).                  |
-| `LOCKED`     | The advisory cross-process write-back lock could not be acquired within the ≤1s contention budget. Retry the operation.                       |
+| Code         | When it fires                                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NO_CREDS`   | Resolution chain returns nothing, OR the chosen path doesn't exist on disk (`ENOENT`).                                                                   |
+| `PARSE`      | YAML parse error (malformed file).                                                                                                                       |
+| `VALIDATION` | Schema validation error (wrong shape, missing fields, unknown keys, legacy pre-#107 shape — see [Migration](#migration-from-pre-107-shapes)).            |
+| `PERMISSION` | File exists but is inaccessible (`EACCES` / `EPERM`), OR is at an unsafe location (sync-root, symlink, world-writable mode).                             |
+| `LOCKED`     | The advisory cross-process write-back lock could not be acquired within the contention budget (≤1s on macOS/Linux, ≤3s on Windows). Retry the operation. |
 
 The CLI surfaces the code as the JSON wire-format `code` field. The MCP server includes it in the rendered tool-error text (`(Code: NO_CREDS)`, etc.).
 
@@ -217,14 +217,14 @@ This is informational — it does NOT produce a `PERMISSION`-coded error. The re
 
 The loader (`loadConfigFile`) and writer (`performYamlMutation`) enforce a stack of pre-flight gates. Each gate has a single failure mode and a single recovery action:
 
-| Gate                              | Where it runs            | Failure → Error code                    | Recovery                                                                                                    |
-| --------------------------------- | ------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **World-writable refusal**        | `loadConfigFile` (read)  | `PERMISSION`                            | `chmod 600 <path>`                                                                                          |
-| **Symlink refusal (write-side)**  | `assertSafePath` (write) | `PERMISSION`                            | Replace the symlink with a regular file containing the same auth credentials.                               |
-| **Sync-root refusal**             | `assertSafePath` (write) | `PERMISSION`                            | Move the config out of the sync directory, or set `TTCTL_CONFIG_FILE` to a path elsewhere in your home.     |
-| **Cross-process write-back lock** | `performYamlMutation`    | `LOCKED` (after ≤1s contention)         | Wait briefly and retry.                                                                                     |
-| **Mtime drift detection**         | `performYamlMutation`    | `AuthTokenPersistError` (bearer rescue) | Re-run `auth signin`. Drift means a concurrent writer (manual editor save, backup restore) raced the write. |
-| **Defensive `chmod 0600`**        | `performYamlMutation`    | n/a (always applied)                    | The temp file is opened with mode `0600`; a defensive `chmod(tmp, 0600)` runs before rename.                |
+| Gate                              | Where it runs            | Failure → Error code                                           | Recovery                                                                                                    |
+| --------------------------------- | ------------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **World-writable refusal**        | `loadConfigFile` (read)  | `PERMISSION`                                                   | `chmod 600 <path>`                                                                                          |
+| **Symlink refusal (write-side)**  | `assertSafePath` (write) | `PERMISSION`                                                   | Replace the symlink with a regular file containing the same auth credentials.                               |
+| **Sync-root refusal**             | `assertSafePath` (write) | `PERMISSION`                                                   | Move the config out of the sync directory, or set `TTCTL_CONFIG_FILE` to a path elsewhere in your home.     |
+| **Cross-process write-back lock** | `performYamlMutation`    | `LOCKED` (after ≤1s contention on macOS/Linux, ≤3s on Windows) | Wait briefly and retry.                                                                                     |
+| **Mtime drift detection**         | `performYamlMutation`    | `AuthTokenPersistError` (bearer rescue)                        | Re-run `auth signin`. Drift means a concurrent writer (manual editor save, backup restore) raced the write. |
+| **Defensive `chmod 0600`**        | `performYamlMutation`    | n/a (always applied)                                           | The temp file is opened with mode `0600`; a defensive `chmod(tmp, 0600)` runs before rename.                |
 
 ### World-writable refusal (load-side)
 
@@ -251,7 +251,7 @@ Match is path-segment-boundary-based — a sibling like `~/DropboxOther/` does N
 
 ### Cross-process write-back lock
 
-`persistAuthToken` and `clearAuthToken` acquire an advisory exclusive lock on a sibling `<configPath>.lock` directory (atomic `mkdir`-based, via `proper-lockfile`) before the stat baseline and release it after the rename. Two concurrent ttctl processes (CLI signin + long-running MCP tool call) cannot interleave their write paths. On contention timeout (≤1s), the writer throws `ConfigError(code: LOCKED)` instead of blocking.
+`persistAuthToken` and `clearAuthToken` acquire an advisory exclusive lock on a sibling `<configPath>.lock` directory (atomic `mkdir`-based, via `proper-lockfile`) before the stat baseline and release it after the rename. Two concurrent ttctl processes (CLI signin + long-running MCP tool call) cannot interleave their write paths. On contention timeout (≤1s on macOS/Linux, ≤3s on Windows — see [#362](https://github.com/alexey-pelykh/ttctl/issues/362)), the writer throws `ConfigError(code: LOCKED)` instead of blocking.
 
 ### Mtime drift detection
 

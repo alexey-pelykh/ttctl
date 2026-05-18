@@ -66,7 +66,8 @@ describe("acquireConfigLock", () => {
     const h1 = await acquireConfigLock(configPath);
     try {
       // Second acquire while first is still held → contention, retries
-      // ≤1s, then ELOCKED → ConfigError(LOCKED).
+      // ≤1s on macOS/Linux (≤3s on Windows — see configLock.ts
+      // LOCK_RETRY_OPTIONS), then ELOCKED → ConfigError(LOCKED).
       await expect(acquireConfigLock(configPath)).rejects.toMatchObject({
         name: "ConfigError",
         code: "LOCKED",
@@ -92,7 +93,7 @@ describe("acquireConfigLock", () => {
     }
   });
 
-  it("contention timeout fires within ~1.25s wall-clock budget (NFR-LOCK-1)", async () => {
+  it("contention timeout fires within wall-clock budget (NFR-LOCK-1)", async () => {
     const h1 = await acquireConfigLock(configPath);
     try {
       const start = Date.now();
@@ -101,11 +102,15 @@ describe("acquireConfigLock", () => {
         expect.fail("expected ConfigError(LOCKED)");
       } catch (err) {
         const elapsed = Date.now() - start;
-        // Plan: ≤1.0s. Allow 1.5s ceiling for vitest scheduler jitter +
-        // proper-lockfile's last retry timing. If this fires regularly,
-        // the LOCK_RETRY_OPTIONS budget needs review (or test machine is
-        // wedged — investigate before relaxing the bound).
-        expect(elapsed).toBeLessThan(1500);
+        // Plan: ≤1.0s on macOS/Linux (5 retries × 100-250ms = 500-1250ms),
+        // ≤3.0s on Windows (#362 Windows scheduler-variance carve-out: 15
+        // retries × 100-250ms = 1500-3750ms). Allow a small ceiling buffer
+        // for vitest scheduler jitter + proper-lockfile's last retry
+        // timing. If this fires regularly, the LOCK_RETRY_OPTIONS budget
+        // needs review (or test machine is wedged — investigate before
+        // relaxing the bound).
+        const ceilingMs = process.platform === "win32" ? 4500 : 1500;
+        expect(elapsed).toBeLessThan(ceilingMs);
         expect(err).toBeInstanceOf(ConfigError);
       }
     } finally {
