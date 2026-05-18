@@ -100,7 +100,7 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
         "`createdOn`.",
         "",
         "Paginated (#373): pass `page` (1-indexed, default 1) and `perPage`",
-        "(default 20) to page beyond the first ~20 records. The response is",
+        "(default 20) to page beyond the first 20 records. The response is",
         "`{ items, summary, pageInfo }` where `pageInfo` carries",
         "`currentPage` / `perPage` / `totalPages` / `hasNextPage` — iterate",
         "by incrementing `page` while `pageInfo.hasNextPage` is true.",

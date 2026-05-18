@@ -11,17 +11,25 @@ import { handlePaymentsError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl payments payouts list [--from <date>]
- * [--to <date>]`. Lists historical payouts (default: most-recent first,
- * server order). Optional `--from` / `--to` filter by `createdOn`
- * (inclusive YYYY-MM-DD).
+ * [--to <date>] [--page <number>] [--per-page <number>]`. Lists
+ * historical payouts (default: most-recent first, server order).
+ * Optional `--from` / `--to` filter by `createdOn` (inclusive
+ * YYYY-MM-DD).
  *
- * Returns the payouts wrapped in the v0.4 list envelope. The wire op
- * also returns aggregate summary totals for the same window; the CLI's
- * `pretty` rendering surfaces them as a header line above the table,
- * while `json` / `yaml` carry the bare list shape per envelope contract
- * (the summary is intentionally NOT in the envelope — it's a portal
- * feature; if users ask for it on the wire we'll add a parallel
- * `payments payouts summary` leaf).
+ * Pagination (#373, mirrors jobs #138/#183): reads `--page` /
+ * `--per-page` from the leaf's parsed options. When neither flag is
+ * set, the service applies defaults (`page: 1, perPage: 20`) — the
+ * same byte-shape as the pre-#373 hardcoded `offsetPagination: {
+ * offset: 0, limit: 20 }`.
+ *
+ * Returns the payouts wrapped in the v0.4 list envelope with
+ * `pageInfo: { currentPage, perPage, totalPages, hasNextPage }`. The
+ * wire op also returns aggregate summary totals for the same window;
+ * the CLI's `pretty` rendering surfaces them as a header line above
+ * the table, while `json` / `yaml` carry the bare list shape per
+ * envelope contract (the summary is intentionally NOT in the envelope
+ * — it's a portal feature; if users ask for it on the wire we'll add
+ * a parallel `payments payouts summary` leaf).
  */
 export interface PaymentsPayoutsListOptions {
   from?: string;
