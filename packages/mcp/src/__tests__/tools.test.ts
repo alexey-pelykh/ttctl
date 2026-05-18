@@ -42,6 +42,10 @@ import { registerAllTools } from "../tools/index.js";
  *
  * Post-#343: + 1 profile.external.show tool (read side of external URLs)
  * = 99 tools total.
+ *
+ * Post-#341: + 3 list tools (employment.list / education.list /
+ * certifications.list) closing the matching Class A surface-shape gaps =
+ * 102 tools total.
  */
 describe("MCP tool registration (Wave 3)", () => {
   function listRegisteredToolNames(server: McpServer): string[] {
@@ -56,7 +60,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (99 tools = 58 wave-3 profile + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (102 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -113,22 +117,25 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_basic_photo_upload",
       "ttctl_profile_basic_show",
       "ttctl_profile_basic_update",
-      // #74 — profile.certifications (5)
+      // #74 — profile.certifications (6, +list #341)
       "ttctl_profile_certifications_add",
       "ttctl_profile_certifications_highlight",
+      "ttctl_profile_certifications_list",
       "ttctl_profile_certifications_remove",
       "ttctl_profile_certifications_show",
       "ttctl_profile_certifications_update",
-      // #74 — profile.education (5)
+      // #74 — profile.education (6, +list #341)
       "ttctl_profile_education_add",
       "ttctl_profile_education_highlight",
+      "ttctl_profile_education_list",
       "ttctl_profile_education_remove",
       "ttctl_profile_education_show",
       "ttctl_profile_education_update",
-      // #74 — profile.employment (6, includes employer_autocomplete)
+      // #74 — profile.employment (7, includes employer_autocomplete, +list #341)
       "ttctl_profile_employment_add",
       "ttctl_profile_employment_employer_autocomplete",
       "ttctl_profile_employment_highlight",
+      "ttctl_profile_employment_list",
       "ttctl_profile_employment_remove",
       "ttctl_profile_employment_show",
       "ttctl_profile_employment_update",

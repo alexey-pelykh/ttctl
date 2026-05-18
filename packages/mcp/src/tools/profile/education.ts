@@ -205,6 +205,42 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
   );
 
   server.registerTool(
+    "ttctl_profile_education_list",
+    {
+      title: "List education entries",
+      description: [
+        "List every education entry on the signed-in user's Toptal profile, with each row's full per-item shape (mirrors `ttctl_profile_education_show`).",
+        "",
+        "Example user prompts that should map to this tool:",
+        '  - "What education entries do I have on my Toptal profile?"',
+        '  - "Show me all my Toptal education history."',
+        '  - "List my Toptal education IDs so I can edit one."',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (input) => {
+      const auth = await ctx.resolveTokenForTool("profile.education.list");
+      if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_EDUCATION",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
+      try {
+        const rows = await profile.education.list(auth.token);
+        return jsonSuccess(rows);
+      } catch (err) {
+        return presentToolError("profile.education.list", err);
+      }
+    },
+  );
+
+  server.registerTool(
     "ttctl_profile_education_highlight",
     {
       title: "Toggle education highlight",

@@ -4,6 +4,8 @@
 import { DateInputError, parseDateInput, profile, splitParagraphs } from "@ttctl/core";
 import { Command, Option } from "commander";
 
+import Table from "cli-table3";
+
 import {
   emitAddSuccess,
   emitErrorAndExit,
@@ -111,6 +113,18 @@ export function buildProfileEmploymentCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runShow(id, options.output);
+    });
+
+  employment
+    .command("list")
+    .description("List every employment entry on your profile")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runList(options.output);
     });
 
   employment
@@ -301,6 +315,21 @@ async function runShow(id: string, format: OutputFormat): Promise<void> {
   emitResult(result, format, { pretty: formatEmploymentText, table: formatEmploymentTable });
 }
 
+async function runList(format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile employment list", format);
+  let rows: profile.employment.Employment[];
+  try {
+    rows = await profile.employment.list(token);
+  } catch (err) {
+    presentSubDomainError("profile employment list", err, format);
+  }
+  emitResult(wrapListEnvelope(rows), format, {
+    pretty: (data) => formatEmploymentListText(data.items),
+    table: (data) => formatEmploymentListTable(data.items),
+    empty: { command: "profile.employment.list" },
+  });
+}
+
 async function runHighlight(id: string, value: boolean, format: OutputFormat): Promise<void> {
   const token = await loadAuthTokenOrExit("profile employment highlight", format);
   let result: { id: string; highlight: boolean };
@@ -410,6 +439,26 @@ function formatYearRange(from: number | null, to: number | null): string {
   if (from !== null && to === null) return `${from.toString()}–present`;
   if (from === null && to !== null) return `?–${to.toString()}`;
   return `${(from ?? 0).toString()}–${(to ?? 0).toString()}`;
+}
+
+/**
+ * Pretty-print a list of Employment rows. One row per line, tab-separated:
+ * position, company, years, id. Mirrors `formatSkillsListText` shape.
+ */
+export function formatEmploymentListText(rows: profile.employment.Employment[]): string {
+  if (rows.length === 0) return "(no employment entries on profile)";
+  return rows.map((e) => `${e.position}\t${e.company}\t${formatYearRange(e.startDate, e.endDate)}\t${e.id}`).join("\n");
+}
+
+/**
+ * Pretty-print a list of Employment rows as a cli-table3 table.
+ */
+export function formatEmploymentListTable(rows: profile.employment.Employment[]): string {
+  const table = new Table({ head: ["Position", "Company", "Years", "Highlight", "Id"], wordWrap: true });
+  for (const e of rows) {
+    table.push([e.position, e.company, formatYearRange(e.startDate, e.endDate), e.highlight ? "yes" : "no", e.id]);
+  }
+  return table.toString();
 }
 
 /**

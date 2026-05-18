@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import Table from "cli-table3";
 import { DateInputError, parseDateInput, profile } from "@ttctl/core";
 import { Command, Option } from "commander";
 
-import { emitAddSuccess, emitErrorAndExit, emitRemoveSuccess, emitUpdateSuccess } from "../../../lib/envelopes.js";
+import {
+  emitAddSuccess,
+  emitErrorAndExit,
+  emitRemoveSuccess,
+  emitUpdateSuccess,
+  wrapListEnvelope,
+} from "../../../lib/envelopes.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, presentSubDomainError } from "../shared.js";
@@ -95,6 +102,18 @@ export function buildProfileCertificationsCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runShow(id, options.output);
+    });
+
+  certs
+    .command("list")
+    .description("List every certification entry on your profile")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runList(options.output);
     });
 
   certs
@@ -236,6 +255,21 @@ async function runShow(id: string, format: OutputFormat): Promise<void> {
   emitResult(result, format, { pretty: formatCertificationText, table: formatCertificationTable });
 }
 
+async function runList(format: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("profile certifications list", format);
+  let rows: profile.certifications.Certification[];
+  try {
+    rows = await profile.certifications.list(token);
+  } catch (err) {
+    presentSubDomainError("profile certifications list", err, format);
+  }
+  emitResult(wrapListEnvelope(rows), format, {
+    pretty: (data) => formatCertificationListText(data.items),
+    table: (data) => formatCertificationListTable(data.items),
+    empty: { command: "profile.certifications.list" },
+  });
+}
+
 async function runHighlight(id: string, value: boolean, format: OutputFormat): Promise<void> {
   const token = await loadAuthTokenOrExit("profile certifications highlight", format);
   let result: { id: string; highlight: boolean };
@@ -338,4 +372,35 @@ function formatMonthYear(month: number | null, year: number | null): string {
   if (year === null) return "—";
   if (month === null) return year.toString();
   return `${month.toString().padStart(2, "0")}/${year.toString()}`;
+}
+
+/**
+ * Pretty-print a list of Certification rows. One row per line, tab-separated:
+ * certificate, institution, validity range, id.
+ */
+export function formatCertificationListText(rows: profile.certifications.Certification[]): string {
+  if (rows.length === 0) return "(no certifications on profile)";
+  return rows
+    .map(
+      (c) =>
+        `${c.certificate}\t${c.institution}\t${formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)}\t${c.id}`,
+    )
+    .join("\n");
+}
+
+/**
+ * Pretty-print a list of Certification rows as a cli-table3 table.
+ */
+export function formatCertificationListTable(rows: profile.certifications.Certification[]): string {
+  const table = new Table({ head: ["Certificate", "Issuer", "Valid", "Highlight", "Id"], wordWrap: true });
+  for (const c of rows) {
+    table.push([
+      c.certificate,
+      c.institution,
+      formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear),
+      c.highlight ? "yes" : "no",
+      c.id,
+    ]);
+  }
+  return table.toString();
 }

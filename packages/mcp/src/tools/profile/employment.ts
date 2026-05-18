@@ -224,6 +224,42 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
   );
 
   server.registerTool(
+    "ttctl_profile_employment_list",
+    {
+      title: "List employment entries",
+      description: [
+        "List every employment entry on the signed-in user's Toptal profile, with each row's full per-item shape (mirrors `ttctl_profile_employment_show`).",
+        "",
+        "Example user prompts that should map to this tool:",
+        '  - "What employment entries do I have on my Toptal profile?"',
+        '  - "Show me all my Toptal work experience."',
+        '  - "List my Toptal employment IDs so I can edit one."',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (input) => {
+      const auth = await ctx.resolveTokenForTool("profile.employment.list");
+      if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_WORK_EXPERIENCE",
+            "talent-profile",
+            { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
+      try {
+        const rows = await profile.employment.list(auth.token);
+        return jsonSuccess(rows);
+      } catch (err) {
+        return presentToolError("profile.employment.list", err);
+      }
+    },
+  );
+
+  server.registerTool(
     "ttctl_profile_employment_highlight",
     {
       title: "Toggle employment highlight",
