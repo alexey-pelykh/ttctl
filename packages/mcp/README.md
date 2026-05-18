@@ -44,6 +44,34 @@ The server registers 88 tools (at time of writing) spanning the full Toptal Tale
 
 Tools use canonical sub-domain names — CLI aliases (`certs`, `experience`) are CLI-only and do NOT appear in the MCP catalog. The full registry is wired in [`tools/index.ts`](https://github.com/alexey-pelykh/ttctl/blob/main/packages/mcp/src/tools/index.ts).
 
+### Glossary — Toptal portal label → MCP / API enum
+
+Tool descriptions reference wire-canonical names (`AVAILABILITY_REQUEST_PENDING`, `eligibleJobs`, …); the Toptal portal surfaces the same concepts with user-facing labels. This table is the cross-reference.
+
+#### Activity items (`ttctl_applications_*`)
+
+The Toptal portal sidebar groups activity rows by **status group**; each row also carries a finer-grained **status**. The MCP `ttctl_applications_list --statusGroups` flag takes the status-group enum. Group assignment is server-side — the `statusV2.value` examples below are representative (✓ = observed in research captures; others inferred from portal observation and enum semantics).
+
+| Portal label                             | `statusGroups` enum   | Representative `statusV2.value`                                                                               |
+| ---------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Interest Requests / Job Interest Request | `ON_RECRUITER_REVIEW` | ✓ `AVAILABILITY_REQUEST_PENDING` (verbose: "Job Interest Request")                                            |
+| On Client Review                         | `ON_CLIENT_REVIEW`    | `PROFILE_SENT_TO_CLIENT`, `APPLIED`, `INTERVIEW_*`                                                            |
+| Active Engagement                        | `ACTIVE_ENGAGEMENT`   | ✓ `ACTIVE`; also `ON_TRIAL`, `ON_BREAK`, `PENDING_START`                                                      |
+| Closed Engagement                        | `CLOSED_ENGAGEMENT`   | `COMPLETED`, `REJECTED_AFTER_TRIAL`                                                                           |
+| Archive / Archived                       | `ARCHIVED`            | ✓ `AVAILABILITY_REQUEST_EXPIRED`, ✓ `AVAILABILITY_REQUEST_REJECTED`, ✓ `JOB_CANCELED`, ✓ `POSITION_FULFILLED` |
+
+Each response row's `statusV2.verbose` is the exact label the portal renders ("Job Interest Request", "Active", "Archived", …); `statusV2.value` is the wire enum.
+
+#### Jobs (`ttctl_jobs_*`)
+
+| Portal concept             | MCP tool                                        | Notes                                                                                                                                                                                                                                                                                                             |
+| -------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Job board "N of M" counter | `ttctl_jobs_list` returns the N (eligible) pool | M − N = already-applied + position-fulfilled + not-interested + apply-blocked (skill / specialization mismatch, missing ID verification, insufficient hours, legacy-client restriction, etc. — see `JobOperationsApplyErrorsEnum` for the apply-error taxonomy); the M − N remainder is not exposed by this tool. |
+| Saved jobs                 | `ttctl_jobs_saved`                              | Server-side `saved=true` filter on `eligibleJobs`.                                                                                                                                                                                                                                                                |
+| Not-interested jobs        | `ttctl_jobs_not_interested_list`                | Server-side `notInterested=true` filter.                                                                                                                                                                                                                                                                          |
+| Viewed jobs                | `ttctl_jobs_viewed`                             | Best-effort: wire has no `viewed` filter; client-side filter over a paginated `eligibleJobs` fetch (see the tool's R1 caveat).                                                                                                                                                                                    |
+| Job-search subscription    | `ttctl_jobs_search_*`                           | Single subscription per user (wire cardinality R2).                                                                                                                                                                                                                                                               |
+
 ### Trust model
 
 Process-level: any process that can spawn `ttctl mcp` gets full access to the user's Toptal Talent session via the configured config file. The 88-tool catalog includes destructive surfaces (`timesheet submit`, profile mutations, job-interest signals, rate-change requests, etc.) — the blast radius is the user's full profile and platform-side activity, not just reads. Don't grant MCP access to untrusted AI agents — see the project [`SECURITY.md`](https://github.com/alexey-pelykh/ttctl/blob/main/SECURITY.md).
