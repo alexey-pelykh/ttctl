@@ -18,6 +18,67 @@ const DRY_RUN_FIELD = z
   );
 
 /**
+ * Pagination input fields for `ttctl_applications_list` (issue #377).
+ * Constraints mirror the CLI's `parsePaginationFlag` (positive integer
+ * ≥ 1); the per-page upper bound is server-enforced. The service-layer
+ * defaults (`page: 1, perPage: 20`) kick in when either field is
+ * omitted, so existing MCP callers see no behavioral change. Same
+ * shape as the four paginating `ttctl_jobs_*` tools (#369).
+ */
+const PAGE_FIELD = z.number().int().min(1).optional().describe("1-indexed page number (≥ 1). Default: 1.");
+
+const PER_PAGE_FIELD = z.number().int().min(1).optional().describe("Items per page (≥ 1; server-capped). Default: 20.");
+
+/**
+ * Build the variables payload the core `applications.list()` sends to
+ * `JobActivityItems` so a dry-run preview matches the apply path's
+ * wire shape EXACTLY (issue #377). Mirrors the core's "empty/undefined
+ * → null" coercion for `keywords` / `onlyStatusGroupFilter` plus the
+ * resolved `page` / `pageSize` (defaults applied via
+ * `applications.DEFAULT_PAGE` / `DEFAULT_PER_PAGE`). Structural twin of
+ * jobs.ts's `buildJobsListVariables` (#369).
+ */
+function buildApplicationsListVariables(opts: applications.ListOptions): Record<string, unknown> {
+  return {
+    keywords: opts.keywords && opts.keywords.length > 0 ? opts.keywords : null,
+    onlyStatusGroupFilter: opts.statusGroups && opts.statusGroups.length > 0 ? opts.statusGroups : null,
+    page: opts.page ?? applications.DEFAULT_PAGE,
+    pageSize: opts.perPage ?? applications.DEFAULT_PER_PAGE,
+  };
+}
+
+/**
+ * Offset-style pagination metadata surfaced alongside `items` on
+ * `ttctl_applications_list` (#377). Mirrors the CLI's
+ * `EnvelopePageInfo` shape (and the jobs MCP `JobsPageInfo`) so LLM
+ * clients detect "more pages available" via `hasNextPage` and iterate.
+ *
+ * Structural twin of
+ * `packages/cli/src/commands/applications/shared.ts#buildApplicationsPageInfo`
+ * per the project's no-cross-surface-import convention (cli ⊥ mcp;
+ * both depend on core but never on each other — see
+ * `applications/shared.ts` § module note). The duplication is
+ * intentional; deduplicating would require a new shared package or
+ * promoting the helper into core, both out of scope for #377.
+ */
+interface ApplicationsPageInfo {
+  currentPage: number;
+  perPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+}
+
+function buildApplicationsPageInfo(page: applications.JobActivityListPage): ApplicationsPageInfo {
+  const totalPages = Math.max(1, Math.ceil(page.totalCount / page.perPage));
+  return {
+    currentPage: page.page,
+    perPage: page.perPage,
+    totalPages,
+    hasNextPage: page.page < totalPages,
+  };
+}
+
+/**
  * Register the three `ttctl_applications_*` MCP tools per the #15 spec.
  * Tool names use the `ttctl_` prefix and the canonical CLI path joined
  * with `_` per project naming policy:
@@ -29,6 +90,16 @@ const DRY_RUN_FIELD = z
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The list tool's `keywords` and `statusGroups` mirror the
  * `--keywords` / `--status-group` CLI flags.
+ *
+ * **Pagination (#377)**: `ttctl_applications_list` accepts optional
+ * `page` (1-indexed) and `perPage` (server-capped) integers — mirroring
+ * the CLI's `--page` / `--per-page` flags and the four paginating
+ * `ttctl_jobs_*` tools (#369). The apply-path response is
+ * `{ items, pageInfo }` where `pageInfo` mirrors the CLI's
+ * `EnvelopePageInfo` shape so LLM callers detect `hasNextPage` and
+ * iterate. `#377` added the `$page` / `$pageSize` wire args to the
+ * hand-authored `JobActivityItems` document (a wire-shape change gated
+ * by the mandatory live E2E per the schema/contract rule).
  *
  * **Read-only** — per project non-goals (#15), no apply / withdraw /
  * edit tools are exposed. `applications` is intentionally a smaller
@@ -67,6 +138,12 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
         '(e.g. "Job Interest Request", "Active", "Archived"); `statusV2.value` is the',
         "wire enum (e.g. `AVAILABILITY_REQUEST_PENDING`).",
         "",
+        "Pagination (#377): returns one page of activity items plus offset-style",
+        "`pageInfo` (`currentPage`, `perPage`, `totalPages`, `hasNextPage`) so callers",
+        "can iterate beyond the default first page (≤20).",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+        "",
         "Example user prompts:",
         '  - "Show me my recent Toptal applications."',
         '  - "Where are my interest requests?" (filter `statusGroups: [ON_RECRUITER_REVIEW]`)',
@@ -81,6 +158,8 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
           .describe(
             "Restrict to one or more JobActivityItemStatusGroupEnum values: ACTIVE_ENGAGEMENT, ARCHIVED, CLOSED_ENGAGEMENT, ON_CLIENT_REVIEW, ON_RECRUITER_REVIEW",
           ),
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -90,15 +169,19 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       const opts: applications.ListOptions = {};
       if (args.keywords !== undefined) opts.keywords = args.keywords;
       if (args.statusGroups !== undefined) opts.statusGroups = args.statusGroups;
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
-        const variables: Record<string, unknown> = {};
-        if (opts.keywords !== undefined) variables["keywords"] = opts.keywords;
-        if (opts.statusGroups !== undefined) variables["onlyStatusGroupFilter"] = opts.statusGroups;
-        return dryRunResponse(buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", variables, auth.token));
+        // Mirror the apply path's wire shape EXACTLY (incl. the
+        // resolved page/pageSize and null-coerced filters) so the
+        // preview is faithful — #377 / #369 dry-run discipline.
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", buildApplicationsListVariables(opts), auth.token),
+        );
       }
       try {
-        const items = await applications.list(auth.token, opts);
-        return successResponse(items);
+        const page = await applications.list(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildApplicationsPageInfo(page) });
       } catch (err) {
         return mapApplicationsError(err);
       }
@@ -162,7 +245,19 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       if (!auth.ok) return auth.response;
       if (args.dryRun === true) {
         const previews: DryRunPreview[] = applications.STATUS_GROUPS.map((group) =>
-          buildMcpDryRunPreview("JobActivityItems", "mobile-gateway", { onlyStatusGroupFilter: [group] }, auth.token),
+          // Mirror the apply-path wire shape EXACTLY (#377 / #369 dry-run
+          // discipline): `applications.stats` issues 5 parallel calls each
+          // with `{ keywords: null, onlyStatusGroupFilter: [group],
+          // page: null, pageSize: null }`. The explicit-null page /
+          // pageSize is the post-#377 deterministic wire-shape contract
+          // (lets the gateway apply its own defaults); the preview must
+          // mirror it.
+          buildMcpDryRunPreview(
+            "JobActivityItems",
+            "mobile-gateway",
+            { keywords: null, onlyStatusGroupFilter: [group], page: null, pageSize: null },
+            auth.token,
+          ),
         );
         return dryRunMultiResponse(previews);
       }

@@ -7,30 +7,39 @@ import { applications } from "@ttctl/core";
 import { wrapListEnvelope } from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
+import {
+  buildApplicationsPageInfo,
+  formatApplicationsPageFooter,
+  handleApplicationsError,
+  loadAuthTokenOrExit,
+} from "./shared.js";
 
 /**
  * Action handler for `ttctl applications list`. Reads the user's
  * activity items (applications, availability requests, interviews,
  * engagements) and emits via the cross-CLI output helper, wrapped in
- * the v0.4 list envelope (`{version, items, pageInfo?}` from #128) for
+ * the v0.4 list envelope (`{version, items, pageInfo}` from #128) for
  * `json` / `yaml`.
  *
  * Filters: `--keywords` (free-text, repeatable) and `--status-group`
  * (one of the five `JobActivityItemStatusGroupEnum` values, repeatable
  * — server-side AND across instances).
  *
- * **Pagination & date filters not exposed** — the captured
- * `JobActivityItems` operation accepts neither. Per #183, pagination
- * flags are declared PER paginating leaf (jobs only); this leaf
- * does not declare `--page` / `--per-page`, so Commander emits its
- * standard `error: unknown option '--page'` (exit 1) when a user
- * passes either flag. Date filters remain out of scope per #15
- * § Open Questions (RESOLVED) in `.tmp/workitem-15.md`.
+ * **Pagination (#377, per-command flags per #183)**: reads `--page` /
+ * `--per-page` directly from the leaf's parsed options. When neither
+ * flag is set, the service applies defaults (`page: 1, perPage: 20`).
+ * `#377` added `$page` / `$pageSize` to the hand-authored
+ * `JobActivityItems` document — a wire-shape change gated by the
+ * mandatory live E2E (schema/contract rule). `pageInfo` is always
+ * surfaced (the service always returns the resolved page metadata),
+ * mirroring the post-#138 jobs behavior. Date filters (`--from` /
+ * `--to`) remain out of scope per #15 § Open Questions (RESOLVED).
  */
 export interface ApplicationsListOptions {
   keywords?: string[];
   statusGroups?: applications.StatusGroup[];
+  page?: number;
+  perPage?: number;
   output: OutputFormat;
 }
 
@@ -43,19 +52,43 @@ export async function runApplicationsList(opts: ApplicationsListOptions): Promis
   const listOpts: applications.ListOptions = {};
   if (opts.keywords !== undefined) listOpts.keywords = opts.keywords;
   if (opts.statusGroups !== undefined) listOpts.statusGroups = opts.statusGroups;
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
 
-  let items: applications.JobActivityItem[];
+  let page: applications.JobActivityListPage;
   try {
-    items = await applications.list(token, listOpts);
+    page = await applications.list(token, listOpts);
   } catch (err) {
     handleApplicationsError("applications list", err, opts.output);
   }
 
-  emitResult(wrapListEnvelope(items), opts.output, {
-    pretty: (data) => formatApplicationsTable(data.items),
-    table: (data) => formatApplicationsTable(data.items),
+  const pageInfo = buildApplicationsPageInfo(page);
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
+    pretty: (data) => renderApplicationsListPretty(data.items, page),
+    table: (data) => renderApplicationsListPretty(data.items, page),
     empty: { command: "applications.list" },
   });
+}
+
+/**
+ * Render the activity table plus the pretty-mode pagination footer
+ * underneath (#377). Single source of truth for the `pretty` / `table`
+ * slots so footer styling stays uniform — structural twin of jobs'
+ * `renderJobsListPretty`.
+ *
+ * The footer is appended only when `totalCount > 0` — empty pages
+ * route through the empty-state CTA wrapper BEFORE this renderer
+ * fires, so the `items.length === 0` branch in `formatApplicationsTable`
+ * is unreachable from this path. The defensive `if` preserves the
+ * direct-call surface (tests, future programmatic use).
+ */
+function renderApplicationsListPretty(
+  items: applications.JobActivityItem[],
+  page: applications.JobActivityListPage,
+): string {
+  const table = formatApplicationsTable(items);
+  if (page.totalCount <= 0) return table;
+  return `${table}\n${formatApplicationsPageFooter(page.page, page.perPage, page.totalCount)}`;
 }
 
 /**

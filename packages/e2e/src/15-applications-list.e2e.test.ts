@@ -133,4 +133,134 @@ describe("applications list (live mobile-gateway)", () => {
       }
     },
   );
+
+  // -------------------------------------------------------------------
+  // Pagination E2E coverage (#377)
+  //
+  // Mandatory per CLAUDE.md § Schema/contract validation rule — this PR
+  // adds `$page: Int, $pageSize: PageSize` wire vars to the hand-authored
+  // `JobActivityItems` operation (the synthesized SDL declares
+  // `viewer.jobActivityList` with NO documented arguments; the page /
+  // pageSize args are INFERRED from the jobs `eligibleJobs` empirical
+  // shape captured in #138). Unit tests with mocks confirm
+  // variable-substitution AT OUR SIDE only — only the live API can
+  // verify the server honors the page variable and respects the
+  // PageSize custom scalar.
+  //
+  // Three assertions (mirroring `24-jobs.e2e.test.ts` § Pagination
+  // E2E coverage):
+  //   1. `--per-page 5` limits the result set to ≤ 5 items AND the
+  //      `pageInfo.perPage` envelope field reflects the request.
+  //   2. Different pages return DIFFERENT entities — proves the server
+  //      honored the `page` variable rather than ignoring it and
+  //      returning a single fixed slice.
+  //   3. Pretty footer renders "Page X of Y" when paginated (footer is
+  //      the user-visible signal that pagination is wired through to
+  //      the output layer).
+  //
+  // The 03-applications.md note records ≈ 377 items in the test
+  // account, well above the 6-item threshold required for the
+  // page-difference assertion; the safety skip nonetheless mirrors the
+  // jobs precedent in case account state drifts.
+  // -------------------------------------------------------------------
+
+  interface ListEnvelope {
+    version?: string;
+    items?: Array<{ id?: string }>;
+    pageInfo?: {
+      currentPage?: number;
+      perPage?: number;
+      totalPages?: number;
+      hasNextPage?: boolean;
+    };
+  }
+
+  it.skipIf(!e2eEnabled)(
+    "applications list --per-page 5 surfaces offset-style pageInfo and limits items (#377)",
+    async () => {
+      const result = await cli.run(["applications", "list", "--page", "1", "--per-page", "5", "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as ListEnvelope;
+      expect(payload.version).toBe("1.0");
+      expect(Array.isArray(payload.items)).toBe(true);
+
+      // Server may return fewer than --per-page items if the test
+      // account has < 5 activity rows total. In either case items must
+      // not exceed perPage.
+      if (Array.isArray(payload.items)) {
+        expect(payload.items.length).toBeLessThanOrEqual(5);
+      }
+
+      // pageInfo MUST be present when --page/--per-page were passed —
+      // even if the result set is empty, the envelope reflects the
+      // request.
+      expect(payload.pageInfo).toBeDefined();
+      expect(payload.pageInfo?.currentPage).toBe(1);
+      expect(payload.pageInfo?.perPage).toBe(5);
+      // totalPages and hasNextPage derived from totalCount; both
+      // present as the server always returns totalCount.
+      expect(typeof payload.pageInfo?.totalPages).toBe("number");
+      expect(typeof payload.pageInfo?.hasNextPage).toBe("boolean");
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "applications list --page 1 vs --page 2 returns DIFFERENT entities (server honors page variable; #377)",
+    async () => {
+      // Use the default sort; jobActivityList's default ordering
+      // (`lastUpdatedAt` desc) is stable enough across consecutive
+      // paged fetches for the "at least one different" assertion below.
+      const sharedArgs = ["applications", "list", "--per-page", "5", "-o", "json"];
+      const page1Result = await cli.run([...sharedArgs, "--page", "1"]);
+      expect(page1Result.exitCode).toBe(0);
+      const page1 = JSON.parse(page1Result.stdout) as ListEnvelope;
+
+      // Need ≥ 6 rows to fill 2 pages of size 5 with distinguishable
+      // content. If there's only one page worth of data, the test
+      // can't prove pagination — skip with a stderr warning.
+      if (!page1.pageInfo?.hasNextPage) {
+        process.stderr.write(
+          `warning: test account has only one page of activity rows (totalCount fits in one --per-page=5 slice); pagination diff assertion skipped\n`,
+        );
+        return;
+      }
+
+      const page2Result = await cli.run([...sharedArgs, "--page", "2"]);
+      expect(page2Result.exitCode).toBe(0);
+      const page2 = JSON.parse(page2Result.stdout) as ListEnvelope;
+      expect(page2.pageInfo?.currentPage).toBe(2);
+
+      const page1Ids = new Set(
+        (page1.items ?? []).map((j) => j.id).filter((id): id is string => typeof id === "string"),
+      );
+      const page2Ids = new Set(
+        (page2.items ?? []).map((j) => j.id).filter((id): id is string => typeof id === "string"),
+      );
+      expect(page1Ids.size).toBeGreaterThan(0);
+      expect(page2Ids.size).toBeGreaterThan(0);
+      // At least one id on page 2 must NOT be on page 1 — proves the
+      // server honored the page variable and returned a different
+      // slice. We don't require strict partitioning (zero overlap)
+      // because activity rows update timestamps mid-fetch and the same
+      // id can occasionally appear on adjacent pages near the partition
+      // boundary. The contract we're proving is "navigation", not
+      // "strict partition".
+      const distinct = [...page2Ids].filter((id) => !page1Ids.has(id));
+      expect(distinct.length).toBeGreaterThan(0);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)("applications list pretty footer renders 'Page X of Y' when paginated (#377)", async () => {
+    const result = await cli.run(["applications", "list", "--page", "1", "--per-page", "5"]);
+    expect(result.exitCode).toBe(0);
+    // Pretty output: the table is followed by the footer line.
+    // When items is empty (no activity rows), the empty-state CTA
+    // wrapper fires before the footer renderer — skip the assertion
+    // in that case.
+    if (result.stdout.includes("No applications") || result.stdout.includes("(no")) {
+      process.stderr.write("warning: test account has no activity rows; pretty-footer assertion skipped\n");
+      return;
+    }
+    expect(result.stdout).toMatch(/Page 1 of \d+ \(per_page=5\)/);
+  });
 });

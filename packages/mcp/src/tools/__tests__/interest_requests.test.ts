@@ -72,6 +72,17 @@ function buildRow(overrides: Partial<applications.JobActivityItem> = {}): applic
   };
 }
 
+/**
+ * Wrap rows in the {@link applications.JobActivityListPage} envelope
+ * `applications.list` returns post-#377. `ttctl_interest_requests_list`
+ * unwraps `.items` (it does not surface pagination — see #372 / R1);
+ * `totalCount` mirrors the slice here because the stub is the whole
+ * (filtered) set.
+ */
+function listPage(items: applications.JobActivityItem[]): applications.JobActivityListPage {
+  return { items, totalCount: items.length, page: 1, perPage: 20 };
+}
+
 describe("projectRow", () => {
   it("computes daysPending as the integer number of days between lastUpdatedAt and now", () => {
     const row = buildRow({ lastUpdatedAt: "2026-05-01T00:00:00Z" });
@@ -141,7 +152,7 @@ describe("ttctl_interest_requests_list — handler", () => {
   });
 
   it("calls applications.list with the ON_RECRUITER_REVIEW status-group filter on the apply path", async () => {
-    listSpy.mockResolvedValue([]);
+    listSpy.mockResolvedValue(listPage([]));
     const handler = getRegisteredHandler(server, "ttctl_interest_requests_list");
     await handler({});
     expect(listSpy).toHaveBeenCalledTimes(1);
@@ -149,7 +160,7 @@ describe("ttctl_interest_requests_list — handler", () => {
   });
 
   it("returns the projected rows as a JSON array", async () => {
-    listSpy.mockResolvedValue([buildRow()]);
+    listSpy.mockResolvedValue(listPage([buildRow()]));
     const handler = getRegisteredHandler(server, "ttctl_interest_requests_list");
     const result = await handler({});
     const parsed = JSON.parse(result.content[0]?.text ?? "") as unknown[];
@@ -164,12 +175,14 @@ describe("ttctl_interest_requests_list — handler", () => {
   it("accepts olderThan: `14d` and filters rows whose daysPending is below the threshold", async () => {
     const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-20T00:00:00Z"));
     try {
-      listSpy.mockResolvedValue([
-        // 19 days old — keeps.
-        buildRow({ id: "old", lastUpdatedAt: "2026-05-01T00:00:00Z" }),
-        // 5 days old — drops.
-        buildRow({ id: "fresh", lastUpdatedAt: "2026-05-15T00:00:00Z" }),
-      ]);
+      listSpy.mockResolvedValue(
+        listPage([
+          // 19 days old — keeps.
+          buildRow({ id: "old", lastUpdatedAt: "2026-05-01T00:00:00Z" }),
+          // 5 days old — drops.
+          buildRow({ id: "fresh", lastUpdatedAt: "2026-05-15T00:00:00Z" }),
+        ]),
+      );
       const handler = getRegisteredHandler(server, "ttctl_interest_requests_list");
       const result = await handler({ olderThan: "14d" });
       const parsed = JSON.parse(result.content[0]?.text ?? "") as { id: string }[];
@@ -183,7 +196,7 @@ describe("ttctl_interest_requests_list — handler", () => {
     const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-20T00:00:00Z"));
     try {
       const row = buildRow({ lastUpdatedAt: "2026-05-05T00:00:00Z" }); // 15 days / 360h old
-      listSpy.mockResolvedValue([row]);
+      listSpy.mockResolvedValue(listPage([row]));
       const handler = getRegisteredHandler(server, "ttctl_interest_requests_list");
 
       // 2w = 336h; row at 360h passes.
