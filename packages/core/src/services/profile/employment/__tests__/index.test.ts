@@ -183,7 +183,17 @@ describe("add", () => {
     const call = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("CreateEmployment");
     expect(call.body.variables).toEqual({
-      input: { profileId: "p1", employment: { company: "Globex", position: "Senior Engineer", startDate: 2020 } },
+      input: {
+        profileId: "p1",
+        employment: {
+          experienceItems: [],
+          skills: [],
+          showViaToptal: true,
+          company: "Globex",
+          position: "Senior Engineer",
+          startDate: 2020,
+        },
+      },
     });
   });
 });
