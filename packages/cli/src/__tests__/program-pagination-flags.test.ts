@@ -182,6 +182,22 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     expect(helpText).toMatch(/--per-page <number>/);
   });
 
+  it("--page DOES appear in `payments payouts list --help` (#373)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["payments", "payouts", "list", "--help"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--page <number>/);
+    expect(helpText).toMatch(/--per-page <number>/);
+  });
+
   // -------------------------------------------------------------------
   // Parser: positive-integer enforcement on the leaves themselves
   // -------------------------------------------------------------------
@@ -244,6 +260,36 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     }
     const errOut = stderr.lines.join("");
     expect(errOut).toContain("--page must be a positive integer");
+  });
+
+  it("--page 0 is rejected on `payments payouts list` (must be ≥ 1) (#373)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["payments", "payouts", "list", "--page", "0"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--page must be a positive integer");
+  });
+
+  it("--per-page 1.5 is rejected on `payments payouts list` (must be Int) (#373)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["payments", "payouts", "list", "--per-page", "1.5"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--per-page must be a positive integer");
   });
 
   // -------------------------------------------------------------------
@@ -387,5 +433,28 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     }
     const opts = nil.opts<{ page?: number; perPage?: number }>();
     expect(opts.page).toBe(4);
+  });
+
+  it("--page 2 --per-page 50 on `payments payouts list` carries both (#373)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureStderr();
+    captureExit();
+
+    const pay = program.commands.find((c) => c.name() === "payments");
+    const payouts = pay?.commands.find((c) => c.name() === "payouts");
+    const list = payouts?.commands.find((c) => c.name() === "list");
+    expect(list).toBeDefined();
+    if (!list) return;
+
+    try {
+      await program.parseAsync(["payments", "payouts", "list", "--page", "2", "--per-page", "50"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    const opts = list.opts<{ page?: number; perPage?: number }>();
+    expect(opts.page).toBe(2);
+    expect(opts.perPage).toBe(50);
   });
 });

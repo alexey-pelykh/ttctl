@@ -17,6 +17,43 @@ const DRY_RUN_FIELD = z
   );
 
 /**
+ * Pagination input fields for `ttctl_payments_payouts_list` (#373).
+ * Constraints mirror the CLI's `parsePaginationFlag` (positive integer
+ * ≥ 1) and the jobs MCP tools shipped in #369/#376; the wire's
+ * per-page upper bound is server-enforced. The service-layer defaults
+ * (`page: 1, perPage: 20` via `payments.DEFAULT_PAGE` /
+ * `payments.DEFAULT_PER_PAGE`) kick in when either field is omitted, so
+ * existing MCP callers see no behavioral change.
+ */
+const PAGE_FIELD = z.number().int().min(1).optional().describe("1-indexed page number (≥ 1). Default: 1.");
+
+const PER_PAGE_FIELD = z.number().int().min(1).optional().describe("Items per page (≥ 1; server-capped). Default: 20.");
+
+/**
+ * Offset-style pagination metadata surfaced alongside `items` /
+ * `summary` on `ttctl_payments_payouts_list` (#373). Mirrors the
+ * `JobsPageInfo` shape the four `ttctl_jobs_*` read tools surface
+ * (#369/#376) and the CLI's `EnvelopePageInfo`, so LLM clients can
+ * detect "more pages available" via `hasNextPage` and iterate.
+ */
+interface PayoutsPageInfo {
+  currentPage: number;
+  perPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+}
+
+function buildPayoutsPageInfo(result: payments.PayoutsListResult): PayoutsPageInfo {
+  const totalPages = Math.max(1, Math.ceil(result.totalCount / result.perPage));
+  return {
+    currentPage: result.page,
+    perPage: result.perPage,
+    totalPages,
+    hasNextPage: result.page < totalPages,
+  };
+}
+
+/**
  * Register the `ttctl_payments_*` MCP tools (#149). 7 tools across 3
  * sub-namespaces:
  *
@@ -60,15 +97,24 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
         "memorandum adjustments.",
         "",
         "Optional `fromDate` / `toDate` (YYYY-MM-DD, inclusive) filter by",
-        "`createdOn`. The server returns at most 20 records per call.",
+        "`createdOn`.",
+        "",
+        "Paginated (#373): pass `page` (1-indexed, default 1) and `perPage`",
+        "(default 20) to page beyond the first ~20 records. The response is",
+        "`{ items, summary, pageInfo }` where `pageInfo` carries",
+        "`currentPage` / `perPage` / `totalPages` / `hasNextPage` — iterate",
+        "by incrementing `page` while `pageInfo.hasNextPage` is true.",
         "",
         "Example user prompts:",
         '  - "Show me my recent Toptal payouts."',
         '  - "List payouts from January 2026."',
+        '  - "Show me page 2 of my payouts."',
       ].join("\n"),
       inputSchema: {
         fromDate: z.string().optional().describe("Filter lower bound (YYYY-MM-DD, inclusive)"),
         toDate: z.string().optional().describe("Filter upper bound (YYYY-MM-DD, inclusive)"),
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -78,16 +124,34 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
       const opts: payments.ListPayoutsOptions = {};
       if (args.fromDate !== undefined) opts.fromDate = args.fromDate;
       if (args.toDate !== undefined) opts.toDate = args.toDate;
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
       if (args.dryRun === true) {
         const hasFilter = opts.fromDate !== undefined || opts.toDate !== undefined;
+        // Resolve pagination defaults the same way `payments.payouts.list`
+        // does so the dry-run preview's wire variables match the apply
+        // path EXACTLY (mirrors #369/#376 jobs dry-run behavior).
+        const page = opts.page ?? payments.DEFAULT_PAGE;
+        const perPage = opts.perPage ?? payments.DEFAULT_PER_PAGE;
         const variables: Record<string, unknown> = {
           filters: hasFilter ? { createdOn: { from: opts.fromDate ?? null, to: opts.toDate ?? null } } : null,
+          offset: (page - 1) * perPage,
+          limit: perPage,
         };
         return dryRunResponse(buildMcpDryRunPreview("Payments", "mobile-gateway", variables, auth.token));
       }
       try {
         const result = await payments.payouts.list(auth.token, opts);
-        return successResponse(result);
+        // `{ items, summary, pageInfo }` — `summary` preserved from the
+        // pre-#373 payload (payouts-specific aggregate); `pageInfo` added
+        // so LLM callers can detect `hasNextPage` and iterate. Bare
+        // `result.items` consumers keep working (payload addition, not a
+        // shape replacement) — same backward-compat contract as #376.
+        return successResponse({
+          items: result.items,
+          summary: result.summary,
+          pageInfo: buildPayoutsPageInfo(result),
+        });
       } catch (err) {
         return mapPaymentsError(err);
       }
