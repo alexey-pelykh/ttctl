@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 
 describe("applications.list", () => {
-  it("returns the entities array on a successful response", async () => {
+  it("returns a JobActivityListPage envelope on a successful response (#377)", async () => {
     reply({
       body: {
         data: {
@@ -73,18 +73,24 @@ describe("applications.list", () => {
         },
       },
     });
-    const items = await list(TOKEN);
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe("act-1");
-    expect(items[0]?.statusGroupV2.value).toBe("ACTIVE_ENGAGEMENT");
+    const res = await list(TOKEN);
+    expect(res.items).toHaveLength(1);
+    expect(res.items[0]?.id).toBe("act-1");
+    expect(res.items[0]?.statusGroupV2.value).toBe("ACTIVE_ENGAGEMENT");
+    expect(res.totalCount).toBe(1);
+    expect(res.page).toBe(1);
+    expect(res.perPage).toBe(20);
   });
 
-  it("returns [] when jobActivityList is null", async () => {
+  it("returns an empty page (items [], totalCount 0) when jobActivityList is null (#377)", async () => {
     reply({
       body: { data: { viewer: { id: "v1", jobActivityList: null } } },
     });
-    const items = await list(TOKEN);
-    expect(items).toEqual([]);
+    const res = await list(TOKEN);
+    expect(res.items).toEqual([]);
+    expect(res.totalCount).toBe(0);
+    expect(res.page).toBe(1);
+    expect(res.perPage).toBe(20);
   });
 
   it("passes keywords and statusGroups filters into the variables", async () => {
@@ -96,7 +102,7 @@ describe("applications.list", () => {
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "JobActivityItems",
-      variables: { keywords: ["python"], onlyStatusGroupFilter: ["ARCHIVED"] },
+      variables: { keywords: ["python"], onlyStatusGroupFilter: ["ARCHIVED"], page: 1, pageSize: 20 },
     });
   });
 
@@ -107,8 +113,34 @@ describe("applications.list", () => {
     await list(TOKEN);
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
-      variables: { keywords: null, onlyStatusGroupFilter: null },
+      variables: { keywords: null, onlyStatusGroupFilter: null, page: 1, pageSize: 20 },
     });
+  });
+
+  it("forwards explicit page / perPage into the wire variables (#377)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [], totalCount: 0 } } } },
+    });
+    await list(TOKEN, { page: 3, perPage: 5 });
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      variables: { keywords: null, onlyStatusGroupFilter: null, page: 3, pageSize: 5 },
+    });
+  });
+
+  it("echoes the resolved page / perPage and server totalCount on the envelope (#377)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { id: "v1", jobActivityList: { entities: [ITEM_FIXTURE], totalCount: 377 } },
+        },
+      },
+    });
+    const res = await list(TOKEN, { page: 2, perPage: 50 });
+    expect(res.page).toBe(2);
+    expect(res.perPage).toBe(50);
+    expect(res.totalCount).toBe(377);
+    expect(res.items).toHaveLength(1);
   });
 
   it("throws AuthRevokedError on HTTP 401", async () => {
@@ -245,6 +277,14 @@ describe("applications.stats", () => {
       return body.variables?.onlyStatusGroupFilter?.[0];
     });
     expect(new Set(filtersSent)).toEqual(new Set(STATUS_GROUPS));
+    // #377: stats() shares the now-paginated JobActivityItems query;
+    // every count call must pass page/pageSize as explicit null (the
+    // grand-total `totalCount` is slice-independent).
+    for (const c of mockedStock.mock.calls) {
+      const body = c[0]?.body as { variables?: { page?: unknown; pageSize?: unknown } };
+      expect(body.variables?.page).toBeNull();
+      expect(body.variables?.pageSize).toBeNull();
+    }
   });
 
   it("treats missing totalCount as 0", async () => {

@@ -38,11 +38,23 @@
  * pass against a live session. The pre-merge requirement is the live
  * E2E run, not the unit tests (which can only verify our parsing).
  *
+ * **Pagination (#377)**: `list` accepts optional `{ page?, perPage? }`
+ * in {@link ListOptions} (1-indexed user-facing; forwarded to the
+ * wire's `jobActivityList.page` / `.pageSize` args). Defaults are
+ * `page: 1, perPage: 20`. The captured `JobActivityItems.graphql`
+ * document did NOT declare `$page` / `$pageSize`; #377 adds them to
+ * the trimmed inline string here (a hand-authored operation
+ * modification — schema/contract rule triggers, gated E2E is the
+ * authority on the wire arg types). `list` returns a {@link
+ * JobActivityListPage} carrying `{items,totalCount,page,perPage}` so
+ * the CLI / MCP layers can render offset-style `pageInfo`. Sibling
+ * vertical of #369/#376 (jobs `eligibleJobs` pagination, #138/#183)
+ * and #375 (engagements, same `JobActivityItems` op name, separate
+ * service module / document).
+ *
  * **Out of scope for v1** (deliberate; see `.tmp/workitem-15.md`):
  * - Date range filters (`--from` / `--to`) — captured operation accepts no
  *   date args.
- * - Pagination (`--page` / `--per-page`) — captured operation has no
- *   `page` / `pageSize` args. Will land via the global #138 work.
  *
  * **Stats granularity**: the wire has no aggregate stats query.
  * `viewer.jobActivityList.totalCount` returns the count for whatever
@@ -129,7 +141,57 @@ export interface ListOptions {
    * server returns rows from every group.
    */
   statusGroups?: StatusGroup[];
+  /**
+   * 1-indexed page number (issue #377). Forwarded to the wire's
+   * `jobActivityList.page` argument. Default `1` when omitted. The
+   * wire `page` is INFERRED to be 1-indexed from the sibling
+   * `eligibleJobs` precedent (#138) — same gateway; gated E2E is the
+   * authority.
+   */
+  page?: number;
+  /**
+   * Items per page (issue #377). Forwarded verbatim to the wire's
+   * `jobActivityList.pageSize` argument. Default `20` when omitted.
+   * Server-capped.
+   */
+  perPage?: number;
 }
+
+/**
+ * Page wrapper returned by {@link list} (issue #377). Carries the
+ * projected items plus the server-reported `totalCount` and the
+ * resolved `page` / `perPage` (the effective values used in the query,
+ * after defaults). Mirrors the `jobs.JobListPage` shape from #138 so
+ * the CLI / MCP layers render an identical offset-style `pageInfo`.
+ *
+ * `totalCount` is the grand total across ALL pages (NOT the count of
+ * the returned slice) — the same server scalar `stats()` reads — so
+ * callers derive `totalPages = ceil(totalCount / perPage)`.
+ *
+ * Why a structured value instead of a bare `JobActivityItem[]`:
+ * pre-#377 the operation declared no `$page` / `$pageSize`, so callers
+ * could not surface pagination metadata. With the wiring change,
+ * callers MUST have `totalCount` to render the "Page X of Y" footer
+ * and populate the JSON envelope's `pageInfo`.
+ */
+export interface JobActivityListPage {
+  items: JobActivityItem[];
+  totalCount: number;
+  /** 1-indexed page number actually requested. */
+  page: number;
+  /** Items per page actually requested. */
+  perPage: number;
+}
+
+/**
+ * Default {@link ListOptions} pagination values when the caller does
+ * not specify them (issue #377). Exposed so the CLI / MCP dry-run
+ * preview and unit tests assert against the same constants the apply
+ * path uses — identical convention to `jobs.DEFAULT_PAGE` /
+ * `jobs.DEFAULT_PER_PAGE` (#138 / #369).
+ */
+export const DEFAULT_PAGE = 1 as const;
+export const DEFAULT_PER_PAGE = 20 as const;
 
 /**
  * Status payload — both `statusV2` (specific) and `statusGroupV2`
@@ -243,13 +305,35 @@ export interface ApplicationsStats {
 // The captured operation passes `keywords`, `onlyStatusGroupFilter`,
 // `id` — empirically these work (the mobile app sends them daily). The
 // E2E tests are the authority on this contract.
+//
+// Pagination wire-arg types (issue #377):
+//
+// - `$page: Int` — nullable Int. INFERRED from the sibling
+//   `eligibleJobs` precedent (#138 verified `$page: Int` empirically:
+//   `BlogPosts`, `GetJobsForDashboard`, `GetTalentReferralTrackers`
+//   all declare `$page: Int`). `jobActivityList` lives on the SAME
+//   mobile-gateway; the type is reused by inference, not capture.
+//
+// - `$pageSize: PageSize` — CUSTOM SCALAR, NOT `Int`. The #138 E2E
+//   run proved the gateway rejects `Int` in a `PageSize`-typed
+//   position for `eligibleJobs` (HTTP 400 `Variable "$pageSize" of
+//   type "Int!" used in position expecting type "PageSize"`). The
+//   `PageSize` scalar is reused here by inference (same gateway). If
+//   the gated `applications list` E2E reveals `jobActivityList`
+//   expects `Int` instead, the fix is a one-token scalar swap in this
+//   document — flagged in the #377 PR body.
+//
+// Both args are nullable (no `!`): `stats()` passes them as `null`
+// (pagination is meaningless for an aggregate count; `totalCount` is
+// the grand total regardless of slice), and the gateway applies its
+// default slice.
 // ---------------------------------------------------------------------
 
-const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $onlyStatusGroupFilter: [JobActivityItemStatusGroupEnum!]) {
+const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $onlyStatusGroupFilter: [JobActivityItemStatusGroupEnum!], $page: Int, $pageSize: PageSize) {
   viewer {
     __typename
     id
-    jobActivityList(keywords: $keywords, statusGroupV2: { only: $onlyStatusGroupFilter }) {
+    jobActivityList(keywords: $keywords, statusGroupV2: { only: $onlyStatusGroupFilter }, page: $page, pageSize: $pageSize) {
       __typename
       entities {
         __typename
@@ -382,18 +466,27 @@ async function callGateway<T extends { viewer: { id: string } | null }>(
  * List the signed-in user's job activity items (applications,
  * availability requests, interviews, engagements).
  *
- * Default scope is whatever the server returns when neither filter is
- * supplied (empirically the full unpaginated set, capped at the
- * server's default limit). The returned array preserves server order;
- * the CLI / MCP do not re-sort.
+ * The returned `items` preserve server order; the CLI / MCP do not
+ * re-sort.
+ *
+ * **Pagination (#377)**: `opts.page` (1-indexed) and `opts.perPage`
+ * are forwarded to the wire's `jobActivityList.page` / `.pageSize`
+ * args. Defaults: `page: 1, perPage: 20` (matching the pre-#377
+ * server-default slice). Returns a {@link JobActivityListPage}
+ * carrying `totalCount` so callers can render offset-style pagination
+ * metadata. The wire `page` is INFERRED 1-indexed from the sibling
+ * `eligibleJobs` precedent (#138) — threaded verbatim, no subtraction;
+ * the gated E2E (`--page 1` vs `--page 2` returns different rows) is
+ * the authority.
  *
  * **AC scope adjustment** (per #15 user decision 2026-05-10): the
- * operation accepts NO date filter and NO pagination args. `--from` /
- * `--to` and `--page` / `--per-page` flags are deliberately not exposed
- * by this leaf; the AC items that referenced them are deferred. See
- * `.tmp/workitem-15.md` § Open Questions (RESOLVED) for the rationale.
+ * operation still accepts NO date filter. `--from` / `--to` flags
+ * remain deliberately unexposed. See `.tmp/workitem-15.md` § Open
+ * Questions (RESOLVED) for the rationale.
  */
-export async function list(token: string, opts: ListOptions = {}): Promise<JobActivityItem[]> {
+export async function list(token: string, opts: ListOptions = {}): Promise<JobActivityListPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
   const variables: Record<string, unknown> = {};
   if (opts.keywords !== undefined && opts.keywords.length > 0) {
     variables["keywords"] = opts.keywords;
@@ -405,6 +498,8 @@ export async function list(token: string, opts: ListOptions = {}): Promise<JobAc
   } else {
     variables["onlyStatusGroupFilter"] = null;
   }
+  variables["page"] = page;
+  variables["pageSize"] = perPage;
   const data = await callGateway<JobActivityListResponse["data"] & object>(
     token,
     "JobActivityItems",
@@ -414,9 +509,14 @@ export async function list(token: string, opts: ListOptions = {}): Promise<JobAc
   // The cast above is the awkward part of dropping codegen here; the
   // shape narrowing below is the single source of runtime truth.
   if (data.viewer === null || data.viewer.jobActivityList === null) {
-    return [];
+    return { items: [], totalCount: 0, page, perPage };
   }
-  return data.viewer.jobActivityList.entities ?? [];
+  return {
+    items: data.viewer.jobActivityList.entities ?? [],
+    totalCount: data.viewer.jobActivityList.totalCount,
+    page,
+    perPage,
+  };
 }
 
 /**
@@ -502,7 +602,13 @@ export async function stats(token: string): Promise<ApplicationsStats> {
         token,
         "JobActivityItems",
         JOB_ACTIVITY_LIST_QUERY,
-        { keywords: null, onlyStatusGroupFilter: [group] },
+        // `page` / `pageSize` are `null` here: the shared query now
+        // declares them (#377) but `stats()` is an aggregate — it
+        // reads the grand-total `totalCount`, which the gateway
+        // returns independent of the paginated slice. Explicit `null`
+        // (vs omitted) keeps the wire payload deterministic across the
+        // 5 parallel count calls.
+        { keywords: null, onlyStatusGroupFilter: [group], page: null, pageSize: null },
       );
       const count = data.viewer?.jobActivityList?.totalCount ?? 0;
       return { name: group, count };

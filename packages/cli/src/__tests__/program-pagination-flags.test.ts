@@ -293,23 +293,67 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
   });
 
   // -------------------------------------------------------------------
-  // Commander's standard "unknown option" fires on non-paginated leaves
+  // `applications list` joins the paginated club (#377)
   // -------------------------------------------------------------------
 
-  it("--page on `applications list` fails with Commander's standard error (#183)", async () => {
+  it("--page DOES appear in `applications list --help` (#377)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["applications", "list", "--help"], { from: "user" });
+    } catch {
+      // expected — commander.help() throws via exitOverride
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--page <number>/);
+    expect(helpText).toMatch(/--per-page <number>/);
+  });
+
+  it("--page 2 --per-page 5 on `applications list` is accepted (#377)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureStderr();
+    captureExit();
+
+    const apps = program.commands.find((c) => c.name() === "applications");
+    expect(apps).toBeDefined();
+    const list = apps?.commands.find((c) => c.name() === "list");
+    expect(list).toBeDefined();
+    if (!list) return;
+
+    try {
+      await program.parseAsync(["applications", "list", "--page", "2", "--per-page", "5"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    const opts = list.opts<{ page?: number; perPage?: number }>();
+    expect(opts.page).toBe(2);
+    expect(opts.perPage).toBe(5);
+  });
+
+  it("--page 0 is rejected on `applications list` (positive-integer enforced via shared parsePaginationFlag; #377)", async () => {
     const program = buildProgram();
     program.exitOverride();
     captureStdout();
     const stderr = captureStderr();
     captureExit();
     try {
-      await program.parseAsync(["applications", "list", "--page", "2"], { from: "user" });
+      await program.parseAsync(["applications", "list", "--page", "0"], { from: "user" });
     } catch {
-      // expected — Commander's parser throws via exitOverride
+      // expected
     }
     const errOut = stderr.lines.join("");
-    expect(errOut).toMatch(/error: unknown option '--page'/);
+    expect(errOut).toContain("--page must be a positive integer");
   });
+
+  // -------------------------------------------------------------------
+  // Commander's standard "unknown option" fires on non-paginated leaves
+  // (engagements `list` still rejects --per-page until #375 lands.)
+  // -------------------------------------------------------------------
 
   it("--per-page on `engagements list` fails with Commander's standard error (#183)", async () => {
     const program = buildProgram();

@@ -199,7 +199,11 @@ export function registerInterestRequestsTools(server: McpServer, ctx: ToolRegist
       }
 
       try {
-        const rows = await applications.list(auth.token, { statusGroups: ["ON_RECRUITER_REVIEW"] });
+        // #377: applications.list now returns a JobActivityListPage
+        // envelope. This tool is a filtered convenience surface (it
+        // does not paginate at the MCP layer — see #372 / R1 framing);
+        // unwrap `.items` and keep the existing client-side projection.
+        const { items: rows } = await applications.list(auth.token, { statusGroups: ["ON_RECRUITER_REVIEW"] });
         const now = Date.now();
         const projected = rows.map((row) => projectRow(row, now));
         const filtered =

@@ -7,9 +7,27 @@ import { applications } from "@ttctl/core";
 
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
+import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runApplicationsList } from "./list.js";
 import { runApplicationsShow } from "./show.js";
 import { runApplicationsStats } from "./stats.js";
+
+/**
+ * Page-number option factory (#377, per-command flags per #183). The
+ * `list` leaf declares its own `--page` / `--per-page`; the parser and
+ * description are shared via these factories so the surface stays
+ * byte-identical with the four jobs paginating leaves in `--help`
+ * output (same `parsePaginationFlag` positive-integer enforcement).
+ */
+function pageOption(): Option {
+  return new Option("--page <number>", "page number (1-indexed)").argParser((raw) =>
+    parsePaginationFlag("--page", raw),
+  );
+}
+
+function perPageOption(): Option {
+  return new Option("--per-page <number>", "items per page").argParser((raw) => parsePaginationFlag("--per-page", raw));
+}
 
 /**
  * Build the `ttctl applications` command tree. Read-only access to the
@@ -25,9 +43,15 @@ import { runApplicationsStats } from "./stats.js";
  * Per project non-goals (#15): no apply / withdraw / edit operations
  * are exposed. The CLI is read-only by design.
  *
- * **Out of scope for v1** (see `.tmp/workitem-15.md` § Open Questions):
- * `--from` / `--to` date filters and `--page` / `--per-page` pagination
- * — captured operation accepts neither. Pagination will land via #138.
+ * **Pagination (#377)**: the `list` leaf declares `--page` /
+ * `--per-page` (1-indexed positive integers; same `parsePaginationFlag`
+ * enforcement as the jobs leaves per #183). `#377` added the
+ * `$page` / `$pageSize` wire args to the hand-authored
+ * `JobActivityItems` document.
+ *
+ * **Still out of scope** (see `.tmp/workitem-15.md` § Open Questions):
+ * `--from` / `--to` date filters — captured operation accepts no date
+ * args.
  */
 export function buildApplicationsCommand(): Command {
   const cmd = new Command("applications").description(
@@ -43,13 +67,21 @@ export function buildApplicationsCommand(): Command {
         ...applications.STATUS_GROUPS,
       ]),
     )
+    .addOption(pageOption())
+    .addOption(perPageOption())
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
     .action(
-      async (options: { keywords?: string[]; statusGroup?: applications.StatusGroup[]; output: OutputFormat }) => {
+      async (options: {
+        keywords?: string[];
+        statusGroup?: applications.StatusGroup[];
+        page?: number;
+        perPage?: number;
+        output: OutputFormat;
+      }) => {
         // `exactOptionalPropertyTypes: true` — build additively to keep
         // omitted-vs-undefined semantics straight at the API boundary.
         const listOpts: import("./list.js").ApplicationsListOptions = {
@@ -57,6 +89,8 @@ export function buildApplicationsCommand(): Command {
         };
         if (options.keywords !== undefined) listOpts.keywords = options.keywords;
         if (options.statusGroup !== undefined) listOpts.statusGroups = options.statusGroup;
+        if (options.page !== undefined) listOpts.page = options.page;
+        if (options.perPage !== undefined) listOpts.perPage = options.perPage;
         await runApplicationsList(listOpts);
       },
     );

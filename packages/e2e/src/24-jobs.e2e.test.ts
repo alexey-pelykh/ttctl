@@ -419,13 +419,14 @@ describe("jobs (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "--page on a non-paginated leaf (`applications list`) fails with Commander's unknown-option error (#183)",
+    "--page on a non-paginated leaf (`engagements list`) fails with Commander's unknown-option error (#183)",
     async () => {
-      // Per #183, pagination flags are declared PER paginating leaf
-      // (jobs only). `applications list` does not declare `--page`,
-      // so Commander emits its standard `error: unknown option`
-      // (exit 1) — no custom refusal machinery in the program.
-      const result = await cli.run(["applications", "list", "--page", "1"]);
+      // Per #183, pagination flags are declared PER paginating leaf.
+      // Post-#377 the applications leaf accepts --page / --per-page;
+      // engagements remains non-paginated until #375 lands. Commander
+      // emits its standard `error: unknown option` (exit 1) — no
+      // custom refusal machinery in the program.
+      const result = await cli.run(["engagements", "list", "--page", "1"]);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toMatch(/error: unknown option '--page'/);
     },
