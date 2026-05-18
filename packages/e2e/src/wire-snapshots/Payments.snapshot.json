@@ -1,0 +1,145 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-18T18:25:18.635Z",
+  "operationName": "Payments",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "items": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "amount": {
+              "kind": "string"
+            },
+            "billingCycle": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "endDate": {
+                  "kind": "string"
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "startDate": {
+                  "kind": "string"
+                }
+              }
+            },
+            "correctionAmount": {
+              "kind": "string"
+            },
+            "createdAt": {
+              "kind": "string"
+            },
+            "description": {
+              "kind": "string"
+            },
+            "downloadPdfUrl": {
+              "kind": "string"
+            },
+            "dueDate": {
+              "kind": "string"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "job": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "client": {
+                  "kind": "object",
+                  "fields": {
+                    "__typename": {
+                      "kind": "string"
+                    },
+                    "fullName": {
+                      "kind": "string"
+                    },
+                    "id": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "title": {
+                  "kind": "string"
+                }
+              }
+            },
+            "kindCategory": {
+              "kind": "string"
+            },
+            "memorandums": {
+              "kind": "array",
+              "item": {
+                "kind": "unknown"
+              }
+            },
+            "number": {
+              "kind": "number"
+            },
+            "paidAt": {
+              "kind": "string"
+            },
+            "paymentGroupId": {
+              "kind": "null"
+            },
+            "status": {
+              "kind": "string"
+            },
+            "updatedAt": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "page": {
+        "kind": "number"
+      },
+      "perPage": {
+        "kind": "number"
+      },
+      "summary": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "totalDisputed": {
+            "kind": "string"
+          },
+          "totalDue": {
+            "kind": "string"
+          },
+          "totalOnHold": {
+            "kind": "string"
+          },
+          "totalOutstanding": {
+            "kind": "string"
+          },
+          "totalOverdue": {
+            "kind": "string"
+          },
+          "totalPaid": {
+            "kind": "string"
+          }
+        }
+      },
+      "totalCount": {
+        "kind": "number"
+      }
+    }
+  }
+}
