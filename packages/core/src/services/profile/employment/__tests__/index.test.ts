@@ -12,7 +12,17 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { add, employerAutocomplete, highlight, list, remove, show, update } from "../index.js";
+import {
+  add,
+  buildUpdateEmploymentInput,
+  employerAutocomplete,
+  highlight,
+  list,
+  remove,
+  show,
+  update,
+} from "../index.js";
+import type { Employment } from "../index.js";
 import { impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
 import { VIEWER_OK } from "../../__tests__/fixtures.js";
@@ -73,6 +83,8 @@ const EMP_1_MAPPED = {
   reportingTo: null,
   industries: [],
   primaryGeography: null,
+  employerId: null,
+  skills: [],
 };
 
 // EMP_2: the four #344 fields PRESENT in their nested wire shape —
@@ -97,12 +109,15 @@ const EMP_2 = {
   primaryGeography: { id: "V1-Geo-1", code: "US", name: "United States" },
 };
 
-// EMP_2 and its mapped form differ in exactly one field — the wire
-// `industries { nodes }` connection projects to a flat `{id,name}[]`.
-// Spread keeps the two in lock-step (mirrors EMP_1_MAPPED above).
+// EMP_2 and its mapped form differ in fields that get projected from
+// nested wire connections — `industries { nodes }`, `skills { nodes }`,
+// `employer { id }` — to scalar / flat read-side shapes. Spread keeps
+// the two in lock-step (mirrors EMP_1_MAPPED above).
 const EMP_2_MAPPED = {
   ...EMP_2,
   industries: [{ id: "V1-Industry-1", name: "Software" }],
+  employerId: null,
+  skills: [],
 };
 
 beforeEach(() => {
@@ -404,7 +419,12 @@ describe("add", () => {
 });
 
 describe("update", () => {
-  it("dispatches UpdateEmployment with employmentId + employment input", async () => {
+  it("reads current then dispatches UpdateEmployment with the merged employment input (#394)", async () => {
+    // Pre-read for the merge: extractProfileId (stockTransport ProfileShow)
+    // + listByProfileId (impersonatedTransport GET_WORK_EXPERIENCE) +
+    // the update mutation itself.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
     replyImpersonated({
       body: {
         data: {
@@ -420,9 +440,38 @@ describe("update", () => {
     const updated = await update(TOKEN, EMP_1.id, { position: "Lead Engineer" });
     expect(updated.position).toBe("Lead Engineer");
     expect(updated).toEqual({ ...EMP_1_MAPPED, position: "Lead Engineer" });
+
+    // The third impersonated call is the UpdateEmployment mutation. Its
+    // variables must include the four required-non-null fields injected
+    // from current state + the user-supplied `position`. Pre-#394, only
+    // `position` was sent and the server rejected the four absent fields
+    // as null.
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.operationName).toBe("UpdateEmployment");
+    // The merge injects GraphQL-required (4) + Rails-blank gates
+    // (company, publicationPermit) + catalog refs (industryIds; employerId
+    // / primaryGeographyId / reportingTo only when current has them).
+    // EMP_1 (the #344-fields-absent fixture) → industries [], no employer.
+    expect(updateCall.body.variables).toEqual({
+      input: {
+        employmentId: EMP_1.id,
+        employment: {
+          experienceItems: EMP_1.experienceItems,
+          skills: [],
+          showViaToptal: EMP_1.showViaToptal,
+          startDate: EMP_1.startDate,
+          company: EMP_1.company,
+          publicationPermit: true,
+          industryIds: [],
+          position: "Lead Engineer",
+        },
+      },
+    });
   });
 
-  it("round-trips the #344 fields through the mapped UpdateEmployment response", async () => {
+  it("preserves the #344 fields on round-trip even when user supplies only one parity field", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_2] } } } } });
     replyImpersonated({
       body: {
         data: {
@@ -445,6 +494,137 @@ describe("update", () => {
     expect(updated.industries).toEqual([{ id: "V1-Industry-1", name: "Software" }]);
     expect(updated.primaryGeography).toEqual({ id: "V1-Geo-1", code: "US", name: "United States" });
     expect(updated.reportingTo).toBe("VP Engineering");
+  });
+
+  it("rejects an empty fields object with VALIDATION_ERROR (no read attempt)", async () => {
+    await expect(update(TOKEN, EMP_1.id, {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    // No transport call was made — empty-fields guard fires before the
+    // read.
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("throws VALIDATION_ERROR when current.startDate is null and caller did not supply --from", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [{ ...EMP_1, startDate: null }] } } } },
+    });
+    await expect(update(TOKEN, EMP_1.id, { position: "X" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    // Read was made (one stock + one impersonated for show), but the
+    // update mutation was NOT dispatched (the guard fires before the
+    // mutation call).
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts user-supplied --from when current.startDate is null", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [{ ...EMP_1, startDate: null }] } } } },
+    });
+    replyImpersonated({
+      body: {
+        data: {
+          updateEmployment: {
+            success: true,
+            errors: null,
+            profile: {
+              id: "p1",
+              employments: { nodes: [{ ...EMP_1, startDate: 2021, position: "X" }] },
+            },
+          },
+        },
+      },
+    });
+    const updated = await update(TOKEN, EMP_1.id, { position: "X", startDate: 2021 });
+    expect(updated.position).toBe("X");
+    expect(updated.startDate).toBe(2021);
+  });
+});
+
+describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
+  // Build a minimal Employment from EMP_*_MAPPED to drive the helper.
+  function fromMapped(mapped: typeof EMP_1_MAPPED | typeof EMP_2_MAPPED): Employment {
+    return mapped as Employment;
+  }
+
+  it("rejects an empty fields object", () => {
+    expect(() => buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {})).toThrow(/at least one field flag/);
+  });
+
+  it("injects the wire-required fields from current when user supplies a different field", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { position: "Lead" });
+    // GraphQL-required-non-null (4): always injected from current.
+    expect(merged.experienceItems).toEqual(EMP_1.experienceItems);
+    expect(merged.skills).toEqual([]); // EMP_1_MAPPED.skills is []
+    expect(merged.showViaToptal).toBe(EMP_1.showViaToptal);
+    expect(merged.startDate).toBe(EMP_1.startDate);
+    // Rails `.blank?` gates: company + publicationPermit always injected
+    // (publicationPermit null → defaults to true).
+    expect(merged.company).toBe(EMP_1.company);
+    expect(merged.publicationPermit).toBe(true);
+    // Catalog refs: industryIds always injected from current.industries;
+    // employerId only injected when current has one (EMP_1 has none).
+    expect(merged.industryIds).toEqual([]);
+    expect(merged).not.toHaveProperty("employerId");
+    // primaryGeographyId / reportingTo only injected when current has
+    // non-null value (EMP_1 has neither).
+    expect(merged).not.toHaveProperty("primaryGeographyId");
+    expect(merged).not.toHaveProperty("reportingTo");
+    // User-supplied field wins.
+    expect(merged.position).toBe("Lead");
+    // Truly-optional fields the caller did not supply are NOT injected.
+    expect(merged).not.toHaveProperty("highlight");
+    expect(merged).not.toHaveProperty("companyWebsite");
+  });
+
+  it("lets user-supplied required-non-null fields override the current-derived defaults", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
+      experienceItems: ["paragraph 1", "paragraph 2"],
+      showViaToptal: false,
+      startDate: 2025,
+    });
+    expect(merged.experienceItems).toEqual(["paragraph 1", "paragraph 2"]);
+    expect(merged.showViaToptal).toBe(false);
+    expect(merged.startDate).toBe(2025);
+    // skills preserved from current (EMP_1_MAPPED.skills is []).
+    expect(merged.skills).toEqual([]);
+  });
+
+  it("injects employerId, primaryGeographyId, reportingTo when current row has them", () => {
+    const merged = buildUpdateEmploymentInput(
+      fromMapped({
+        ...EMP_2_MAPPED,
+        employerId: "V1-Employer-99",
+        skills: [{ id: "V1-Skill-1", name: "TypeScript" }],
+      } as Employment),
+      { position: "Lead" },
+    );
+    expect(merged.employerId).toBe("V1-Employer-99");
+    expect(merged.primaryGeographyId).toBe("V1-Geo-1");
+    expect(merged.reportingTo).toBe("VP Engineering");
+    expect(merged.industryIds).toEqual(["V1-Industry-1"]);
+    expect(merged.skills).toEqual([{ id: "V1-Skill-1", name: "TypeScript" }]);
+  });
+
+  it("falls back to [] when current.experienceItems is null", () => {
+    const currentWithNullItems = { ...EMP_1_MAPPED, experienceItems: null } as Employment;
+    const merged = buildUpdateEmploymentInput(currentWithNullItems, { position: "X" });
+    expect(merged.experienceItems).toEqual([]);
+  });
+
+  it("throws VALIDATION_ERROR when both current.startDate and fields.startDate are null/undefined", () => {
+    const currentWithNullStart = { ...EMP_1_MAPPED, startDate: null } as Employment;
+    expect(() => buildUpdateEmploymentInput(currentWithNullStart, { position: "X" })).toThrow(
+      /startDate is required and current value is null/,
+    );
+  });
+
+  it("uses fields.startDate when current.startDate is null but caller supplied --from", () => {
+    const currentWithNullStart = { ...EMP_1_MAPPED, startDate: null } as Employment;
+    const merged = buildUpdateEmploymentInput(currentWithNullStart, { position: "X", startDate: 2022 });
+    expect(merged.startDate).toBe(2022);
   });
 });
 

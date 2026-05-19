@@ -505,7 +505,14 @@ exports[`MCP profile_employment — payload snapshots > payload: full profile em
       "id": "geo_test_us",
       "code": "US",
       "name": "United States"
-    }
+    },
+    "employerId": "V1-Employer-test-001",
+    "skills": [
+      {
+        "id": "sk_test_typescript",
+        "name": "TypeScript"
+      }
+    ]
   },
   {
     "id": "emp_test_002",
@@ -534,7 +541,14 @@ exports[`MCP profile_employment — payload snapshots > payload: full profile em
       "id": "geo_test_us",
       "code": "US",
       "name": "United States"
-    }
+    },
+    "employerId": "V1-Employer-test-002",
+    "skills": [
+      {
+        "id": "sk_test_typescript",
+        "name": "TypeScript"
+      }
+    ]
   }
 ]"
 `;

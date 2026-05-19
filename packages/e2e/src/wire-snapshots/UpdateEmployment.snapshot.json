@@ -1,0 +1,91 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-19T12:05:34.917Z",
+  "operationName": "UpdateEmployment",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "company": {
+        "kind": "string"
+      },
+      "companyWebsite": {
+        "kind": "string"
+      },
+      "employerId": {
+        "kind": "string"
+      },
+      "endDate": {
+        "kind": "null"
+      },
+      "experienceItems": {
+        "kind": "array",
+        "item": {
+          "kind": "string"
+        }
+      },
+      "highlight": {
+        "kind": "boolean"
+      },
+      "id": {
+        "kind": "string"
+      },
+      "industries": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "string"
+            },
+            "name": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "noWebsite": {
+        "kind": "boolean"
+      },
+      "position": {
+        "kind": "string"
+      },
+      "primaryGeography": {
+        "kind": "null"
+      },
+      "publicationPermit": {
+        "kind": "boolean"
+      },
+      "reportingTo": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "showViaToptal": {
+        "kind": "boolean"
+      },
+      "skills": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "string"
+            },
+            "name": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "startDate": {
+        "kind": "number"
+      },
+      "toptalRelated": {
+        "kind": "boolean"
+      }
+    }
+  }
+}
