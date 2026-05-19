@@ -629,9 +629,10 @@ function formatCandidate(m: EmployerSuggestion): string {
 /**
  * Placeholder string substituted into a dry-run `UpdateEmployment`
  * preview's variables payload for fields that the apply-path resolves by
- * reading the current row (`experienceItems`, `skills`, `showViaToptal`,
- * `startDate` — the four required-non-null fields injected by the
- * read-current+merge logic, #394). Surfaced verbatim so MCP consumers can
+ * reading the current row (`experienceItems`, `position`, `skills`,
+ * `showViaToptal`, `startDate` — the five required-non-null fields
+ * injected by the read-current+merge logic, #394 + #407 for `position`).
+ * Surfaced verbatim so MCP consumers can
  * see the structural shape of what will be sent without TTCtl having
  * fired the read transport. Same posture as `basic.set`'s
  * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} — preserves the zero-transport-
@@ -644,18 +645,19 @@ export const DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER = "<resolved at send-time by r
  * Build the merged `EmploymentInput` to send for an `UpdateEmployment`
  * mutation by reading the current row and overlaying user-supplied fields.
  *
- * The `talent_profile/graphql` server treats four `EmploymentInput` fields
+ * The `talent_profile/graphql` server treats five `EmploymentInput` fields
  * as required non-null on `UpdateEmployment` and rejects the whole
  * variables payload with `"Expected value to not be null"` when they are
- * absent (#394 — wire-broke meta-class #392). The four fields are
- * `experienceItems`, `showViaToptal`, `startDate`, and `skills`. This
- * helper injects them from the current state where the EMPLOYMENT_FRAGMENT
- * surfaces them (`experienceItems`, `showViaToptal`, `startDate`) and
- * defaults `skills: []` because the fragment does not currently select the
- * read-side `skills` connection. Other fields are left undefined and
- * omitted from the wire payload — the server keeps the existing value for
- * any field absent from the input (the omission-is-preservation half of
- * the merge contract; only the four required-non-null fields force-echo).
+ * absent (#394 + #407 for `position` — wire-broke meta-class #392). The
+ * five fields are `experienceItems`, `position`, `showViaToptal`,
+ * `startDate`, and `skills`. This helper injects them from the current
+ * state where the EMPLOYMENT_FRAGMENT surfaces them (`experienceItems`,
+ * `position`, `showViaToptal`, `startDate`) and defaults `skills: []`
+ * because the fragment does not currently select the read-side `skills`
+ * connection. Other fields are left undefined and omitted from the wire
+ * payload — the server keeps the existing value for any field absent
+ * from the input (the omission-is-preservation half of the merge
+ * contract; only the five required-non-null fields force-echo).
  *
  * **Known limitation (#394)**: `skills` defaults to `[]` because the
  * current read fragment does not surface skills. Calling `update()` on a
@@ -706,6 +708,11 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
   const merged: EmploymentFields = {
     // Wire-required non-null (GraphQL `Expected value to not be null`):
     experienceItems: current.experienceItems ?? [],
+    // #407 — same wire-required non-null class: server rejects with
+    // `Expected value to not be null` for `employment.position` on any
+    // partial update that omits it. EMPLOYMENT_FRAGMENT selects `position`
+    // so `current.position` is always available to thread through.
+    position: current.position,
     // Preserve current row's skills through the merge — server rejects
     // `skills: []` with "is too short (minimum is 1 character)" on
     // update (#394 live-capture finding 2026-05-19). The EMPLOYMENT_FRAGMENT
@@ -738,9 +745,9 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
  * Update an existing employment row. Wire format per Pattern 1:
  * `{ employmentId, employment: EmploymentInput }`.
  *
- * Reads the current row first and merges the four required-non-null
+ * Reads the current row first and merges the five required-non-null
  * fields onto the wire input (see {@link buildUpdateEmploymentInput} for
- * the merge contract and #394 for the originating wire-broke incident).
+ * the merge contract and #394 + #407 for the originating wire-broke incidents).
  */
 export async function update(token: string, id: string, fields: EmploymentFields): Promise<Employment> {
   if (Object.keys(fields).length === 0) {
