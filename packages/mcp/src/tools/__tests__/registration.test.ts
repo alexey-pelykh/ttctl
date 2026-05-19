@@ -148,9 +148,14 @@ const EXPECTED_TOOLS = [
   "ttctl_jobs_search_list",
   "ttctl_jobs_search_save",
   "ttctl_jobs_search_remove",
-  // timesheet (#13) — 3 tools (list/show/submit). Submit is destructive
-  // (one-way at the wire level); LLM clients must confirm with the user.
+  // timesheet (#13) — 3 tools (list/show/submit) plus #374 pending_list.
+  // Submit is destructive (one-way at the wire level); LLM clients must
+  // confirm with the user. #374 pending_list exposes surface-honest
+  // `limit` pagination (the viewer-wide wire field is LimitPagination,
+  // no offset) — diverges from the offset-style page/perPage other
+  // paginated tools use. See ADR-007 row 3.
   "ttctl_timesheet_list",
+  "ttctl_timesheet_pending_list",
   "ttctl_timesheet_show",
   "ttctl_timesheet_submit",
   // payments (#149) — 7 tools (payouts list/show + methods list/show + rate
@@ -196,7 +201,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (103 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 1 #371 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (104 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 1 #371 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

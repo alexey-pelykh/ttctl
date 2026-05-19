@@ -222,6 +222,25 @@ export interface TimesheetDetail extends TimesheetListItem {
 
 /**
  * Optional list filter.
+ *
+ * **Pagination divergence** (#374, per ADR-007 row 3 — "limit-only
+ * wrapper"): the viewer-wide `PendingTimesheets` wire op accepts a
+ * `pagination: { limit: Int }` input (nullable Int on a
+ * `LimitPagination` field — NO `offset`, NO `page`, NO `pageSize`).
+ * The CLI / MCP expose this as `--limit N` / `{ limit }` — diverging
+ * from the offset-style `--page` / `--per-page` used by jobs /
+ * applications / engagements / payouts whose wires ARE offset-style.
+ * Surface-honest per the council vote on 2026-05-19; documented in
+ * ADR-007 (filed in #387).
+ *
+ * The original re-spike attempt (PR #383, closed) added
+ * `--page`/`--per-page` and tried to translate to `pagination:
+ * { limit, offset }`. The wire rejected this with HTTP 400 across 8
+ * E2E tests — the field is `LimitPagination` only.
+ *
+ * `limit` is ignored when `engagement` is set — the per-engagement
+ * `Timesheets($jobActivityItemId)` wire op carries no pagination
+ * input (separate concern; see issue #374 OUT-OF-SCOPE note).
  */
 export interface ListOptions {
   /**
@@ -233,7 +252,34 @@ export interface ListOptions {
    * regardless of submission state).
    */
   engagement?: string;
+  /**
+   * Maximum number of pending billing cycles to return on the
+   * viewer-wide `PendingTimesheets` path. Wire-honest: maps directly to
+   * the `pagination: { limit: $limit }` input on
+   * `Viewer.billingCycles`. Default 50 (the historical hardcoded value)
+   * when the option is unset or `undefined`.
+   *
+   * Ignored when {@link engagement} is set (the per-engagement wire op
+   * has no pagination input).
+   *
+   * Wire constraint (per the `LimitPagination` field empirically
+   * confirmed via PR #383's failure transcript): `limit` is the ONLY
+   * accepted key — no `offset`, no cursor. The wire field is
+   * `LimitPagination`, not `OffsetPagination`.
+   */
+  limit?: number;
 }
+
+/**
+ * Default `pagination: { limit }` value used on the viewer-wide
+ * `PendingTimesheets` wire op when the caller does not pass
+ * {@link ListOptions.limit}. Matches the pre-#374 hardcoded value
+ * (`pagination: { limit: 50 }` in the captured operation document),
+ * preserving the historical default for flag-less callers.
+ *
+ * Exported so callers and tests share one source of truth.
+ */
+export const DEFAULT_PENDING_LIMIT = 50;
 
 /**
  * Result of {@link resolveCurrentCycle}.
@@ -323,8 +369,18 @@ export interface ResolveCurrentCycleOptions {
 
 // ---------------------------------------------------------------------
 
-// Verbatim from `../research/graphql/gateway/operations/mobile/PendingTimesheets.graphql`.
-const PENDING_TIMESHEETS_QUERY = `query PendingTimesheets { viewer { __typename id ...pendingTimesheets } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment pendingTimesheets on Viewer { __typename billingCycles(filters: { pendingTimesheetOnly: true } , pagination: { limit: 50 } ) { __typename nodes { __typename ...timesheetListFields } } }`;
+// Adapted from `../research/graphql/gateway/operations/mobile/PendingTimesheets.graphql`
+// — the captured document hardcoded `pagination: { limit: 50 }` inline; this
+// parameterised variant threads `$limit: Int` through the same `LimitPagination`
+// input (`limit` is the ONLY field — no `offset`, no cursor). Per ADR-007 row
+// 3 ("limit-only wrapper"), surface-honestly exposed as `--limit N` / `{limit}`
+// on CLI / MCP. The wire field is verified by PR #383's HTTP 400 failure
+// transcript: attempting `pagination: { limit, offset: 0 }` was rejected as
+// the field is `LimitPagination`, not `OffsetPagination`. `$limit` is
+// nullable on the wire — omission preserves server-side default behaviour;
+// the apply path always passes the explicit value (defaulted to
+// {@link DEFAULT_PENDING_LIMIT} when the caller omits {@link ListOptions.limit}).
+const PENDING_TIMESHEETS_QUERY = `query PendingTimesheets($limit: Int) { viewer { __typename id ...pendingTimesheets } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment pendingTimesheets on Viewer { __typename billingCycles(filters: { pendingTimesheetOnly: true } , pagination: { limit: $limit } ) { __typename nodes { __typename ...timesheetListFields } } }`;
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/Timesheets.graphql`.
 const TIMESHEETS_QUERY = `query Timesheets($jobActivityItemId: ID!) { viewer { __typename id jobActivityItem(id: $jobActivityItemId) { __typename id engagement { __typename id billingCycles(filters: { onlyTimesheets: true } ) { __typename ids nodes { __typename ...timesheetListFields } } } } } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }`;
@@ -509,19 +565,26 @@ function projectDetailItem(wire: TimesheetDetailWireItem): TimesheetDetail {
  *
  * Default (no `engagement` option): uses `PendingTimesheets` to fetch
  * viewer-wide cycles that still need submission. This is the
- * "what needs my attention" view.
+ * "what needs my attention" view. Pagination is exposed via
+ * {@link ListOptions.limit} (defaults to {@link DEFAULT_PENDING_LIMIT}
+ * to preserve pre-#374 behaviour).
  *
  * With `engagement` option: uses `Timesheets($jobActivityItemId)` to
  * fetch ALL cycles for that engagement (regardless of submission
  * state). The argument is the public `JobActivityItem.id` exposed by
- * `engagements list`.
+ * `engagements list`. `limit` is ignored on this path (the
+ * per-engagement wire op has no pagination input — see #374
+ * OUT-OF-SCOPE note).
  *
  * The returned array preserves server order; the CLI / MCP do not
  * re-sort.
  */
 export async function list(token: string, opts: ListOptions = {}): Promise<TimesheetListItem[]> {
   if (opts.engagement === undefined) {
-    const data = await callGateway<PendingTimesheetsResponse>(token, "PendingTimesheets", PENDING_TIMESHEETS_QUERY, {});
+    const limit = opts.limit ?? DEFAULT_PENDING_LIMIT;
+    const data = await callGateway<PendingTimesheetsResponse>(token, "PendingTimesheets", PENDING_TIMESHEETS_QUERY, {
+      limit,
+    });
     if (data.viewer === null) {
       throw new TimesheetError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
     }

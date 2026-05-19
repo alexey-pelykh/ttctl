@@ -192,9 +192,14 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_visas_list",
       "ttctl_profile_visas_remove",
       "ttctl_profile_visas_update",
-      // #13 — timesheet (3, list/show/submit). Submit is destructive
-      // (one-way); LLM clients must confirm with the user.
+      // #13 — timesheet (3, list/show/submit) + #374 pending_list.
+      // Submit is destructive (one-way); LLM clients must confirm with
+      // the user. pending_list (#374) exposes surface-honest `limit`
+      // pagination — diverges from page/perPage other paginated tools
+      // because the viewer-wide wire field is LimitPagination
+      // (no offset, no cursor). See ADR-007 row 3.
       "ttctl_timesheet_list",
+      "ttctl_timesheet_pending_list",
       "ttctl_timesheet_show",
       "ttctl_timesheet_submit",
     ]);

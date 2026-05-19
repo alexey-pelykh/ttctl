@@ -6,25 +6,36 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
+import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runTimesheetList } from "./list.js";
+import { runTimesheetPendingList } from "./pending/list.js";
 import { runTimesheetShow } from "./show.js";
 import { runTimesheetSubmit } from "./submit.js";
 
 /**
- * Build the `ttctl timesheet` command tree (#13). Three leaves:
+ * Build the `ttctl timesheet` command tree (#13). Three leaves plus a
+ * `pending` sub-tree (#374):
  *
  * | Leaf                             | Description                                       |
  * |----------------------------------|---------------------------------------------------|
  * | `list [--engagement <id>]`       | List timesheets (default: viewer-wide pending)    |
+ * | `pending list [--limit N]`       | Viewer-wide pending timesheets, with --limit      |
  * | `show <id>`                      | One timesheet detail (id = BillingCycle.id)       |
  * | `submit [id] [--confirm]`        | Submit timesheet for billing (destructive)        |
  *
  * **Wire identity model**:
  *   - `BillingCycle.id` — the public "timesheet id" returned by
- *     `list` and consumed by `show` / `submit`.
+ *     `list` / `pending list` and consumed by `show` / `submit`.
  *   - `JobActivityItem.id` — the "engagement id" exposed by
  *     `engagements list`. Passed via `--engagement <id>` to scope
  *     `list` / `submit` auto-resolve to one engagement.
+ *
+ * **`pending list` surface-honest pagination divergence** (#374, per
+ * ADR-007 row 3): the viewer-wide `PendingTimesheets` wire op accepts
+ * ONLY a `pagination: { limit: Int }` input — no `offset`, no cursor —
+ * so the CLI surfaces `--limit N` rather than the offset-style
+ * `--page` / `--per-page` used by jobs / applications / engagements /
+ * payouts. Documented in `CHANGELOG.md` and ADR-007.
  *
  * **Out of scope for v1** (per #13 spec): editing timesheet records,
  * uploading attachments, reminder settings, rejection/approval
@@ -47,6 +58,31 @@ export function buildTimesheetCommand(): Command {
       const listOpts: import("./list.js").TimesheetListOptions = { output: options.output };
       if (options.engagement !== undefined) listOpts.engagement = options.engagement;
       await runTimesheetList(listOpts);
+    });
+
+  // `ttctl timesheet pending list [--limit N]` (#374) — viewer-wide pending
+  // pagination with the surface-honest `--limit` flag (the wire field is
+  // `LimitPagination`, NO `offset`). See ADR-007 row 3 for the grammar.
+  const pending = cmd.command("pending").description("Viewer-wide pending timesheets (limit-only pagination)");
+
+  pending
+    .command("list")
+    .description("List viewer-wide pending timesheet billing cycles (limit-only pagination)")
+    .addOption(
+      new Option(
+        "--limit <number>",
+        "max pending cycles to return (default: 50, the historical wire default)",
+      ).argParser((raw) => parsePaginationFlag("--limit", raw)),
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { limit?: number; output: OutputFormat }) => {
+      const listOpts: import("./pending/list.js").TimesheetPendingListOptions = { output: options.output };
+      if (options.limit !== undefined) listOpts.limit = options.limit;
+      await runTimesheetPendingList(listOpts);
     });
 
   cmd

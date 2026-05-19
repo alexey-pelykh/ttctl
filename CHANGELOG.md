@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ttctl timesheet pending list [--limit N]` (CLI) and
+  `ttctl_timesheet_pending_list` (MCP) — surface-honest viewer-wide
+  pending pagination (#374, re-spike of #383)**. Closes the original
+  pagination gap on the timesheet domain: pre-#374, the viewer-wide
+  `PendingTimesheets` wire op hardcoded `pagination: { limit: 50 }` in
+  its captured document, so callers with more than 50 pending cycles
+  could not enumerate them all.
+  - **Wire**: `PENDING_TIMESHEETS_QUERY` is now parameterised with
+    `$limit: Int` and threads through the wire's
+    `pagination: { limit: $limit }` input. The wire field is
+    `LimitPagination` (no `offset`, no cursor) — empirically confirmed
+    by PR #383's HTTP 400 transcript when an offset was supplied.
+  - **Core**: `timesheet.ListOptions` gains `limit?: number`; the new
+    `DEFAULT_PENDING_LIMIT = 50` export preserves the pre-#374
+    hardcoded value when callers omit the option. The `engagement`
+    path is untouched — the per-engagement `TIMESHEETS_QUERY` carries
+    no pagination input (OUT-OF-SCOPE per #374; tracked separately if
+    user demand surfaces).
+  - **CLI**: new sub-command tree `ttctl timesheet pending list
+[--limit N]`. The pre-existing `ttctl timesheet list
+[--engagement <id>]` is unchanged and continues to work in both
+    viewer-wide and per-engagement modes (the no-engagement path now
+    threads `DEFAULT_PENDING_LIMIT` through the parameterised wire op
+    — flag-less callers see no behaviour change).
+  - **MCP**: new `ttctl_timesheet_pending_list` tool with the schema
+    `{ limit?: number (int, positive), dryRun? }`. The pre-existing
+    `ttctl_timesheet_list` tool keeps its pre-#374 shape (no
+    pagination args) for backward compatibility; its description
+    points agents at `ttctl_timesheet_pending_list` when pagination
+    is needed.
+  - **Surface-honest divergence from the other four paginated
+    services** (jobs / applications / engagements / payments
+    payouts): those wires expose offset-style pagination and ttctl
+    surfaces `--page` / `--per-page` flags; the
+    `PendingTimesheets` wire op accepts only `limit` so this surface
+    diverges to `--limit N` (CLI) / `{ limit }` (MCP). Surface-honest
+    per ADR-007 (see `hq/engineering/adr/ADR-007-pagination-flag-grammar.md`,
+    filed in #387 — companion PR in this batch). CLI flag names
+    mirror wire arg names; MCP keys mirror wire arg keys; no
+    translation layer.
+  - **Supersedes PR #383** (closed as broken). The original
+    re-spike attempt added `--page` / `--per-page` and tried to
+    translate them into `pagination: { limit, offset }`. The wire
+    rejected this with HTTP 400 across 8 E2E tests — the field is
+    `LimitPagination`, not `OffsetPagination`. This re-spike adopts
+    the surface-honest grammar from ADR-007 row 3 ("limit-only
+    wrapper") instead.
+  - **Schema/contract rule**: TRIGGERED. The hand-authored
+    `PendingTimesheets($limit: Int)` document threads a variable
+    through the inferred wire-input shape. E2E coverage in
+    `packages/e2e/src/25-timesheet-list.e2e.test.ts` (gated by
+    `TTCTL_E2E=1`) asserts the live API accepts the variable with an
+    explicit value (`limit: 1`) and with the default
+    (`DEFAULT_PENDING_LIMIT = 50`); manual run + transcript REQUIRED
+    on the PR thread per the rule. Track 1 (wire-shape snapshot) per
+    ADR-006 — the existing
+    `packages/e2e/src/wire-snapshots/PendingTimesheets.snapshot.json`
+    continues to assert structural drift; the input variable change
+    does not perturb the response shape.
+
 - **`employment` / `education` / `certifications` `list` operation surfaced
   on CLI + MCP (#341)**. Closes the Class A surface-coverage gap caught
   by `scripts/check-surface-coverage.ts`: the three sub-domains exported

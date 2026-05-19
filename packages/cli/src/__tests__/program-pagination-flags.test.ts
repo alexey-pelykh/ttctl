@@ -546,4 +546,80 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     expect(opts.page).toBe(2);
     expect(opts.perPage).toBe(7);
   });
+
+  // -------------------------------------------------------------------
+  // timesheet pending list (#374) — surface-honest `--limit` divergence
+  // -------------------------------------------------------------------
+
+  it("--limit DOES appear in `timesheet pending list --help`, --page does NOT (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["timesheet", "pending", "list", "--help"], { from: "user" });
+    } catch {
+      // expected — help exits via exitOverride
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--limit <number>/);
+    // Surface-honest divergence: this leaf MUST NOT expose --page / --per-page.
+    expect(helpText).not.toMatch(/^\s+--page\b/m);
+    expect(helpText).not.toMatch(/^\s+--per-page\b/m);
+  });
+
+  it("--page on `timesheet pending list` fails with Commander's standard unknown-option error (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["timesheet", "pending", "list", "--page", "1"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toMatch(/error: unknown option '--page'/);
+  });
+
+  it("--limit 5 on `timesheet pending list` is accepted (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureStderr();
+    captureExit();
+
+    const timesheet = program.commands.find((c) => c.name() === "timesheet");
+    expect(timesheet).toBeDefined();
+    const pending = timesheet?.commands.find((c) => c.name() === "pending");
+    expect(pending).toBeDefined();
+    const list = pending?.commands.find((c) => c.name() === "list");
+    expect(list).toBeDefined();
+    if (!list) return;
+
+    try {
+      await program.parseAsync(["timesheet", "pending", "list", "--limit", "5"], { from: "user" });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    const opts = list.opts<{ limit?: number }>();
+    expect(opts.limit).toBe(5);
+  });
+
+  it("--limit 0 is rejected on `timesheet pending list` (must be ≥ 1; shared parsePaginationFlag) (#374)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["timesheet", "pending", "list", "--limit", "0"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--limit must be a positive integer");
+  });
 });
