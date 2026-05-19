@@ -55,6 +55,13 @@ function parseOlderThanHours(input: string): number | null {
  * to integer days. Returns the same `id` so callers can drill into
  * `ttctl_applications_show` for the full detail view.
  *
+ * **`fixedRate` (#410)**: surfaces the recruiter-pinned Fixed rate the
+ * Toptal portal renders next to the IR. Lifted from the row's
+ * `availabilityRequest.metadata.offeredHourlyRate` via the core
+ * `applications.list()` projection. `null` when the AR carries no
+ * Fixed-rate offer (defensive — every recruiter-initiated IR observed
+ * in the wild has carried one).
+ *
  * @internal Exported for unit tests.
  */
 export interface InterestRequestRow {
@@ -72,6 +79,13 @@ export interface InterestRequestRow {
   lastUpdatedAt: string;
   /** Whole days between `lastUpdatedAt` and `now`; null if unparseable. */
   daysPending: number | null;
+  /**
+   * Recruiter-pinned Fixed rate (#410), in the standard Money shape.
+   * `null` when no Fixed-rate offer is present on the row. Use
+   * `fixedRate.decimal` for numeric comparison, `fixedRate.verbose` for
+   * pretty rendering (server-formatted, e.g. `"$77.00/hr"`).
+   */
+  fixedRate: applications.FixedRate | null;
 }
 
 /**
@@ -83,6 +97,7 @@ export function projectRow(
     lastUpdatedAt: string;
     statusV2: { verbose: string };
     job: { title: string | null; url: string | null; client: { fullName: string | null } | null };
+    fixedRate: applications.FixedRate | null;
   },
   now: number,
 ): InterestRequestRow {
@@ -98,6 +113,7 @@ export function projectRow(
     jobUrl: row.job.url,
     lastUpdatedAt: row.lastUpdatedAt,
     daysPending,
+    fixedRate: row.fixedRate,
   };
 }
 

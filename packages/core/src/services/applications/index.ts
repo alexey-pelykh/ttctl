@@ -218,14 +218,34 @@ export interface ApplicationJobRef {
 }
 
 /**
+ * Recruiter-pinned Fixed rate (#410). The Toptal portal renders this as
+ * the "Fixed" rate badge on Interest Requests — distinct from the
+ * marketplace `maxRate` ceiling on `TalentJob`. Lives on the
+ * `AvailabilityRequest.metadata.offeredHourlyRate` path in the
+ * synthesized schema (`AvailabilityRequestFixedMetadata`). Shape is
+ * the standard `Money { decimal verbose }`. `null` when the activity
+ * row has no AR, or the AR carries no Fixed-rate offer.
+ */
+export interface FixedRate {
+  decimal: string;
+  verbose: string;
+}
+
+/**
  * One row in the activity list — the CLI's `applications list` and the
  * MCP's `ttctl_applications_list` both surface this shape. `engagement`,
- * `jobApplication`, `availabilityRequest`, and `interview` are all
- * presence indicators (only `id` is selected) — a non-null value tells
- * the consumer "this row has reached the corresponding lifecycle
- * stage". The `mostRelevantApplication` union from the captured
- * operation is intentionally elided here: it duplicates information
- * `jobApplication` / `availabilityRequest` already carry.
+ * `jobApplication`, and `interview` are presence indicators (only `id`
+ * is selected) — a non-null value tells the consumer "this row has
+ * reached the corresponding lifecycle stage". `availabilityRequest`
+ * additionally carries the recruiter Fixed-rate offer (#410). The
+ * `mostRelevantApplication` union from the captured operation is
+ * intentionally elided here: it duplicates information `jobApplication`
+ * / `availabilityRequest` already carry.
+ *
+ * `fixedRate` (#410) is projected from
+ * `availabilityRequest.metadata.offeredHourlyRate` so callers can rate-
+ * triage Interest Requests without crawling into the AR sub-shape
+ * themselves. `null` when no AR exists for this row.
  */
 export interface JobActivityItem {
   id: string;
@@ -238,6 +258,7 @@ export interface JobActivityItem {
   engagement: { id: string } | null;
   availabilityRequest: { id: string } | null;
   interview: { id: string } | null;
+  fixedRate: FixedRate | null;
 }
 
 /**
@@ -329,6 +350,16 @@ export interface ApplicationsStats {
 // default slice.
 // ---------------------------------------------------------------------
 
+// `availabilityRequest.metadata.offeredHourlyRate { decimal verbose }`
+// surfaces the recruiter-pinned Fixed rate (#410). The schema declares
+// `AvailabilityRequest.metadata: AvailabilityRequestFixedMetadata!` and
+// `AvailabilityRequestFixedMetadata.offeredHourlyRate: Money!`, both
+// non-null when an AR exists. The hand-authored selection lives in the
+// schema-coverage gap region (`JobActivityItems` is T1 per
+// `docs/wire-validation-routing.md`), so the live E2E run is the
+// authority — the existing `15-applications-list.e2e.test.ts` /
+// `16-applications-show.e2e.test.ts` extend with `fixedRate` shape
+// assertions to gate the schema/contract rule.
 const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $onlyStatusGroupFilter: [JobActivityItemStatusGroupEnum!], $page: Int, $pageSize: PageSize) {
   viewer {
     __typename
@@ -351,7 +382,14 @@ const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $o
         }
         jobApplication { __typename id }
         engagement { __typename id }
-        availabilityRequest { __typename id }
+        availabilityRequest {
+          __typename
+          id
+          metadata {
+            __typename
+            offeredHourlyRate { __typename decimal verbose }
+          }
+        }
         interview { __typename id }
       }
       totalCount
@@ -400,7 +438,14 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
         commitment { __typename slug }
         expectedHours
       }
-      availabilityRequest { __typename id }
+      availabilityRequest {
+        __typename
+        id
+        metadata {
+          __typename
+          offeredHourlyRate { __typename decimal verbose }
+        }
+      }
       interview { __typename id }
     }
   }
@@ -412,12 +457,85 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
 // Five small parallel calls keep the wall-clock cost flat (≈ one
 // round-trip).
 
+/**
+ * Wire-side shape of `availabilityRequest` as returned by the trimmed
+ * `JobActivityItems` / `JobActivityItem` selection set. `id` is the
+ * presence indicator; `metadata.offeredHourlyRate` (the Money shape) is
+ * the recruiter-pinned Fixed rate (#410). The flatten step in
+ * {@link projectActivityItem} lifts `offeredHourlyRate` into the
+ * row-level `fixedRate` projection field so callers (CLI, MCP, LLM
+ * agents) can rate-triage without traversing the AR sub-shape.
+ */
+interface AvailabilityRequestWireEntity {
+  id: string;
+  metadata: {
+    offeredHourlyRate: {
+      decimal: string;
+      verbose: string;
+    };
+  };
+}
+
+/**
+ * Wire-side row shape for `jobActivityList.entities[]`. Decouples the
+ * raw wire selection (`availabilityRequest` carries `metadata.offered...`)
+ * from the public projection shape (which surfaces a flat
+ * `fixedRate: FixedRate | null` field at the row level). The projection
+ * step lives in {@link projectActivityItem}.
+ */
+interface JobActivityItemWireEntity {
+  id: string;
+  statusV2: ApplicationStatus;
+  statusGroupV2: ApplicationStatus;
+  statusColor: string | null;
+  lastUpdatedAt: string;
+  job: ApplicationJobRef;
+  jobApplication: { id: string } | null;
+  engagement: { id: string } | null;
+  availabilityRequest: AvailabilityRequestWireEntity | null;
+  interview: { id: string } | null;
+}
+
+/**
+ * Wire-side detail shape for `viewer.jobActivityItem(id:)`. Narrows
+ * {@link JobActivityItemWireEntity} with richer `job` / `jobApplication`
+ * / `engagement` selections (mirroring the public {@link
+ * JobActivityItemDetail} extends {@link JobActivityItem} pattern). The
+ * AR shape is inherited unchanged — the detail selection set picks the
+ * same `metadata.offeredHourlyRate` fields as the list selection.
+ */
+interface JobActivityItemDetailWireEntity extends JobActivityItemWireEntity {
+  job: ApplicationJobRef & {
+    descriptionMd: string | null;
+    expectedHours: number | null;
+    commitment: { slug: string } | null;
+    workType: { slug: string } | null;
+    specialization: { title: string } | null;
+    startDate: string | null;
+    postedWhen: string | null;
+    estimatedLength: { enumValue: string } | null;
+    isCoaching: boolean | null;
+    isToptalProject: boolean | null;
+  };
+  jobApplication: {
+    id: string;
+    requestedHourlyRate: { decimal: string } | null;
+  } | null;
+  engagement: {
+    id: string;
+    startDate: string | null;
+    endDate: string | null;
+    commitment: { slug: string } | null;
+    expectedHours: number | null;
+  } | null;
+}
+
 interface JobActivityListResponse {
   data?: {
     viewer: {
       id: string;
       jobActivityList: {
-        entities: JobActivityItem[] | null;
+        entities: JobActivityItemWireEntity[] | null;
         totalCount: number;
       } | null;
     } | null;
@@ -429,10 +547,67 @@ interface JobActivityItemResponse {
   data?: {
     viewer: {
       id: string;
-      jobActivityItem: JobActivityItemDetail | null;
+      jobActivityItem: JobActivityItemDetailWireEntity | null;
     } | null;
   } | null;
   errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Lift the wire's `availabilityRequest.metadata.offeredHourlyRate` Money
+ * shape into a row-level {@link FixedRate} projection field (#410).
+ * Returns `null` when the row carries no AR (typical for `APPLIED` /
+ * engagement-only rows) or when an AR exists but the metadata is absent
+ * (defensive — schema declares both non-null, but the live wire is the
+ * authority).
+ */
+function projectFixedRate(ar: AvailabilityRequestWireEntity | null): FixedRate | null {
+  if (ar === null) return null;
+  const offered = ar.metadata.offeredHourlyRate;
+  return { decimal: offered.decimal, verbose: offered.verbose };
+}
+
+/**
+ * Project a wire-shape activity-item row into the public
+ * {@link JobActivityItem} surface. The `availabilityRequest` field is
+ * narrowed to its presence indicator `{ id }`; the recruiter Fixed
+ * rate is flattened to `fixedRate`.
+ */
+function projectActivityItem(wire: JobActivityItemWireEntity): JobActivityItem {
+  return {
+    id: wire.id,
+    statusV2: wire.statusV2,
+    statusGroupV2: wire.statusGroupV2,
+    statusColor: wire.statusColor,
+    lastUpdatedAt: wire.lastUpdatedAt,
+    job: wire.job,
+    jobApplication: wire.jobApplication,
+    engagement: wire.engagement,
+    availabilityRequest: wire.availabilityRequest === null ? null : { id: wire.availabilityRequest.id },
+    interview: wire.interview,
+    fixedRate: projectFixedRate(wire.availabilityRequest),
+  };
+}
+
+/**
+ * Project a wire-shape detail row into {@link JobActivityItemDetail}.
+ * Same flattening as {@link projectActivityItem}; the detail-only
+ * fields pass through verbatim.
+ */
+function projectActivityItemDetail(wire: JobActivityItemDetailWireEntity): JobActivityItemDetail {
+  return {
+    id: wire.id,
+    statusV2: wire.statusV2,
+    statusGroupV2: wire.statusGroupV2,
+    statusColor: wire.statusColor,
+    lastUpdatedAt: wire.lastUpdatedAt,
+    job: wire.job,
+    jobApplication: wire.jobApplication,
+    engagement: wire.engagement,
+    availabilityRequest: wire.availabilityRequest === null ? null : { id: wire.availabilityRequest.id },
+    interview: wire.interview,
+    fixedRate: projectFixedRate(wire.availabilityRequest),
+  };
 }
 
 /**
@@ -511,8 +686,9 @@ export async function list(token: string, opts: ListOptions = {}): Promise<JobAc
   if (data.viewer === null || data.viewer.jobActivityList === null) {
     return { items: [], totalCount: 0, page, perPage };
   }
+  const entities = data.viewer.jobActivityList.entities ?? [];
   return {
-    items: data.viewer.jobActivityList.entities ?? [],
+    items: entities.map(projectActivityItem),
     totalCount: data.viewer.jobActivityList.totalCount,
     page,
     perPage,
@@ -570,7 +746,7 @@ export async function show(token: string, id: string): Promise<JobActivityItemDe
       `No activity item found with id "${id}" (or you don't have access to it).`,
     );
   }
-  return data.viewer.jobActivityItem;
+  return projectActivityItemDetail(data.viewer.jobActivityItem);
 }
 
 /**

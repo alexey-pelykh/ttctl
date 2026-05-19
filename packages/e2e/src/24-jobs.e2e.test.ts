@@ -77,7 +77,46 @@ describe("jobs (live mobile-gateway)", () => {
     expect("saved" in first).toBe(true);
     expect("notInterested" in first).toBe(true);
     expect("viewed" in first).toBe(true);
+    // Recruiter Fixed rate (#410): every row carries `fixedRate`,
+    // shape is Money ({ decimal, verbose }) or null. Most eligibleJobs
+    // browse rows the talent hasn't engaged report `null`; IRs and
+    // recruiter-pinged jobs report the Money shape.
+    expect("fixedRate" in first).toBe(true);
+    for (const row of payload.items) {
+      const r = row as { fixedRate?: unknown };
+      if (r.fixedRate === null || r.fixedRate === undefined) continue;
+      expect(typeof r.fixedRate).toBe("object");
+      const rate = r.fixedRate as { decimal?: unknown; verbose?: unknown };
+      expect(typeof rate.decimal).toBe("string");
+      expect(typeof rate.verbose).toBe("string");
+    }
   });
+
+  it.skipIf(!e2eEnabled)(
+    "jobs show projects fixedRate (Money | null) from activityItem.availabilityRequest.metadata (#410)",
+    async () => {
+      const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+      expect(listResult.exitCode).toBe(0);
+      const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+      const probeId = listed.items[0]?.id;
+      if (probeId === undefined) {
+        process.stderr.write("warning: no eligible jobs in test account — jobs show fixedRate assertion skipped\n");
+        return;
+      }
+      const showResult = await cli.run(["jobs", "show", probeId, "-o", "json"]);
+      expect(showResult.exitCode).toBe(0);
+      const detail = JSON.parse(showResult.stdout) as { fixedRate?: unknown };
+      // `fixedRate` MUST be a key on the detail payload; null when the
+      // job has no AR for the viewer, Money-shaped when present.
+      expect("fixedRate" in detail).toBe(true);
+      const fr = detail.fixedRate;
+      if (fr === null || fr === undefined) return;
+      expect(typeof fr).toBe("object");
+      const rate = fr as { decimal?: unknown; verbose?: unknown };
+      expect(typeof rate.decimal).toBe("string");
+      expect(typeof rate.verbose).toBe("string");
+    },
+  );
 
   it.skipIf(!e2eEnabled)("round-trips save → saved → unsave → saved against a real job", async () => {
     // Step 1: find a job to use as the round-trip subject.

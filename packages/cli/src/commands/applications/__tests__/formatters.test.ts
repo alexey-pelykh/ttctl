@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { applications } from "@ttctl/core";
 
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
+import { formatFixedRate } from "../shared.js";
 import { formatApplicationDetail } from "../show.js";
 import { formatStatsPretty } from "../stats.js";
 
@@ -25,6 +26,7 @@ const ITEM: applications.JobActivityItem = {
   engagement: { id: "eng-1" },
   availabilityRequest: null,
   interview: null,
+  fixedRate: null,
 };
 
 describe("shortenStatusGroup", () => {
@@ -50,6 +52,18 @@ describe("formatDate", () => {
   it("returns the input unchanged when it does not start with a date", () => {
     expect(formatDate("not-a-date")).toBe("not-a-date");
     expect(formatDate("")).toBe("");
+  });
+});
+
+describe("formatFixedRate (#410)", () => {
+  it("returns the server-formatted verbose when present", () => {
+    expect(formatFixedRate({ decimal: "77.00", verbose: "$77.00/hr" })).toBe("$77.00/hr");
+  });
+  it("falls back to $<decimal>/h when verbose is empty (defensive)", () => {
+    expect(formatFixedRate({ decimal: "109.00", verbose: "" })).toBe("$109.00/h");
+  });
+  it("returns empty string when fixedRate is null", () => {
+    expect(formatFixedRate(null)).toBe("");
   });
 });
 
@@ -184,6 +198,30 @@ describe("formatApplicationDetail", () => {
     };
     const out = formatApplicationDetail(noDesc);
     expect(out).not.toContain("Description:");
+  });
+
+  it("renders the Fixed rate section when fixedRate is present (#410)", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      availabilityRequest: { id: "ar-1" },
+      fixedRate: { decimal: "77.00", verbose: "$77.00/hr" },
+    });
+    expect(out).toContain("Fixed rate");
+    expect(out).toContain("$77.00/hr");
+  });
+
+  it("omits the Fixed rate section when fixedRate is null (#410)", () => {
+    const out = formatApplicationDetail(DETAIL);
+    expect(out).not.toContain("Fixed rate");
+  });
+
+  it("falls back to $<decimal>/h when verbose is empty (#410 defensive)", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      availabilityRequest: { id: "ar-1" },
+      fixedRate: { decimal: "109.00", verbose: "" },
+    });
+    expect(out).toContain("$109.00/h");
   });
 });
 

@@ -23,6 +23,23 @@ export function handleApplicationsError(commandLabel: string, err: unknown, form
 }
 
 /**
+ * Render a recruiter Fixed rate (#410). Domain-local twin of
+ * `jobs/shared.ts`'s `formatFixedRate` — per the project's
+ * one-copy-per-CLI-surface convention (no cross-domain import; the
+ * `applications.FixedRate` and `jobs.FixedRate` types are structurally
+ * identical but nominally per-domain). Prefers `verbose` (server-
+ * formatted, e.g. "$77.00/hr") when present; falls back to a hand-
+ * rendered `$<decimal>/h` so the value stays populated even if the
+ * gateway omits `verbose` on some response shape. Returns empty when
+ * the row carries no Fixed-rate offer.
+ */
+export function formatFixedRate(fixedRate: applications.FixedRate | null): string {
+  if (fixedRate === null) return "";
+  if (fixedRate.verbose !== "") return fixedRate.verbose;
+  return `$${fixedRate.decimal}/h`;
+}
+
+/**
  * Render the pretty-format pagination footer "Page X of Y
  * (per_page=Z)" appended below the activity table for `applications
  * list` (#377). Domain-local twin of `jobs/shared.ts`'s

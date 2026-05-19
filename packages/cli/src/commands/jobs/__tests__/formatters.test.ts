@@ -10,6 +10,7 @@ import { formatJobDetail } from "../show.js";
 import {
   buildJobsPageInfo,
   formatDate,
+  formatFixedRate,
   formatFlags,
   formatJobsTable,
   formatPageFooter,
@@ -26,6 +27,7 @@ const LIST_ITEM_FIXTURE: jobs.JobListItem = {
   specialization: { title: "Frontend" },
   expectedHours: 40,
   maxRate: 120,
+  fixedRate: null,
   startDate: "2026-06-01",
   postedWhen: "2 days ago",
   viewed: false,
@@ -90,6 +92,18 @@ describe("formatRate", () => {
   });
 });
 
+describe("formatFixedRate (#410)", () => {
+  it("returns the server-formatted verbose when present", () => {
+    expect(formatFixedRate({ decimal: "77.00", verbose: "$77.00/hr" })).toBe("$77.00/hr");
+  });
+  it("falls back to $<decimal>/h when verbose is empty (defensive)", () => {
+    expect(formatFixedRate({ decimal: "109.00", verbose: "" })).toBe("$109.00/h");
+  });
+  it("returns empty string when fixedRate is null", () => {
+    expect(formatFixedRate(null)).toBe("");
+  });
+});
+
 describe("formatFlags", () => {
   it("returns combined letters for set flags", () => {
     expect(formatFlags({ saved: true, notInterested: false, viewed: true })).toBe("SV");
@@ -124,6 +138,21 @@ describe("formatJobsTable", () => {
   it("renders untitled placeholder when title is null", () => {
     const output = formatJobsTable([{ ...LIST_ITEM_FIXTURE, title: null }], 100);
     expect(output).toContain("(untitled)");
+  });
+
+  it("renders the recruiter Fixed rate verbose in its own column (#410)", () => {
+    const fixedRateRow: jobs.JobListItem = {
+      ...LIST_ITEM_FIXTURE,
+      fixedRate: { decimal: "77.00", verbose: "$77.00/hr" },
+    };
+    const output = formatJobsTable([fixedRateRow], 200);
+    expect(output).toContain("$77.00/hr");
+    // The maxRate column stays populated independently — the two carry
+    // distinct semantics per #410.
+    expect(output).toContain("$120/h");
+    // Header column labels both rates separately.
+    expect(output).toContain("fixed rate");
+    expect(output).toContain("max rate");
   });
 });
 
@@ -201,6 +230,24 @@ describe("buildJobsPageInfo", () => {
     });
     expect(pageInfo.totalPages).toBe(1);
     expect(pageInfo.hasNextPage).toBe(false);
+  });
+});
+
+describe("formatJobDetail fixedRate (#410)", () => {
+  it("renders the Fixed rate line under the Max rate line when present", () => {
+    const detail: jobs.JobDetail = {
+      ...DETAIL_FIXTURE,
+      fixedRate: { decimal: "77.00", verbose: "$77.00/hr" },
+    };
+    const output = formatJobDetail(detail);
+    expect(output).toContain("Max rate: $120/h");
+    expect(output).toContain("Fixed rate: $77.00/hr");
+  });
+
+  it("omits the Fixed rate line when fixedRate is null", () => {
+    const output = formatJobDetail(DETAIL_FIXTURE);
+    expect(output).toContain("Max rate: $120/h");
+    expect(output).not.toContain("Fixed rate:");
   });
 });
 

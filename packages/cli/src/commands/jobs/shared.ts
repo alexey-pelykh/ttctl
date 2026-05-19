@@ -38,30 +38,54 @@ export function formatRate(rate: number | null): string {
 }
 
 /**
+ * Render a recruiter Fixed rate (#410). Prefers `verbose` (server-
+ * formatted, e.g. "$77.00/hr") when present; falls back to a hand-
+ * rendered `$<decimal>/h` so the column stays populated even if the
+ * gateway omits `verbose` on some response shape. Returns empty when
+ * the row carries no Fixed-rate offer.
+ */
+export function formatFixedRate(fixedRate: jobs.FixedRate | null): string {
+  if (fixedRate === null) return "";
+  if (fixedRate.verbose !== "") return fixedRate.verbose;
+  return `$${fixedRate.decimal}/h`;
+}
+
+/**
  * Render the jobs list as a `cli-table3` table sized to the current
- * terminal width. Columns: id, title, client, commitment, rate, flags
+ * terminal width. Columns: id, title, client, commitment, max rate
+ * (marketplace ceiling), fixed rate (recruiter-pinned, #410), flags
  * (saved / not-interested / viewed). Used by `list`, `saved`,
  * `viewed`, `not-interested-list`.
+ *
+ * Why two rate columns: `maxRate` and `fixedRate` carry distinct
+ * semantics — `maxRate` is the marketplace ceiling (often null);
+ * `fixedRate` is the recruiter-pinned offer rendered as the Toptal
+ * portal's "Fixed" badge. Collapsing them into one column would lose
+ * the disambiguation the bug report (#410) specifically asks for.
  */
 export function formatJobsTable(
   items: jobs.JobListItem[],
   terminalWidth: number = process.stdout.columns || 100,
 ): string {
   if (items.length === 0) {
-    const empty = new Table({ head: ["id", "title", "client", "commitment", "rate", "flags"] });
+    const empty = new Table({ head: ["id", "title", "client", "commitment", "max rate", "fixed rate", "flags"] });
     return empty.toString();
   }
   const idWidth = 22;
   const commitmentWidth = 14;
-  const rateWidth = 10;
+  const maxRateWidth = 10;
+  const fixedRateWidth = 12;
   const flagsWidth = 8;
   const clientWidth = 24;
-  // 6 columns x 2 padding + 7 borders ≈ 19
-  const remaining = Math.max(20, terminalWidth - idWidth - clientWidth - commitmentWidth - rateWidth - flagsWidth - 19);
+  // 7 columns x 2 padding + 8 borders ≈ 22
+  const remaining = Math.max(
+    20,
+    terminalWidth - idWidth - clientWidth - commitmentWidth - maxRateWidth - fixedRateWidth - flagsWidth - 22,
+  );
   const titleWidth = Math.max(20, remaining);
   const table = new Table({
-    head: ["id", "title", "client", "commitment", "rate", "flags"],
-    colWidths: [idWidth, titleWidth, clientWidth, commitmentWidth, rateWidth, flagsWidth],
+    head: ["id", "title", "client", "commitment", "max rate", "fixed rate", "flags"],
+    colWidths: [idWidth, titleWidth, clientWidth, commitmentWidth, maxRateWidth, fixedRateWidth, flagsWidth],
     wordWrap: true,
   });
   for (const it of items) {
@@ -71,6 +95,7 @@ export function formatJobsTable(
       it.client?.fullName ?? "",
       it.commitment?.slug ?? "",
       formatRate(it.maxRate),
+      formatFixedRate(it.fixedRate),
       formatFlags(it),
     ]);
   }

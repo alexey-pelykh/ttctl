@@ -180,6 +180,52 @@ describe("applications.list", () => {
       code: "NETWORK_ERROR",
     });
   });
+
+  // ----- Recruiter Fixed rate projection (#410) ---------------------
+  //
+  // `availabilityRequest.metadata.offeredHourlyRate` is lifted into a
+  // row-level `fixedRate` projection field so callers can rate-triage
+  // Interest Requests without crawling into the AR sub-shape. The
+  // wire-shape interface narrows the public `availabilityRequest` to
+  // its presence indicator `{ id }`; the Money payload moves to the
+  // top-level `fixedRate`.
+
+  it("projects fixedRate from availabilityRequest.metadata.offeredHourlyRate (#410)", async () => {
+    const rowWithFixedRate = {
+      ...ITEM_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-1",
+        metadata: {
+          __typename: "AvailabilityRequestFixedMetadata",
+          offeredHourlyRate: { __typename: "Money", decimal: "77.00", verbose: "$77.00/hr" },
+        },
+      },
+    };
+    reply({
+      body: {
+        data: { viewer: { id: "v1", jobActivityList: { entities: [rowWithFixedRate], totalCount: 1 } } },
+      },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.fixedRate).toEqual({ decimal: "77.00", verbose: "$77.00/hr" });
+    // The public availabilityRequest is narrowed to {id}; the Money
+    // payload no longer rides on it.
+    expect(res.items[0]?.availabilityRequest).toEqual({ id: "ar-1" });
+  });
+
+  it("projects fixedRate=null when availabilityRequest is null (#410)", async () => {
+    // ITEM_FIXTURE already carries `availabilityRequest: null` — the
+    // typical row for engagement-only activity items.
+    reply({
+      body: {
+        data: { viewer: { id: "v1", jobActivityList: { entities: [ITEM_FIXTURE], totalCount: 1 } } },
+      },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.fixedRate).toBeNull();
+    expect(res.items[0]?.availabilityRequest).toBeNull();
+  });
 });
 
 describe("applications.show", () => {
@@ -236,6 +282,36 @@ describe("applications.show", () => {
       name: "ApplicationsError",
       code: "NOT_FOUND",
     });
+  });
+
+  it("projects fixedRate from availabilityRequest.metadata on show (#410)", async () => {
+    const detailWithFixedRate = {
+      ...DETAIL_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-9",
+        metadata: {
+          __typename: "AvailabilityRequestFixedMetadata",
+          offeredHourlyRate: { __typename: "Money", decimal: "109.00", verbose: "$109.00/hr" },
+        },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: detailWithFixedRate } } },
+    });
+    const item = await show(TOKEN, "act-1");
+    expect(item.fixedRate).toEqual({ decimal: "109.00", verbose: "$109.00/hr" });
+    expect(item.availabilityRequest).toEqual({ id: "ar-9" });
+  });
+
+  it("projects fixedRate=null on show when availabilityRequest is null (#410)", async () => {
+    // DETAIL_FIXTURE inherits ITEM_FIXTURE's `availabilityRequest: null`.
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: DETAIL_FIXTURE } } },
+    });
+    const item = await show(TOKEN, "act-1");
+    expect(item.fixedRate).toBeNull();
+    expect(item.availabilityRequest).toBeNull();
   });
 
   it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
