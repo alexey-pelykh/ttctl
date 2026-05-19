@@ -206,6 +206,9 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
         const shown = await profile.employment.show(token, created.id);
         expect(shown.id).toBe(created.id);
         expect(shown.company).toBe("Anthropic");
+        // #403 AC#4(a): the explicitly-supplied industryIds persisted
+        // and round-trip through the read-side `industries` projection.
+        expect(shown.industries.map((i) => i.id)).toContain(firstIndustry.id);
 
         // T1 snapshot — capture the mapped Employment shape returned by
         // add(). Drift in the server's response signals a wire-format

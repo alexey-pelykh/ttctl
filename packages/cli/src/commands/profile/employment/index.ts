@@ -59,6 +59,11 @@ export function buildProfileEmploymentCommand(): Command {
       "--employer-id <id>",
       "explicit employerId (bypasses autocomplete; use `ttctl profile employment employer-autocomplete <query>` to discover)",
     )
+    .option(
+      "--industry-id <id>",
+      'catalog Industry id (repeatable; required — at least one). Discover via `ttctl profile industries autocomplete "<query>"`.',
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -84,6 +89,11 @@ export function buildProfileEmploymentCommand(): Command {
     )
     .option("--edit", "open $EDITOR to compose the description (cannot be combined with --description)", false)
     .option("--highlight <bool>", "set highlight flag (true|false)")
+    .option(
+      "--industry-id <id>",
+      'catalog Industry id (repeatable; when supplied, replaces the entry\'s industry set — omit to preserve). Discover via `ttctl profile industries autocomplete "<query>"`.',
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -170,6 +180,7 @@ interface AddOptions {
   current: boolean;
   website?: string;
   employerId?: string;
+  industryId?: string[];
   output: OutputFormat;
 }
 
@@ -183,6 +194,7 @@ interface UpdateOptions {
   description?: string;
   edit: boolean;
   highlight?: string;
+  industryId?: string[];
   output: OutputFormat;
 }
 
@@ -200,6 +212,28 @@ async function runAdd(options: AddOptions): Promise<void> {
   }
   applyDateFlags(fields, options, "profile employment add", options.output);
   if (options.current) fields.endDate = null;
+
+  // industryIds is required on the live `CreateEmployment` wire (#395
+  // cascade: the server rejects a blank industry set). Surface it as a
+  // required flag — mirrors `ttctl profile portfolio add --industry-id`
+  // — so the failure is an upfront VALIDATION_ERROR, not a confusing
+  // late wire USER_ERROR.
+  if (options.industryId === undefined || options.industryId.length === 0) {
+    emitErrorAndExit({
+      operation: "profile.employment.add",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message:
+            "--industry-id is required (at least one). " +
+            'Discover catalog IDs via `ttctl profile industries autocomplete "<query>"`.',
+        },
+      ],
+      prettySummary: "profile employment add failed (VALIDATION_ERROR): --industry-id is required.",
+    });
+  }
+  fields.industryIds = options.industryId;
 
   const token = await loadAuthTokenOrExit("profile employment add", options.output);
   let result: profile.employment.Employment;
@@ -276,6 +310,14 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
     // (the API stores each paragraph as a separate row, per the
     // UpdateEmploymentInput capture's `experienceItems: 3-10 items`).
     fields.experienceItems = splitParagraphs(description);
+  }
+  // Replace-on-supply: when --industry-id is given (repeatable), the
+  // supplied catalog set replaces the entry's entire industry set; when
+  // omitted, the core read-current+merge preserves the existing set
+  // (#394 `buildUpdateEmploymentInput`). Setting it here also makes
+  // `--industry-id` count toward the "at least one field flag" check.
+  if (options.industryId !== undefined && options.industryId.length > 0) {
+    fields.industryIds = options.industryId;
   }
 
   if (Object.keys(fields).length === 0) {

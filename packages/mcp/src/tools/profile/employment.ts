@@ -43,7 +43,8 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         "Add a new employment entry (company + role, with optional start/end years and `current` flag). " +
         "The `company` string is resolved to the server-side `employerId` via the employer-autocomplete catalog: " +
         "0 matches or 2+ matches return a VALIDATION_ERROR with disambiguation guidance. Pass an explicit `employerId` to " +
-        "bypass autocomplete entirely. Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
+        "bypass autocomplete entirely. `industryIds` (at least one required) attaches catalog industries to the entry — " +
+        "discover ids via `ttctl_profile_industries_autocomplete`. Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
       inputSchema: {
         company: z.string().min(1).describe("company / employer name (resolved to employerId via autocomplete)"),
         role: z.string().min(1).describe("job title (mapped to position)"),
@@ -53,6 +54,12 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .optional()
           .describe(
             "explicit employerId (bypasses autocomplete; use `ttctl_profile_employment_employer_autocomplete` to discover)",
+          ),
+        industryIds: z
+          .array(z.string())
+          .min(1)
+          .describe(
+            'Catalog Industry ids (at least one required). Discover via `ttctl_profile_industries_autocomplete` or `ttctl profile industries autocomplete "<query>"`.',
           ),
         from: dateInput.optional().describe("start date — ISO-8601 or year"),
         to: dateInput.optional().describe("end date — ISO-8601 or year"),
@@ -72,6 +79,11 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       const fields: profile.employment.EmploymentFields = {
         company: input.company,
         position: input.role,
+        // industryIds is required by the schema (zod `.min(1)`). The
+        // live `CreateEmployment` wire rejects a blank industry set
+        // (#395 cascade); surfacing it as a required parameter mirrors
+        // `portfolio_add` and fails fast before the wire.
+        industryIds: input.industryIds,
       };
       if (input.employerId !== undefined) {
         fields.employerId = input.employerId;
@@ -113,7 +125,8 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
     {
       title: "Update employment entry",
       description:
-        "Update an existing employment entry by id. At least one field must be supplied. `description` is multi-paragraph free-text and splits on blank lines.",
+        "Update an existing employment entry by id. At least one field must be supplied. `description` is multi-paragraph free-text and splits on blank lines. " +
+        "`industryIds`, when supplied, replaces the entry's entire industry set (omit to preserve the current set) — discover ids via `ttctl_profile_industries_autocomplete`.",
       inputSchema: {
         id: z.string().min(1).describe("employment id (V1-Employment-NNN)"),
         company: z.string().optional(),
@@ -124,6 +137,13 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         website: z.url().optional(),
         description: z.string().optional(),
         highlight: z.boolean().optional(),
+        industryIds: z
+          .array(z.string())
+          .min(1)
+          .optional()
+          .describe(
+            "Catalog Industry ids — when supplied, replaces the entry's industry set (partial update; omit to preserve). Discover via `ttctl_profile_industries_autocomplete`.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -149,6 +169,10 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         fields.experienceItems = splitParagraphs(input.description);
       }
       if (input.highlight !== undefined) fields.highlight = input.highlight;
+      // Replace-on-supply: when present, the supplied catalog set wins
+      // over the merge placeholder (dry-run) / current-state projection
+      // (apply path, via `buildUpdateEmploymentInput`'s `...fields`).
+      if (input.industryIds !== undefined) fields.industryIds = input.industryIds;
 
       if (input.dryRun === true) {
         // Dry-run preview shows the full merged shape — the wire-required

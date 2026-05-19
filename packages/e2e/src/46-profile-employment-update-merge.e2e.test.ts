@@ -218,6 +218,41 @@ describe("profile employment update — read-current+merge regression (#394)", (
           transport: "impersonated",
           response: updated,
         });
+
+        // #403 AC#4(c): the minimal {position} update did NOT supply
+        // industryIds — read-current+merge must PRESERVE the seeded set.
+        expect(shown.industries.map((i) => i.id)).toContain(firstIndustry.id);
+
+        // #403 AC#4(b): supplying industryIds REPLACES the entire set
+        // (replace-on-supply, mirrors portfolio_update). Source a second
+        // distinct catalog industry, replace, assert the set is now
+        // exactly the replacement (the seeded firstIndustry is gone).
+        //
+        // Fixture-availability guard: HARD throw on missing 2nd distinct
+        // industry, mirroring the seed-industry/employer/skills guards
+        // earlier in this test (`unreachable` precedent at line ~140,
+        // exact-employer precedent at line ~152). A soft warn-and-skip
+        // here would let the test PASS while leaving AC#4(b) — the ONLY
+        // on-wire proof of replace-on-supply — silently unproven. The
+        // file header (§ Coverage strategy + "No silent-skip on
+        // USER_ERROR") explicitly opposes that pattern; the live e2e
+        // run's value as a Submit-phase AC#4 transcript depends on
+        // every sub-assertion being unconditional once reached.
+        const otherMatches = await profile.industries.autocomplete(token, "Finance", 5);
+        const otherIndustry = otherMatches.find((m) => m.id !== firstIndustry.id);
+        if (otherIndustry === undefined) {
+          throw new Error(
+            `industries autocomplete for "Finance" returned no catalog match distinct from ` +
+              `firstIndustry (${firstIndustry.id}) — cannot prove #403 AC#4(b) replace-on-supply. ` +
+              `Re-broaden the autocomplete query (or adjust the test fixture) if the catalog changed.`,
+          );
+        }
+        const replaced = await profile.employment.update(token, created.id, {
+          industryIds: [otherIndustry.id],
+        });
+        const replacedIds = replaced.industries.map((i) => i.id);
+        expect(replacedIds).toContain(otherIndustry.id);
+        expect(replacedIds).not.toContain(firstIndustry.id);
       } finally {
         if (createdId !== undefined) {
           await profile.employment.remove(token, createdId);
