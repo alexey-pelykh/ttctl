@@ -575,13 +575,15 @@ describe("update", () => {
     expect(updated).toEqual({ ...EMP_1_MAPPED, position: "Lead Engineer" });
 
     // The third impersonated call is the UpdateEmployment mutation. Its
-    // variables must include the four required-non-null fields injected
-    // from current state + the user-supplied `position`. Pre-#394, only
-    // `position` was sent and the server rejected the four absent fields
-    // as null.
+    // variables must include the five required-non-null fields injected
+    // from current state + the user-supplied `position` (which overrides
+    // the injected `current.position` via `{ ...merged, ...fields }`).
+    // Pre-#394, only `position` was sent and the server rejected the
+    // four other required fields as null; #407 added `position` itself
+    // to the wire-required set.
     const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(updateCall.body.operationName).toBe("UpdateEmployment");
-    // The merge injects GraphQL-required (4) + Rails-blank gates
+    // The merge injects GraphQL-required (5) + Rails-blank gates
     // (company, publicationPermit) + catalog refs (industryIds; employerId
     // / primaryGeographyId / reportingTo only when current has them).
     // EMP_1 (the #344-fields-absent fixture) → industries [], no employer.
@@ -691,7 +693,8 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
 
   it("injects the wire-required fields from current when user supplies a different field", () => {
     const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { position: "Lead" });
-    // GraphQL-required-non-null (4): always injected from current.
+    // GraphQL-required-non-null (5; `position` is the user-supplied
+    // override asserted below): always injected from current.
     expect(merged.experienceItems).toEqual(EMP_1.experienceItems);
     expect(merged.skills).toEqual([]); // EMP_1_MAPPED.skills is []
     expect(merged.showViaToptal).toBe(EMP_1.showViaToptal);
@@ -731,6 +734,25 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.startDate).toBe(2025);
     // skills preserved from current (EMP_1_MAPPED.skills is []).
     expect(merged.skills).toEqual([]);
+  });
+
+  it("injects current.position when the partial update omits position (#407 regression)", () => {
+    // Pre-#407, the merge enum never threaded `position` through, so
+    // any partial update missing `position` (e.g., the #403 AC#4(b)
+    // `{industryIds: [X]}`-only replace) crashed at the wire with
+    // `Expected value to not be null` on employment.position.
+    // EMP_1_MAPPED.position is "Engineer".
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
+      industryIds: ["V1-Industry-99"],
+    });
+    expect(merged.position).toBe(EMP_1.position);
+    // User-supplied field still wins (replace-on-supply).
+    expect(merged.industryIds).toEqual(["V1-Industry-99"]);
+  });
+
+  it("lets user-supplied position override the current-derived default (#407)", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { position: "Lead" });
+    expect(merged.position).toBe("Lead");
   });
 
   it("injects employerId, primaryGeographyId, reportingTo when current row has them", () => {

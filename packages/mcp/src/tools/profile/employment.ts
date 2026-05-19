@@ -202,15 +202,17 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         //
         // Field set mirrors `buildUpdateEmploymentInput` in
         // `services/profile/employment/index.ts`: GraphQL-required-non-null
-        // (4) + Rails `.blank?` gates (company, publicationPermit) +
-        // catalog refs (employerId, industryIds — both injected
-        // conditionally on current state in the apply path). The optional
-        // catalog refs (primaryGeographyId, reportingTo) appear in the
-        // preview only when the current row has them; here we surface them
-        // as placeholders so the preview is non-misleading about the
-        // potential shape.
+        // (5: experienceItems, position, skills, showViaToptal, startDate
+        // — `position` added #407) + Rails `.blank?` gates (company,
+        // publicationPermit) + catalog refs (employerId, industryIds —
+        // both injected conditionally on current state in the apply path).
+        // The optional catalog refs (primaryGeographyId, reportingTo)
+        // appear in the preview only when the current row has them; here
+        // we surface them as placeholders so the preview is non-misleading
+        // about the potential shape.
         const previewEmployment: Record<string, unknown> = {
           experienceItems: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+          position: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           skills: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           showViaToptal: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           startDate: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
