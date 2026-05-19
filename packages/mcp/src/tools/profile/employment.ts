@@ -43,10 +43,16 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         "Add a new employment entry (company + role, with optional start/end years and `current` flag). " +
         "The `company` string is resolved to the server-side `employerId` via the employer-autocomplete catalog: " +
         "0 matches or 2+ matches return a VALIDATION_ERROR with disambiguation guidance. Pass an explicit `employerId` to " +
-        "bypass autocomplete entirely. `industryIds` (at least one required) attaches catalog industries to the entry — " +
-        "discover ids via `ttctl_profile_industries_autocomplete`. Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
+        "bypass autocomplete entirely. Set `noEmployer: true` for a custom (non-catalog) workplace — sends the free-text " +
+        "`company` with employerId:null and skips autocomplete (orthogonal to `website`; cannot be combined with `employerId`). " +
+        "`industryIds` (at least one required) attaches catalog industries to the entry — " +
+        "discover ids via `ttctl_profile_industries_autocomplete`. " +
+        "Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
       inputSchema: {
-        company: z.string().min(1).describe("company / employer name (resolved to employerId via autocomplete)"),
+        company: z
+          .string()
+          .min(1)
+          .describe("company / employer name (resolved to employerId via autocomplete unless noEmployer is set)"),
         role: z.string().min(1).describe("job title (mapped to position)"),
         employerId: z
           .string()
@@ -60,6 +66,12 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .min(1)
           .describe(
             'Catalog Industry ids (at least one required). Discover via `ttctl_profile_industries_autocomplete` or `ttctl profile industries autocomplete "<query>"`.',
+          ),
+        noEmployer: z
+          .boolean()
+          .optional()
+          .describe(
+            "custom (non-catalog) workplace: send the free-text `company` with employerId:null and skip the employer-autocomplete catalog. Orthogonal to `website`; cannot be combined with `employerId`.",
           ),
         from: dateInput.optional().describe("start date — ISO-8601 or year"),
         to: dateInput.optional().describe("end date — ISO-8601 or year"),
@@ -88,6 +100,9 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       if (input.employerId !== undefined) {
         fields.employerId = input.employerId;
       }
+      if (input.noEmployer === true) {
+        fields.noEmployer = true;
+      }
       try {
         if (input.from !== undefined) fields.startDate = parseDateInput(input.from, "from").year;
         if (input.to !== undefined) fields.endDate = parseDateInput(input.to, "to").year;
@@ -106,8 +121,10 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       // Per-#395: dry-run path is delegated to the core service so the
       // preview's `variables.input.employment.employerId` carries the
       // resolved id (not the raw `company` string). The autocomplete
-      // read query fires in dry-run too — the CreateEmployment mutation
-      // transport does not.
+      // read query fires in dry-run too — EXCEPT on the #401
+      // custom-workplace path (`noEmployer: true`), where core skips
+      // resolution entirely (zero network). The CreateEmployment
+      // mutation transport never fires in dry-run regardless.
       try {
         const outcome = await profile.employment.add(auth.token, fields, { dryRun: input.dryRun === true });
         if (outcome.kind === "preview") {

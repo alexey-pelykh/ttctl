@@ -69,11 +69,15 @@ export interface Employment {
  * level so future leaves can grow without churning callers.
  *
  * `employerId` is the server-side catalog identifier for the employer
- * record (e.g. "V1-Employer-1234"). `add()` requires either an explicit
- * `employerId` or a `company` that resolves to exactly one
- * autocomplete match — see {@link add} for the resolution policy. Per
- * the captured input shape, `employerId` is nullable only when
- * `noWebsite: true` (which TTCtl does not currently surface on `add`).
+ * record (e.g. "V1-Employer-1234"). `add()` requires EITHER an explicit
+ * `employerId`, a `company` that resolves to exactly one autocomplete
+ * match (see {@link add} for the resolution policy), OR the
+ * {@link EmploymentFields.noEmployer} signal for a custom (non-catalog)
+ * workplace — which sends `employerId: null` with the free-text
+ * `company` verbatim. `employerId` and `noWebsite` are ORTHOGONAL axes
+ * (#401): a custom workplace may still carry a website. The earlier
+ * "nullable only when noWebsite" note was a single-capture
+ * over-inference, not the wire contract.
  */
 export interface EmploymentFields {
   company?: string;
@@ -101,6 +105,19 @@ export interface EmploymentFields {
    * rejects empty arrays on update).
    */
   skills?: { id: string; name: string }[];
+  // write-only: request-shaping signal for the custom (non-catalog)
+  // workplace path (#401). An add()-only signal: it selects
+  // `employerId: null` + the free-text `company` verbatim and skips
+  // employer-autocomplete; it is NOT an `EmploymentInput` wire field,
+  // and `add()` strips it before the `CreateEmployment` mutation. It
+  // has no meaning on the update path — `update()` /
+  // `buildUpdateEmploymentInput` neither read nor strip it, so never
+  // pass it there (the server would reject an unknown `EmploymentInput`
+  // field). Not round-tripped: the resulting state is observable
+  // read-side as `Employment.employerId === null`, never a field named
+  // `noEmployer`. Orthogonal to `noWebsite` (a custom workplace may
+  // still have a site).
+  noEmployer?: boolean;
 }
 
 /**
@@ -115,8 +132,10 @@ export interface EmploymentFields {
  * departs from `basic.set`'s zero-network dry-run by design (#395):
  * the alternative — placeholder employerId — would misrepresent the
  * wire shape, since the server-side input requires the resolved id, not
- * the company name. The mutation transport is still NEVER fired in
- * `dryRun` mode.
+ * the company name. EXCEPTION (#401): the custom-workplace path
+ * (`fields.noEmployer === true`) skips resolution entirely, so dry-run
+ * there fires ZERO network — `employerId: null` needs no lookup. The
+ * mutation transport is still NEVER fired in `dryRun` mode.
  */
 export interface AddOptions {
   dryRun?: boolean;
@@ -412,23 +431,48 @@ export async function show(token: string, id: string): Promise<Employment> {
  *
  * **Dry-run path (#395)**: when `options.dryRun === true`, the
  * employer resolution still runs (fires `employersAutocomplete` if
- * `employerId` is absent) so the preview's `variables.input.employment`
+ * `employerId` is absent — except on the #401 custom-workplace path;
+ * see **Custom-workplace path (#401)** below) so the preview's
+ * `variables.input.employment`
  * carries the resolved `employerId`, matching the wire shape the live
  * mutation would transmit. The `CreateEmployment` mutation transport
  * is NOT invoked. The placeholder
  * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} stands in for `profileId`
  * (which the apply-path resolves via `extractProfileId`).
+ *
+ * **Custom-workplace path (#401)**: when `fields.noEmployer === true`,
+ * `resolveEmployerId()` is skipped entirely — NO `employersAutocomplete`
+ * call in EITHER the apply or dry-run path — and `employerId: null` is
+ * sent with the free-text `company`. Mutually exclusive with an explicit
+ * `fields.employerId` (→ `VALIDATION_ERROR`). Orthogonal to `noWebsite`.
  */
 export async function add(token: string, fields: EmploymentFields, options: AddOptions = {}): Promise<AddOutcome> {
   if (!fields.company || !fields.position) {
     throw new ProfileError("VALIDATION_ERROR", "employment add requires --company and --role.");
   }
 
-  // Resolve employerId BEFORE branching on dryRun so the preview's
-  // wire shape matches what the live mutation would transmit (#395
-  // explicit AC). The autocomplete query is a read, not a mutation —
-  // it fires in both dry-run and apply paths.
-  const employerId = await resolveEmployerId(token, fields);
+  // Custom (non-catalog) workplace path (#401): when `noEmployer` is
+  // set, the Toptal "Add as new: <name>" behaviour applies — the wire
+  // takes `employerId: null` with the free-text `company` verbatim
+  // (there is no `CreateEmployer` mutation anywhere in the schema). It
+  // is orthogonal to `noWebsite` (a custom workplace may still have a
+  // website) and mutually exclusive with an explicit `employerId` (a
+  // catalog id and "not in the catalog" are contradictory).
+  if (fields.noEmployer === true && fields.employerId !== undefined && fields.employerId !== "") {
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      "employment add: a custom workplace (--no-employer) cannot also pass --employer-id (a catalog id). Use one or the other.",
+    );
+  }
+
+  // Resolve employerId BEFORE branching on dryRun so the preview's wire
+  // shape matches what the live mutation would transmit (#395 explicit
+  // AC). The autocomplete query is a read, not a mutation — it fires in
+  // both dry-run and apply paths. The custom-workplace path (#401) skips
+  // resolution entirely: NO autocomplete network call in EITHER path
+  // (apply or dry-run), and `employerId: null` goes on the wire.
+  const { noEmployer, ...wireFields } = fields;
+  const employerId: string | null = noEmployer === true ? null : await resolveEmployerId(token, wireFields);
 
   // The wire requires several non-null fields on `CreateEmployment`
   // (live API rejects with "Expected value to not be null" / "You can't
@@ -438,16 +482,18 @@ export async function add(token: string, fields: EmploymentFields, options: AddO
   // `CreateEmploymentInput` rejects unknown fields with
   // "Field is not defined on EmploymentInput" (e.g. `toptalRelated`,
   // `highlight` are valid on `UpdateEmploymentInput` but NOT on
-  // `CreateEmploymentInput`).
+  // `CreateEmploymentInput`). The request-shaping `noEmployer` signal is
+  // destructured out above for the same reason — it is not an
+  // `EmploymentInput` field.
   //   - `experienceItems`, `skills`, `showViaToptal` — via the #344 E2E
   //   - `publicationPermit` — via the #395 live capture (2026-05-19)
   // Callers may still override.
-  const employment: EmploymentFields = {
+  const employment: Omit<EmploymentFields, "noEmployer" | "employerId"> & { employerId: string | null } = {
     experienceItems: [],
     skills: [],
     showViaToptal: true,
     publicationPermit: false,
-    ...fields,
+    ...wireFields,
     employerId,
   };
 
