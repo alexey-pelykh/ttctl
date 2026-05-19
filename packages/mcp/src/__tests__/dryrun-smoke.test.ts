@@ -181,8 +181,15 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   // core service's unit tests). Per #395, the apply path now requires
   // employerId; dry-run without an explicit employerId fires the
   // `employersAutocomplete` read query, which is sentinel-rejected by
-  // this test's transport mock.
-  ttctl_profile_employment_add: { company: "Toptal", role: "Engineer", employerId: "V1-Employer-stub" },
+  // this test's transport mock. Per #403, industryIds is a required
+  // parameter (mirrors portfolio_add) — supplied here so the fixture
+  // exercises the new field path.
+  ttctl_profile_employment_add: {
+    company: "Toptal",
+    role: "Engineer",
+    employerId: "V1-Employer-stub",
+    industryIds: ["V1-Industry-stub"],
+  },
   ttctl_profile_employment_employer_autocomplete: { query: "Google" },
   ttctl_profile_employment_highlight: { id: "emp_123" },
   ttctl_profile_employment_list: {},

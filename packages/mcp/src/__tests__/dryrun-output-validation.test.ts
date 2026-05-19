@@ -93,7 +93,15 @@ const FORMERLY_AFFECTED_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_education_remove: { id: "edu_123" },
   // employerId bypass keeps dry-run zero-transport — see sibling
   // dryrun-smoke.test.ts fixture comment for the #395 rationale.
-  ttctl_profile_employment_add: { company: "Toptal", role: "Engineer", employerId: "V1-Employer-stub" },
+  // #403: industryIds is a required (zod `.min(1)`) parameter on
+  // employment_add (mirrors portfolio_add). This test drives a real
+  // zod-validated Client, so the field MUST be present.
+  ttctl_profile_employment_add: {
+    company: "Toptal",
+    role: "Engineer",
+    employerId: "V1-Employer-stub",
+    industryIds: ["V1-Industry-stub"],
+  },
   ttctl_profile_employment_update: { id: "emp_123", company: "Anthropic" },
   ttctl_profile_employment_remove: { id: "emp_123" },
   ttctl_profile_industries_update: { id: "ind_123", name: "Health Tech" },

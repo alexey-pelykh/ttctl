@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`profile.employment.add` + `profile.employment.update`: expose
+  the `industryIds` parameter the server already supports (#403)**.
+  The core service already accepted `EmploymentFields.industryIds`
+  (since #344) and threaded it through `add()` and
+  `buildUpdateEmploymentInput`, but neither user-facing surface
+  exposed it — so `ttctl profile employment add` produced a confusing
+  late wire `USER_ERROR` (`industries: can't be blank`, per the #395
+  cascade) and `update` could not attach/replace industries at all.
+  - **New surface — add (required)**: CLI `ttctl profile employment
+add` gains a repeatable `--industry-id <id>` flag and the MCP
+    `ttctl_profile_employment_add` tool gains `industryIds:
+string[]`, both **required (≥1)** — mirroring `portfolio add` /
+    `ttctl_profile_portfolio_add`. A missing/empty value is now an
+    upfront `VALIDATION_ERROR` instead of a confusing server-side
+    rejection after the request is sent. Discover catalog ids via
+    `ttctl profile industries autocomplete` /
+    `ttctl_profile_industries_autocomplete`.
+  - **New surface — update (replace-on-supply)**: CLI `ttctl profile
+employment update` and the MCP `ttctl_profile_employment_update`
+    tool gain the same `--industry-id` / `industryIds` input,
+    **optional**; when supplied it **replaces** the entry's entire
+    industry set, when omitted the existing set is **preserved** —
+    identical semantics to `portfolio update` (replace-on-supply,
+    preserve-on-omit). Clearing to an empty set is intentionally not
+    offered (the live API's #394 Rails-blank gate rejects empty
+    `industryIds` on employment).
+  - **No core change**: surface-only — `EmploymentFields.industryIds`,
+    the `add()` field spread, and the `buildUpdateEmploymentInput`
+    merge/override already existed; this issue only wires the two
+    user-facing surfaces to the existing capability.
+  - **Schema/contract rule**: NOT triggered — no file under
+    `packages/core/src/services/profile/**` changed (the wire shape
+    is unchanged; `industryIds` was already sent by core). The
+    pre-existing `CreateEmployment` / `UpdateEmployment` T1 wire-shape
+    snapshots (per ADR-006) remain authoritative and unchanged. E2E
+    coverage extended in
+    `packages/e2e/src/45-profile-employment-add.e2e.test.ts` (AC#4a:
+    seeded industry round-trips through `show()`) and
+    `packages/e2e/src/46-profile-employment-update-merge.e2e.test.ts`
+    (AC#4b: supplying `industryIds` replaces the set; AC#4c: omitting
+    it preserves the seeded set).
+
 ### Fixed
 
 - **Wire-broke meta-class #392 (4th sibling) — `profile.skills.add`
