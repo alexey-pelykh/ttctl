@@ -81,7 +81,7 @@
  * actionable, not hidden.
  */
 
-// e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE
+// e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE, UpdateEmployment, RemoveEmployment
 
 import { readFileSync } from "node:fs";
 
@@ -308,13 +308,245 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
         createdId = created.id;
 
         expect(typeof created.id).toBe("string");
-        // The display name we sent should be on the row. The actual
-        // employer-record identity is governed by employerId — which we
-        // can't read back through the Employment fragment (the read
-        // doesn't echo employerId per #340 read-write asymmetry
-        // documented in research/notes/10-mutation-input-patterns.md).
-        // The proof that the bypass worked is non-USER_ERROR success:
-        // a missing employerId would have triggered the pre-#395 error.
+        // The display name we sent should be on the row. The
+        // employer-record identity is governed by employerId; post-#394
+        // the Employment fragment selects `employer { id }` so it IS
+        // readable as `created.employerId` (see the #401 block below for
+        // a test that asserts it). This bypass test proves the path
+        // worked via non-USER_ERROR success — a missing employerId would
+        // have triggered the pre-#395 error regardless of read-back.
+      } finally {
+        if (createdId !== undefined) {
+          await profile.employment.remove(token, createdId);
+        }
+      }
+    },
+  );
+});
+
+/**
+ * E2E coverage for `profile.employment.add` with the #401 custom
+ * (non-catalog) workplace path.
+ *
+ * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
+ * `CreateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`, AND the
+ * `employerId: null`-on-CREATE behaviour is an INFERRED contract: the
+ * research note `research/captures/web/inputs/UpdateEmploymentInput.json`
+ * documents nullable `employerId` for *Update* and the maintainer
+ * clarified (2026-05-19, #401) that the Toptal "Add as new: <name>" UI
+ * sends `employerId: null` with the free-text `company` (there is no
+ * `CreateEmployer` mutation). The live API is the only authority on
+ * whether `CreateEmployment` accepts `employerId: null`.
+ *
+ * **Axis-independence claim under test (#401)**: `employerId` and
+ * `noWebsite` are ORTHOGONAL. The earlier single-capture co-occurrence
+ * (custom AND website-less) implied a coupling that is not the wire
+ * contract. This test deliberately exercises the
+ * `employerId:null + noWebsite:false + companyWebsite:<url>` combination
+ * — the variant the existing #395 captures do NOT cover — so the live
+ * wire settles independence, not just the no-website case.
+ *
+ * **Track 1 disposition**: `CreateEmployment` has no generated operation
+ * type → **T1**. The RESPONSE shape is invariant vs the #395
+ * autocomplete path (only the REQUEST differs: `employerId:null` instead
+ * of a resolved catalog id), so this shares the committed
+ * `CreateEmployment.snapshot.json` with the sibling tests.
+ *
+ * **Non-destructive**: the created row is removed in `finally` so the
+ * user's profile is unchanged at end of test, even on assertion failure.
+ *
+ * **NO USER_ERROR silent-skip**: a `USER_ERROR` mentioning `employerId`
+ * is precisely the #401 contract-violation class (the inferred
+ * null-employerId CREATE contract being wrong) — propagated as a hard
+ * failure, never hidden.
+ */
+describe("profile employment #401 custom (non-catalog) workplace add()→update()→remove() lifecycle (live talent-profile, INFERRED null-employerId CREATE+UPDATE contract)", () => {
+  let sandboxConfigPath: string;
+
+  beforeAll(() => {
+    if (!e2eEnabled) return;
+    sandboxConfigPath = getSharedSession().sandboxConfigPath;
+  });
+
+  // -------------------------------------------------------------------
+  // Custom workplace WITH a website — proves employerId:null ⊥ noWebsite
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "full lifecycle: add({ noEmployer:true, companyWebsite, noWebsite:false }) → update({ position }) → remove() — employerId:null persists across add+update+show, axis independence (website coexists) survives every step, self-cleaning",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+
+      // Cascade fixture — skills + industries + experienceItems are
+      // server-required on CreateEmployment regardless of the employer
+      // path (see the #395 file header § Cascade-of-required-fields).
+      const basic = await profile.basic.show(token);
+      const basicShape = basic as unknown as { viewer?: { viewerRole?: { profile?: { id?: string } } } };
+      const profileId = basicShape.viewer?.viewerRole?.profile?.id;
+      if (profileId === undefined) {
+        throw new Error("Cannot extract profileId from basic.show response — test fixture needs adjustment.");
+      }
+      const skillsList = await profile.skills.list(token, profileId);
+      const firstSkill = skillsList[0];
+      const industryMatches = await profile.industries.autocomplete(token, "Software", 5);
+      const firstIndustry = industryMatches[0];
+      if (firstSkill === undefined || firstIndustry === undefined) {
+        // HARD failure — deliberately NOT a green-skip. This subtest is
+        // the SOLE live settler of the INFERRED employerId:null-on-CREATE
+        // contract that CLAUDE.md § Schema/contract rule mandates for
+        // #401. A green-skip would let the mandated gate pass vacuously
+        // and surface a misleading PASS in the maintainer's required
+        // transcript (the degenerate-subject-gate trap). This diverges
+        // from the #395 sibling's skip on purpose: #395 validates an
+        // already-*captured* wire path; #401 gates a *newly inferred*
+        // contract — precedent context-drift, so the skip semantics do
+        // not carry over. A real Toptal talent account has ≥1 skill and
+        // `industries.autocomplete("Software")` is a catalog read (not
+        // the account-scoped IndustryProfile-seeding block), so this
+        // does not trip in practice; if it ever does, the contract was
+        // NOT exercised and the operator MUST see a failure, never a skip.
+        throw new Error(
+          "#401 PRECONDITION UNMET: the test account lacks a skill and/or a " +
+            "catalog industry (both server-required for the custom-workplace " +
+            "CreateEmployment). The mandated employerId:null contract gate " +
+            "must not pass vacuously — seed at least one skill/industry on " +
+            "the test account and re-run TTCTL_E2E=1.",
+        );
+      }
+
+      // A deliberately unique free-text name that is NOT a catalog
+      // employer — proves the custom path (autocomplete would never
+      // resolve it, and is never consulted on this path anyway).
+      const customName = `TTCtl Custom Workplace #401 ${Date.now().toString()}`;
+      const customWebsite = "https://example.com";
+
+      let createdId: string | undefined;
+      try {
+        const outcome = await profile.employment.add(token, {
+          company: customName,
+          position: "E2E Engineer (#401 custom workplace + website)",
+          startDate: 2024,
+          // The #401 signal: custom (non-catalog) workplace →
+          // employerId:null, autocomplete skipped entirely.
+          noEmployer: true,
+          // Orthogonal website axis — explicitly NOT noWebsite. Proves a
+          // custom workplace can still carry a site (the over-coupling
+          // the research note implied is false).
+          companyWebsite: customWebsite,
+          noWebsite: false,
+          experienceItems: [
+            "Founded and operated a custom (non-catalog) workplace; this row exercises the #401 employerId:null path.",
+            "Validated that the free-text company name persists verbatim with no Toptal employer-catalog record.",
+            "Confirmed the website axis is independent of the employer axis on the live CreateEmployment wire.",
+          ],
+          skills: [{ id: firstSkill.id, name: firstSkill.name ?? "skill" }],
+          industryIds: [firstIndustry.id],
+        });
+        expect(outcome.kind).toBe("created");
+        if (outcome.kind !== "created") throw new Error("unreachable");
+        const created = outcome.result;
+        createdId = created.id;
+
+        expect(typeof created.id).toBe("string");
+        expect(created.id.length).toBeGreaterThan(0);
+        expect(created.company).toBe(customName);
+        // THE #401 contract assertion: a custom workplace persists with
+        // NO catalog employer. `Employment.employerId` is surfaced
+        // read-side post-#394 (`employer { id }` in EMPLOYMENT_FRAGMENT).
+        expect(created.employerId).toBeNull();
+        // Axis-independence proof: the website survived alongside
+        // employerId:null (noWebsite:false honoured on the live wire).
+        expect(created.noWebsite).toBe(false);
+        expect(created.companyWebsite).toBe(customWebsite);
+
+        // Read back via show() — persistence assertion (not merely the
+        // mutation's own echo).
+        const shown = await profile.employment.show(token, created.id);
+        expect(shown.id).toBe(created.id);
+        expect(shown.company).toBe(customName);
+        expect(shown.employerId).toBeNull();
+        expect(shown.companyWebsite).toBe(customWebsite);
+        // Axis-independence also survives the read-back round-trip (not
+        // merely the mutation echo): noWebsite:false persists alongside
+        // employerId:null. Closes the second-axis leg on the show() path.
+        expect(shown.noWebsite).toBe(false);
+
+        // T1 snapshot — RESPONSE shape is invariant vs the #395
+        // autocomplete path (only the REQUEST differs). Shares
+        // CreateEmployment.snapshot.json with the sibling tests; drift
+        // is a wire-format regression to re-engineer (refresh via
+        // TTCTL_UPDATE_WIRE_SNAPSHOTS=1 after reviewing the diff).
+        expect(() =>
+          assertWireShapeStable({
+            operationName: "CreateEmployment",
+            surface: "talent-profile",
+            transport: "impersonated",
+            response: created,
+          }),
+        ).not.toThrow();
+
+        // ── #401 lifecycle: UPDATE a custom (employerId:null) row ──
+        // The latent concern the adversarial post-submit review flagged
+        // (NEW-1 / L-iter3-1): `noEmployer` is an add()-only signal;
+        // `update()` uses #394's read-current+merge and never sees it.
+        // Does `employerId: null` SURVIVE an UpdateEmployment round-trip,
+        // or does the merge resurrect a catalog id and silently
+        // un-custom the row? Documented but UNVERIFIED until now —
+        // settle it live so the full add→update→remove lifecycle of a
+        // custom workplace leaves no unverified contract behind.
+        const updatedRole = "E2E Engineer (#401 custom workplace — UPDATED)";
+        const updated = await profile.employment.update(token, created.id, { position: updatedRole });
+        expect(updated.id).toBe(created.id);
+        expect(updated.position).toBe(updatedRole);
+        // THE #401 update-lifecycle contract: a custom workplace stays
+        // custom across an unrelated field edit — the #394 merge must
+        // NOT resurrect a catalog `employerId`.
+        expect(updated.employerId).toBeNull();
+        // The free-text company + the orthogonal website axis survive
+        // the read-current+merge untouched.
+        expect(updated.company).toBe(customName);
+        expect(updated.companyWebsite).toBe(customWebsite);
+        expect(updated.noWebsite).toBe(false);
+
+        // Fresh read confirms the update PERSISTED and the row is still
+        // custom (not merely the mutation's own echo).
+        const shownAfterUpdate = await profile.employment.show(token, created.id);
+        expect(shownAfterUpdate.id).toBe(created.id);
+        expect(shownAfterUpdate.position).toBe(updatedRole);
+        expect(shownAfterUpdate.employerId).toBeNull();
+        expect(shownAfterUpdate.company).toBe(customName);
+        expect(shownAfterUpdate.companyWebsite).toBe(customWebsite);
+        expect(shownAfterUpdate.noWebsite).toBe(false);
+
+        // T1 wire-shape snapshot for UpdateEmployment — shared with the
+        // #394 / 46-…-update-merge sibling. RESPONSE shape is invariant;
+        // only the REQUEST differs (this row carries employerId:null).
+        expect(() =>
+          assertWireShapeStable({
+            operationName: "UpdateEmployment",
+            surface: "talent-profile",
+            transport: "impersonated",
+            response: updated,
+          }),
+        ).not.toThrow();
+      } catch (err) {
+        if (err !== null && typeof err === "object" && "code" in err) {
+          const code = (err as { code?: unknown; message?: unknown }).code;
+          const msg = (err as { message?: unknown }).message;
+          // A USER_ERROR mentioning employerId here means the inferred
+          // null-employerId contract is WRONG — either CreateEmployment
+          // rejected the initial null employerId, or UpdateEmployment's
+          // #394 read-current+merge could not preserve it through the
+          // round-trip. Either is a #401 contract-violation class this
+          // E2E is mandated to settle. Hard failure, no silent skip.
+          if (code === "USER_ERROR" && typeof msg === "string" && /employerId/i.test(msg)) {
+            throw new Error(
+              `#401 CONTRACT VIOLATION: live CreateEmployment or UpdateEmployment rejected employerId:null for a custom workplace: ${msg}`,
+              { cause: err },
+            );
+          }
+        }
+        throw err;
       } finally {
         if (createdId !== undefined) {
           await profile.employment.remove(token, createdId);

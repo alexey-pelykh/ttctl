@@ -49,7 +49,10 @@ export function buildProfileEmploymentCommand(): Command {
   employment
     .command("add")
     .description("Add a new employment entry to your profile")
-    .requiredOption("--company <name>", "company / employer name (resolved to employerId via autocomplete)")
+    .requiredOption(
+      "--company <name>",
+      "company / employer name (resolved to employerId via autocomplete unless --no-employer)",
+    )
     .requiredOption("--role <title>", "job title (mapped to position)")
     .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
     .option("--to <date>", "end date — ISO-8601 or year")
@@ -63,6 +66,10 @@ export function buildProfileEmploymentCommand(): Command {
       "--industry-id <id>",
       'catalog Industry id (repeatable; required — at least one). Discover via `ttctl profile industries autocomplete "<query>"`.',
       (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
+    .option(
+      "--no-employer",
+      "custom (non-catalog) workplace: send the free-text --company with employerId:null and skip the employer-autocomplete catalog (orthogonal to --website; cannot be combined with --employer-id)",
     )
     .addOption(
       new Option("-o, --output <format>", "output format")
@@ -181,6 +188,9 @@ interface AddOptions {
   website?: string;
   employerId?: string;
   industryId?: string[];
+  // Commander maps `--no-employer` to `employer: false` (default true
+  // when the flag is absent) — the custom-workplace signal (#401).
+  employer: boolean;
   output: OutputFormat;
 }
 
@@ -205,6 +215,13 @@ async function runAdd(options: AddOptions): Promise<void> {
   };
   if (options.employerId !== undefined) {
     fields.employerId = options.employerId;
+  }
+  // `--no-employer` → Commander sets `options.employer` false (default
+  // true). Maps to the custom-workplace signal; orthogonal to --website
+  // (#401). The --no-employer + --employer-id contradiction is validated
+  // in core (single source of truth, shared by the MCP surface).
+  if (!options.employer) {
+    fields.noEmployer = true;
   }
   if (options.website !== undefined) {
     fields.companyWebsite = options.website;

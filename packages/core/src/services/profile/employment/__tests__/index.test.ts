@@ -416,6 +416,139 @@ describe("add", () => {
     expect(mockedImpersonated).not.toHaveBeenCalled();
     expect(mockedStock).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------
+  // #401 — custom (non-catalog) workplace via noEmployer → employerId:null
+  // -------------------------------------------------------------------
+
+  it("custom workplace (noEmployer): skips autocomplete, sends employerId:null + free-text company verbatim, defaults preserved", async () => {
+    // Apply path: VIEWER_OK (extractProfileId, stock) → list before
+    // (impersonated[0]) → create (impersonated[1]). NO autocomplete
+    // reply is queued — it must not fire on the custom path.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [EMP_1, EMP_2] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await add(TOKEN, {
+      company: "Custom Place",
+      position: "Founder",
+      startDate: 2021,
+      noEmployer: true,
+    });
+    expect(outcome.kind).toBe("created");
+    if (outcome.kind !== "created") throw new Error("unreachable");
+
+    // Exactly two impersonated calls: list + create. A third (or a
+    // calls[0] autocomplete) would mean resolveEmployerId fired.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+    const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(createCall.body.operationName).toBe("CreateEmployment");
+    expect(createCall.body.variables).toEqual({
+      input: {
+        profileId: "p1",
+        employment: {
+          experienceItems: [],
+          skills: [],
+          showViaToptal: true,
+          publicationPermit: false,
+          company: "Custom Place",
+          position: "Founder",
+          startDate: 2021,
+          employerId: null,
+        },
+      },
+    });
+    // The request-shaping signal must NOT leak onto the wire — the
+    // server rejects unknown EmploymentInput fields. (toEqual above
+    // already enforces exact shape; this states the intent explicitly.)
+    const emp = (createCall.body.variables as { input: { employment: Record<string, unknown> } }).input.employment;
+    expect(emp).not.toHaveProperty("noEmployer");
+  });
+
+  it("custom workplace WITH a website: employerId:null + companyWebsite + noWebsite:false coexist (axis independence)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [EMP_1, EMP_2] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await add(TOKEN, {
+      company: "Custom Place",
+      position: "Founder",
+      startDate: 2021,
+      noEmployer: true,
+      companyWebsite: "https://custom.example",
+      noWebsite: false,
+    });
+    expect(outcome.kind).toBe("created");
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+    const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const emp = (
+      createCall.body.variables as {
+        input: { employment: { employerId: string | null; companyWebsite: string; noWebsite: boolean } };
+      }
+    ).input.employment;
+    // The two axes are independent: a custom workplace (employerId:null)
+    // still carries the supplied website (noWebsite:false honoured).
+    expect(emp.employerId).toBeNull();
+    expect(emp.companyWebsite).toBe("https://custom.example");
+    expect(emp.noWebsite).toBe(false);
+  });
+
+  it("custom workplace + dry-run fires ZERO network calls and previews employerId:null", async () => {
+    const outcome = await add(
+      TOKEN,
+      { company: "Custom Place", position: "Founder", noEmployer: true },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    expect(outcome.preview.operationName).toBe("CreateEmployment");
+    const vars = outcome.preview.variables as {
+      input: { profileId: string; employment: { employerId: string | null; company: string } };
+    };
+    expect(vars.input.employment.employerId).toBeNull();
+    expect(vars.input.employment.company).toBe("Custom Place");
+    // Strip-symmetry with the apply-path test: the `noEmployer` signal
+    // is never on the wire on the dry-run path either (structurally
+    // guaranteed — same stripped `employment` object feeds both branches).
+    expect(vars.input.employment).not.toHaveProperty("noEmployer");
+    expect(vars.input.profileId).toBe("<resolved at send-time from session token>");
+    // The #401 custom path skips resolveEmployerId entirely — unlike
+    // the #395 non-custom dry-run, NO autocomplete read fires here.
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects --no-employer combined with an explicit employerId (VALIDATION_ERROR, no network)", async () => {
+    await expect(
+      add(TOKEN, { company: "X", position: "Y", noEmployer: true, employerId: "V1-Employer-1" }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("cannot also pass --employer-id") as unknown,
+    });
+    // The contradiction guard fires before any transport.
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
 });
 
 describe("update", () => {
