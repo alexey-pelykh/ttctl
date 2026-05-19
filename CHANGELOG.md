@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wire-broke meta-class #392 (4th sibling) — `profile.skills.add`
+  rejected by the live API; input shape was pure invention (#396)**.
+  `ttctl_profile_skills_add` / `ttctl profile skills add` sent the
+  invented variables `{ input: { name } }`. The live
+  `talent_profile/graphql` server rejected every call with
+  `name (Field is not defined on AddProfileSkillSetInput),
+profileId (Expected value to not be null),
+skillSet (Expected value to not be null)`. Unlike the three rc.4
+  siblings (#393 / #394 / #395), `skills.add` had **no live capture**
+  to guide the shape and the schema was a gap
+  (`AddProfileSkillSetInput { _placeholder: String }`), so it was held
+  back from rc.4 until the wire shape could be captured (capture-first
+  is non-negotiable — re-inventing a second shape is the same
+  anti-pattern that produced the bug).
+  - **Fix**: live capture committed (both catalog and custom-skill
+    variants). The service now sends the real Pattern-2 shape
+    `{ input: { profileId, skillSet: { name, rating, experience,
+public, [id] } } }` — `profileId` resolved via
+    `extractProfileId(token)`, the inner `skillSet.id` an OPTIONAL
+    catalog `Skill` id (omit → server creates a custom skill).
+  - **API change**: `profile.skills.add(token, name)` →
+    `add(token, fields, options?)` returning the discriminated
+    `AddSkillOutcome` (`{ kind: "created" } | { kind: "preview" }`),
+    mirroring `basic.set` (#393) / `employment.add` (#395). Required
+    field `name`; optional `rating` / `experience` / `public` /
+    `skillId` with defaults `COMPETENT` / `1` / `false` / (unset) so
+    the bare `{ name }` call still succeeds.
+  - **New surface**: CLI `add` gains `--rating` / `--experience` /
+    `--public` / `--private` / `--skill-id` (and routes the global
+    `--dry-run`); the MCP tool gains `rating` / `experience` /
+    `public` / `skillId` (optional) and delegates dry-run to the core
+    service so the preview is byte-identical to the live wire.
+  - **Out of scope**: transparent `name` → catalog `skillId`
+    resolution (analogous to `employment.add`'s `--company` →
+    `employerId`) is a follow-up; for now callers pass `skillId`
+    explicitly (discover via `ttctl profile skills autocomplete`).
+  - **Schema/contract rule**: TRIGGERED (file-path:
+    `packages/core/src/services/profile/skills/index.ts`). E2E
+    coverage at `packages/e2e/src/47-profile-skills-add.e2e.test.ts`
+    (`e2e-covers: ADD_PROFILE_SKILL_SET`). T1 wire-shape snapshot
+    committed at
+    `packages/e2e/src/wire-snapshots/ADD_PROFILE_SKILL_SET.snapshot.json`
+    per ADR-006.
+
 ## [v0.1.0-rc.4] - 2026-05-19
 
 ### Fixed

@@ -6,8 +6,10 @@ import { Command, Option } from "commander";
 import { TtctlError, profile } from "@ttctl/core";
 
 import { presentTtctlError } from "../../../errors.js";
+import { getCliDryRun, markMutation } from "../../../lib/dry-run.js";
 import {
   emitAddSuccess,
+  emitDryRunSuccess,
   emitErrorAndExit,
   emitRemoveSuccess,
   emitUpdateSuccess,
@@ -116,15 +118,77 @@ function handleSkillsError(err: unknown, commandLabel: string, format: OutputFor
 // Action handlers (one per leaf)
 // =======================================================================
 
-async function runSkillsAdd(name: string, format: OutputFormat): Promise<void> {
+interface SkillsAddOptions {
+  rating?: profile.skills.ProficiencyRating;
+  experience?: string;
+  public?: boolean;
+  private?: boolean;
+  skillId?: string;
+  output: OutputFormat;
+}
+
+async function runSkillsAdd(name: string, options: SkillsAddOptions): Promise<void> {
   const commandLabel = "profile skills add";
+  const format = options.output;
+
+  if (options.public === true && options.private === true) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "--public and --private cannot both be set.",
+        },
+      ],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --public and --private cannot both be set.`,
+    });
+  }
+
+  const fields: profile.skills.AddSkillFields = { name };
+  if (options.rating !== undefined) fields.rating = options.rating;
+  if (options.experience !== undefined) {
+    const experience = parseExperience(options.experience);
+    if (experience === null) {
+      emitErrorAndExit({
+        operation: operationFor(commandLabel),
+        format,
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            field: "experience",
+            message: '--experience must be an integer count of months or a duration like "5y" or "60m".',
+          },
+        ],
+        prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --experience must be an integer count of months or a duration like "5y" or "60m".`,
+      });
+    }
+    fields.experience = experience;
+  }
+  if (options.public === true) fields.public = true;
+  if (options.private === true) fields.public = false;
+  if (options.skillId !== undefined) fields.skillId = options.skillId;
+
   const token = await loadTokenOrExit(commandLabel, format);
-  let result: profile.skills.ProfileSkillSet;
+  const dryRun = getCliDryRun();
+
+  let outcome: profile.skills.AddSkillOutcome;
   try {
-    result = await profile.skills.add(token, name);
+    outcome = await profile.skills.add(token, fields, { dryRun });
   } catch (err) {
     handleSkillsError(err, commandLabel, format);
   }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: operationFor(commandLabel),
+      format,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const { result } = outcome;
   emitAddSuccess({
     operation: operationFor(commandLabel),
     format,
@@ -415,17 +479,29 @@ export function buildProfileSkillsCommand(): Command {
     "Manage the skills section of your profile (add / remove / update / show / list / autocomplete / readiness)",
   );
 
-  skills
-    .command("add <name>")
-    .description("Add a skill to your profile by its catalog name (e.g., `TypeScript`)")
-    .addOption(
-      new Option("-o, --output <format>", "output format")
-        .choices(OUTPUT_FORMATS)
-        .default("pretty" satisfies OutputFormat),
-    )
-    .action(async (name: string, options: { output: OutputFormat }) => {
-      await runSkillsAdd(name, options.output);
-    });
+  markMutation(
+    skills
+      .command("add <name>")
+      .description(
+        "Add a skill to your profile. Free-text `name` creates a custom skill; pair with `--skill-id` to bind to a catalog Skill (use `autocomplete` to find one). Defaults applied when omitted: rating=COMPETENT, experience=1, --private.",
+      )
+      .option("--rating <value>", "Proficiency level (one of: COMPETENT, STRONG, EXPERT). Defaults to COMPETENT.")
+      .option(
+        "--experience <duration>",
+        'Experience: integer ("60"), "Ny" ("5y" = 60 months), or "Nm" ("60m" = 60 months). Defaults to 1.',
+      )
+      .option("--public", "Show the skill on your public profile (defaults to private)")
+      .option("--private", "Hide the skill from your public profile (default)")
+      .option("--skill-id <id>", "Catalog Skill id (e.g., V1-Skill-NNN); omit for a custom skill")
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (name: string, options: SkillsAddOptions) => {
+        await runSkillsAdd(name, options);
+      }),
+  );
 
   skills
     .command("remove <id>")

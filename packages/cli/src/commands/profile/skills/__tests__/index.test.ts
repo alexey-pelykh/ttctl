@@ -150,6 +150,12 @@ describe("buildProfileSkillsCommand", () => {
     expect(flags).toEqual(expect.arrayContaining(["--rating", "--experience", "--public", "--private"]));
   });
 
+  it("add leaf accepts --rating, --experience, --public, --private, --skill-id flags (#396)", () => {
+    const add = cmd.commands.find((c) => c.name() === "add");
+    const flags = add?.options.map((o) => o.long);
+    expect(flags).toEqual(expect.arrayContaining(["--rating", "--experience", "--public", "--private", "--skill-id"]));
+  });
+
   it("show / list / autocomplete / readiness expose -o/--output with pretty/json/yaml choices", () => {
     for (const name of ["show", "list", "autocomplete", "readiness"]) {
       const sub = cmd.commands.find((c) => c.name() === name);
