@@ -203,6 +203,8 @@ export function buildMinimalProfile(): ProfileFixture {
     reportingTo: null,
     industries: [],
     primaryGeography: null,
+    employerId: null,
+    skills: [],
   };
 
   const minimalEducation: Education = {

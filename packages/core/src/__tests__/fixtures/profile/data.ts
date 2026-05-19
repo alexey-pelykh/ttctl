@@ -175,6 +175,8 @@ export const EMPLOYMENT_PRINCIPAL_ENGINEER: Employment = {
   reportingTo: "VP of Engineering",
   industries: [{ id: "ind_test_software", name: "Software" }],
   primaryGeography: { id: "geo_test_us", code: "US", name: "United States" },
+  employerId: "V1-Employer-test-001",
+  skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
 };
 
 export const EMPLOYMENT_SENIOR_ENGINEER: Employment = {
@@ -196,6 +198,8 @@ export const EMPLOYMENT_SENIOR_ENGINEER: Employment = {
   reportingTo: "Director of Engineering",
   industries: [{ id: "ind_test_health", name: "Healthcare" }],
   primaryGeography: { id: "geo_test_us", code: "US", name: "United States" },
+  employerId: "V1-Employer-test-002",
+  skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
 };
 
 // -----------------------------------------------------------------------

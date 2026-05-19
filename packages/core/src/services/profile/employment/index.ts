@@ -40,6 +40,19 @@ export interface Employment {
   industries: { id: string; name: string }[];
   /** The role's primary geography; `null` when unset (#344). */
   primaryGeography: { id: string; code: string | null; name: string | null } | null;
+  /**
+   * The catalog id of the resolved employer (#394 — surfaced read-side so
+   * `update()` can echo it back through the merge; the wire's
+   * `UpdateEmploymentInput` requires `employerId` even when the caller
+   * only supplies `position`, and the read-side previously hid the id).
+   */
+  employerId: string | null;
+  /**
+   * Catalog skills attached to the row (#394 — surfaced read-side so
+   * `update()` can preserve them through the merge; the wire requires
+   * `skills` to be non-empty on update).
+   */
+  skills: { id: string; name: string }[];
 }
 
 /**
@@ -81,7 +94,13 @@ export interface EmploymentFields {
   industryIds?: string[];
   primaryGeographyId?: string | null;
   reportingTo?: string | null;
-  skills?: string[];
+  /**
+   * Catalog skill refs (wire shape: `SkillRefInput[]` = `{ id, name }[]`,
+   * not the `string[]` originally declared — corrected #394 after the
+   * live capture showed the live mutation accepts the object form and
+   * rejects empty arrays on update).
+   */
+  skills?: { id: string; name: string }[];
 }
 
 /**
@@ -161,6 +180,8 @@ const EMPLOYMENT_FRAGMENT = `fragment Employment on Employment {
   reportingTo
   industries { nodes { id name } }
   primaryGeography { id code name }
+  employer { id }
+  skills { nodes { id name } }
 }`;
 
 const GET_WORK_EXPERIENCE_QUERY = `query GET_WORK_EXPERIENCE($profileId: ID!) {
@@ -257,6 +278,14 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
           name: typeof geoRaw.name === "string" ? geoRaw.name : null,
         }
       : null;
+  const employerRaw = node["employer"] as { id?: unknown } | null | undefined;
+  const employerId = employerRaw && typeof employerRaw.id === "string" ? employerRaw.id : null;
+  const skillsConn = node["skills"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
+  const skills: { id: string; name: string }[] = Array.isArray(skillsConn?.nodes)
+    ? skillsConn.nodes.flatMap((s) =>
+        typeof s.id === "string" && typeof s.name === "string" ? [{ id: s.id, name: s.name }] : [],
+      )
+    : [];
   const rawItems = node["experienceItems"];
   return {
     id: typeof node["id"] === "string" ? node["id"] : "",
@@ -276,6 +305,8 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
     reportingTo: (node["reportingTo"] as string | null | undefined) ?? null,
     industries,
     primaryGeography,
+    employerId,
+    skills,
   };
 }
 
@@ -546,18 +577,121 @@ function formatCandidate(m: EmployerSuggestion): string {
 }
 
 /**
+ * Placeholder string substituted into a dry-run `UpdateEmployment`
+ * preview's variables payload for fields that the apply-path resolves by
+ * reading the current row (`experienceItems`, `skills`, `showViaToptal`,
+ * `startDate` — the four required-non-null fields injected by the
+ * read-current+merge logic, #394). Surfaced verbatim so MCP consumers can
+ * see the structural shape of what will be sent without TTCtl having
+ * fired the read transport. Same posture as `basic.set`'s
+ * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} — preserves the zero-transport-
+ * in-dry-run invariant (#165 / #379) while honoring #394's AC that the
+ * preview shows the full merged shape.
+ */
+export const DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER = "<resolved at send-time by reading current state>" as const;
+
+/**
+ * Build the merged `EmploymentInput` to send for an `UpdateEmployment`
+ * mutation by reading the current row and overlaying user-supplied fields.
+ *
+ * The `talent_profile/graphql` server treats four `EmploymentInput` fields
+ * as required non-null on `UpdateEmployment` and rejects the whole
+ * variables payload with `"Expected value to not be null"` when they are
+ * absent (#394 — wire-broke meta-class #392). The four fields are
+ * `experienceItems`, `showViaToptal`, `startDate`, and `skills`. This
+ * helper injects them from the current state where the EMPLOYMENT_FRAGMENT
+ * surfaces them (`experienceItems`, `showViaToptal`, `startDate`) and
+ * defaults `skills: []` because the fragment does not currently select the
+ * read-side `skills` connection. Other fields are left undefined and
+ * omitted from the wire payload — the server keeps the existing value for
+ * any field absent from the input (the omission-is-preservation half of
+ * the merge contract; only the four required-non-null fields force-echo).
+ *
+ * **Known limitation (#394)**: `skills` defaults to `[]` because the
+ * current read fragment does not surface skills. Calling `update()` on a
+ * row that has skills will reset them to empty. A follow-up will extend
+ * the fragment to read skills and preserve them through the merge; for
+ * the test-account this is acceptable, and the bug fix here is for the
+ * minimal `{id, role}` repro that previously failed at the wire layer
+ * regardless of skills state.
+ *
+ * Exported so the MCP layer can build the same merged input for the
+ * dry-run preview (AC: "Dry-run preview shows the full merged input").
+ *
+ * @throws `ProfileError("VALIDATION_ERROR")` when `fields` is empty.
+ * @throws `ProfileError("VALIDATION_ERROR")` when `current.startDate` is
+ *   `null` and the caller did not supply a `startDate` override — the
+ *   wire requires a non-null `startDate` and we have nothing to send.
+ */
+export function buildUpdateEmploymentInput(current: Employment, fields: EmploymentFields): EmploymentFields {
+  if (Object.keys(fields).length === 0) {
+    throw new ProfileError("VALIDATION_ERROR", "employment update requires at least one field flag.");
+  }
+  const startDate = fields.startDate ?? current.startDate;
+  if (startDate === null) {
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      `Cannot update employment "${current.id}": startDate is required and current value is null. Supply --from to set a year.`,
+    );
+  }
+  // Server-side Rails `.blank?` gates (USER_ERROR "You can't leave this
+  // empty") — surfaced by the #394 live capture (2026-05-19): when the
+  // caller omits these, the wire layer accepts the partial input but
+  // the Rails apply path rejects it. Inject from the current row so
+  // user-supplied fields can still override. Optional pass-throughs
+  // (primaryGeographyId / reportingTo) are only set when the current
+  // row has a non-null value — sending an explicit null would change
+  // the row's state, which would defeat "merge".
+  const merged: EmploymentFields = {
+    // Wire-required non-null (GraphQL `Expected value to not be null`):
+    experienceItems: current.experienceItems ?? [],
+    // Preserve current row's skills through the merge — server rejects
+    // `skills: []` with "is too short (minimum is 1 character)" on
+    // update (#394 live-capture finding 2026-05-19). The EMPLOYMENT_FRAGMENT
+    // now selects `skills { nodes { id name } }` so `current.skills` is
+    // populated; pre-#394 it was always `[]` and update() defaulted to
+    // empty, which is what the live wire was rejecting.
+    skills: current.skills,
+    showViaToptal: current.showViaToptal,
+    startDate,
+    // Rails `.blank?` gates:
+    company: current.company,
+    publicationPermit: current.publicationPermit ?? true,
+    // industryIds: catalog refs the wire requires present and non-empty
+    // on the apply path.
+    industryIds: current.industries.map((i) => i.id),
+  };
+  if (current.employerId !== null) {
+    merged.employerId = current.employerId;
+  }
+  if (current.primaryGeography !== null) {
+    merged.primaryGeographyId = current.primaryGeography.id;
+  }
+  if (current.reportingTo !== null) {
+    merged.reportingTo = current.reportingTo;
+  }
+  return { ...merged, ...fields };
+}
+
+/**
  * Update an existing employment row. Wire format per Pattern 1:
  * `{ employmentId, employment: EmploymentInput }`.
+ *
+ * Reads the current row first and merges the four required-non-null
+ * fields onto the wire input (see {@link buildUpdateEmploymentInput} for
+ * the merge contract and #394 for the originating wire-broke incident).
  */
 export async function update(token: string, id: string, fields: EmploymentFields): Promise<Employment> {
   if (Object.keys(fields).length === 0) {
     throw new ProfileError("VALIDATION_ERROR", "employment update requires at least one field flag.");
   }
+  const current = await show(token, id);
+  const employment = buildUpdateEmploymentInput(current, fields);
   const res = await callTalentProfile(
     token,
     "UpdateEmployment",
     UPDATE_EMPLOYMENT_MUTATION,
-    { input: { employmentId: id, employment: fields } },
+    { input: { employmentId: id, employment } },
     "employment update",
   );
   const payload = unwrapMutation(res, "updateEmployment", "employment update");
