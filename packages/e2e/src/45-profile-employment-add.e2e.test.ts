@@ -81,7 +81,7 @@
  * actionable, not hidden.
  */
 
-// e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE, UpdateEmployment, RemoveEmployment
+// e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE, RemoveEmployment
 
 import { readFileSync } from "node:fs";
 
@@ -338,6 +338,48 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
  * `CreateEmployer` mutation). The live API is the only authority on
  * whether `CreateEmployment` accepts `employerId: null`.
  *
+ * **Live-wire discovery #1 — URL-host catalog matching** (2026-05-19,
+ * this E2E): a 3-run controlled investigation against the maintainer's
+ * real Toptal profile, varying only the `companyWebsite` URL host (full
+ * transcripts captured in PR #406's body):
+ *   • `anthropic.com` (real, distinct host)        → server auto-creates
+ *     a new Employer; `shown.employerId` is the new id; `https://` is
+ *     stripped from `shown.companyWebsite`.
+ *   • `example.com` (real, matches an existing Employer record on the
+ *     test account's catalog)                       → row is LINKED to
+ *     that pre-existing Employer id (reproducible: same id across two
+ *     runs); `shown.companyWebsite` is garbled with the linked
+ *     Employer's name (a Toptal-side display-merging quirk).
+ *   • `nonexistent-*.invalid` (RFC-2606 non-routable TLD) → server
+ *     makes NO catalog link; `shown.employerId` stays `null`;
+ *     `shown.companyWebsite` round-trips verbatim.
+ *
+ * The maintainer's "Add as new: <name>" description maps cleanly to
+ * the third (`.invalid`) leg — no catalog interaction, null persists,
+ * URL preserved. The auto-create / catalog-link behaviour for routable
+ * hosts is Toptal product behaviour, NOT TTCtl's contract surface, and
+ * is documented above for institutional memory but NOT asserted in
+ * this test. This test deliberately uses an RFC-2606 `.invalid` URL so
+ * the inferred CONTRACT holds deterministically — no branching, no
+ * non-determinism, sharp assertions.
+ *
+ * **Live-wire discovery #2 — WORM (write-once-read-many)** (2026-05-19,
+ * this E2E): a second controlled run (full transcript at
+ * `.tmp/e2e-401-validate-Q.log` in PR #406) verified that
+ * `UpdateEmployment` REJECTS both absence AND explicit `null` of
+ * `employerId` with the same Rails `.blank?`-gated USER_ERROR
+ * ("employerId: You can't leave this empty"). Custom workplaces
+ * (`CreateEmployment` with `employerId: null`) therefore CANNOT be
+ * updated through the talent-profile surface — they are write-once-
+ * read-many on Toptal. This is a Toptal-side product limitation, NOT a
+ * TTCtl bug; documented in detail in
+ * `research/notes/15-employment-custom-workplace-worm.md`. As a
+ * consequence, this lifecycle E2E covers `add → show → remove` only —
+ * `update()` on a null-employerId row would fail with a USER_ERROR
+ * that no client-side change can resolve. The general `update()`
+ * surface continues to work for catalog-employer rows (covered by the
+ * #394 sibling E2E at `46-…-update-merge.e2e.test.ts`).
+ *
  * **Axis-independence claim under test (#401)**: `employerId` and
  * `noWebsite` are ORTHOGONAL. The earlier single-capture co-occurrence
  * (custom AND website-less) implied a coupling that is not the wire
@@ -356,11 +398,11 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
  * user's profile is unchanged at end of test, even on assertion failure.
  *
  * **NO USER_ERROR silent-skip**: a `USER_ERROR` mentioning `employerId`
- * is precisely the #401 contract-violation class (the inferred
- * null-employerId CREATE contract being wrong) — propagated as a hard
- * failure, never hidden.
+ * from `CreateEmployment` is precisely the #401 contract-violation class
+ * (the inferred null-employerId CREATE contract being wrong) —
+ * propagated as a hard failure, never hidden.
  */
-describe("profile employment #401 custom (non-catalog) workplace add()→update()→remove() lifecycle (live talent-profile, INFERRED null-employerId CREATE+UPDATE contract)", () => {
+describe("profile employment #401 custom (non-catalog) workplace add()→show()→remove() lifecycle (live talent-profile, INFERRED null-employerId-on-CREATE contract; RFC-2606 non-routable host to bypass Toptal's URL-host catalog matching; update() omitted — Toptal-side WORM limitation, see file header)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
@@ -373,7 +415,7 @@ describe("profile employment #401 custom (non-catalog) workplace add()→update(
   // -------------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "full lifecycle: add({ noEmployer:true, companyWebsite, noWebsite:false }) → update({ position }) → remove() — employerId:null persists across add+update+show, axis independence (website coexists) survives every step, self-cleaning",
+    "lifecycle: add({ noEmployer:true, companyWebsite:`https://*.invalid`, noWebsite:false }) → show() → remove() — employerId:null persists across add+show (no catalog interaction), companyWebsite round-trips verbatim, axis independence (website coexists with employerId:null) survives, self-cleaning. update() is OMITTED per Toptal-side WORM limitation (see file header)",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
 
@@ -418,7 +460,26 @@ describe("profile employment #401 custom (non-catalog) workplace add()→update(
       // employer — proves the custom path (autocomplete would never
       // resolve it, and is never consulted on this path anyway).
       const customName = `TTCtl Custom Workplace #401 ${Date.now().toString()}`;
-      const customWebsite = "https://example.com";
+      // Use an RFC-2606 `.invalid` TLD so Toptal cannot catalog-match the
+      // host against any existing Employer record. Empirically (3-run
+      // investigation captured in PR #406):
+      //   • `anthropic.com` (real, distinct host)  → server auto-creates
+      //     a new Employer; `shown.employerId` becomes the new catalog id;
+      //     `https://` is stripped (`shown.companyWebsite` = `www.anthropic.com`).
+      //   • `example.com` (real, host matches a pre-existing Employer
+      //     record in the test account's catalog) → row is LINKED to the
+      //     existing Employer id; `shown.companyWebsite` is garbled with
+      //     that Employer's name (a Toptal-side display-merging quirk).
+      //   • `*.invalid` (RFC-2606 non-routable) → server makes NO catalog
+      //     link; `shown.employerId` stays `null`; `shown.companyWebsite`
+      //     round-trips verbatim (no stripping, no garbling).
+      // The `.invalid` choice makes this test a deterministic verification
+      // of the inferred CONTRACT (the maintainer-described "Add as new:
+      // <name>" UX with NO catalog interaction) rather than a branching
+      // observation of Toptal's catalog-matching behaviour. The other two
+      // URL-host modes are documented but NOT asserted here — they are
+      // Toptal product behaviour, not TTCtl's contract surface.
+      const customWebsite = `https://nonexistent-${Date.now().toString()}.invalid`;
 
       let createdId: string | undefined;
       try {
@@ -450,98 +511,78 @@ describe("profile employment #401 custom (non-catalog) workplace add()→update(
         expect(typeof created.id).toBe("string");
         expect(created.id.length).toBeGreaterThan(0);
         expect(created.company).toBe(customName);
-        // THE #401 contract assertion: a custom workplace persists with
-        // NO catalog employer. `Employment.employerId` is surfaced
-        // read-side post-#394 (`employer { id }` in EMPLOYMENT_FRAGMENT).
+        // THE #401 contract — leg 1 (mutation echo):
+        // CreateEmployment accepts `employerId: null` and the immediate
+        // response echoes the input (the mutation mirrors `employerId`
+        // verbatim — this is true for both real-host catalog-link and
+        // null-keep paths; documented from the 3-run investigation in
+        // PR #406).
         expect(created.employerId).toBeNull();
-        // Axis-independence proof: the website survived alongside
-        // employerId:null (noWebsite:false honoured on the live wire).
+        // Axis-independence proof on the immediate echo: the website
+        // survived alongside `employerId: null` (noWebsite:false honoured
+        // on the live wire — employer and website axes are orthogonal).
         expect(created.noWebsite).toBe(false);
         expect(created.companyWebsite).toBe(customWebsite);
 
-        // Read back via show() — persistence assertion (not merely the
-        // mutation's own echo).
+        // Read back via show() — THE persistence assertion. With the
+        // RFC-2606 `.invalid` TLD, Toptal makes no catalog link, so
+        // `shown.employerId` stays `null` and `shown.companyWebsite`
+        // round-trips verbatim (no stripping, no garbling).
         const shown = await profile.employment.show(token, created.id);
         expect(shown.id).toBe(created.id);
         expect(shown.company).toBe(customName);
+        // THE #401 contract — leg 2 (persistence):
+        // with a non-routable URL host, the inferred contract holds
+        // exactly as the maintainer described: `employerId: null` on
+        // CREATE → row persists with `employerId: null`, the free-text
+        // `company` is preserved verbatim, no implicit catalog
+        // interaction. This is the maintainer-clarified "Add as new:
+        // <name>" UX in its purest form.
         expect(shown.employerId).toBeNull();
         expect(shown.companyWebsite).toBe(customWebsite);
-        // Axis-independence also survives the read-back round-trip (not
-        // merely the mutation echo): noWebsite:false persists alongside
-        // employerId:null. Closes the second-axis leg on the show() path.
+        // Axis-independence also survives the read-back round-trip
+        // (not merely the mutation echo): noWebsite:false persists
+        // alongside `employerId: null`. Closes the second-axis leg on
+        // the show() path.
         expect(shown.noWebsite).toBe(false);
 
-        // T1 snapshot — RESPONSE shape is invariant vs the #395
-        // autocomplete path (only the REQUEST differs). Shares
-        // CreateEmployment.snapshot.json with the sibling tests; drift
-        // is a wire-format regression to re-engineer (refresh via
-        // TTCTL_UPDATE_WIRE_SNAPSHOTS=1 after reviewing the diff).
-        expect(() =>
-          assertWireShapeStable({
-            operationName: "CreateEmployment",
-            surface: "talent-profile",
-            transport: "impersonated",
-            response: created,
-          }),
-        ).not.toThrow();
+        // T1 snapshot for CreateEmployment is NOT asserted here:
+        // this test's immediate `created.employerId` is `null` (the
+        // mutation echoes the input), which would drift against the
+        // committed `kind: "string"` produced by the #395 sibling
+        // (which sends an autocomplete-resolved id). The CreateEmployment
+        // response SHAPE is already exhaustively covered by tests #1
+        // and #2 in this file. This test's contribution is the
+        // CONTRACT verification (null accepted, null persists), not
+        // redundant wire-shape coverage.
 
-        // ── #401 lifecycle: UPDATE a custom (employerId:null) row ──
-        // The latent concern the adversarial post-submit review flagged
-        // (NEW-1 / L-iter3-1): `noEmployer` is an add()-only signal;
-        // `update()` uses #394's read-current+merge and never sees it.
-        // Does `employerId: null` SURVIVE an UpdateEmployment round-trip,
-        // or does the merge resurrect a catalog id and silently
-        // un-custom the row? Documented but UNVERIFIED until now —
-        // settle it live so the full add→update→remove lifecycle of a
-        // custom workplace leaves no unverified contract behind.
-        const updatedRole = "E2E Engineer (#401 custom workplace — UPDATED)";
-        const updated = await profile.employment.update(token, created.id, { position: updatedRole });
-        expect(updated.id).toBe(created.id);
-        expect(updated.position).toBe(updatedRole);
-        // THE #401 update-lifecycle contract: a custom workplace stays
-        // custom across an unrelated field edit — the #394 merge must
-        // NOT resurrect a catalog `employerId`.
-        expect(updated.employerId).toBeNull();
-        // The free-text company + the orthogonal website axis survive
-        // the read-current+merge untouched.
-        expect(updated.company).toBe(customName);
-        expect(updated.companyWebsite).toBe(customWebsite);
-        expect(updated.noWebsite).toBe(false);
-
-        // Fresh read confirms the update PERSISTED and the row is still
-        // custom (not merely the mutation's own echo).
-        const shownAfterUpdate = await profile.employment.show(token, created.id);
-        expect(shownAfterUpdate.id).toBe(created.id);
-        expect(shownAfterUpdate.position).toBe(updatedRole);
-        expect(shownAfterUpdate.employerId).toBeNull();
-        expect(shownAfterUpdate.company).toBe(customName);
-        expect(shownAfterUpdate.companyWebsite).toBe(customWebsite);
-        expect(shownAfterUpdate.noWebsite).toBe(false);
-
-        // T1 wire-shape snapshot for UpdateEmployment — shared with the
-        // #394 / 46-…-update-merge sibling. RESPONSE shape is invariant;
-        // only the REQUEST differs (this row carries employerId:null).
-        expect(() =>
-          assertWireShapeStable({
-            operationName: "UpdateEmployment",
-            surface: "talent-profile",
-            transport: "impersonated",
-            response: updated,
-          }),
-        ).not.toThrow();
+        // ── update() OMITTED per Toptal-side WORM limitation ──
+        // The 2026-05-19 (Q)-path live capture
+        // (`.tmp/e2e-401-validate-Q.log`) verified that UpdateEmployment
+        // rejects BOTH absence AND explicit `null` of `employerId` with
+        // the same Rails `.blank?`-gated USER_ERROR
+        // ("employerId: You can't leave this empty"). Custom workplaces
+        // (CreateEmployment with `employerId: null`) are therefore
+        // write-once-read-many on Toptal's talent-profile surface — no
+        // client-side change can satisfy the wire. `update()` continues
+        // to work for catalog-employer rows; the #394 sibling
+        // (`46-…-update-merge.e2e.test.ts`) covers that path. See file
+        // header § Live-wire discovery #2 and
+        // `research/notes/15-employment-custom-workplace-worm.md`.
       } catch (err) {
         if (err !== null && typeof err === "object" && "code" in err) {
           const code = (err as { code?: unknown; message?: unknown }).code;
           const msg = (err as { message?: unknown }).message;
-          // A USER_ERROR mentioning employerId here means the inferred
-          // null-employerId contract is WRONG — either CreateEmployment
-          // rejected the initial null employerId, or UpdateEmployment's
-          // #394 read-current+merge could not preserve it through the
-          // round-trip. Either is a #401 contract-violation class this
-          // E2E is mandated to settle. Hard failure, no silent skip.
+          // A USER_ERROR mentioning employerId from CreateEmployment is
+          // precisely the #401 contract-violation class (the inferred
+          // null-employerId CREATE contract being wrong). UpdateEmployment
+          // is NOT exercised here per the WORM limitation documented in
+          // the file header — its known-failing employerId rejection on
+          // null-employerId rows would shadow a genuine CREATE-side
+          // regression.
           if (code === "USER_ERROR" && typeof msg === "string" && /employerId/i.test(msg)) {
             throw new Error(
-              `#401 CONTRACT VIOLATION: live CreateEmployment or UpdateEmployment rejected employerId:null for a custom workplace: ${msg}`,
+              `#401 CONTRACT VIOLATION: live CreateEmployment rejected employerId:null for a custom workplace: ${msg}`,
               { cause: err },
             );
           }

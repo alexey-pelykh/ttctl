@@ -228,7 +228,7 @@ describe("add", () => {
           experienceItems: [],
           skills: [],
           showViaToptal: true,
-          publicationPermit: false,
+          publicationPermit: true,
           company: "Globex",
           position: "Senior Engineer",
           startDate: 2020,
@@ -460,7 +460,7 @@ describe("add", () => {
           experienceItems: [],
           skills: [],
           showViaToptal: true,
-          publicationPermit: false,
+          publicationPermit: true,
           company: "Custom Place",
           position: "Founder",
           startDate: 2021,
@@ -585,6 +585,9 @@ describe("update", () => {
     // (company, publicationPermit) + catalog refs (industryIds; employerId
     // / primaryGeographyId / reportingTo only when current has them).
     // EMP_1 (the #344-fields-absent fixture) → industries [], no employer.
+    // (#401 WORM limitation: null-employerId rows cannot be updated on
+    // the live wire; absence and explicit null both fail the same Rails
+    // `.blank?` gate. The merge omits employerId honestly when null.)
     expect(updateCall.body.variables).toEqual({
       input: {
         employmentId: EMP_1.id,
@@ -699,6 +702,11 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.publicationPermit).toBe(true);
     // Catalog refs: industryIds always injected from current.industries;
     // employerId only injected when current has one (EMP_1 has none).
+    // (#401 WORM limitation: explicit null was also tried — Toptal's
+    // Rails apply path rejects both absence AND explicit null the same
+    // way. Custom workplaces are write-once-read-many; the helper
+    // honestly omits null employerId rather than send an explicit null
+    // that the wire also rejects.)
     expect(merged.industryIds).toEqual([]);
     expect(merged).not.toHaveProperty("employerId");
     // primaryGeographyId / reportingTo only injected when current has

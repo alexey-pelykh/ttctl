@@ -486,13 +486,17 @@ export async function add(token: string, fields: EmploymentFields, options: AddO
   // destructured out above for the same reason — it is not an
   // `EmploymentInput` field.
   //   - `experienceItems`, `skills`, `showViaToptal` — via the #344 E2E
-  //   - `publicationPermit` — via the #395 live capture (2026-05-19)
+  //   - `publicationPermit` — server treats Boolean `false` as blank
+  //     (USER_ERROR "publicationPermit: You can't leave this empty");
+  //     default to `true` to satisfy the Rails `.blank?` gate. Mirrors the
+  //     `buildUpdateEmploymentInput` fallback (`current.publicationPermit
+  //     ?? true`) so add/update agree on the no-caller-input semantics.
   // Callers may still override.
   const employment: Omit<EmploymentFields, "noEmployer" | "employerId"> & { employerId: string | null } = {
     experienceItems: [],
     skills: [],
     showViaToptal: true,
-    publicationPermit: false,
+    publicationPermit: true,
     ...wireFields,
     employerId,
   };
@@ -685,9 +689,20 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
   // caller omits these, the wire layer accepts the partial input but
   // the Rails apply path rejects it. Inject from the current row so
   // user-supplied fields can still override. Optional pass-throughs
-  // (primaryGeographyId / reportingTo) are only set when the current
-  // row has a non-null value — sending an explicit null would change
-  // the row's state, which would defeat "merge".
+  // (employerId / primaryGeographyId / reportingTo) are only set when
+  // the current row has a non-null value — sending an explicit null
+  // would change the row's state, which would defeat "merge".
+  //
+  // #401 WORM limitation (2026-05-19 live capture): the UpdateEmployment
+  // wire treats BOTH absence AND explicit null of `employerId` as Rails
+  // `.blank?` and rejects with "employerId: You can't leave this
+  // empty". Custom workplaces (CreateEmployment with `employerId: null`)
+  // therefore CANNOT be updated via this surface — they are write-once-
+  // read-many on Toptal. The "omit when null" branch below reflects
+  // this honestly: there is no employerId payload we can send that
+  // satisfies the wire for a null-employerId row. update() on such a
+  // row will surface the USER_ERROR verbatim. See
+  // `research/notes/15-employment-custom-workplace-worm.md` and #401.
   const merged: EmploymentFields = {
     // Wire-required non-null (GraphQL `Expected value to not be null`):
     experienceItems: current.experienceItems ?? [],

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-19T11:27:52.262Z",
+  "capturedAt": "2026-05-19T18:36:23.544Z",
   "operationName": "CreateEmployment",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -11,6 +11,9 @@
         "kind": "string"
       },
       "companyWebsite": {
+        "kind": "string"
+      },
+      "employerId": {
         "kind": "string"
       },
       "endDate": {
@@ -62,6 +65,12 @@
       },
       "showViaToptal": {
         "kind": "boolean"
+      },
+      "skills": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
       },
       "startDate": {
         "kind": "number"
