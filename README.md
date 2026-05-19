@@ -189,6 +189,24 @@ auth:
 
 The on-disk shape after a successful `ttctl auth signin` against a Form A or B config. Both fields coexist; signout removes the `token` field (returning to Form A or B) without touching `credentials`.
 
+## Pagination
+
+TTCtl exposes the wire's actual pagination model per service. The Toptal Talent platform uses **multiple coexisting pagination idioms** — there is no single uniform shape — and the wire rejects requests that mix idioms (PR [#383](https://github.com/alexey-pelykh/ttctl/pull/383) empirically proved this: an attempt to add `offset` to a limit-only field was rejected with HTTP 400 across 8 E2E test failures).
+
+Rather than invent a uniform translation layer that would lie about what the wire accepts, ttctl flags name what the wire arg names; their types match what the wire arg accepts. This keeps AI / script callers honest: a flag name maps 1:1 to a wire argument (with **one** documented translation — see row 2).
+
+| Service                                              | CLI flags                            | MCP keys                       | Wire idiom                                                      |
+| ---------------------------------------------------- | ------------------------------------ | ------------------------------ | --------------------------------------------------------------- |
+| `jobs list`, `applications list`, `engagements list` | `--page` / `--per-page`              | `{page, perPage}`              | Offset-list `(page, pageSize)`                                  |
+| `payments payouts list`                              | `--page` / `--per-page` (translated) | `{page, perPage}` (translated) | Offset-pagination wrapper `(offsetPagination: {offset, limit})` |
+| `timesheet pending` _(post-#374 re-spike)_           | `--limit`                            | `{limit}`                      | Limit-only wrapper `(pagination: {limit})`                      |
+| _(future engagements-payments)_                      | `--limit` + `--after <id>`           | `{limit, after}`               | Limit+forward-cursor wrapper `(pagination: {limit, after})`     |
+| _(future performed-actions)_                         | `--before` / `--after` / `--limit`   | `{before, after, limit}`       | Bare bidirectional cursor `(before, after, limit)`              |
+
+Heterogeneity is the deliberate Sage move: a uniform `--cursor <token>` layer would forfeit scriptability for offset services (no integer-composable pages); verb decomposition (`show-all` vs `list`) would double the command tree without buying disambiguation the flag types already provide. Per-service `--help` is the canonical recovery surface for the specific flag shape.
+
+The 5-row grammar is locked in [ADR-007 — Pagination flag grammar](hq/engineering/adr/ADR-007-pagination-flag-grammar.md).
+
 ## MCP Integration
 
 TTCtl implements the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) so AI assistants can interact with your Toptal Talent profile through natural language. Run `ttctl mcp` to start an MCP server on stdio.
