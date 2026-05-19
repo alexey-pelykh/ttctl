@@ -7,17 +7,23 @@ vi.mock("../../../../transport.js", async () => {
   const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
   return {
     ...actual,
+    stockTransport: vi.fn(),
     impersonatedTransport: vi.fn(),
   };
 });
 
 import { add, autocomplete, list, readiness, rm, set, show, SkillsError } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { Cf403Error, impersonatedTransport } from "../../../../transport.js";
+import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
+import { VIEWER_OK } from "../../__tests__/fixtures.js";
 
 const mocked = vi.mocked(impersonatedTransport);
+const mockedStock = vi.mocked(stockTransport);
 const TOKEN = "tok-skills";
+// `VIEWER_OK.data.viewer.viewerRole.profileId` — kept in sync with the
+// shared fixture; if the fixture changes its profileId, update here.
+const PROFILE_ID = "p1";
 
 interface MockResponse {
   status?: number;
@@ -34,8 +40,19 @@ function reply(...responses: MockResponse[]): void {
   }
 }
 
+function replyStock(...responses: MockResponse[]): void {
+  for (const r of responses) {
+    mockedStock.mockResolvedValueOnce({
+      status: r.status ?? 200,
+      headers: {},
+      body: r.body,
+    } satisfies TransportResponse);
+  }
+}
+
 beforeEach(() => {
   mocked.mockReset();
+  mockedStock.mockReset();
 });
 
 const SKILL_SET_OK = {
@@ -54,14 +71,16 @@ const SKILL_SET_OK = {
 
 describe("skills.add", () => {
   it("rejects an empty name without making any network call", async () => {
-    await expect(add(TOKEN, "   ")).rejects.toMatchObject({
+    await expect(add(TOKEN, { name: "   " })).rejects.toMatchObject({
       name: "SkillsError",
       code: "VALIDATION_ERROR",
     });
     expect(mocked).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
   });
 
-  it("calls ADD_PROFILE_SKILL_SET with a trimmed name and returns the new skill set", async () => {
+  it("resolves profileId, sends the captured wire shape with defaults, and returns kind:created", async () => {
+    replyStock({ body: VIEWER_OK });
     reply({
       body: {
         data: {
@@ -75,33 +94,97 @@ describe("skills.add", () => {
       },
     });
 
-    const result = await add(TOKEN, "  TypeScript  ");
-    expect(result.id).toBe("ss1");
-    expect(result.skill.name).toBe("TypeScript");
-    expect(result.connectionsCount).toBe(3);
+    const outcome = await add(TOKEN, { name: "  TypeScript  " });
+    expect(outcome.kind).toBe("created");
+    if (outcome.kind !== "created") throw new Error("unreachable");
+    expect(outcome.result.id).toBe("ss1");
+    expect(outcome.result.skill.name).toBe("TypeScript");
+    expect(outcome.result.connectionsCount).toBe(3);
 
     const call = mocked.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("ADD_PROFILE_SKILL_SET");
-    expect(call.body.variables).toEqual({ input: { name: "TypeScript" } });
+    // Captured wire shape: { profileId, skillSet: { name, rating,
+    // experience, public } }. Defaults applied: COMPETENT / 1 / false.
+    // `skillSet.id` is OMITTED when no skillId is supplied (the custom-
+    // skill capture variant).
+    expect(call.body.variables).toEqual({
+      input: {
+        profileId: PROFILE_ID,
+        skillSet: { name: "TypeScript", rating: "COMPETENT", experience: 1, public: false },
+      },
+    });
     expect(call.surface).toBe("talent-profile");
   });
 
+  it("forwards explicit rating/experience/public and binds catalog skillId when supplied", async () => {
+    replyStock({ body: VIEWER_OK });
+    reply({
+      body: {
+        data: {
+          addProfileSkillSet: { skillSet: SKILL_SET_OK, success: true, notice: null, errors: [] },
+        },
+      },
+    });
+
+    await add(TOKEN, {
+      name: "PostgreSQL",
+      rating: "EXPERT",
+      experience: 5,
+      public: true,
+      skillId: "V1-Skill-278891",
+    });
+
+    const call = mocked.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.body.variables).toEqual({
+      input: {
+        profileId: PROFILE_ID,
+        skillSet: {
+          name: "PostgreSQL",
+          rating: "EXPERT",
+          experience: 5,
+          public: true,
+          id: "V1-Skill-278891",
+        },
+      },
+    });
+  });
+
+  it("dry-run returns kind:preview WITHOUT firing any transport (zero-network)", async () => {
+    const outcome = await add(TOKEN, { name: "Rust", rating: "STRONG" }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    expect(outcome.preview.operationName).toBe("ADD_PROFILE_SKILL_SET");
+    // Placeholder profileId — extractProfileId is skipped in dry-run.
+    expect(outcome.preview.variables).toEqual({
+      input: {
+        profileId: expect.stringContaining("resolved at send-time"),
+        skillSet: { name: "Rust", rating: "STRONG", experience: 1, public: false },
+      },
+    });
+    expect(mocked).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
   it("propagates Cf403Error from the talent-profile transport", async () => {
+    replyStock({ body: VIEWER_OK });
     mocked.mockRejectedValueOnce(new Cf403Error("talent-profile", "https://example.com/api"));
-    await expect(add(TOKEN, "TypeScript")).rejects.toBeInstanceOf(Cf403Error);
+    await expect(add(TOKEN, { name: "TypeScript" })).rejects.toBeInstanceOf(Cf403Error);
   });
 
   it("throws AuthRevokedError on HTTP 401", async () => {
+    replyStock({ body: VIEWER_OK });
     reply({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
-    await expect(add(TOKEN, "TypeScript")).rejects.toBeInstanceOf(AuthRevokedError);
+    await expect(add(TOKEN, { name: "TypeScript" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws AuthRevokedError when extensions.code is UNAUTHENTICATED", async () => {
+    replyStock({ body: VIEWER_OK });
     reply({ body: { errors: [{ message: "x", extensions: { code: "UNAUTHENTICATED" } }] } });
-    await expect(add(TOKEN, "TypeScript")).rejects.toBeInstanceOf(AuthRevokedError);
+    await expect(add(TOKEN, { name: "TypeScript" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws SkillsError USER_ERROR when payload reports user errors", async () => {
+    replyStock({ body: VIEWER_OK });
     reply({
       body: {
         data: {
@@ -113,13 +196,14 @@ describe("skills.add", () => {
         },
       },
     });
-    await expect(add(TOKEN, "TypeScript")).rejects.toMatchObject({
+    await expect(add(TOKEN, { name: "TypeScript" })).rejects.toMatchObject({
       code: "USER_ERROR",
       message: expect.stringContaining("Skill already on profile"),
     });
   });
 
   it("throws SkillsError USER_ERROR when payload.success === false (no errors array)", async () => {
+    replyStock({ body: VIEWER_OK });
     reply({
       body: {
         data: {
@@ -127,15 +211,16 @@ describe("skills.add", () => {
         },
       },
     });
-    await expect(add(TOKEN, "TypeScript")).rejects.toMatchObject({
+    await expect(add(TOKEN, { name: "TypeScript" })).rejects.toMatchObject({
       code: "USER_ERROR",
       message: expect.stringContaining("rate-limited"),
     });
   });
 
   it("throws SkillsError NETWORK_ERROR on transport-level throw", async () => {
+    replyStock({ body: VIEWER_OK });
     mocked.mockRejectedValueOnce(new Error("ECONNRESET"));
-    await expect(add(TOKEN, "TypeScript")).rejects.toMatchObject({
+    await expect(add(TOKEN, { name: "TypeScript" })).rejects.toMatchObject({
       code: "NETWORK_ERROR",
       message: expect.stringContaining("ECONNRESET"),
     });

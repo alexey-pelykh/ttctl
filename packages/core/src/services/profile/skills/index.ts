@@ -55,6 +55,10 @@
 import type { z } from "zod";
 
 import { callGatewayShared } from "../../_shared/transport.js";
+import { buildDryRunPreview } from "../../../transport.js";
+import type { DryRunPreview } from "../../../transport.js";
+import { DRY_RUN_PROFILE_ID_PLACEHOLDER } from "../basic/index.js";
+import { extractProfileId } from "../shared.js";
 
 /**
  * Skills-domain error codes. Mirrors `profile.basic.ProfileErrorCode`'s
@@ -261,6 +265,24 @@ export type ProficiencyRating = "COMPETENT" | "STRONG" | "EXPERT" | "NOVICE";
 export type SkillVisibility = boolean;
 
 /**
+ * Catalog (or custom) skill the {@link ProfileSkillSet} is bound to.
+ *
+ * Declared as a *named* interface rather than an inline object literal so
+ * the write-read-symmetry gate's file-local BFS can traverse it: the gate
+ * builds the reachable echo-field set by walking named interface
+ * references, and an inline `{ id; name }` is invisible to that walk.
+ * With `SkillRef` named, `AddSkillFields.name` is correctly recognised as
+ * echoed at `ProfileSkillSet.skill.name` (Class B gap defense — see
+ * CLAUDE.md § Write-read symmetry gate).
+ */
+export interface SkillRef {
+  /** Catalog `Skill` id (`V1-Skill-<n>`) or the server-synthesised id for a custom skill. */
+  id: string;
+  /** Display name of the skill. Echoes {@link AddSkillFields.name}. */
+  name: string;
+}
+
+/**
  * Full skill set as exposed to consumers. Mirrors the GraphQL
  * `ProfileSkillSet` selection set we ask for, normalised so optional
  * fields surface as `null` rather than `undefined` (matches the
@@ -272,7 +294,7 @@ export interface ProfileSkillSet {
   rating: ProficiencyRating | null;
   public: boolean;
   position: number | null;
-  skill: { id: string; name: string };
+  skill: SkillRef;
   connectionsCount: number;
 }
 
@@ -321,6 +343,98 @@ export interface UpdateSkillResult {
   public: boolean | null;
   notices: string[];
 }
+
+/**
+ * Caller-facing input shape for {@link add}.
+ *
+ * **Required**: `name`. **Optional with defaults**: `rating` ("COMPETENT"),
+ * `experience` (1), `public` (false). The defaults exist so the AC
+ * `{name: "<skill>"}` succeeds against the live wire (the server rejects
+ * with "Expected value to not be null" on any of `rating` / `experience` /
+ * `public` if omitted). Callers wanting a different proficiency can either
+ * pass it here OR add the skill with the defaults and follow up with
+ * {@link set}.
+ *
+ * **Optional bypass**: `skillId`. When supplied, the server binds the new
+ * `ProfileSkillSet` to the catalog `Skill` identified by this id (e.g.,
+ * `"V1-Skill-278891"`). Sourced via {@link autocomplete}. When omitted,
+ * the server treats `name` as a free-text custom skill and creates a
+ * non-catalog `Skill` to back the new `ProfileSkillSet` — this is the
+ * captured "custom skill" path. Both are valid wire shapes.
+ *
+ * **Per the wire capture** (`research/captures/web/inputs/
+ * ADD_PROFILE_SKILL_SET.json`): the wire format is
+ * `{ profileId, skillSet: { name, rating, experience, public, [id] } }` —
+ * Pattern 2 with parent id; the inner `skillSet.id` is the CATALOG skill
+ * id (`V1-Skill-<n>`), NOT the resulting `ProfileSkillSet` id (which is
+ * `V1-ProfileSkillSet-<n>` and only exists in the response).
+ *
+ * **Name → id resolution is intentionally out of scope** of {@link add}:
+ * callers wanting the autocomplete-resolution UX (analogous to
+ * `employment.add`'s `--company` → `employerId` flow) consume
+ * {@link autocomplete} explicitly and pass the resolved id via
+ * `skillId`. A follow-up issue tracks wiring transparent resolution into
+ * `add` itself.
+ */
+export interface AddSkillFields {
+  name: string;
+  /** Proficiency rating. Defaults to `"COMPETENT"`. */
+  rating?: ProficiencyRating;
+  /** Total experience on the skill. Defaults to `1`. Passed verbatim to the wire (the existing `set` flow uses the same convention). */
+  experience?: number;
+  /** Profile visibility. Defaults to `false` (private). */
+  public?: boolean;
+  // write-only: catalog `Skill` id (e.g. "V1-Skill-278891") consumed to bind
+  // the new ProfileSkillSet to a catalog Skill; the resolved binding is
+  // echoed via skill.id / skill.name on the read side rather than the input
+  // field name. Omit for custom (non-catalog) skills. See AddSkillFields
+  // docstring § "Optional bypass" and the employment.add employerId precedent.
+  skillId?: string;
+}
+
+/**
+ * Options accepted by {@link add}. `dryRun` mirrors the option-shape
+ * established by `basic.set` (#393 / SetOptions) and `employment.add`
+ * (#395 / AddOptions) so the cross-service surface stays uniform —
+ * callers branch on the {@link AddSkillOutcome} `kind` discriminator
+ * regardless of which mutation they're invoking.
+ *
+ * Unlike `employment.add`, the {@link add} dry-run path is zero-network:
+ * no autocomplete read is fired during dry-run (the caller supplies the
+ * `skillId` directly if needed). The placeholder
+ * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} stands in for `profileId` so
+ * `extractProfileId` is also skipped.
+ */
+export interface AddSkillOptions {
+  dryRun?: boolean;
+}
+
+/**
+ * Discriminated outcome of an {@link add} call when the apply-path
+ * succeeded — the newly created `ProfileSkillSet`.
+ */
+export interface AddSkillOutcomeCreated {
+  kind: "created";
+  result: ProfileSkillSet;
+}
+
+/**
+ * Discriminated outcome of an {@link add} call invoked with
+ * `dryRun: true` — the structured preview of the request that WOULD
+ * have been sent. No mutation OR autocomplete-read was fired.
+ */
+export interface AddSkillOutcomePreview {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link add}. Apply-path callers
+ * branch on `outcome.kind === "created"`; dry-run callers branch on
+ * `"preview"`. Symmetric with `basic.set`'s `SetOutcome` (#393) and
+ * `employment.add`'s `AddOutcome` (#395).
+ */
+export type AddSkillOutcome = AddSkillOutcomeCreated | AddSkillOutcomePreview;
 
 // -----------------------------------------------------------------------
 // Wire-format response shapes (private)
@@ -382,7 +496,7 @@ interface WireSkillSet {
   rating: ProficiencyRating | null;
   public: boolean;
   position: number | null;
-  skill: { id: string; name: string };
+  skill: SkillRef;
   connections: { totalCount: number };
 }
 
@@ -440,34 +554,98 @@ function raiseUserErrors(operation: string, errors: UserErrorEntry[] | null | un
 
 /**
  * Add a skill to the signed-in user's profile. Identifies the skill by
- * its catalog name (e.g. `"TypeScript"`); the server resolves the name to
- * a `Skill` id under the hood and returns the newly-attached
- * `ProfileSkillSet` with default `rating`/`experience`/`public` values.
+ * its `name` (e.g. `"TypeScript"`) plus the proficiency dimensions the
+ * live wire requires (`rating`, `experience`, `public`).
  *
- * Use {@link autocomplete} first if the caller needs to disambiguate
- * between candidate skills (e.g., "Postgres" vs "PostgreSQL"). Once the
- * skill is added, configure proficiency via {@link set}.
+ * **Wire shape** (per `research/captures/web/inputs/ADD_PROFILE_SKILL_SET.json`):
+ * `{ input: { profileId, skillSet: { name, rating, experience, public, [id] } } }` —
+ * Pattern 2 with parent id. The inner `skillSet.id` is the catalog
+ * `Skill` id (V1-Skill-<n>); omit it to create a custom (non-catalog)
+ * skill from the `name` string.
+ *
+ * **Defaults** (so `add(token, { name })` succeeds out of the box):
+ *   - `rating: "COMPETENT"` (least-claim default; user can upgrade via `set`)
+ *   - `experience: 1`
+ *   - `public: false` (privacy default)
+ *
+ * **Bug history (#396)**: pre-#396, `add(token, name)` sent the invented
+ * shape `{ input: { name } }`. The server rejected with
+ * `name (Field is not defined), profileId (required), skillSet (required)`
+ * — the schema for `AddProfileSkillSetInput` was a gap
+ * (`{ _placeholder: String }` at `schema.graphql:893`) and the shape had
+ * to be derived from live capture. #396 commits the capture, fixes the
+ * wire shape, and bumps the signature to a `{ fields, options }` form
+ * mirroring `employment.add` (#395) and `basic.set` (#393).
+ *
+ * **Dry-run path**: zero-network. `extractProfileId` is skipped (the
+ * placeholder `DRY_RUN_PROFILE_ID_PLACEHOLDER` stands in); the
+ * `ADD_PROFILE_SKILL_SET` mutation transport is NOT fired. Use this to
+ * preview the wire shape end-to-end before committing to the live call.
  *
  * Errors:
- * - `SkillsError` `VALIDATION_ERROR` when `name` is empty or whitespace-only.
+ * - `SkillsError` `VALIDATION_ERROR` when `fields.name` is empty or
+ *   whitespace-only.
  * - `SkillsError` `USER_ERROR` when the server reports a domain failure
- *   (e.g., skill already on profile, name not in catalog).
+ *   (e.g., skill already on profile, invalid catalog id, server-side
+ *   policy rejection).
+ * - `ProfileError` `NO_VIEWER` from the `extractProfileId(token)`
+ *   round-trip propagates verbatim — apply path only (dry-run skips
+ *   the round-trip). Surfaces with the same actionable message as
+ *   `ttctl profile show`.
  * - `AuthRevokedError`, `Cf403Error`, plus the standard
  *   `GRAPHQL_ERROR`/`NETWORK_ERROR`/`UNKNOWN` codes from the shared
  *   transport-error path.
  */
-export async function add(token: string, name: string): Promise<ProfileSkillSet> {
-  const trimmed = name.trim();
-  if (trimmed.length === 0) {
+export async function add(
+  token: string,
+  fields: AddSkillFields,
+  options: AddSkillOptions = {},
+): Promise<AddSkillOutcome> {
+  const name = fields.name.trim();
+  if (name.length === 0) {
     throw new SkillsError("VALIDATION_ERROR", "Skill name is required.");
   }
+
+  // Build the `skillSet` wire-input verbatim per the capture. Defaults
+  // are applied here (not at the call sites) so every caller — CLI,
+  // MCP, internal — converges on the same wire shape.
+  const skillSet: {
+    name: string;
+    rating: ProficiencyRating;
+    experience: number;
+    public: boolean;
+    id?: string;
+  } = {
+    name,
+    rating: fields.rating ?? "COMPETENT",
+    experience: fields.experience ?? 1,
+    public: fields.public ?? false,
+  };
+  if (fields.skillId !== undefined) {
+    skillSet.id = fields.skillId;
+  }
+
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "ADD_PROFILE_SKILL_SET",
+          query: ADD_PROFILE_SKILL_SET_MUTATION,
+          variables: { input: { profileId: DRY_RUN_PROFILE_ID_PLACEHOLDER, skillSet } },
+        },
+      }),
+    };
+  }
+
+  const profileId = await extractProfileId(token);
   const data = await callTalentProfile<AddSkillSetData>(
     token,
     "ADD_PROFILE_SKILL_SET",
     ADD_PROFILE_SKILL_SET_MUTATION,
-    {
-      input: { name: trimmed },
-    },
+    { input: { profileId, skillSet } },
   );
   const payload = data.addProfileSkillSet;
   if (!payload) {
@@ -483,7 +661,7 @@ export async function add(token: string, name: string): Promise<ProfileSkillSet>
   if (!payload.skillSet) {
     throw new SkillsError("UNKNOWN", "Skill add succeeded but response had no `skillSet` payload");
   }
-  return normaliseSkillSet(payload.skillSet);
+  return { kind: "created", result: normaliseSkillSet(payload.skillSet) };
 }
 
 // -----------------------------------------------------------------------

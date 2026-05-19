@@ -547,6 +547,18 @@ describe("program --dry-run flag (#52)", () => {
     }
   });
 
+  it("`profile skills add` is marked as a mutation so --dry-run routes through the core dryRun path (#396)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const skills = profile?.commands.find((c) => c.name() === "skills");
+    expect(skills).toBeDefined();
+    const add = skills?.commands.find((c) => c.name() === "add");
+    expect(add).toBeDefined();
+    if (add !== undefined) {
+      expect(isMutationCommand(add)).toBe(true);
+    }
+  });
+
   it("--dry-run on the top-level alias (`profile update`) is also marked as a mutation", () => {
     const program = buildProgram();
     const profile = program.commands.find((c) => c.name() === "profile");
