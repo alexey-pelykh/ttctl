@@ -40,10 +40,20 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
     {
       title: "Add employment entry",
       description:
-        "Add a new employment entry (company + role, with optional start/end years and `current` flag). Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
+        "Add a new employment entry (company + role, with optional start/end years and `current` flag). " +
+        "The `company` string is resolved to the server-side `employerId` via the employer-autocomplete catalog: " +
+        "0 matches or 2+ matches return a VALIDATION_ERROR with disambiguation guidance. Pass an explicit `employerId` to " +
+        "bypass autocomplete entirely. Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
       inputSchema: {
-        company: z.string().min(1).describe("company / employer name"),
+        company: z.string().min(1).describe("company / employer name (resolved to employerId via autocomplete)"),
         role: z.string().min(1).describe("job title (mapped to position)"),
+        employerId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "explicit employerId (bypasses autocomplete; use `ttctl_profile_employment_employer_autocomplete` to discover)",
+          ),
         from: dateInput.optional().describe("start date — ISO-8601 or year"),
         to: dateInput.optional().describe("end date — ISO-8601 or year"),
         current: z.boolean().optional().describe("mark as current position (no end date)"),
@@ -63,6 +73,9 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         company: input.company,
         position: input.role,
       };
+      if (input.employerId !== undefined) {
+        fields.employerId = input.employerId;
+      }
       try {
         if (input.from !== undefined) fields.startDate = parseDateInput(input.from, "from").year;
         if (input.to !== undefined) fields.endDate = parseDateInput(input.to, "to").year;
@@ -78,20 +91,17 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         fields.experienceItems = splitParagraphs(input.description);
       }
 
-      if (input.dryRun === true) {
-        return dryRunResponse(
-          buildMcpDryRunPreview(
-            "CreateEmployment",
-            "talent-profile",
-            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, employment: fields } },
-            auth.token,
-          ),
-        );
-      }
-
+      // Per-#395: dry-run path is delegated to the core service so the
+      // preview's `variables.input.employment.employerId` carries the
+      // resolved id (not the raw `company` string). The autocomplete
+      // read query fires in dry-run too — the CreateEmployment mutation
+      // transport does not.
       try {
-        const created = await profile.employment.add(auth.token, fields);
-        return jsonSuccess(created);
+        const outcome = await profile.employment.add(auth.token, fields, { dryRun: input.dryRun === true });
+        if (outcome.kind === "preview") {
+          return dryRunResponse(outcome.preview);
+        }
+        return jsonSuccess(outcome.result);
       } catch (err) {
         return presentToolError("profile.employment.add", err);
       }

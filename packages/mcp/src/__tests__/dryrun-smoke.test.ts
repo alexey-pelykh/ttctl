@@ -176,7 +176,13 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_education_show: { id: "edu_123" },
   ttctl_profile_education_update: { id: "edu_123", degree: "MSc" },
   // profile.employment (7, +list #341)
-  ttctl_profile_employment_add: { company: "Toptal", role: "Engineer" },
+  // employerId bypass keeps the dry-run path zero-transport for the
+  // smoke test (the autocomplete-resolution path is exercised in the
+  // core service's unit tests). Per #395, the apply path now requires
+  // employerId; dry-run without an explicit employerId fires the
+  // `employersAutocomplete` read query, which is sentinel-rejected by
+  // this test's transport mock.
+  ttctl_profile_employment_add: { company: "Toptal", role: "Engineer", employerId: "V1-Employer-stub" },
   ttctl_profile_employment_employer_autocomplete: { query: "Google" },
   ttctl_profile_employment_highlight: { id: "emp_123" },
   ttctl_profile_employment_list: {},

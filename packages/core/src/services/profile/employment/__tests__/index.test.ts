@@ -162,7 +162,28 @@ describe("add", () => {
     await expect(add(TOKEN, { company: "Acme" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("dispatches CreateEmployment with profileId + employment input", async () => {
+  it("dispatches CreateEmployment with profileId + resolved employerId after autocomplete (1 exact match)", async () => {
+    // Autocomplete returns several matches but only one has name
+    // exactly equal to the user's query → use its id transparently.
+    replyImpersonated({
+      body: {
+        data: {
+          employersAutocomplete: [
+            { id: "V1-Employer-9", name: "Globex", city: null, country: null, logoUrl: null, website: null },
+            {
+              id: "V1-Employer-10",
+              name: "Globex Industries",
+              city: "LA",
+              country: "US",
+              logoUrl: null,
+              website: null,
+            },
+            { id: "V1-Employer-11", name: "Globex Records", city: null, country: null, logoUrl: null, website: null },
+          ],
+        },
+      },
+    });
+    // Apply path: VIEWER_OK (extractProfileId), then list (before), then create.
     replyStock({ body: VIEWER_OK });
     replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
     replyImpersonated({
@@ -177,24 +198,208 @@ describe("add", () => {
       },
     });
 
-    const e = await add(TOKEN, { company: "Globex", position: "Senior Engineer", startDate: 2020 });
-    expect(e.id).toBe(EMP_2.id);
-    expect(e).toEqual(EMP_2_MAPPED);
-    const call = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
-    expect(call.body.operationName).toBe("CreateEmployment");
-    expect(call.body.variables).toEqual({
+    const outcome = await add(TOKEN, { company: "Globex", position: "Senior Engineer", startDate: 2020 });
+    expect(outcome.kind).toBe("created");
+    if (outcome.kind !== "created") throw new Error("unreachable");
+    expect(outcome.result.id).toBe(EMP_2.id);
+    expect(outcome.result).toEqual(EMP_2_MAPPED);
+    // The CreateEmployment call is the LAST impersonated call (calls 0, 2, 3 — call 1 is stock).
+    const createCall = mockedImpersonated.mock.calls[2]?.[0] as TransportRequest;
+    expect(createCall.body.operationName).toBe("CreateEmployment");
+    expect(createCall.body.variables).toEqual({
       input: {
         profileId: "p1",
         employment: {
           experienceItems: [],
           skills: [],
           showViaToptal: true,
+          publicationPermit: false,
           company: "Globex",
           position: "Senior Engineer",
           startDate: 2020,
+          employerId: "V1-Employer-9",
         },
       },
     });
+  });
+
+  it("uses explicit employerId verbatim (bypass — autocomplete NOT fired)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [EMP_1, EMP_2] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await add(TOKEN, {
+      company: "Globex",
+      position: "Senior Engineer",
+      startDate: 2020,
+      employerId: "V1-Employer-42",
+    });
+    expect(outcome.kind).toBe("created");
+    // Verify only TWO impersonated calls: list + create (no autocomplete).
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+    const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(createCall.body.operationName).toBe("CreateEmployment");
+    const vars = createCall.body.variables as { input: { employment: { employerId: string } } };
+    expect(vars.input.employment.employerId).toBe("V1-Employer-42");
+  });
+
+  it("rejects with actionable nudge when autocomplete returns 0 matches (empty catalog response)", async () => {
+    const emptyMatch = { body: { data: { employersAutocomplete: null } } };
+    replyImpersonated(emptyMatch, emptyMatch);
+    await expect(add(TOKEN, { company: "Joe's Garage LLC", position: "Lead" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/No employer matched "Joe's Garage LLC"/) as unknown,
+    });
+    await expect(add(TOKEN, { company: "Joe's Garage LLC", position: "Lead" })).rejects.toMatchObject({
+      message: expect.stringContaining("--employer-id") as unknown,
+    });
+  });
+
+  it("rejects with closest-candidates listing when autocomplete returns fuzzy matches but no exact name match", async () => {
+    // Autocomplete returns prefix / fuzzy matches but NONE matches the
+    // user's query exactly. Surface the catalog's actual names so the
+    // user can refine.
+    const fuzzyOnly = {
+      body: {
+        data: {
+          employersAutocomplete: [
+            { id: "V1-Employer-1", name: "AcmeCorp Inc", city: "NYC", country: "US", logoUrl: null, website: null },
+            { id: "V1-Employer-2", name: "Acme Industries", city: "LA", country: "US", logoUrl: null, website: null },
+          ],
+        },
+      },
+    };
+    replyImpersonated(fuzzyOnly, fuzzyOnly);
+    await expect(add(TOKEN, { company: "Acme", position: "Engineer" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining('No exact match for "Acme"') as unknown,
+    });
+    await expect(add(TOKEN, { company: "Acme", position: "Engineer" })).rejects.toMatchObject({
+      message: expect.stringMatching(/V1-Employer-1.*AcmeCorp Inc.*\(NYC, US\)/s) as unknown,
+    });
+  });
+
+  it("rejects with duplicates listing when autocomplete returns 2+ exact-name matches", async () => {
+    // The catalog has multiple records sharing the user-supplied display
+    // name (e.g. regional subsidiaries). Surface only the exact matches.
+    const exactDups = {
+      body: {
+        data: {
+          employersAutocomplete: [
+            { id: "V1-Employer-1", name: "Toptal", city: "San Francisco", country: "US", logoUrl: null, website: null },
+            { id: "V1-Employer-2", name: "Toptal", city: "London", country: "UK", logoUrl: null, website: null },
+            { id: "V1-Employer-3", name: "Toptal", city: null, country: null, logoUrl: null, website: null },
+            { id: "V1-Employer-4", name: "Toptracer", city: "Dallas", country: "US", logoUrl: null, website: null },
+          ],
+        },
+      },
+    };
+    replyImpersonated(exactDups, exactDups);
+
+    await expect(add(TOKEN, { company: "Toptal", position: "Engineer" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining('Multiple employers matched "Toptal" exactly') as unknown,
+    });
+    await expect(add(TOKEN, { company: "Toptal", position: "Engineer" })).rejects.toMatchObject({
+      // Disambiguation includes the 3 exact-name records but NOT Toptracer
+      // (which is fuzzy-match only).
+      message: expect.not.stringContaining("Toptracer") as unknown,
+    });
+  });
+
+  it("exact-name match is case-insensitive (user types 'anthropic' → 'Anthropic' resolves)", async () => {
+    replyImpersonated({
+      body: {
+        data: {
+          employersAutocomplete: [
+            {
+              id: "V1-Employer-A",
+              name: "Anthropic",
+              city: "San Francisco",
+              country: "US",
+              logoUrl: null,
+              website: null,
+            },
+            { id: "V1-Employer-B", name: "Anthropic Records", city: null, country: null, logoUrl: null, website: null },
+          ],
+        },
+      },
+    });
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [EMP_1, EMP_2] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await add(TOKEN, { company: "anthropic", position: "Engineer" });
+    expect(outcome.kind).toBe("created");
+    const createCall = mockedImpersonated.mock.calls[2]?.[0] as TransportRequest;
+    const vars = createCall.body.variables as { input: { employment: { employerId: string } } };
+    expect(vars.input.employment.employerId).toBe("V1-Employer-A");
+  });
+
+  it("dry-run fires autocomplete + builds preview with resolved employerId, NOT the mutation", async () => {
+    replyImpersonated({
+      body: {
+        data: {
+          employersAutocomplete: [
+            { id: "V1-Employer-9", name: "Globex", city: null, country: null, logoUrl: null, website: null },
+          ],
+        },
+      },
+    });
+
+    const outcome = await add(
+      TOKEN,
+      { company: "Globex", position: "Senior Engineer", startDate: 2020 },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    expect(outcome.preview.operationName).toBe("CreateEmployment");
+    expect(outcome.preview.surface).toBe("talent-profile");
+    expect(outcome.preview.transport).toBe("impersonated");
+    const vars = outcome.preview.variables as {
+      input: { profileId: string; employment: { company: string; employerId: string } };
+    };
+    expect(vars.input.employment.employerId).toBe("V1-Employer-9");
+    expect(vars.input.employment.company).toBe("Globex");
+    expect(vars.input.profileId).toBe("<resolved at send-time from session token>");
+    // Only ONE impersonated call: autocomplete. No mutation, no list, no VIEWER_OK.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dry-run with explicit employerId fires ZERO network calls (bypass + dry-run)", async () => {
+    const outcome = await add(
+      TOKEN,
+      { company: "Anything", position: "Engineer", employerId: "V1-Employer-42" },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    const vars = outcome.preview.variables as { input: { employment: { employerId: string } } };
+    expect(vars.input.employment.employerId).toBe("V1-Employer-42");
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
   });
 });
 
