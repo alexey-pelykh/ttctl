@@ -340,6 +340,27 @@ export const DEFAULT_PAGE = 1 as const;
 export const DEFAULT_PER_PAGE = 20 as const;
 
 /**
+ * Recruiter-pinned Fixed rate (#410) — surfaced alongside `maxRate` so
+ * callers can disambiguate "marketplace ceiling" (`maxRate`, often null)
+ * from "recruiter-pinned offer" (`fixedRate`, the Toptal portal's "Fixed"
+ * badge). Projected from `viewer.job(id).activityItem.availabilityRequest.
+ * metadata.offeredHourlyRate` (`Money` shape). `null` when:
+ *
+ * - the viewer has no activity item for this job (no prior interaction
+ *   AND no recruiter-initiated AR), OR
+ * - an activity item exists but carries no `availabilityRequest` (the
+ *   job is in the browse pool but no recruiter has pinged the talent
+ *   yet — typical for `eligibleJobs` rows the talent hasn't engaged).
+ *
+ * The same shape is reused on the AR-side surfaces in
+ * `@ttctl/core/services/applications` ({@link FixedRate} there).
+ */
+export interface FixedRate {
+  decimal: string;
+  verbose: string;
+}
+
+/**
  * Single-row projection for jobs listings (browse + saved-list +
  * not-interested-list + viewed-list).
  */
@@ -353,6 +374,7 @@ export interface JobListItem {
   specialization: { title: string } | null;
   expectedHours: number | null;
   maxRate: number | null;
+  fixedRate: FixedRate | null;
   startDate: string | null;
   postedWhen: string | null;
   viewed: boolean | null;
@@ -464,6 +486,15 @@ export interface SearchSubscriptionState {
 //   API returned HTTP 400 `Variable "$pageSize" of type "Int!" used
 //   in position expecting type "PageSize"` during E2E pre-merge
 //   verification — schema/contract validation rule caught it.
+// `activityItem.availabilityRequest.metadata.offeredHourlyRate` (#410)
+// surfaces the recruiter-pinned Fixed rate per row. The schema declares
+// `TalentJob.activityItem: TalentJobActivityItem!` (non-null) and
+// `TalentJobActivityItem.availabilityRequest: AvailabilityRequest`
+// (nullable) — eligibleJobs rows the talent hasn't engaged carry
+// `availabilityRequest: null`, so `projectFixedRate` short-circuits to
+// `null`. Adds one nested selection per row; size impact is small
+// (3 strings when set, nothing when not). Disposition stays T1 per
+// `docs/wire-validation-routing.md` — no committed snapshot to update.
 const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!], $excludeSkills: [String!], $excludeKeywords: [String!], $commitments: [JobCommitmentFilterEnum!], $workTypes: [JobWorkTypeSlug!], $estimatedLengths: [EstimatedLengthFilterEnum!], $notInterested: BooleanFilter, $saved: BooleanFilter, $sortTarget: String, $page: Int, $pageSize: PageSize) {
   viewer {
     __typename
@@ -498,6 +529,18 @@ const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!]
         saved
         notInterested
         client { __typename id fullName }
+        activityItem {
+          __typename
+          id
+          availabilityRequest {
+            __typename
+            id
+            metadata {
+              __typename
+              offeredHourlyRate { __typename decimal verbose }
+            }
+          }
+        }
       }
       totalCount
     }
@@ -561,6 +604,18 @@ const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
         }
       }
       languages { __typename id name }
+      activityItem {
+        __typename
+        id
+        availabilityRequest {
+          __typename
+          id
+          metadata {
+            __typename
+            offeredHourlyRate { __typename decimal verbose }
+          }
+        }
+      }
     }
   }
 }`;
@@ -692,6 +747,29 @@ interface MutationResult {
   errors?: MutationResultErrors[] | null;
 }
 
+/**
+ * Wire-side shape of `TalentJob.activityItem.availabilityRequest`
+ * sub-selection (#410). The schema marks `TalentJob.activityItem`
+ * non-null, but the AR pointer below is nullable — eligibleJobs rows
+ * the talent hasn't engaged carry `availabilityRequest: null`. The
+ * metadata path (`metadata.offeredHourlyRate`) is the recruiter Fixed
+ * rate; both legs of `metadata` and `offeredHourlyRate` are non-null
+ * in the schema, so the nullability cascade has one branch: AR present
+ * → Fixed rate guaranteed, AR null → row carries no Fixed rate.
+ */
+interface ActivityItemRateWire {
+  id: string;
+  availabilityRequest: {
+    id: string;
+    metadata: {
+      offeredHourlyRate: {
+        decimal: string;
+        verbose: string;
+      };
+    };
+  } | null;
+}
+
 interface JobListEntity {
   id: string;
   title: string | null;
@@ -707,6 +785,14 @@ interface JobListEntity {
   saved: boolean | null;
   notInterested: boolean | null;
   client: { id: string; fullName: string | null } | null;
+  /**
+   * Per-row activity-item sub-selection carrying the recruiter Fixed
+   * rate (#410). Optional in the wire shape so fixtures that pre-date
+   * the #410 selection (or future trimmed-selection regressions) can
+   * still be projected; `projectFixedRate` short-circuits to `null`
+   * on absence.
+   */
+  activityItem?: ActivityItemRateWire | null;
 }
 
 interface JobsListResponse {
@@ -851,6 +937,27 @@ async function callGateway<T>(
   });
 }
 
+/**
+ * Lift the wire's nested `activityItem.availabilityRequest.metadata.
+ * offeredHourlyRate` (Money shape) into a row-level {@link FixedRate}
+ * field (#410). Short-circuits at every nullable hop:
+ *
+ * 1. `activityItem` may be wire-absent or wire-null (defensive —
+ *    schema declares non-null but the trimmed selection here keeps
+ *    the null-tolerant branch). Accepts `undefined` so callers
+ *    constructing partial fixtures don't have to populate every
+ *    detail of the wire shape.
+ * 2. `activityItem.availabilityRequest` is nullable per schema (the
+ *    common case for `eligibleJobs` rows the talent hasn't engaged).
+ * 3. The Money shape itself is schema-non-null when an AR exists.
+ */
+function projectFixedRate(activityItem: ActivityItemRateWire | null | undefined): FixedRate | null {
+  if (activityItem === null || activityItem === undefined) return null;
+  if (activityItem.availabilityRequest === null) return null;
+  const offered = activityItem.availabilityRequest.metadata.offeredHourlyRate;
+  return { decimal: offered.decimal, verbose: offered.verbose };
+}
+
 function projectListItem(entity: JobListEntity): JobListItem {
   return {
     id: entity.id,
@@ -862,6 +969,7 @@ function projectListItem(entity: JobListEntity): JobListItem {
     specialization: entity.specialization,
     expectedHours: entity.expectedHours,
     maxRate: entity.maxRate,
+    fixedRate: projectFixedRate(entity.activityItem),
     startDate: entity.startDate,
     postedWhen: entity.postedWhen,
     viewed: entity.viewed,

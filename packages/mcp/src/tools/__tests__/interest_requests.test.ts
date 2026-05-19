@@ -68,6 +68,7 @@ function buildRow(overrides: Partial<applications.JobActivityItem> = {}): applic
     engagement: null,
     availabilityRequest: { id: "ar_001" },
     interview: null,
+    fixedRate: null,
     ...overrides,
   };
 }
@@ -115,6 +116,18 @@ describe("projectRow", () => {
   it("emits clientName=null when the row's client is null", () => {
     const row = buildRow({ job: { id: "j", title: null, url: null, client: null } });
     expect(projectRow(row, Date.now()).clientName).toBeNull();
+  });
+
+  it("surfaces fixedRate verbatim from the AR-side projection (#410)", () => {
+    const row = buildRow({ fixedRate: { decimal: "77.00", verbose: "$77.00/hr" } });
+    const out = projectRow(row, Date.parse("2026-05-15T00:00:00Z"));
+    expect(out.fixedRate).toEqual({ decimal: "77.00", verbose: "$77.00/hr" });
+  });
+
+  it("surfaces fixedRate=null when the AR-side projection has no Fixed-rate offer (#410)", () => {
+    const row = buildRow(); // default: fixedRate: null
+    const out = projectRow(row, Date.parse("2026-05-15T00:00:00Z"));
+    expect(out.fixedRate).toBeNull();
   });
 });
 

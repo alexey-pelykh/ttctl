@@ -81,4 +81,41 @@ describe("applications show (live mobile-gateway)", () => {
     // see service-side regex match.
     expect(payload.errors?.[0]?.code).toBe("NOT_FOUND");
   });
+
+  // -------------------------------------------------------------------
+  // Recruiter Fixed rate projection (#410) — live wire-shape assertion
+  // for the detail-view selection set.
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "show projects fixedRate (Money | null) from availabilityRequest.metadata (#410)",
+    async () => {
+      // Prefer an ON_RECRUITER_REVIEW row so the AR-side path is
+      // exercised; fall back to any first row if the IR pool is empty.
+      const irList = await cli.run(["applications", "list", "--status-group", "ON_RECRUITER_REVIEW", "-o", "json"]);
+      expect(irList.exitCode).toBe(0);
+      const irItems = JSON.parse(irList.stdout) as { items: Array<{ id?: string }> };
+      let probeId: string | undefined = irItems.items[0]?.id;
+      if (probeId === undefined) {
+        const fallback = await cli.run(["applications", "list", "-o", "json"]);
+        const fbItems = JSON.parse(fallback.stdout) as { items: Array<{ id?: string }> };
+        probeId = fbItems.items[0]?.id;
+      }
+      expect(probeId).toBeDefined();
+      if (probeId === undefined) return;
+
+      const detail = await cli.run(["applications", "show", probeId, "-o", "json"]);
+      expect(detail.exitCode).toBe(0);
+      const payload = JSON.parse(detail.stdout) as { fixedRate?: unknown };
+      // `fixedRate` MUST be a key on the detail payload — `null` when
+      // no AR or no metadata; Money-shaped when present.
+      expect("fixedRate" in payload).toBe(true);
+      const fr = payload.fixedRate;
+      if (fr === null) return;
+      expect(typeof fr).toBe("object");
+      const rate = fr as { decimal?: unknown; verbose?: unknown };
+      expect(typeof rate.decimal).toBe("string");
+      expect(typeof rate.verbose).toBe("string");
+    },
+  );
 });

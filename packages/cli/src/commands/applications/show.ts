@@ -5,7 +5,7 @@ import { applications } from "@ttctl/core";
 
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
+import { formatFixedRate, handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl applications show <id>`. Reads a single
@@ -60,6 +60,9 @@ export async function runApplicationsShow(id: string, output: OutputFormat): Pro
  *     Application                  // omitted if jobApplication is null
  *       Id: <id>
  *       Requested rate: <decimal>
+ *
+ *     Fixed rate                   // omitted if fixedRate is null (#410)
+ *       <verbose | $<decimal>/h>
  *
  *     Engagement                   // omitted if engagement is null
  *       Id: <id>
@@ -127,6 +130,15 @@ export function formatApplicationDetail(item: applications.JobActivityItemDetail
     if (item.jobApplication.requestedHourlyRate?.decimal != null) {
       lines.push(`  Requested rate: ${item.jobApplication.requestedHourlyRate.decimal}`);
     }
+  }
+
+  // Surface the recruiter-pinned Fixed rate (#410) alongside the talent-
+  // proposed `requestedHourlyRate` above so the user can compare both
+  // sides of the AR at a glance.
+  if (item.fixedRate !== null) {
+    lines.push("");
+    lines.push("Fixed rate");
+    lines.push(`  ${formatFixedRate(item.fixedRate)}`);
   }
 
   if (item.engagement !== null) {

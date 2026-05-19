@@ -5,7 +5,7 @@ import { jobs } from "@ttctl/core";
 
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
-import { formatDate, formatRate, handleJobsError, loadAuthTokenOrExit } from "./shared.js";
+import { formatDate, formatFixedRate, formatRate, handleJobsError, loadAuthTokenOrExit } from "./shared.js";
 
 /**
  * Action handler for `ttctl jobs show <id>`. Fetches a single job's
@@ -51,6 +51,7 @@ export function formatJobDetail(job: jobs.JobDetail): string {
     lines.push(`  Min hours/cycle: ${job.minimumHoursPerBillingCycle.toString()}`);
   }
   if (job.maxRate !== null) lines.push(`  Max rate: ${formatRate(job.maxRate)}`);
+  if (job.fixedRate !== null) lines.push(`  Fixed rate: ${formatFixedRate(job.fixedRate)}`);
   if (job.startDate !== null) lines.push(`  Starts: ${formatDate(job.startDate)}`);
   if (job.postedWhen !== null) lines.push(`  Posted: ${job.postedWhen}`);
   if (job.isCoaching === true) lines.push(`  Type: coaching`);

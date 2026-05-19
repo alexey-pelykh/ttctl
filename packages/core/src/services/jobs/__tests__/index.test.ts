@@ -440,6 +440,116 @@ describe("jobs.show", () => {
   });
 });
 
+// ----- Recruiter Fixed rate projection (issue #410) --------------------
+//
+// `viewer.{job(id), eligibleJobs.entities[]}.activityItem.availabilityRequest
+// .metadata.offeredHourlyRate` is lifted into a row-level `fixedRate`
+// projection field so callers can disambiguate "marketplace ceiling"
+// (`maxRate`, often null) from "recruiter-pinned offer" (`fixedRate`,
+// the portal's "Fixed" badge). Both list and show paths share the
+// projection; both nullability branches (AR present, AR null) are
+// covered here.
+
+describe("jobs fixedRate projection (#410)", () => {
+  it("lists projects fixedRate from activityItem.availabilityRequest.metadata", async () => {
+    const fixedRateEntity = {
+      ...JOB_LIST_ENTITY,
+      id: "job-fixed",
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        id: "act-1",
+        availabilityRequest: {
+          __typename: "AvailabilityRequest",
+          id: "ar-1",
+          metadata: {
+            __typename: "AvailabilityRequestFixedMetadata",
+            offeredHourlyRate: { __typename: "Money", decimal: "77.00", verbose: "$77.00/hr" },
+          },
+        },
+      },
+    };
+    reply({
+      body: {
+        data: { viewer: { id: "v1", eligibleJobs: { entities: [fixedRateEntity], totalCount: 1 } } },
+      },
+    });
+    const page = await list(TOKEN);
+    expect(page.items[0]?.fixedRate).toEqual({ decimal: "77.00", verbose: "$77.00/hr" });
+  });
+
+  it("lists projects fixedRate=null when the row's activityItem has no availabilityRequest", async () => {
+    // Common case for `eligibleJobs` browse rows the talent hasn't
+    // engaged: `activityItem` exists but `availabilityRequest` is null.
+    const noArEntity = {
+      ...JOB_LIST_ENTITY,
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        id: "act-2",
+        availabilityRequest: null,
+      },
+    };
+    reply({
+      body: {
+        data: { viewer: { id: "v1", eligibleJobs: { entities: [noArEntity], totalCount: 1 } } },
+      },
+    });
+    const page = await list(TOKEN);
+    expect(page.items[0]?.fixedRate).toBeNull();
+  });
+
+  it("lists projects fixedRate=null when the row carries no activityItem at all (defensive)", async () => {
+    // The schema marks `TalentJob.activityItem: TalentJobActivityItem!`
+    // non-null; this case is the defensive wire-drift branch covered by
+    // the `undefined`-tolerant `projectFixedRate`.
+    reply({
+      body: {
+        data: { viewer: { id: "v1", eligibleJobs: { entities: [JOB_LIST_ENTITY], totalCount: 1 } } },
+      },
+    });
+    const page = await list(TOKEN);
+    expect(page.items[0]?.fixedRate).toBeNull();
+  });
+
+  it("show projects fixedRate from activityItem.availabilityRequest.metadata", async () => {
+    const fixedRateDetail = {
+      ...JOB_DETAIL_ENTITY,
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        id: "act-3",
+        availabilityRequest: {
+          __typename: "AvailabilityRequest",
+          id: "ar-3",
+          metadata: {
+            __typename: "AvailabilityRequestFixedMetadata",
+            offeredHourlyRate: { __typename: "Money", decimal: "109.00", verbose: "$109.00/hr" },
+          },
+        },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", job: fixedRateDetail } } },
+    });
+    const job = await show(TOKEN, "job-1");
+    expect(job.fixedRate).toEqual({ decimal: "109.00", verbose: "$109.00/hr" });
+  });
+
+  it("show projects fixedRate=null when the job's availabilityRequest is null", async () => {
+    const noArDetail = {
+      ...JOB_DETAIL_ENTITY,
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        id: "act-4",
+        availabilityRequest: null,
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", job: noArDetail } } },
+    });
+    const job = await show(TOKEN, "job-1");
+    expect(job.fixedRate).toBeNull();
+  });
+});
+
 describe("jobs interest mutations", () => {
   it("save() returns the post-mutation state wrapped in an applied outcome", async () => {
     reply({
