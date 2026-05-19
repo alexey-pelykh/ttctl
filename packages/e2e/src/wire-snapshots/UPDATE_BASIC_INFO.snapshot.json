@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-19T10:07:48.333Z",
+  "operationName": "UPDATE_BASIC_INFO",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "notice": {
+        "kind": "null"
+      },
+      "profile": {
+        "kind": "object",
+        "fields": {
+          "about": {
+            "kind": "string"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "quote": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}
