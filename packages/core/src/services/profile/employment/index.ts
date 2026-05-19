@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { ProfileError } from "../basic/index.js";
+import { DRY_RUN_PROFILE_ID_PLACEHOLDER, ProfileError } from "../basic/index.js";
 import { applyUserErrorsAndSuccess, callTalentProfile, ensureNoTopLevelErrors, extractProfileId } from "../shared.js";
 import type { GraphQLErrorEntry, UserError } from "../shared.js";
+import { buildDryRunPreview } from "../../../transport.js";
+import type { DryRunPreview } from "../../../transport.js";
 
 /**
  * `Employment` row as ttctl exposes it. Trimmed read-side projection of
@@ -52,9 +54,20 @@ export interface Employment {
  * fields (employerId, engagementId, industryIds, managementExperience,
  * primaryGeographyId, reportingTo, skills, …) are exposed at the type
  * level so future leaves can grow without churning callers.
+ *
+ * `employerId` is the server-side catalog identifier for the employer
+ * record (e.g. "V1-Employer-1234"). `add()` requires either an explicit
+ * `employerId` or a `company` that resolves to exactly one
+ * autocomplete match — see {@link add} for the resolution policy. Per
+ * the captured input shape, `employerId` is nullable only when
+ * `noWebsite: true` (which TTCtl does not currently surface on `add`).
  */
 export interface EmploymentFields {
   company?: string;
+  // write-only: catalog id consumed by autocomplete-resolution to materialize
+  // the employer relationship; the resolved relationship is echoed via
+  // company / companyWebsite / industries rather than the catalog id itself.
+  employerId?: string;
   position?: string;
   companyWebsite?: string | null;
   noWebsite?: boolean;
@@ -70,6 +83,53 @@ export interface EmploymentFields {
   reportingTo?: string | null;
   skills?: string[];
 }
+
+/**
+ * Options accepted by {@link add}. `dryRun` mirrors the option-shape
+ * established by `basic.set` (#393 / SetOptions) so the cross-service
+ * surface stays uniform — callers that branch on the outcome's `kind`
+ * discriminator can use the same code path regardless of which
+ * mutation they're invoking.
+ *
+ * The `dryRun` path fires the employer autocomplete read so the preview
+ * shows the resolved `employerId` (not the raw `company` string). This
+ * departs from `basic.set`'s zero-network dry-run by design (#395):
+ * the alternative — placeholder employerId — would misrepresent the
+ * wire shape, since the server-side input requires the resolved id, not
+ * the company name. The mutation transport is still NEVER fired in
+ * `dryRun` mode.
+ */
+export interface AddOptions {
+  dryRun?: boolean;
+}
+
+/**
+ * Discriminated outcome of an {@link add} call when the apply-path
+ * succeeded — the newly created {@link Employment} row.
+ */
+export interface AddOutcomeCreated {
+  kind: "created";
+  result: Employment;
+}
+
+/**
+ * Discriminated outcome of an {@link add} call invoked with
+ * `dryRun: true` — the structured preview of the request that WOULD
+ * have been sent. The `employersAutocomplete` read query MAY have been
+ * fired during dry-run to resolve `employerId`; the `CreateEmployment`
+ * mutation transport was NOT fired.
+ */
+export interface AddOutcomePreview {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link add}. Apply-path callers
+ * branch on `outcome.kind === "created"`; dry-run callers branch on
+ * `"preview"`. Symmetric with `basic.set`'s {@link SetOutcome} (#393).
+ */
+export type AddOutcome = AddOutcomeCreated | AddOutcomePreview;
 
 /**
  * Lightweight `Employer` reference returned by
@@ -282,27 +342,102 @@ export async function show(token: string, id: string): Promise<Employment> {
 
 /**
  * Create a new employment row. Wire format per Pattern 2: `{ profileId,
- * employment: EmploymentInput }`. `company` and `position` are required.
+ * employment: EmploymentInput }`.
+ *
+ * **employerId resolution (#395)**: the live `talent_profile/graphql`
+ * server requires `employment.employerId` (the catalog identifier),
+ * NOT the free-text `company` string. Pre-#395, `add({company, role,
+ * …})` sent only the company string and was rejected with
+ * `USER_ERROR: employment add rejected (employerId): You can't leave
+ * this empty`. The fix:
+ *
+ *   1. If `fields.employerId` is supplied → use it verbatim. This is
+ *      the explicit-bypass path (`--employer-id` on CLI,
+ *      `employerId` on MCP) — useful for replay scripts, the
+ *      disambiguation fallback, or known-good ids.
+ *   2. Otherwise, fire {@link employerAutocomplete} against
+ *      `fields.company`. Toptal's autocomplete is fuzzy / prefix-
+ *      search (typing "Anthropic" returns 10 partial matches), so the
+ *      practical cardinality is on EXACT NAME MATCH (case-insensitive
+ *      trim):
+ *        - exactly 1 exact match → use its id transparently
+ *        - 2+ exact matches (catalog duplicates — e.g. multiple
+ *          regional subsidiaries with the same display name) →
+ *          `VALIDATION_ERROR` listing the duplicates + `--employer-id`
+ *          nudge
+ *        - 0 exact, 0 fuzzy → `VALIDATION_ERROR` nudging to the
+ *          autocomplete CLI command or `--employer-id` bypass
+ *        - 0 exact, ≥1 fuzzy → `VALIDATION_ERROR` listing the top-N
+ *          closest candidates with `--employer-id` nudge (the user
+ *          typed a prefix; surface the catalog's actual names)
+ *
+ * The static defaults at `experienceItems: []`, `skills: []`,
+ * `showViaToptal: true` are retained pre-#395 — they were established
+ * empirically via the #344 E2E to satisfy "Expected value to not be
+ * null" on those required fields. Reviewing them in this PR would
+ * be premature without a fresh live capture; they may be revisited in
+ * a follow-up that mirrors the basic.set #393 read-merge pattern for
+ * employment.add.
+ *
+ * **Dry-run path (#395)**: when `options.dryRun === true`, the
+ * employer resolution still runs (fires `employersAutocomplete` if
+ * `employerId` is absent) so the preview's `variables.input.employment`
+ * carries the resolved `employerId`, matching the wire shape the live
+ * mutation would transmit. The `CreateEmployment` mutation transport
+ * is NOT invoked. The placeholder
+ * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} stands in for `profileId`
+ * (which the apply-path resolves via `extractProfileId`).
  */
-export async function add(token: string, fields: EmploymentFields): Promise<Employment> {
+export async function add(token: string, fields: EmploymentFields, options: AddOptions = {}): Promise<AddOutcome> {
   if (!fields.company || !fields.position) {
     throw new ProfileError("VALIDATION_ERROR", "employment add requires --company and --role.");
   }
-  const profileId = await extractProfileId(token);
-  const before = await listByProfileId(token, profileId);
-  const beforeIds = new Set(before.map((e) => e.id));
-  // The wire requires `experienceItems`, `skills`, and `showViaToptal` to
-  // be non-null on `CreateEmployment` (live API rejects with
-  // "Expected value to not be null" otherwise). The synthesized SDL marks
-  // `CreateEmploymentInput` as `{ _placeholder: String }` — these defaults
-  // were established empirically via the #344 E2E. Callers may still
-  // override.
+
+  // Resolve employerId BEFORE branching on dryRun so the preview's
+  // wire shape matches what the live mutation would transmit (#395
+  // explicit AC). The autocomplete query is a read, not a mutation —
+  // it fires in both dry-run and apply paths.
+  const employerId = await resolveEmployerId(token, fields);
+
+  // The wire requires several non-null fields on `CreateEmployment`
+  // (live API rejects with "Expected value to not be null" / "You can't
+  // leave this empty" otherwise). The defaults below were established
+  // empirically through E2E iteration — DO NOT add pre-emptive defaults
+  // for fields the server hasn't explicitly demanded, since
+  // `CreateEmploymentInput` rejects unknown fields with
+  // "Field is not defined on EmploymentInput" (e.g. `toptalRelated`,
+  // `highlight` are valid on `UpdateEmploymentInput` but NOT on
+  // `CreateEmploymentInput`).
+  //   - `experienceItems`, `skills`, `showViaToptal` — via the #344 E2E
+  //   - `publicationPermit` — via the #395 live capture (2026-05-19)
+  // Callers may still override.
   const employment: EmploymentFields = {
     experienceItems: [],
     skills: [],
     showViaToptal: true,
+    publicationPermit: false,
     ...fields,
+    employerId,
   };
+
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "CreateEmployment",
+          query: CREATE_EMPLOYMENT_MUTATION,
+          variables: { input: { profileId: DRY_RUN_PROFILE_ID_PLACEHOLDER, employment } },
+        },
+      }),
+    };
+  }
+
+  const profileId = await extractProfileId(token);
+  const before = await listByProfileId(token, profileId);
+  const beforeIds = new Set(before.map((e) => e.id));
   const res = await callTalentProfile(
     token,
     "CreateEmployment",
@@ -318,7 +453,96 @@ export async function add(token: string, fields: EmploymentFields): Promise<Empl
   if (!created) {
     throw new ProfileError("UNKNOWN", "employment add returned success but no new row was found in the response.");
   }
-  return created;
+  return { kind: "created", result: created };
+}
+
+/**
+ * Resolve `fields.employerId` for the create-employment flow (#395).
+ *
+ *   - Explicit `fields.employerId` → returned verbatim (bypass).
+ *   - Otherwise call {@link employerAutocomplete}; Toptal's autocomplete
+ *     is fuzzy / prefix-search, so the practical cardinality is on
+ *     **exact name match** (case-insensitive, trimmed):
+ *       - 1 exact match → transparent use
+ *       - 0 exact, 0 fuzzy → "No employer matched" nudge
+ *       - 0 exact, ≥1 fuzzy → "No exact match; closest candidates"
+ *         listing + `--employer-id` nudge (the user typed a prefix /
+ *         substring; we surface the catalog's actual names so they can
+ *         pick an id)
+ *       - 2+ exact → disambiguation listing of the duplicates (the
+ *         catalog has multiple records with the same display name —
+ *         common for companies with city subsidiaries; the user must
+ *         pick one)
+ *
+ * Errors all surface as `VALIDATION_ERROR` with actionable recovery
+ * text so the CLI / MCP layer can render them as user-facing
+ * messages without further classification.
+ */
+async function resolveEmployerId(token: string, fields: EmploymentFields): Promise<string> {
+  if (fields.employerId !== undefined && fields.employerId !== "") {
+    return fields.employerId;
+  }
+  // `fields.company` is asserted non-empty by the caller (the add()
+  // pre-flight rejects an empty company / position).
+  const company = fields.company ?? "";
+  const matches = await employerAutocomplete(token, company);
+  const norm = company.trim().toLowerCase();
+  const exact = matches.filter((m) => m.name.trim().toLowerCase() === norm);
+
+  if (exact.length === 1) {
+    const only = exact[0];
+    if (only === undefined) {
+      // Defensive: exact.length === 1 but indexed read is undefined —
+      // a TypeScript noUncheckedIndexedAccess guard. Unreachable at
+      // runtime.
+      throw new ProfileError(
+        "UNKNOWN",
+        "employer-autocomplete returned 1 exact match but indexing it yielded undefined.",
+      );
+    }
+    return only.id;
+  }
+
+  if (exact.length >= 2) {
+    // Multiple catalog records share the user-supplied exact name
+    // (common for global companies with regional subsidiaries listed
+    // separately). Surface only the exact-name duplicates — the fuzzy
+    // siblings would just add noise.
+    const list = exact.map(formatCandidate).join("\n");
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      `Multiple employers matched "${company}" exactly (${exact.length.toString()} duplicates in the catalog):\n` +
+        `${list}\n` +
+        `Pass \`--employer-id <id>\` to disambiguate.`,
+    );
+  }
+
+  // exact.length === 0
+  if (matches.length === 0) {
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      `No employer matched "${company}". Use ` +
+        `\`ttctl profile employment employer-autocomplete <query>\` to search the catalog, ` +
+        `or pass \`--employer-id <id>\` to bypass autocomplete.`,
+    );
+  }
+
+  // 0 exact, ≥1 fuzzy. Surface the catalog's actual names so the user
+  // can refine (or pick an id directly).
+  const top = matches.slice(0, 5);
+  const list = top.map(formatCandidate).join("\n");
+  throw new ProfileError(
+    "VALIDATION_ERROR",
+    `No exact match for "${company}" in the employer catalog ` +
+      `(${matches.length.toString()} fuzzy match${matches.length === 1 ? "" : "es"}; showing top ${top.length.toString()}):\n` +
+      `${list}\n` +
+      `Refine the company string to the exact catalog name, or pass \`--employer-id <id>\` to bypass autocomplete.`,
+  );
+}
+
+function formatCandidate(m: EmployerSuggestion): string {
+  const loc = [m.city, m.country].filter((v): v is string => v !== null && v !== "").join(", ");
+  return `  - ${m.id}  ${m.name}${loc ? ` (${loc})` : ""}`;
 }
 
 /**

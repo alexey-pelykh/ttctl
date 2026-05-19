@@ -49,12 +49,16 @@ export function buildProfileEmploymentCommand(): Command {
   employment
     .command("add")
     .description("Add a new employment entry to your profile")
-    .requiredOption("--company <name>", "company / employer name")
+    .requiredOption("--company <name>", "company / employer name (resolved to employerId via autocomplete)")
     .requiredOption("--role <title>", "job title (mapped to position)")
     .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
     .option("--to <date>", "end date — ISO-8601 or year")
     .option("--current", "current position (no end date)", false)
     .option("--website <url>", "company website (optional)")
+    .option(
+      "--employer-id <id>",
+      "explicit employerId (bypasses autocomplete; use `ttctl profile employment employer-autocomplete <query>` to discover)",
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -165,6 +169,7 @@ interface AddOptions {
   to?: string;
   current: boolean;
   website?: string;
+  employerId?: string;
   output: OutputFormat;
 }
 
@@ -186,6 +191,9 @@ async function runAdd(options: AddOptions): Promise<void> {
     company: options.company,
     position: options.role,
   };
+  if (options.employerId !== undefined) {
+    fields.employerId = options.employerId;
+  }
   if (options.website !== undefined) {
     fields.companyWebsite = options.website;
     fields.noWebsite = false;
@@ -196,7 +204,13 @@ async function runAdd(options: AddOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("profile employment add", options.output);
   let result: profile.employment.Employment;
   try {
-    result = await profile.employment.add(token, fields);
+    const outcome = await profile.employment.add(token, fields);
+    // CLI does not currently surface dryRun for employment add (#395 — MCP-only),
+    // so the apply path always returns `kind: "created"`.
+    if (outcome.kind !== "created") {
+      throw new Error(`Unexpected non-created outcome from profile.employment.add: ${outcome.kind}`);
+    }
+    result = outcome.result;
   } catch (err) {
     presentSubDomainError("profile employment add", err, options.output);
   }

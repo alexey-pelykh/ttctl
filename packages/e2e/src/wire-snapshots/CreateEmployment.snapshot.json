@@ -1,0 +1,74 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-19T11:27:52.262Z",
+  "operationName": "CreateEmployment",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "company": {
+        "kind": "string"
+      },
+      "companyWebsite": {
+        "kind": "string"
+      },
+      "endDate": {
+        "kind": "null"
+      },
+      "experienceItems": {
+        "kind": "array",
+        "item": {
+          "kind": "string"
+        }
+      },
+      "highlight": {
+        "kind": "boolean"
+      },
+      "id": {
+        "kind": "string"
+      },
+      "industries": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "string"
+            },
+            "name": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "noWebsite": {
+        "kind": "boolean"
+      },
+      "position": {
+        "kind": "string"
+      },
+      "primaryGeography": {
+        "kind": "null"
+      },
+      "publicationPermit": {
+        "kind": "boolean"
+      },
+      "reportingTo": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "showViaToptal": {
+        "kind": "boolean"
+      },
+      "startDate": {
+        "kind": "number"
+      },
+      "toptalRelated": {
+        "kind": "boolean"
+      }
+    }
+  }
+}

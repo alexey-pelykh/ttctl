@@ -91,7 +91,9 @@ const FORMERLY_AFFECTED_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_education_add: { institution: "MIT", degree: "BSc" },
   ttctl_profile_education_update: { id: "edu_123", degree: "MSc" },
   ttctl_profile_education_remove: { id: "edu_123" },
-  ttctl_profile_employment_add: { company: "Toptal", role: "Engineer" },
+  // employerId bypass keeps dry-run zero-transport — see sibling
+  // dryrun-smoke.test.ts fixture comment for the #395 rationale.
+  ttctl_profile_employment_add: { company: "Toptal", role: "Engineer", employerId: "V1-Employer-stub" },
   ttctl_profile_employment_update: { id: "emp_123", company: "Anthropic" },
   ttctl_profile_employment_remove: { id: "emp_123" },
   ttctl_profile_industries_update: { id: "ind_123", name: "Health Tech" },
