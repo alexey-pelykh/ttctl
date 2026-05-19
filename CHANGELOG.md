@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.4] - 2026-05-19
+
+### Fixed
+
+- **Wire-broke meta-class #392 — `profile.basic.set` / `profile.employment.add` /
+  `profile.employment.update` all rejected by the live API in rc.3**. Three
+  MCP write tools that shipped in v0.1.0-rc.3 sent partial input variables
+  that the live `talent_profile/graphql` server rejected (GraphQL-required
+  non-null fields and Rails `.blank?` USER_ERROR gates). Unit tests with
+  mocks could not detect the contract mismatches because mocks accept
+  whatever shape the code sends — the cause the project's
+  **schema/contract validation rule** is designed to catch. rc.4 ships
+  three independent fixes from the #392 decomposition:
+
+- **`profile.basic.set` — read-current+merge to satisfy full-replacement
+  contract (#393)**. Live `talent_profile/graphql` treats
+  `UpdateBasicInfoInput!` as a full-replacement contract: any required
+  non-null field omitted from the input fails with `"Expected value to not
+  be null"`, regardless of its current value on the server. Pre-fix,
+  `set({bio, headline})` sent only `{profileId, profile: {about?, quote?}}`
+  and the live API rejected on **9 required fields** (`fullName`, `legalName`,
+  `countryId`, `city`, `placeIdentity`, `citizenshipId`, `languageIds`,
+  `phoneNumber`, `softwareSkills`).
+  - **Fix**: read current state via `getBasicInfo()` pre-submit, merge
+    user-supplied fields over the snapshot, send the full input. The
+    extended `getBasicInfo()` projects every server-required scalar /
+    collection so the merge has full coverage. `UpdateBasicInfoProfileInput`
+    now mirrors the full input contract documented in
+    `research/notes/10-mutation-input-patterns.md`.
+  - **Dry-run preview** (#52 zero-transport invariant preserved): now shows
+    the full merged input — user-supplied fields verbatim, unset scalars
+    carry an explicit `<preserved from current profile state>` placeholder,
+    collection fields surface as empty arrays. Consumers see exactly which
+    keys the live mutation will transmit without firing any transport.
+  - **Schema/contract rule**: TRIGGERED (file-path:
+    `packages/core/src/services/profile/basic/index.ts`). E2E coverage at
+    `packages/e2e/src/44-profile-basic.e2e.test.ts` (`e2e-covers:
+UPDATE_BASIC_INFO, GET_BASIC_INFO`). T1 wire-shape snapshot committed at
+    `packages/e2e/src/wire-snapshots/UPDATE_BASIC_INFO.snapshot.json` per
+    ADR-006.
+
+- **`profile.employment.add` — auto-resolve `employerId` via autocomplete
+  (#395)**. Pre-fix, `add({company, role, ...})` passed the free-text
+  `company` string to the server's `CreateEmployment` mutation. The server
+  requires `employment.employerId` (catalog id, not the company string) and
+  rejected the call with `USER_ERROR: employment add rejected (employerId):
+You can't leave this empty`.
+  - **Fix**: wires the existing `employerAutocomplete()` into `add()` with
+    an exact-name (case-insensitive, trimmed) resolution heuristic — 1 match
+    → transparent use, 0 matches → nudge to autocomplete discovery, 2+
+    exact-name duplicates → disambiguation listing. New `--employer-id` CLI
+    flag and `employerId` MCP field bypass autocomplete entirely.
+  - **`AddOutcome` discriminated union** (`{kind:"created"}` |
+    `{kind:"preview"}`) for cross-service consistency with #393's `SetOutcome`.
+  - **Dry-run** fires autocomplete so the preview shows the **resolved**
+    `employerId` rather than the raw company string — diverges from
+    `basic.set`'s zero-network dry-run by design (documented at the call
+    site). The mutation transport is still NEVER fired in `dryRun` mode.
+  - **`publicationPermit: true` default** — empirically discovered via live
+    capture that the server's Rails `.blank?` semantics treat Boolean `false`
+    as blank for the non-null `publicationPermit` field. Other server-
+    required fields (`experienceItems`, `skills`, `industryIds`) remain
+    caller-supplied; full auto-defaulting is tracked as a follow-up.
+  - **Schema/contract rule**: TRIGGERED. T1 wire-shape snapshot committed
+    at `packages/e2e/src/wire-snapshots/CreateEmployment.snapshot.json`. New
+    E2E at `packages/e2e/src/45-profile-employment-add.e2e.test.ts`
+    (`e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE`) includes a
+    regression guard that hard-fails if the original `employerId`-empty
+    `USER_ERROR` ever returns.
+
+- **`profile.employment.update` — full read-current+merge on wire & Rails-
+  blank gates (#394)**. Pre-fix, the apply path sent only the user-supplied
+  subset (e.g. `{position: "Odoo Expert"}`). The live API rejected the
+  variables across **two tiers**: first the GraphQL layer with
+  `"Expected value to not be null"` for four required-non-null fields
+  (`experienceItems`, `showViaToptal`, `startDate`, `skills`), then a second
+  tier of Rails `.blank?` `USER_ERROR` gates that fire **below** the GraphQL
+  layer (`company`, `employerId`, `publicationPermit`, `industryIds`, plus
+  `skills`-non-empty).
+  - **Fix**: read the current row via `show()` and merge **all** wire-required
+    fields onto the input. GraphQL non-null (4) + Rails `.blank?` gates
+    (`company`, `publicationPermit` — defaults to `true` when current is null)
+    - catalog refs (`industryIds` always; `employerId` /
+      `primaryGeographyId` / `reportingTo` conditionally on current row).
+      User-supplied `fields` override the current-derived defaults.
+  - **Fragment + interface extensions**: `EMPLOYMENT_FRAGMENT` now selects
+    `employer { id }` and `skills { nodes { id name } }`; `Employment`
+    interface gains `employerId: string | null` and `skills: { id; name }[]`;
+    `EmploymentFields.skills` type corrected from `string[]` to
+    `{ id; name }[]` (matches the wire's `SkillRefInput` shape).
+  - **MCP dry-run**: surfaces the new placeholders (`company`,
+    `publicationPermit`, `employerId`, `industryIds`) so the preview reflects
+    the merged shape. Zero-transport-in-dry-run invariant (#165 / #379)
+    preserved.
+  - **Schema/contract rule**: TRIGGERED. T1 wire-shape snapshot committed at
+    `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json`. New
+    E2E at `packages/e2e/src/46-profile-employment-update-merge.e2e.test.ts`
+    (`e2e-covers: UpdateEmployment`); does NOT propagate the silent-skip-on-
+    USER_ERROR anti-pattern from sibling `43-profile-employment.e2e.test.ts`.
+
+  **Sibling out-of-scope**: `profile.skills.add` (#396) was identified in the
+  #392 decomposition as a fourth wire-broke tool but is blocked on live
+  capture per the operator's scope clause; it is **not** addressed in rc.4
+  and remains tracked under the open #392 meta-issue.
+
+## [v0.1.0-rc.3] - 2026-05-19
+
 ### Added
 
 - **`ttctl timesheet pending list [--limit N]` (CLI) and
