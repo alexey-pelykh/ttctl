@@ -27,11 +27,12 @@ const DRY_RUN_FIELD = z
 const SUBMIT_AUTO_RESOLVE_PLACEHOLDER = "<auto-resolved-at-apply-time>";
 
 /**
- * Register the `ttctl_timesheet_*` MCP tools per the #13 spec. Tool
- * names use the `ttctl_` prefix and the canonical CLI path joined
- * with `_`:
+ * Register the `ttctl_timesheet_*` MCP tools per the #13 spec, plus
+ * the #374 pending-list pagination sibling. Tool names use the
+ * `ttctl_` prefix and the canonical CLI path joined with `_`:
  *
  *   - `ttctl_timesheet_list`
+ *   - `ttctl_timesheet_pending_list`   (#374)
  *   - `ttctl_timesheet_show`
  *   - `ttctl_timesheet_submit`
  *
@@ -39,11 +40,20 @@ const SUBMIT_AUTO_RESOLVE_PLACEHOLDER = "<auto-resolved-at-apply-time>";
  * fields. Identity model:
  *
  *   - `BillingCycle.id`     — the "timesheet id" returned by
- *                              `timesheet_list` and consumed by
- *                              `timesheet_show` / `timesheet_submit`.
+ *                              `timesheet_list` / `timesheet_pending_list`
+ *                              and consumed by `timesheet_show` /
+ *                              `timesheet_submit`.
  *   - `JobActivityItem.id`  — the "engagement id" exposed by
  *                              `engagements_list`. Passed via
  *                              `engagement` to scope.
+ *
+ * **`timesheet_pending_list` pagination divergence** (#374, per
+ * ADR-007 row 3): the viewer-wide `PendingTimesheets` wire op
+ * accepts ONLY a `pagination: { limit: Int }` input — no `offset`,
+ * no cursor — so this tool exposes `limit` rather than the
+ * offset-style `page` / `perPage` used by jobs / applications /
+ * engagements / payouts. Surface-honest: MCP keys mirror wire arg
+ * keys.
  *
  * Submit is destructive — its tool description explicitly warns
  * humans, and per #13 the CLI gates on `--confirm` / TTY interactive
@@ -65,6 +75,11 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
         "submission). Pass `engagement` (jobActivityItem.id from",
         "`engagements_list`) to scope to one engagement (returns ALL cycles for",
         "that engagement, regardless of submission state).",
+        "",
+        "For viewer-wide pagination, prefer `ttctl_timesheet_pending_list`",
+        "(#374) — it exposes the wire's `limit` input surface-honestly. This",
+        "tool keeps its pre-#374 shape (no pagination args) for backward",
+        "compatibility.",
         "",
         "Example user prompts:",
         '  - "Show my pending Toptal timesheets."',
@@ -92,11 +107,90 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
         // that branch in the preview so callers see the exact wire
         // operation that would fire.
         if (opts.engagement === undefined) {
-          return dryRunResponse(buildMcpDryRunPreview("PendingTimesheets", "mobile-gateway", {}, auth.token));
+          // #374: PendingTimesheets is now parameterised with $limit;
+          // the dry-run preview surfaces the DEFAULT value the apply
+          // path will pass when the caller omits `limit` (which this
+          // pre-#374 tool always does — only the new
+          // `ttctl_timesheet_pending_list` exposes `limit`).
+          return dryRunResponse(
+            buildMcpDryRunPreview(
+              "PendingTimesheets",
+              "mobile-gateway",
+              { limit: timesheet.DEFAULT_PENDING_LIMIT },
+              auth.token,
+            ),
+          );
         }
         return dryRunResponse(
           buildMcpDryRunPreview("Timesheets", "mobile-gateway", { jobActivityItemId: opts.engagement }, auth.token),
         );
+      }
+      try {
+        const items = await timesheet.list(auth.token, opts);
+        return successResponse(items);
+      } catch (err) {
+        return mapTimesheetError(err);
+      }
+    },
+  );
+
+  // `ttctl_timesheet_pending_list` (#374) — surface-honest viewer-wide
+  // pending pagination. Schema mirrors the wire arg name exactly:
+  // `{ limit? }` maps directly to `pagination: { limit: $limit }` on
+  // `Viewer.billingCycles`. See ADR-007 row 3 ("limit-only wrapper").
+  server.registerTool(
+    "ttctl_timesheet_pending_list",
+    {
+      title: "List viewer-wide pending timesheets (limit-only pagination)",
+      description: [
+        "List the signed-in user's Toptal Talent viewer-wide pending billing",
+        "cycles — the timesheets that currently need submission. Use this",
+        "tool when the user wants to enumerate or paginate over their pending",
+        "timesheets and `ttctl_timesheet_list` (no pagination args) returns",
+        "a too-narrow window.",
+        "",
+        "**Pagination divergence** (#374, per ADR-007): unlike",
+        "`ttctl_jobs_list` / `ttctl_applications_list` / `ttctl_engagements_list`",
+        "/ `ttctl_payments_payouts_list` (offset-style with `page` /",
+        "`perPage`), this tool exposes ONLY `limit` because the underlying",
+        "wire field is `LimitPagination` (no `offset`, no cursor). MCP keys",
+        "mirror wire arg names verbatim. Default `limit` when omitted is 50",
+        "(the historical wire default).",
+        "",
+        "For the per-engagement variant (all cycles for one engagement,",
+        "regardless of submission state) use `ttctl_timesheet_list` with",
+        "the `engagement` arg — that wire op carries no pagination input.",
+        "",
+        "Example user prompts:",
+        '  - "Show me 5 of my pending Toptal timesheets."',
+        '  - "List my pending timesheets, limit 10."',
+        '  - "What are the next few timesheets I need to submit?"',
+      ].join("\n"),
+      inputSchema: {
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Maximum number of pending cycles to return. Maps to `pagination: { limit: $limit }` on the wire. Default 50 when omitted.",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      const opts: timesheet.ListOptions = {};
+      if (args.limit !== undefined) opts.limit = args.limit;
+      if (args.dryRun === true) {
+        // Surface the actual wire variable (`limit`) the apply path
+        // will send. When the caller omits `limit`, the apply path
+        // defaults to {@link timesheet.DEFAULT_PENDING_LIMIT}; the
+        // preview surfaces the same default so the dry-run reflects
+        // the exact request shape.
+        const limit = args.limit ?? timesheet.DEFAULT_PENDING_LIMIT;
+        return dryRunResponse(buildMcpDryRunPreview("PendingTimesheets", "mobile-gateway", { limit }, auth.token));
       }
       try {
         const items = await timesheet.list(auth.token, opts);

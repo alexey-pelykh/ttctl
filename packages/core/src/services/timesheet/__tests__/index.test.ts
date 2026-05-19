@@ -90,7 +90,7 @@ beforeEach(() => {
 });
 
 describe("timesheet.list", () => {
-  it("default scope → PendingTimesheets (no args), returns pending cycles", async () => {
+  it("default scope → PendingTimesheets($limit=DEFAULT_PENDING_LIMIT), returns pending cycles", async () => {
     reply({
       body: {
         data: { viewer: { id: "v1", billingCycles: { nodes: [LIST_WIRE_ITEM] } } },
@@ -104,10 +104,32 @@ describe("timesheet.list", () => {
     const call = mockedStock.mock.calls[0]?.[0];
     expect(call?.body).toMatchObject({
       operationName: "PendingTimesheets",
-      variables: {},
+      // #374: viewer-wide variant now threads `$limit` through
+      // `pagination: { limit: $limit }`. The default value matches
+      // the pre-#374 hardcoded `pagination: { limit: 50 }` so
+      // flag-less callers see no behaviour change.
+      variables: { limit: 50 },
     });
     expect(call?.surface).toBe("mobile-gateway");
     expect(call?.authToken).toBe(TOKEN);
+  });
+
+  it("with limit option → PendingTimesheets($limit=opts.limit), threads explicit value", async () => {
+    // #374: surface-honest `--limit N` / `{ limit }` maps directly
+    // to the wire `pagination: { limit: $limit }` input — no
+    // translation layer, no inferred fields.
+    reply({
+      body: {
+        data: { viewer: { id: "v1", billingCycles: { nodes: [LIST_WIRE_ITEM] } } },
+      },
+    });
+    const items = await list(TOKEN, { limit: 5 });
+    expect(items).toHaveLength(1);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "PendingTimesheets",
+      variables: { limit: 5 },
+    });
   });
 
   it("returns [] when PendingTimesheets has no nodes", async () => {
@@ -147,6 +169,39 @@ describe("timesheet.list", () => {
       operationName: "Timesheets",
       variables: { jobActivityItemId: "act-1" },
     });
+  });
+
+  it("with engagement option, limit is ignored (per-engagement wire op has no pagination input)", async () => {
+    // #374 OUT-OF-SCOPE: the per-engagement `TIMESHEETS_QUERY`
+    // carries no pagination input; `limit` is silently dropped on
+    // this path. Documented behaviour, not a wire constraint
+    // bypass — `Timesheets` simply does not accept pagination.
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityItem: {
+              id: "act-1",
+              engagement: {
+                id: "eng-1",
+                billingCycles: { ids: ["bc-1"], nodes: [LIST_WIRE_ITEM] },
+              },
+            },
+          },
+        },
+      },
+    });
+    await list(TOKEN, { engagement: "act-1", limit: 999 });
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "Timesheets",
+      variables: { jobActivityItemId: "act-1" },
+    });
+    // No `limit` key in the variables — the per-engagement wire op
+    // does not accept one.
+    const variables = (call?.body as { variables?: Record<string, unknown> }).variables ?? {};
+    expect("limit" in variables).toBe(false);
   });
 
   it("with engagement option, jobActivityItem null → NOT_FOUND", async () => {

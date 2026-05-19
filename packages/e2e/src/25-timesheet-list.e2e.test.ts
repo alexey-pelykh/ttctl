@@ -218,4 +218,80 @@ describe("timesheet list (live mobile-gateway)", () => {
       }),
     ).not.toThrow();
   });
+
+  // ---------------------------------------------------------------------
+  // Schema/contract live-wire assertions for #374 — surface-honest
+  // `--limit`-only pagination.
+  //
+  // The hand-authored `PendingTimesheets($limit: Int)` document threads
+  // the `$limit` variable into the wire's `pagination: { limit: $limit }`
+  // input. The wire field is `LimitPagination` (confirmed empirically by
+  // PR #383's HTTP 400 transcript when `offset` was supplied). These
+  // tests assert that:
+  //
+  //   (1) the live API accepts the `$limit` variable (no HTTP 400);
+  //   (2) the returned row count respects the supplied `$limit` bound;
+  //   (3) the response shape matches the existing `PendingTimesheets`
+  //       snapshot (the input change does not perturb the output shape).
+  //
+  // Mandatory per CLAUDE.md § Schema/contract validation rule — the
+  // wire-input modification is INFERRED until the live API confirms.
+  // ---------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "PendingTimesheets accepts `pagination: { limit: $limit }` with explicit value (#374)",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+      // Smallest meaningful window — exercises the `$limit` variable
+      // through the wire without depending on how many pending cycles
+      // the test account currently carries.
+      const response = await timesheet.list(token, { limit: 1 });
+      // Returned items must respect the limit (≤ 1). 0 rows is acceptable
+      // (the test account may have nothing pending at all); the contract
+      // is "limit bounds the response, not establishes a floor".
+      expect(response.length).toBeLessThanOrEqual(1);
+      if (response.length === 0) {
+        process.stderr.write(
+          "warning: PendingTimesheets($limit=1) returned 0 rows (test account has no pending cycles) — bound-check skipped, but live API accepted the variable (no HTTP 400)\n",
+        );
+        return;
+      }
+      // First row carries the standard `timesheetListFields` projection.
+      const first = response[0];
+      expect(first).toBeDefined();
+      if (first === undefined) return;
+      expect(typeof first.id).toBe("string");
+      expect(typeof first.startDate).toBe("string");
+      expect(typeof first.endDate).toBe("string");
+      expect(first.timesheetSubmitted).toBe(false);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "PendingTimesheets accepts `pagination: { limit: $limit }` with default 50 (#374)",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+      // No `limit` opt → the core service defaults to
+      // `timesheet.DEFAULT_PENDING_LIMIT === 50`; this preserves the
+      // pre-#374 hardcoded `pagination: { limit: 50 }` behaviour.
+      const response = await timesheet.list(token);
+      expect(response.length).toBeLessThanOrEqual(50);
+      if (response.length === 0) {
+        process.stderr.write(
+          "warning: PendingTimesheets default (limit=50) returned 0 rows (test account has no pending cycles) — bound-check skipped\n",
+        );
+        return;
+      }
+      // Existing snapshot assertion — the input variable change does
+      // NOT alter the response shape.
+      expect(() =>
+        assertWireShapeStable({
+          operationName: "PendingTimesheets",
+          surface: "mobile-gateway",
+          transport: "stock",
+          response,
+        }),
+      ).not.toThrow();
+    },
+  );
 });
