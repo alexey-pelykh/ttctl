@@ -398,6 +398,17 @@ export interface ProfileLanguage {
 }
 
 /**
+ * One software-skill entry on `Profile.softwareSkills.nodes` — identifier
+ * + display name. Same `Unknown`-typed-in-SDL story as {@link ProfileLanguage};
+ * runtime contract is the source of truth. Filtering of malformed entries
+ * happens in {@link getBasicInfo}.
+ */
+export interface ProfileSoftwareSkill {
+  id: string;
+  name: string;
+}
+
+/**
  * Read-side projection of the `talent_profile`-only profile fields that
  * complement {@link show}. Returned by {@link getBasicInfo}.
  *
@@ -409,9 +420,25 @@ export interface ProfileLanguage {
  * the user typed.
  *
  * `null` indicates the user hasn't set the field (or the server didn't
- * return it). `languages` is an array — empty when none are set, never
- * `null` (the empty-collection convention agreed in the #124 audit's
- * null-rendering recommendation).
+ * return it). `languages` and `softwareSkills` are arrays — empty when
+ * none are set, never `null` (the empty-collection convention agreed in
+ * the #124 audit's null-rendering recommendation).
+ *
+ * **Scope expansion (#393, 2026-05-19)**: pre-#393 this projection carried
+ * only `{profileId, bio, headline, languages}`. The Toptal `talent_profile`
+ * API treats `UpdateBasicInfoInput` as a **full-replacement contract** —
+ * any required non-null field omitted from the input fails with
+ * "Expected value to not be null". To support a robust read-merge
+ * mutation path in {@link set}, we now fetch the full set of server-
+ * required scalars (`fullName`, `legalName`, `city`, `placeIdentity`,
+ * `phoneNumber`) and id-bearing relations (`countryId`, `citizenshipId`,
+ * `languageIds`, `softwareSkills` — the last surfaced as objects rather
+ * than just ids because the API's read-side returns the rich shape).
+ * Each is `null` when the user hasn't set it on their profile (the
+ * server then rejects an UPDATE if a required field is null on read AND
+ * the input omits it — see issue #393's repro). Callers that only want
+ * the narrative bits (`bio` / `headline` / `languages`) continue to read
+ * what they always did; the additional fields are additive.
  */
 export interface BasicInfo {
   /** Echoes the talent_profile-side `Profile.id` (matches `show()`'s `viewerRole.profileId`). */
@@ -422,19 +449,45 @@ export interface BasicInfo {
   headline: string | null;
   /** User-declared languages. Empty array when none. */
   languages: ProfileLanguage[];
+  /** Display name as the user typed it. `null` when unset on this account. */
+  fullName: string | null;
+  /** Legal name (matches the legal-documents name). `null` when unset. */
+  legalName: string | null;
+  /** City of residence (free-text). `null` when unset. */
+  city: string | null;
+  /** Google place identity (string token from the geocoder). `null` when unset. */
+  placeIdentity: string | null;
+  /** Country-of-residence id (`Country.id`). `null` when unset. */
+  countryId: string | null;
+  /** Citizenship country id (`Country.id`). `null` when unset. */
+  citizenshipId: string | null;
+  /** Phone number (free-text, server-validated). `null` when unset. */
+  phoneNumber: string | null;
+  /** User-declared software skills (free-form, distinct from the rated `Skill` catalog). Empty array when none. */
+  softwareSkills: ProfileSoftwareSkill[];
 }
 
 /**
- * Full-document `GET_BASIC_INFO` query string. Trimmed subset of the
- * canonical bundle-extracted operation
+ * Full-document `GET_BASIC_INFO` query string. Subset of the canonical
+ * bundle-extracted operation
  * (`research/graphql/talent_profile/operations/GET_BASIC_INFO.graphql`):
- * we ask only for the read-display-relevant fields surfaced by
- * {@link BasicInfo} — `about`, `quote`, `languages.nodes` — and skip
- * the `ProfileRecommendations`, `softwareSkills`, social URL, and
- * top-level `countries` / `languages` catalog fields that the canonical
- * operation also fetches (out of scope for the read-display surface; the
- * social URLs are owned by the `external` sub-domain, the catalog
- * payloads are autocomplete-tier).
+ * we ask for the fields surfaced by {@link BasicInfo} — narrative
+ * (`about`, `quote`), identity (`fullName`, `legalName`, `phoneNumber`),
+ * location (`city`, `placeIdentity`, `country.id`, `citizenship.id`),
+ * collections (`languages.nodes`, `softwareSkills.nodes`) — and skip
+ * the `ProfileRecommendations` fragment, social URLs (owned by the
+ * `external` sub-domain), `timeZone`, `skype`, and the top-level
+ * `countries` / `languages` catalog payloads that the canonical
+ * operation also fetches (autocomplete-tier, not needed for read or
+ * merge-on-write).
+ *
+ * **Scope rationale (#393)**: this selection set covers the full set of
+ * server-required non-null fields on `UpdateBasicInfoInput` (per the
+ * issue's wire-error trace — `fullName`, `legalName`, `countryId`,
+ * `city`, `placeIdentity`, `citizenshipId`, `languageIds`,
+ * `phoneNumber`, `softwareSkills`). Adding any of these to the query
+ * later would be an additive wire change — the snapshot diff catches
+ * accidental regressions.
  *
  * Operation name `GET_BASIC_INFO` (SCREAMING_CASE) matches the bundle-
  * extracted document so the server's literal `operationName` allowlist
@@ -445,7 +498,24 @@ const GET_BASIC_INFO_QUERY = `query GET_BASIC_INFO($profileId: ID!) {
     id
     about
     quote
+    fullName
+    legalName
+    city
+    placeIdentity
+    phoneNumber
+    country {
+      id
+    }
+    citizenship {
+      id
+    }
     languages {
+      nodes {
+        id
+        name
+      }
+    }
+    softwareSkills {
       nodes {
         id
         name
@@ -459,7 +529,15 @@ interface GetBasicInfoData {
     id?: string | null;
     about?: string | null;
     quote?: string | null;
+    fullName?: string | null;
+    legalName?: string | null;
+    city?: string | null;
+    placeIdentity?: string | null;
+    phoneNumber?: string | null;
+    country?: { id?: string | null } | null;
+    citizenship?: { id?: string | null } | null;
     languages?: { nodes?: ({ id?: string | null; name?: string | null } | null)[] | null } | null;
+    softwareSkills?: { nodes?: ({ id?: string | null; name?: string | null } | null)[] | null } | null;
   } | null;
 }
 
@@ -469,9 +547,13 @@ interface GetBasicInfoResponse {
 }
 
 /**
- * Fetch the read-side `talent_profile`-only basic-info fields that
- * complement {@link show} — `bio` (→ `Profile.about`), `headline` (→
- * `Profile.quote`), and `languages`.
+ * Fetch the {@link BasicInfo} projection of the `talent_profile`-only
+ * profile fields that complement {@link show} — narrative scalars
+ * (`bio`, `headline`), identity (`fullName`, `legalName`, `phoneNumber`),
+ * location (`city`, `placeIdentity`, `countryId`, `citizenshipId`), and
+ * collections (`languages`, `softwareSkills`). The full field roster
+ * is required by `set()`'s read-merge path (#393); see
+ * {@link BasicInfo} for per-field semantics.
  *
  * Routed against `https://www.toptal.com/api/talent_profile/graphql` via
  * {@link impersonatedTransport} (Cloudflare-protected; Chrome TLS
@@ -479,8 +561,9 @@ interface GetBasicInfoResponse {
  * the `profileId` required by the `profile(id: ID!)` field — same
  * pattern as {@link photoShow}.
  *
- * Returns a typed {@link BasicInfo} projection — `null` for fields the
- * user hasn't set, an empty array for `languages` when none.
+ * Returns a typed {@link BasicInfo} projection — `null` for scalars the
+ * user hasn't set, empty arrays for `languages` and `softwareSkills`
+ * when none.
  *
  * Errors:
  * - `Cf403Error` propagates from the talent-profile transport.
@@ -540,21 +623,43 @@ export async function getBasicInfo(token: string): Promise<BasicInfo> {
   }
 
   const p = body.data.profile;
-  const rawNodes = p.languages?.nodes ?? [];
-  const languages: ProfileLanguage[] = [];
-  for (const node of rawNodes) {
-    if (node === null || typeof node !== "object") continue;
-    if (typeof node.id !== "string" || node.id.length === 0) continue;
-    if (typeof node.name !== "string") continue;
-    languages.push({ id: node.id, name: node.name });
-  }
+  const languages = collectIdNameNodes(p.languages?.nodes);
+  const softwareSkills = collectIdNameNodes(p.softwareSkills?.nodes);
 
   return {
     profileId: typeof p.id === "string" && p.id.length > 0 ? p.id : profileId,
     bio: typeof p.about === "string" ? p.about : null,
     headline: typeof p.quote === "string" ? p.quote : null,
     languages,
+    fullName: typeof p.fullName === "string" ? p.fullName : null,
+    legalName: typeof p.legalName === "string" ? p.legalName : null,
+    city: typeof p.city === "string" ? p.city : null,
+    placeIdentity: typeof p.placeIdentity === "string" ? p.placeIdentity : null,
+    countryId: typeof p.country?.id === "string" && p.country.id.length > 0 ? p.country.id : null,
+    citizenshipId: typeof p.citizenship?.id === "string" && p.citizenship.id.length > 0 ? p.citizenship.id : null,
+    phoneNumber: typeof p.phoneNumber === "string" ? p.phoneNumber : null,
+    softwareSkills,
   };
+}
+
+/**
+ * Normalise a `{nodes: [{id, name}, ...]}` connection — used identically
+ * for `languages` and `softwareSkills`. Drops null entries, entries with
+ * empty string ids, and entries where `name` is not a string. The
+ * filtered output guarantees both fields are non-empty strings, matching
+ * the {@link ProfileLanguage} / {@link ProfileSoftwareSkill} contract.
+ */
+function collectIdNameNodes(
+  rawNodes: ({ id?: string | null; name?: string | null } | null)[] | null | undefined,
+): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = [];
+  for (const node of rawNodes ?? []) {
+    if (node === null || typeof node !== "object") continue;
+    if (typeof node.id !== "string" || node.id.length === 0) continue;
+    if (typeof node.name !== "string") continue;
+    out.push({ id: node.id, name: node.name });
+  }
+  return out;
 }
 
 /**
@@ -621,18 +726,50 @@ export interface ProfileUpdate {
  * mutations (Pattern 1), falsified empirically. `UPDATE_BASIC_INFO` is the
  * documented exception to Pattern 1.
  *
- * The full input shape supports many more fields than ttctl currently exposes
- * (`fullName`, `legalName`, `city`, `placeIdentity`, `countryId`,
- * `citizenshipId`, `languageIds`, social URLs, `softwareSkills`). Only
- * `about` / `quote` are typed here, matching what `set()` writes. Adding more
- * fields is a future enhancement (tracked separately).
+ * **Full-replacement contract (#393)**: empirically (issue #393, wire error
+ * 2026-05-19), the server's `UpdateBasicInfoInput!` rejects any required
+ * non-null field omitted from the input — `fullName`, `legalName`,
+ * `countryId`, `city`, `placeIdentity`, `citizenshipId`, `languageIds`,
+ * `phoneNumber`, `softwareSkills`. The `talent_profile` API treats this
+ * mutation as a **full-replacement contract** despite the JS bundle's
+ * partial-input shape suggesting otherwise. `set()` therefore reads the
+ * current profile state via {@link getBasicInfo} and merges user-supplied
+ * fields over it before submitting the full input.
+ *
+ * `softwareSkills` is `{id, name}[]` per the captured-curl shape — NOT
+ * just ids or `{id}` — so we echo back the full read-side objects.
+ * `languageIds` is the documented input key (whereas read returns
+ * `languages.nodes[]` — input and output use different field names).
+ *
+ * Social URLs (`twitter`, `linkedin`, etc.) are owned by the `external`
+ * sub-domain and intentionally NOT in this type — `external.update`
+ * writes them via a separate mutation. The basic-info merge does NOT
+ * touch them; the server-side `UPDATE_BASIC_INFO` operation accepts
+ * (but doesn't require) social fields in its input, so omitting them
+ * leaves them untouched.
  */
 interface UpdateBasicInfoInput {
   profileId: string;
-  profile: {
-    about?: string;
-    quote?: string;
-  };
+  profile: UpdateBasicInfoProfileInput;
+}
+
+interface UpdateBasicInfoSoftwareSkillRef {
+  id: string;
+  name: string;
+}
+
+interface UpdateBasicInfoProfileInput {
+  about: string | null;
+  quote: string | null;
+  fullName: string | null;
+  legalName: string | null;
+  city: string | null;
+  placeIdentity: string | null;
+  countryId: string | null;
+  citizenshipId: string | null;
+  phoneNumber: string | null;
+  languageIds: string[];
+  softwareSkills: UpdateBasicInfoSoftwareSkillRef[];
 }
 
 interface UpdateBasicInfoUserError {
@@ -708,6 +845,29 @@ export interface SetOptions {
 export const DRY_RUN_PROFILE_ID_PLACEHOLDER = "<resolved at send-time from session token>" as const;
 
 /**
+ * Placeholder string substituted for the basic-info scalar fields that
+ * the apply-path merges from the current profile state via
+ * {@link getBasicInfo}. The dry-run preview keeps the full input shape
+ * (so consumers see exactly which fields the live mutation will send)
+ * but uses these placeholders for values that would normally be read
+ * server-side. The placeholder is intentionally distinct from
+ * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} so the two preview surfaces
+ * remain separately recognisable.
+ *
+ * Applies to: `fullName`, `legalName`, `city`, `placeIdentity`,
+ * `countryId`, `citizenshipId`, `phoneNumber`, `about`, `quote` —
+ * any scalar field that the merge path reads from current state when
+ * the user didn't supply it. (Fields the user DID supply are echoed
+ * verbatim into the preview, same as the apply path.)
+ *
+ * `languageIds` and `softwareSkills` use a dedicated empty-array
+ * placeholder (`[]`) — the absence of an array is more readable than a
+ * placeholder array, and consumers branching on the dry-run shape can
+ * inspect `Array.isArray(...)` without special-case logic.
+ */
+export const DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER = "<preserved from current profile state>" as const;
+
+/**
  * Discriminated outcome of a {@link set} call when the apply-path
  * succeeded — the server-confirmed payload normalised to {@link
  * UpdateProfileResult}. Identical to the pre-#52 return type wrapped in
@@ -745,39 +905,56 @@ export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
  *
  * Authenticates via `Authorization: Token token=<token>` (the canonical
  * Toptal auth mechanism). Cookies are NOT load-bearing — Chrome TLS
- * impersonation alone passes Cloudflare. Internally calls `show()`
- * (against mobile-gateway) first to obtain the `profileId` required by the
- * mutation input, then issues the typed `UpdateBasicInfo` mutation against
- * talent-profile via `impersonatedTransport`. Returns the server-confirmed
- * updated values wrapped in a {@link SetOutcomeApplied} discriminator.
+ * impersonation alone passes Cloudflare.
  *
- * Dry-run path (issue #52): when invoked with `options.dryRun === true`,
- * builds a {@link DryRunPreview} of the WRITE request without invoking
- * any transport (read OR write) and returns it wrapped in {@link
- * SetOutcomePreview}. The preview substitutes a placeholder string
- * ({@link DRY_RUN_PROFILE_ID_PLACEHOLDER}) for `profileId` because the
- * apply-path resolves it via `show()` (a stock-transport read call) and
- * the dry-run AC requires zero transport invocations. The bearer token
- * is redacted in the preview's `headers.authorization` per the security
- * contract documented on {@link DryRunPreview}.
+ * **Read-merge protocol (#393)**: the server treats `UpdateBasicInfoInput!`
+ * as a **full-replacement contract** — required non-null fields omitted
+ * from the input fail with "Expected value to not be null", regardless
+ * of their value in the current profile state. To support a partial
+ * "I only want to change bio + headline" use case without losing
+ * any of the other required fields, the apply path:
+ *
+ *   1. Calls {@link getBasicInfo} to read the current full state (this
+ *      transitively calls `show()` for `profileId`).
+ *   2. Merges user-supplied fields (`bio` → `about`, `headline` → `quote`)
+ *      over the read snapshot.
+ *   3. Submits the full {@link UpdateBasicInfoInput} with every required
+ *      field populated.
+ *
+ * The extra read round-trip is acceptable for an update-the-profile
+ * use case (profile updates are infrequent; the read is plain HTTPS
+ * against the talent-profile surface).
+ *
+ * Dry-run path (issue #52, extended for #393): when invoked with
+ * `options.dryRun === true`, the preview is built WITHOUT firing any
+ * transport (zero network I/O — preserved from the #52 AC). Fields that
+ * the apply-path would have read from current state use
+ * {@link DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER}; user-supplied fields
+ * are echoed verbatim. Result: the preview's `variables.input.profile`
+ * carries the exact key set the live mutation will send, with values
+ * differentiated by `<preserved from current profile state>` (read-merged)
+ * vs the user's literals (overridden). The bearer token is redacted in
+ * the preview's `headers.authorization` per the security contract
+ * documented on {@link DryRunPreview}.
  *
  * Errors:
  * - `ProfileError` with code `VALIDATION_ERROR` when neither `bio` nor
  *   `headline` is supplied — the contract requires at least one. Fires
  *   in BOTH the apply-path and the dry-run path.
  * - `Cf403Error` propagates from the talent-profile transport when
- *   Cloudflare returns 403. Apply-path only.
+ *   Cloudflare returns 403. Apply-path only (dry-run never touches the
+ *   network).
  * - `AuthRevokedError` on token expiry (HTTP 401, or any GraphQL
  *   `extensions.code` matching `isAuthRevokedExtensionCode` — currently
  *   `'UNAUTHENTICATED'`, `'AUTHENTICATION_REQUIRED'`, or `'UNAUTHORIZED'`).
- *   Apply-path only.
+ *   Apply-path only — fires on EITHER the read-merge call or the write.
  * - `ProfileError` with code `NO_VIEWER` when no viewer is bound.
- *   Apply-path only — dry-run skips the read entirely.
+ *   Apply-path only — fires on the read-merge call.
  * - `ProfileError` with code `USER_ERROR` when the mutation returns a
  *   non-empty `errors` array (validation failures from the server, e.g., a
  *   bio that exceeds the platform's length limit). Apply-path only.
- * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors.
- *   Apply-path only.
+ * - `ProfileError` with code `GRAPHQL_ERROR` on top-level GraphQL errors
+ *   from EITHER the read or write call. Apply-path only.
  * - `ProfileError` with code `NETWORK_ERROR` on transport-level throws.
  *   Apply-path only.
  */
@@ -786,20 +963,26 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
     throw new ProfileError("VALIDATION_ERROR", "Profile update requires at least one of `bio` or `headline`.");
   }
 
-  const profileFields: UpdateBasicInfoInput["profile"] = {};
-  if (changes.bio !== undefined) profileFields.about = changes.bio;
-  if (changes.headline !== undefined) profileFields.quote = changes.headline;
-
-  // Dry-run short-circuit: build the WRITE request shape with a
-  // placeholder `profileId` and return a preview without any transport
-  // call. Apply-path resolves `profileId` via `show()` (a mobile-gateway
-  // read), but dry-run skips that step so neither transport is invoked
-  // — the AC for issue #52 reads "transport never called" in the
-  // singular and the helper honors it for both directions.
+  // Dry-run short-circuit: build the WRITE request shape with placeholders
+  // for fields that the apply-path would read from current state. Zero
+  // transport calls (read OR write) — the #52 AC reads "transport never
+  // called" in the singular and we honor it for both directions.
   if (options.dryRun === true) {
     const previewInput: UpdateBasicInfoInput = {
       profileId: DRY_RUN_PROFILE_ID_PLACEHOLDER,
-      profile: profileFields,
+      profile: {
+        about: changes.bio !== undefined ? changes.bio : DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        quote: changes.headline !== undefined ? changes.headline : DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        fullName: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        legalName: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        city: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        placeIdentity: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        countryId: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        citizenshipId: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        phoneNumber: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        languageIds: [],
+        softwareSkills: [],
+      },
     };
     return {
       kind: "preview",
@@ -815,19 +998,30 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
     };
   }
 
-  // Need profileId for the mutation input — fetch the current profile first.
-  // Errors from show() (ProfileError) propagate verbatim: a write attempt
-  // that can't read its own profile is unrecoverable, and surfacing the
-  // read-side error gives the user the same actionable message they'd get
-  // from `ttctl profile show`.
-  const profile = await show(token);
-  const profileId = profile.viewer?.viewerRole.profileId;
-  if (profileId === undefined) {
-    throw new ProfileError(
-      "NO_VIEWER",
-      "Cannot update profile: viewer or profile id missing from the session response.",
-    );
-  }
+  // Read-merge: fetch the current full basic-info state so the mutation
+  // input carries every server-required non-null field (#393). Errors
+  // from getBasicInfo (ProfileError / AuthRevokedError / Cf403Error)
+  // propagate verbatim — a write attempt that can't read its own profile
+  // is unrecoverable, and surfacing the read-side error gives the user
+  // the same actionable message they'd get from `ttctl profile show`.
+  const current = await getBasicInfo(token);
+
+  // Merge user-supplied fields over the current state. User intent wins:
+  // `changes.bio === ""` is a real "clear the bio" intent, distinct from
+  // "leave it alone" (which is `changes.bio === undefined`).
+  const merged: UpdateBasicInfoProfileInput = {
+    about: changes.bio !== undefined ? changes.bio : current.bio,
+    quote: changes.headline !== undefined ? changes.headline : current.headline,
+    fullName: current.fullName,
+    legalName: current.legalName,
+    city: current.city,
+    placeIdentity: current.placeIdentity,
+    countryId: current.countryId,
+    citizenshipId: current.citizenshipId,
+    phoneNumber: current.phoneNumber,
+    languageIds: current.languages.map((l) => l.id),
+    softwareSkills: current.softwareSkills.map((s) => ({ id: s.id, name: s.name })),
+  };
 
   let res: TransportResponse;
   try {
@@ -837,7 +1031,9 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
       body: {
         operationName: "UPDATE_BASIC_INFO",
         query: UPDATE_BASIC_INFO_MUTATION,
-        variables: { input: { profileId, profile: profileFields } satisfies UpdateBasicInfoInput },
+        variables: {
+          input: { profileId: current.profileId, profile: merged } satisfies UpdateBasicInfoInput,
+        },
       },
     });
   } catch (err) {

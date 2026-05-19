@@ -256,7 +256,15 @@ exports[`MCP profile_basic_show — payload snapshots > payload: BasicShowPayloa
     "profileId": "p_test_001",
     "bio": null,
     "headline": null,
-    "languages": []
+    "languages": [],
+    "fullName": null,
+    "legalName": null,
+    "city": null,
+    "placeIdentity": null,
+    "countryId": null,
+    "citizenshipId": null,
+    "phoneNumber": null,
+    "softwareSkills": []
   }
 }"
 `;
@@ -397,6 +405,19 @@ exports[`MCP profile_basic_show — payload snapshots > payload: full BasicShowP
       {
         "id": "lang_uk",
         "name": "Ukrainian"
+      }
+    ],
+    "fullName": "Test User",
+    "legalName": "Test User",
+    "city": "Kyiv",
+    "placeIdentity": "ChIJ-place-kyiv",
+    "countryId": "country_ua",
+    "citizenshipId": "country_ua",
+    "phoneNumber": "+380 50 000 0000",
+    "softwareSkills": [
+      {
+        "id": "ss_typescript",
+        "name": "TypeScript"
       }
     ]
   }

@@ -242,6 +242,14 @@ const BASIC_INFO_FULL: profile.basic.BasicInfo = {
     { id: "lang1", name: "English" },
     { id: "lang2", name: "French" },
   ],
+  fullName: "Ada Lovelace",
+  legalName: "Augusta Ada King-Noel",
+  city: "London",
+  placeIdentity: "ChIJ-place-london",
+  countryId: "country_uk",
+  citizenshipId: "country_uk",
+  phoneNumber: "+44 20 0000 0000",
+  softwareSkills: [{ id: "ss_assembly", name: "Assembly" }],
 };
 
 const BASIC_INFO_EMPTY: profile.basic.BasicInfo = {
@@ -249,6 +257,14 @@ const BASIC_INFO_EMPTY: profile.basic.BasicInfo = {
   bio: null,
   headline: null,
   languages: [],
+  fullName: null,
+  legalName: null,
+  city: null,
+  placeIdentity: null,
+  countryId: null,
+  citizenshipId: null,
+  phoneNumber: null,
+  softwareSkills: [],
 };
 
 function payloadOf(

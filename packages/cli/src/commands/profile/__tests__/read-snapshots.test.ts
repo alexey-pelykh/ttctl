@@ -189,6 +189,17 @@ describe("profile.basic — read snapshots", () => {
       { id: "lang_en", name: "English" },
       { id: "lang_es", name: "Spanish" },
     ],
+    fullName: "Test User",
+    legalName: "Test User",
+    city: "San Francisco",
+    placeIdentity: "ChIJ-place-sf",
+    countryId: "country_us",
+    citizenshipId: "country_us",
+    phoneNumber: "+1 555 0100",
+    softwareSkills: [
+      { id: "ss_typescript", name: "TypeScript" },
+      { id: "ss_postgres", name: "PostgreSQL" },
+    ],
   };
 
   const BASIC_INFO_EMPTY: profile.basic.BasicInfo = {
@@ -196,6 +207,14 @@ describe("profile.basic — read snapshots", () => {
     bio: null,
     headline: null,
     languages: [],
+    fullName: null,
+    legalName: null,
+    city: null,
+    placeIdentity: null,
+    countryId: null,
+    citizenshipId: null,
+    phoneNumber: null,
+    softwareSkills: [],
   };
 
   it("show payload: full profile + full basic info", () => {

@@ -420,6 +420,39 @@ const UPDATE_OK = {
   },
 };
 
+/**
+ * Current-profile read used by `set()`'s read-merge path (#393). The
+ * apply-path calls {@link getBasicInfo} BEFORE the mutation so the input
+ * carries every server-required non-null field; this fixture is the
+ * canonical "current state" returned by the GET_BASIC_INFO call so the
+ * merged input has full coverage.
+ */
+const BASIC_INFO_CURRENT = {
+  data: {
+    profile: {
+      id: "p1",
+      about: "current bio",
+      quote: "current headline",
+      fullName: "Ada Lovelace",
+      legalName: "Augusta Ada King-Noel",
+      city: "London",
+      placeIdentity: "ChIJ-place-london",
+      phoneNumber: "+44 20 0000 0000",
+      country: { id: "country_uk" },
+      citizenship: { id: "country_uk" },
+      languages: {
+        nodes: [
+          { id: "lang_en", name: "English" },
+          { id: "lang_fr", name: "French" },
+        ],
+      },
+      softwareSkills: {
+        nodes: [{ id: "ss_assembly", name: "Assembly" }],
+      },
+    },
+  },
+};
+
 describe("set", () => {
   beforeEach(() => {
     mockedStock.mockReset();
@@ -436,80 +469,135 @@ describe("set", () => {
     expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 
-  it("fetches the profile (mobile-gateway/stock) first, then issues UpdateBasicInfo (talent-profile/impersonated)", async () => {
+  it("read-merge chain: ProfileShow (stock) → GET_BASIC_INFO (impersonated) → UPDATE_BASIC_INFO (impersonated)", async () => {
+    // #393 — the apply path now reads current state via getBasicInfo()
+    // before submitting the mutation, so the wire chain is one stock
+    // call + two impersonated calls. Order matters: ProfileShow first
+    // (resolves profileId), THEN GET_BASIC_INFO (full state for merge),
+    // THEN UPDATE_BASIC_INFO.
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     await set(TOKEN, { bio: "new bio" });
 
     expect(mockedStock).toHaveBeenCalledTimes(1);
-    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
     const showCall = mockedStock.mock.calls[0]?.[0] as TransportRequest;
-    const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const readCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(showCall.surface).toBe("mobile-gateway");
     expect(showCall.body.operationName).toBe("ProfileShow");
+    expect(readCall.surface).toBe("talent-profile");
+    expect(readCall.body.operationName).toBe("GET_BASIC_INFO");
     expect(updateCall.surface).toBe("talent-profile");
     expect(updateCall.body.operationName).toBe("UPDATE_BASIC_INFO");
     expect(updateCall.body.query).toContain("mutation UPDATE_BASIC_INFO");
     expect(updateCall.body.query).toContain("updateBasicInfo(input: $input)");
   });
 
-  it("forwards the auth token on both the read and write call", async () => {
+  it("forwards the auth token on all three calls (ProfileShow, GET_BASIC_INFO, UPDATE_BASIC_INFO)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     await set(TOKEN, { bio: "x" });
 
     const showCall = mockedStock.mock.calls[0]?.[0] as TransportRequest;
-    const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const readCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(showCall.authToken).toBe(TOKEN);
+    expect(readCall.authToken).toBe(TOKEN);
     expect(updateCall.authToken).toBe(TOKEN);
   });
 
-  it("maps `bio` -> `about` and `headline` -> `quote` in the mutation input", async () => {
+  it("merges user-supplied fields over current state — bio→about, headline→quote take precedence", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     await set(TOKEN, { bio: "long-form bio text", headline: "short tagline" });
 
-    const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(updateCall.body.variables).toEqual({
       input: {
         profileId: "p1",
         profile: {
+          // Overridden by user input
           about: "long-form bio text",
           quote: "short tagline",
+          // Preserved from the BASIC_INFO_CURRENT read snapshot
+          fullName: "Ada Lovelace",
+          legalName: "Augusta Ada King-Noel",
+          city: "London",
+          placeIdentity: "ChIJ-place-london",
+          countryId: "country_uk",
+          citizenshipId: "country_uk",
+          phoneNumber: "+44 20 0000 0000",
+          languageIds: ["lang_en", "lang_fr"],
+          softwareSkills: [{ id: "ss_assembly", name: "Assembly" }],
         },
       },
     });
   });
 
-  it("omits unset fields from the mutation input (partial updates)", async () => {
+  it("preserves all server-required fields from current state when user only updates headline (#393 regression)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     await set(TOKEN, { headline: "only headline" });
 
-    const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
-    expect(variables.input.profile).toEqual({ quote: "only headline" });
-    expect(variables.input.profile).not.toHaveProperty("about");
+    // #393 — the omitted bio MUST come from current state, NOT be null /
+    // absent. This was the bug: pre-#393, `set({headline})` sent
+    // `profile: {quote: <new>}` only, server rejected on null-on-required-
+    // field errors. Post-#393 the full profile shape is preserved.
+    expect(variables.input.profile["about"]).toBe("current bio");
+    expect(variables.input.profile["quote"]).toBe("only headline");
+    expect(variables.input.profile["fullName"]).toBe("Ada Lovelace");
+    expect(variables.input.profile["countryId"]).toBe("country_uk");
+    expect(variables.input.profile["citizenshipId"]).toBe("country_uk");
+    expect(variables.input.profile["phoneNumber"]).toBe("+44 20 0000 0000");
+    expect(variables.input.profile["languageIds"]).toEqual(["lang_en", "lang_fr"]);
+    expect(variables.input.profile["softwareSkills"]).toEqual([{ id: "ss_assembly", name: "Assembly" }]);
   });
 
   it("preserves empty-string updates (clearing a field is a real intent, not an unset)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     await set(TOKEN, { bio: "" });
 
-    const updateCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
-    expect(variables.input.profile).toEqual({ about: "" });
+    // Empty-string is a real intent → server-side `about` is cleared.
+    expect(variables.input.profile["about"]).toBe("");
+    // Other fields still preserved from current state.
+    expect(variables.input.profile["quote"]).toBe("current headline");
+  });
+
+  it("forwards null current-state fields as null in the merge (server accepts null when current is null)", async () => {
+    // If a field was never set on the current profile (e.g. phoneNumber
+    // is null in current state), the merge passes null through to the
+    // server. The wire-error from #393 only fires when REQUIRED fields
+    // come through as null — fields that are nullable on the server side
+    // get null verbatim from the read-merge contract.
+    const sparseCurrent = structuredClone(BASIC_INFO_CURRENT);
+    sparseCurrent.data.profile.phoneNumber = null as unknown as string;
+    sparseCurrent.data.profile.legalName = null as unknown as string;
+
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: sparseCurrent }, { body: UPDATE_OK });
+
+    await set(TOKEN, { bio: "x" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile["phoneNumber"]).toBeNull();
+    expect(variables.input.profile["legalName"]).toBeNull();
   });
 
   it("returns the updated bio/headline values from the server's confirmation payload", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     const outcome = await set(TOKEN, { bio: "new bio", headline: "new headline" });
 
@@ -524,7 +612,7 @@ describe("set", () => {
 
   it("normalizes a missing `notice` to null (callers can branch cleanly)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     const outcome = await set(TOKEN, { bio: "x" });
     expect(outcome.kind).toBe("applied");
@@ -534,29 +622,47 @@ describe("set", () => {
 
   it("propagates Cf403Error from the write-side mutation call (talent-profile is Cloudflare-protected)", async () => {
     replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT });
     mockedImpersonated.mockRejectedValueOnce(
       new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
     );
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
     expect(mockedStock).toHaveBeenCalledTimes(1);
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates Cf403Error from the read-merge call (early-exit before write)", async () => {
+    // #393: the read-merge call can fail too — Cf403 there short-circuits
+    // BEFORE the write attempt fires, so the write is never called.
+    replyStock({ body: PROFILE_OK });
+    mockedImpersonated.mockRejectedValueOnce(
+      new Cf403Error("talent-profile", "https://www.toptal.com/api/talent_profile/graphql"),
+    );
+
+    await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(Cf403Error);
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    // Only the read attempt fired — write never started.
     expect(mockedImpersonated).toHaveBeenCalledTimes(1);
   });
 
   it("throws ProfileError USER_ERROR when the mutation payload returns a non-empty errors array", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      body: {
-        data: {
-          updateBasicInfo: {
-            success: false,
-            notice: null,
-            errors: [{ message: "About is too long", key: "about" }],
-            profile: null,
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        body: {
+          data: {
+            updateBasicInfo: {
+              success: false,
+              notice: null,
+              errors: [{ message: "About is too long", key: "about" }],
+              profile: null,
+            },
           },
         },
       },
-    });
+    );
 
     await expect(set(TOKEN, { bio: "x".repeat(10000) })).rejects.toMatchObject({
       name: "ProfileError",
@@ -567,17 +673,20 @@ describe("set", () => {
 
   it("includes the field name in USER_ERROR messages when the server reports one", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      body: {
-        data: {
-          updateBasicInfo: {
-            success: false,
-            errors: [{ message: "is required", key: "quote" }],
-            profile: null,
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        body: {
+          data: {
+            updateBasicInfo: {
+              success: false,
+              errors: [{ message: "is required", key: "quote" }],
+              profile: null,
+            },
           },
         },
       },
-    });
+    );
 
     await expect(set(TOKEN, { headline: "" })).rejects.toMatchObject({
       message: expect.stringContaining("(quote)"),
@@ -586,18 +695,21 @@ describe("set", () => {
 
   it("throws ProfileError USER_ERROR when payload.success === false (no errors array)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      body: {
-        data: {
-          updateBasicInfo: {
-            success: false,
-            notice: "Something went wrong",
-            errors: [],
-            profile: null,
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        body: {
+          data: {
+            updateBasicInfo: {
+              success: false,
+              notice: "Something went wrong",
+              errors: [],
+              profile: null,
+            },
           },
         },
       },
-    });
+    );
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "USER_ERROR",
@@ -607,29 +719,35 @@ describe("set", () => {
 
   it("throws AuthRevokedError on errors[0].extensions.code='UNAUTHENTICATED' from the mutation", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      status: 200,
-      body: {
-        errors: [
-          {
-            message: "Session expired",
-            extensions: { code: "UNAUTHENTICATED" },
-          },
-        ],
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        status: 200,
+        body: {
+          errors: [
+            {
+              message: "Session expired",
+              extensions: { code: "UNAUTHENTICATED" },
+            },
+          ],
+        },
       },
-    });
+    );
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws AuthRevokedError on errors[0].extensions.code='AUTHENTICATION_REQUIRED' (gateway form) from the mutation", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      status: 200,
-      body: {
-        errors: [{ message: "Authentication required", extensions: { code: "AUTHENTICATION_REQUIRED" } }],
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        status: 200,
+        body: {
+          errors: [{ message: "Authentication required", extensions: { code: "AUTHENTICATION_REQUIRED" } }],
+        },
       },
-    });
+    );
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
@@ -638,31 +756,37 @@ describe("set", () => {
   // empirical-capture context.
   it("throws AuthRevokedError on errors[0].extensions.code='UNAUTHORIZED' (issue #89) from the mutation", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      status: 200,
-      body: {
-        errors: [
-          {
-            message:
-              "That account isn't in our system. Make sure you're using a valid email and try again, or contact support.",
-            extensions: { code: "UNAUTHORIZED", status: 403, serviceName: "talent_schema" },
-            status: 403,
-          },
-        ],
-        data: null,
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        status: 200,
+        body: {
+          errors: [
+            {
+              message:
+                "That account isn't in our system. Make sure you're using a valid email and try again, or contact support.",
+              extensions: { code: "UNAUTHORIZED", status: 403, serviceName: "talent_schema" },
+              status: 403,
+            },
+          ],
+          data: null,
+        },
       },
-    });
+    );
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws ProfileError GRAPHQL_ERROR on top-level errors (non-UNAUTHENTICATED)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({
-      body: {
-        errors: [{ message: "Field 'updateBasicInfo' not defined", extensions: { code: "VALIDATION" } }],
+    replyImpersonated(
+      { body: BASIC_INFO_CURRENT },
+      {
+        body: {
+          errors: [{ message: "Field 'updateBasicInfo' not defined", extensions: { code: "VALIDATION" } }],
+        },
       },
-    });
+    );
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "GRAPHQL_ERROR",
@@ -672,14 +796,14 @@ describe("set", () => {
 
   it("throws AuthRevokedError on HTTP 401 response from the mutation", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { status: 401, body: { errors: [{ message: "unauthorized" }] } });
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
   it("throws ProfileError UNKNOWN on unexpected non-2xx (e.g., 500)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ status: 502, body: "<html>bad gateway</html>" });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { status: 502, body: "<html>bad gateway</html>" });
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
@@ -689,6 +813,7 @@ describe("set", () => {
 
   it("wraps generic transport throws (e.g., ECONNRESET) as ProfileError NETWORK_ERROR", async () => {
     replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT });
     mockedImpersonated.mockRejectedValueOnce(new Error("ECONNRESET"));
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
@@ -699,7 +824,7 @@ describe("set", () => {
 
   it("throws ProfileError UNKNOWN when the mutation response has no data.updateBasicInfo", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: { data: {} } });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: { data: {} } });
 
     await expect(set(TOKEN, { bio: "x" })).rejects.toMatchObject({
       code: "UNKNOWN",
@@ -745,13 +870,27 @@ describe("set", () => {
     expect(outcome.preview.operationName).toBe("UPDATE_BASIC_INFO");
   });
 
-  it("dry-run preview maps `bio` -> `about` and `headline` -> `quote` (same as apply path)", async () => {
+  it("dry-run preview maps `bio` -> `about` and `headline` -> `quote` (user-supplied verbatim, other required fields placeholdered)", async () => {
     const outcome = await set(TOKEN, { bio: "long bio", headline: "tagline" }, { dryRun: true });
 
     expect(outcome.kind).toBe("preview");
     if (outcome.kind !== "preview") return;
     const variables = outcome.preview.variables as { input: { profile: Record<string, unknown> } };
-    expect(variables.input.profile).toEqual({ about: "long bio", quote: "tagline" });
+    // User-supplied fields are echoed verbatim (apply-path parity).
+    expect(variables.input.profile["about"]).toBe("long bio");
+    expect(variables.input.profile["quote"]).toBe("tagline");
+    // Other server-required fields appear with the dedicated placeholder
+    // (so the user can see the full shape the live mutation will send).
+    expect(variables.input.profile["fullName"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["legalName"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["city"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["placeIdentity"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["countryId"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["citizenshipId"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["phoneNumber"]).toBe("<preserved from current profile state>");
+    // Array fields use empty-array placeholders rather than placeholder strings.
+    expect(variables.input.profile["languageIds"]).toEqual([]);
+    expect(variables.input.profile["softwareSkills"]).toEqual([]);
   });
 
   it("dry-run preview substitutes the profileId placeholder (would be resolved at send-time)", async () => {
@@ -789,35 +928,59 @@ describe("set", () => {
     expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 
-  it("dry-run preview omits unset fields from `profile` (partial updates surface accurately)", async () => {
+  it("dry-run preview placeholders user-unsupplied bio/headline (#393: full shape, not partial)", async () => {
+    // Pre-#393 the preview omitted the user-unsupplied field. Post-#393
+    // the preview shows the FULL shape the live mutation will transmit —
+    // user-unsupplied scalars get the placeholder so the consumer sees
+    // exactly which fields the wire request carries.
     const outcome = await set(TOKEN, { headline: "only headline" }, { dryRun: true });
 
     expect(outcome.kind).toBe("preview");
     if (outcome.kind !== "preview") return;
     const variables = outcome.preview.variables as { input: { profile: Record<string, unknown> } };
-    expect(variables.input.profile).toEqual({ quote: "only headline" });
-    expect(variables.input.profile).not.toHaveProperty("about");
+    // User supplied → echoed verbatim.
+    expect(variables.input.profile["quote"]).toBe("only headline");
+    // User did NOT supply bio → placeholder.
+    expect(variables.input.profile["about"]).toBe("<preserved from current profile state>");
+    // The full shape contains all required keys.
+    expect(Object.keys(variables.input.profile).sort()).toEqual(
+      [
+        "about",
+        "citizenshipId",
+        "city",
+        "countryId",
+        "fullName",
+        "languageIds",
+        "legalName",
+        "phoneNumber",
+        "placeIdentity",
+        "quote",
+        "softwareSkills",
+      ].sort(),
+    );
   });
 
   it("explicit `dryRun: false` is the apply path (default behavior; ensures option does not invert)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     const outcome = await set(TOKEN, { bio: "x" }, { dryRun: false });
 
     expect(outcome.kind).toBe("applied");
     expect(mockedStock).toHaveBeenCalledTimes(1);
-    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+    // Read-merge chain: GET_BASIC_INFO + UPDATE_BASIC_INFO = 2 impersonated calls.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
   });
 
   it("omitted options is the apply path (backward-compat: third arg is optional)", async () => {
     replyStock({ body: PROFILE_OK });
-    replyImpersonated({ body: UPDATE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
     const outcome = await set(TOKEN, { bio: "x" });
 
     expect(outcome.kind).toBe("applied");
-    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+    // Read-merge chain: 2 impersonated calls (read + write).
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -840,10 +1003,23 @@ const BASIC_INFO_OK = {
       id: "p1",
       about: "Hi, I'm Ada — software engineer interested in analytical engines.",
       quote: "Build for clarity.",
+      fullName: "Ada Lovelace",
+      legalName: "Augusta Ada King-Noel",
+      city: "London",
+      placeIdentity: "ChIJ-place-london",
+      phoneNumber: "+44 20 0000 0000",
+      country: { id: "country_uk" },
+      citizenship: { id: "country_uk" },
       languages: {
         nodes: [
           { id: "lang-en", name: "English" },
           { id: "lang-fr", name: "French" },
+        ],
+      },
+      softwareSkills: {
+        nodes: [
+          { id: "ss-typescript", name: "TypeScript" },
+          { id: "ss-postgres", name: "PostgreSQL" },
         ],
       },
     },
@@ -911,9 +1087,21 @@ describe("getBasicInfo", () => {
       { id: "lang-en", name: "English" },
       { id: "lang-fr", name: "French" },
     ]);
+    // #393 — extended projection: identity + location + skills.
+    expect(result.fullName).toBe("Ada Lovelace");
+    expect(result.legalName).toBe("Augusta Ada King-Noel");
+    expect(result.city).toBe("London");
+    expect(result.placeIdentity).toBe("ChIJ-place-london");
+    expect(result.countryId).toBe("country_uk");
+    expect(result.citizenshipId).toBe("country_uk");
+    expect(result.phoneNumber).toBe("+44 20 0000 0000");
+    expect(result.softwareSkills).toEqual([
+      { id: "ss-typescript", name: "TypeScript" },
+      { id: "ss-postgres", name: "PostgreSQL" },
+    ]);
   });
 
-  it("normalizes missing about/quote to null (user hasn't set the field)", async () => {
+  it("normalizes missing scalar fields to null (user hasn't set them) and empty collections to []", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({
       body: {
@@ -922,7 +1110,15 @@ describe("getBasicInfo", () => {
             id: "p1",
             about: null,
             quote: null,
+            fullName: null,
+            legalName: null,
+            city: null,
+            placeIdentity: null,
+            phoneNumber: null,
+            country: null,
+            citizenship: null,
             languages: { nodes: [] },
+            softwareSkills: { nodes: [] },
           },
         },
       },
@@ -931,7 +1127,15 @@ describe("getBasicInfo", () => {
     const result = await getBasicInfo(TOKEN);
     expect(result.bio).toBeNull();
     expect(result.headline).toBeNull();
+    expect(result.fullName).toBeNull();
+    expect(result.legalName).toBeNull();
+    expect(result.city).toBeNull();
+    expect(result.placeIdentity).toBeNull();
+    expect(result.phoneNumber).toBeNull();
+    expect(result.countryId).toBeNull();
+    expect(result.citizenshipId).toBeNull();
     expect(result.languages).toEqual([]);
+    expect(result.softwareSkills).toEqual([]);
   });
 
   it("returns an empty languages array when the server omits the languages.nodes field entirely", async () => {
@@ -951,6 +1155,25 @@ describe("getBasicInfo", () => {
 
     const result = await getBasicInfo(TOKEN);
     expect(result.languages).toEqual([]);
+  });
+
+  it("returns an empty softwareSkills array when the server omits the softwareSkills.nodes field entirely", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            about: "bio",
+            quote: "headline",
+            // softwareSkills omitted — server may not include the key at all.
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.softwareSkills).toEqual([]);
   });
 
   it("filters out malformed language nodes (null entries, missing id, missing name)", async () => {
@@ -983,6 +1206,59 @@ describe("getBasicInfo", () => {
     ]);
   });
 
+  it("filters out malformed softwareSkills nodes (null entries, missing id, missing name)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            about: "bio",
+            quote: "headline",
+            softwareSkills: {
+              nodes: [
+                null,
+                { id: "ss-typescript", name: "TypeScript" },
+                { id: "", name: "Empty id" },
+                { id: "ss-postgres" }, // missing name
+                { id: "ss-rust", name: "Rust" },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.softwareSkills).toEqual([
+      { id: "ss-typescript", name: "TypeScript" },
+      { id: "ss-rust", name: "Rust" },
+    ]);
+  });
+
+  it("normalizes country/citizenship with empty-string id to null (empty id is not a valid relation)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            about: "bio",
+            quote: "headline",
+            country: { id: "" },
+            citizenship: { id: "" },
+            languages: { nodes: [] },
+            softwareSkills: { nodes: [] },
+          },
+        },
+      },
+    });
+
+    const result = await getBasicInfo(TOKEN);
+    expect(result.countryId).toBeNull();
+    expect(result.citizenshipId).toBeNull();
+  });
+
   it("falls back to the show()-resolved profileId when the talent-profile response omits it", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({
@@ -1000,6 +1276,27 @@ describe("getBasicInfo", () => {
 
     const result = await getBasicInfo(TOKEN);
     expect(result.profileId).toBe("p1");
+  });
+
+  it("requests the extended selection set (#393): identity + location + softwareSkills", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_OK });
+
+    await getBasicInfo(TOKEN);
+
+    const infoCall = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    // Selection-set assertions — these guarantee the wire query carries
+    // every field that the read-merge path in `set()` depends on. A
+    // future regression that drops one of these from GET_BASIC_INFO_QUERY
+    // fails this test before it fails the live UPDATE_BASIC_INFO call.
+    expect(infoCall.body.query).toContain("fullName");
+    expect(infoCall.body.query).toContain("legalName");
+    expect(infoCall.body.query).toContain("city");
+    expect(infoCall.body.query).toContain("placeIdentity");
+    expect(infoCall.body.query).toContain("phoneNumber");
+    expect(infoCall.body.query).toContain("country");
+    expect(infoCall.body.query).toContain("citizenship");
+    expect(infoCall.body.query).toContain("softwareSkills");
   });
 
   it("propagates Cf403Error from the talent-profile call (Cloudflare-protected surface)", async () => {

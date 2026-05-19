@@ -186,6 +186,14 @@ describe("MCP profile_basic_show — payload snapshots", () => {
       { id: "lang_en", name: "English" },
       { id: "lang_uk", name: "Ukrainian" },
     ],
+    fullName: "Test User",
+    legalName: "Test User",
+    city: "Kyiv",
+    placeIdentity: "ChIJ-place-kyiv",
+    countryId: "country_ua",
+    citizenshipId: "country_ua",
+    phoneNumber: "+380 50 000 0000",
+    softwareSkills: [{ id: "ss_typescript", name: "TypeScript" }],
   };
 
   it("payload: full BasicShowPayload (profile + basicInfo with bio/headline/languages)", () => {
@@ -198,6 +206,14 @@ describe("MCP profile_basic_show — payload snapshots", () => {
       bio: null,
       headline: null,
       languages: [],
+      fullName: null,
+      legalName: null,
+      city: null,
+      placeIdentity: null,
+      countryId: null,
+      citizenshipId: null,
+      phoneNumber: null,
+      softwareSkills: [],
     };
     expect(extractText(jsonResponse({ profile: PROFILE, basicInfo: emptyBasicInfo }))).toMatchSnapshot();
   });
