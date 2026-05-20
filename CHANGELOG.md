@@ -7,7 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.5] - 2026-05-20
+
 ### Added
+
+- **`interest_requests` accept/reject MCP+CLI tools wrapping
+  `ConfirmAvailabilityRequest` / `RejectAvailabilityRequest` (#411)**.
+  Adds the write-side IR triage surface that completes the loop
+  opened by #410's read-side `fixedRate` visibility — an MCP host
+  can now accept/reject Interest Requests without leaving the host
+  UI.
+  - **New surfaces** (3 tools each per MCP + CLI): - `ttctl_interest_requests_accept` / `ttctl applications
+confirm` → `ConfirmAvailabilityRequest`. Auto-detects
+    `AvailabilityRequestKindEnum` from AR metadata `__typename`;
+    auto-fills the requested rate from Fixed-kind
+    `offeredHourlyRate`. **Destructive on the wire** — confirms
+    the AR and creates a `JobApplication`; no undo. - `ttctl_interest_requests_reject` / `ttctl applications reject`
+    → `RejectAvailabilityRequest`. `--reason` key drawn from the
+    decline-reason inventory. **Destructive — terminal
+    `AVAILABILITY_REQUEST_REJECTED` state.** - `ttctl_interest_requests_reject_reasons` / `ttctl applications
+reject-reasons` → `AvailabilityRequestRejectReasons` (new
+    hand-authored query). Returns the `{fixed, flexible}` decline-
+    reason inventory the portal's Decline form uses. Read-only.
+  - **Surface naming**: MCP renames `confirm` → `accept` for
+    ergonomic alignment with the portal's Respond/Decline buttons;
+    the wire-side spelling persists in the service. CLI keeps
+    `confirm` (mirrors the wire name).
+  - **IR list projection extended**: `ttctl_interest_requests_list`
+    now surfaces `availabilityRequestId` so callers chain
+    accept/reject without a separate `_show` round-trip.
+  - **Schema/contract rule**: TRIGGERED. `ConfirmAvailabilityRequest`
+    and `RejectAvailabilityRequest` were already in
+    `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`;
+    `AvailabilityRequestRejectReasons` and
+    `GetAvailabilityRequestKind` are NEW hand-authored ops;
+    `AvailabilityRequestKindEnum` values
+    (`FIXED` / `FLEXIBLE` / `MARKETPLACE_FLEXIBLE`) are INFERRED
+    from synthesized-schema metadata-union variants. E2E coverage at
+    `packages/e2e/src/{48-applications-confirm,49-applications-reject,51-applications-reject-reasons}.e2e.test.ts`
+    — `48` / `49` ship always-on dry-run + negative paths plus
+    gated positive paths via `TTCTL_E2E_ACCEPT_INTEREST_REQUEST` /
+    `TTCTL_E2E_REJECT_INTEREST_REQUEST` (positive paths require an
+    operator-supplied real pending AR id; destructive on the
+    wire); `51` is always-on, read-only.
+  - **Track 1 vs Track 2**: T1 for all four ops — none are in the
+    codegen-trusted catalog. Wire-shape snapshots commit on first
+    live run via `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`.
+
+- **Projections expose recruiter Fixed rate on jobs/applications/IR
+  surfaces (#410)**. Surfaces the recruiter-set Fixed rate (e.g.
+  `$77/hr Fixed` in the portal UI) on four projections so callers
+  can disambiguate it from the existing Marketplace `maxRate`
+  ceiling.
+  - **Affected projections**: `ttctl_jobs_list` per-row on
+    `JobListItem.fixedRate`; `ttctl_jobs_show` on
+    `JobDetail.fixedRate`; `ttctl_applications_show` on
+    `JobActivityItemDetail.fixedRate`;
+    `ttctl_interest_requests_list` on `InterestRequestRow.fixedRate`.
+  - **Field shape**: `{ decimal: string, verbose: string } | null`
+    (Money type, identical to the existing `requestedHourlyRate`
+    pattern). Sourced from
+    `viewer.job(id).activityItem.availabilityRequest.metadata.offeredHourlyRate`
+    on `AvailabilityRequestFixedMetadata`.
+  - **Disambiguation preserved**: `maxRate` (Marketplace ceiling)
+    and `fixedRate` (recruiter-pinned) coexist as separate fields.
+    CLI tables widen by one column (`max rate` + `fixed rate`);
+    pretty renderers emit a separate "Fixed rate" line/section.
+  - **Nullability cascade**: every projection short-circuits at
+    `activityItem` / `availabilityRequest` / (missing metadata) and
+    returns `fixedRate: null`.
+  - **Schema/contract rule**: TRIGGERED — modifies four
+    hand-authored T1 op selection sets (`JobShow`, `JobsList`,
+    `JobActivityItem`, `JobActivityItems`). Live `TTCTL_E2E=1`
+    shape assertions added across
+    `packages/e2e/src/{24-jobs,15-applications-list,16-applications-show}.e2e.test.ts`.
+  - **Track 1 vs Track 2**: T1 for all four ops — no generated
+    operation types (codegen-exclusion list). No committed wire
+    snapshots existed for any of these ops; live E2E shape
+    assertions are the wire-validation surface.
 
 - **`profile.employment.add` + `profile.employment.update`: expose
   the `industryIds` parameter the server already supports (#403)**.
@@ -51,7 +128,90 @@ employment update` and the MCP `ttctl_profile_employment_update`
     (AC#4b: supplying `industryIds` replaces the set; AC#4c: omitting
     it preserves the seeded set).
 
+- **`profile.employment.add` — custom (non-catalog) workplace via
+  `employerId: null` (#401)**. Adds the Toptal "Add as new: <name>"
+  behaviour to `employment.add`. When the new `noEmployer` signal is
+  set, `add()` skips employer-autocomplete resolution and sends
+  `CreateEmployment` with `employerId: null` + the free-text
+  `company` verbatim. There is no `CreateEmployer` mutation in the
+  API; this surfaces the existing nullable-`employerId` path.
+  - **New surface**: CLI `--no-employer` flag; MCP `noEmployer`
+    boolean arg on `ttctl_profile_employment_add`. Mutual-exclusion
+    guard rejects `--no-employer` + `--employer-id` as
+    `VALIDATION_ERROR`. `noEmployer` is orthogonal to `noWebsite` —
+    a custom workplace may still carry a website.
+  - **Core**: `EmploymentFields.noEmployer?: boolean` (write-only
+    signal, Class B exempt — stripped from the wire payload);
+    conditional `resolveEmployerId()` skip (NO autocomplete on the
+    custom path, in apply or dry-run); `employerId: null` on the
+    wire.
+  - **Toptal-side WORM (write-once-read-many) limitation**: rows
+    with `employerId: null` CANNOT be updated via
+    `UpdateEmployment` — Toptal's Rails apply path treats BOTH
+    absence AND explicit `null` as `.blank?` and rejects with
+    `USER_ERROR "employmentId update rejected (employerId): You
+can't leave this empty"`. No client-side payload can satisfy the
+    wire on a null-employerId row. This is a Toptal-side product
+    limitation, not a TTCtl bug; documented in the E2E file header,
+    `buildUpdateEmploymentInput`'s docblock, and
+    `research/notes/15-employment-custom-workplace-worm.md`. E2E
+    `#3` scope is `add → show → remove` only.
+  - **Sibling fix — `publicationPermit` default `:false → :true`**:
+    `CreateEmployment`'s Rails apply path treats Boolean `false` as
+    `.blank?` and rejects with `USER_ERROR "publicationPermit: You
+can't leave this empty"`. The `add()` static default was carried
+    from pre-#395 inference; flipping to `:true` aligns `add()`
+    with `buildUpdateEmploymentInput`'s
+    `current.publicationPermit ?? true` fallback so add/update
+    agree on the no-caller-input semantics.
+  - **Schema/contract rule**: TRIGGERED (file path
+    `packages/core/src/services/profile/employment/index.ts`).
+    `CreateEmployment` was in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`
+    and the change relies on an INFERRED contract:
+    `employerId: null` accepted on CREATE (documented for Update,
+    inferred for Create per maintainer-clarified #401 wire note).
+    Live `TTCTL_E2E=1` `45-profile-employment-add.e2e.test.ts`
+    `#401` block exercises the `add → show → remove` lifecycle.
+    T1 `CreateEmployment.snapshot.json` refreshed to surface
+    `employerId: string` + `skills: array<unknown>` — newly-selected
+    fields from the #344/#394 `EMPLOYMENT_FRAGMENT` widening
+    (incomplete original capture, NOT Toptal-side drift).
+  - **Live-wire investigation note**: a 3-run controlled URL-host
+    probe established that Toptal may auto-create a new Employer
+    (real distinct host like `https://anthropic.com`), link to an
+    existing Employer (host matches existing test-account catalog
+    entry), or do no catalog interaction (RFC-2606 `.invalid`
+    host). The E2E uses `.invalid` for deterministic contract
+    assertion.
+
 ### Fixed
+
+- **`profile.employment.update` — thread `current.position` through
+  the merge enum to satisfy wire-required non-null (#407)**.
+  `buildUpdateEmploymentInput` merge enum (sibling to the
+  wire-broke meta-class #394 / #392) dropped `position`. Any
+  partial update that omitted `position` (e.g. the
+  `{industryIds: [X]}`-only replace path from #403 AC#4(b))
+  crashed at the wire with `Variable $input ... was provided
+invalid value for employment.position (Expected value to not be
+null)`.
+  - **Fix**: threads `current.position` through the merge.
+    `EMPLOYMENT_FRAGMENT` already selected `position` read-side, so
+    the value was always available — only the merge enum was the
+    gap. JSDoc cardinality of GraphQL-required-non-null fields
+    refreshed from "(4)" → "(5)" across
+    `DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER`,
+    `buildUpdateEmploymentInput`, and `update`. MCP `dryRun: true`
+    preview synced to include a `position` placeholder.
+  - **Schema/contract rule**: TRIGGERED (file path
+    `packages/core/src/services/profile/employment/index.ts`). E2E
+    coverage at
+    `packages/e2e/src/46-profile-employment-update-merge.e2e.test.ts:250`
+    — the partial-update-without-position call site from #403
+    AC#4(b).
+  - **Track 1 vs Track 2**: T1 — `UpdateEmployment` snapshot
+    unchanged (the fix changes wire INPUT values, not the wire
+    RESPONSE shape).
 
 - **Wire-broke meta-class #392 (4th sibling) — `profile.skills.add`
   rejected by the live API; input shape was pure invention (#396)**.
@@ -96,6 +256,14 @@ public, [id] } } }` — `profileId` resolved via
     committed at
     `packages/e2e/src/wire-snapshots/ADD_PROFILE_SKILL_SET.snapshot.json`
     per ADR-006.
+
+### Dependencies
+
+- Bump `undici` 8.2.0 → 8.3.0 (#420), `tsx` 4.21.0 → 4.22.3 (#419),
+  `typescript-eslint` 8.59.3 → 8.59.4 (#417), `yaml` 2.8.4 → 2.9.0
+  (#416), `eslint` 10.3.0 → 10.4.0 (#415),
+  `codecov/codecov-action` 6.0.0 → 6.0.1 (#414),
+  `actions/github-script` 8.0.0 → 9.0.0 (#413).
 
 ## [v0.1.0-rc.4] - 2026-05-19
 
