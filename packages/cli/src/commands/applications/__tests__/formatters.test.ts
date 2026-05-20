@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import type { applications } from "@ttctl/core";
 
+import { formatRespondPayload } from "../confirm.js";
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
+import { formatRejectReasons } from "../reject-reasons.js";
 import { formatFixedRate } from "../shared.js";
 import { formatApplicationDetail } from "../show.js";
 import { formatStatsPretty } from "../stats.js";
@@ -222,6 +224,96 @@ describe("formatApplicationDetail", () => {
       fixedRate: { decimal: "109.00", verbose: "" },
     });
     expect(out).toContain("$109.00/h");
+  });
+});
+
+describe("formatRespondPayload (#411)", () => {
+  const BASE: applications.AvailabilityRequestRespondPayload = {
+    id: "ar-1",
+    answeredAt: "2026-05-20T00:00:00Z",
+    statusV2: { value: "AVAILABILITY_REQUEST_CONFIRMED", verbose: "Confirmed" },
+    talentComment: null,
+    requestedHourlyRate: { decimal: "80.00", verbose: "$80.00/hr" },
+    rejectReason: null,
+  };
+
+  it("renders status verbose+value and the answered timestamp", () => {
+    const out = formatRespondPayload(BASE);
+    expect(out).toContain("Status: Confirmed (AVAILABILITY_REQUEST_CONFIRMED)");
+    expect(out).toContain("Answered: 2026-05-20T00:00:00Z");
+  });
+
+  it("renders requested rate with verbose + decimal when present", () => {
+    const out = formatRespondPayload(BASE);
+    expect(out).toContain("Rate: $80.00/hr (80.00)");
+  });
+
+  it("omits Rate line when requestedHourlyRate is null", () => {
+    const out = formatRespondPayload({ ...BASE, requestedHourlyRate: null });
+    expect(out).not.toContain("Rate:");
+  });
+
+  it("omits Answered line when answeredAt is null", () => {
+    const out = formatRespondPayload({ ...BASE, answeredAt: null });
+    expect(out).not.toContain("Answered:");
+  });
+
+  it("renders talent comment when present and non-empty", () => {
+    const out = formatRespondPayload({ ...BASE, talentComment: "Sounds good" });
+    expect(out).toContain("Comment: Sounds good");
+  });
+
+  it("omits Comment line when talentComment is empty string (defensive)", () => {
+    const out = formatRespondPayload({ ...BASE, talentComment: "" });
+    expect(out).not.toContain("Comment:");
+  });
+
+  it("renders reject reason when present (post-reject payload)", () => {
+    const out = formatRespondPayload({ ...BASE, rejectReason: "rate_too_low", requestedHourlyRate: null });
+    expect(out).toContain("Reject reason: rate_too_low");
+  });
+});
+
+describe("formatRejectReasons (#411)", () => {
+  const FIXED: applications.AvailabilityRequestRejectReason = {
+    key: "rate_too_low",
+    value: "Rate too low",
+    customPlaceholder: null,
+    isMandatory: false,
+  };
+  const FLEXIBLE_MANDATORY: applications.AvailabilityRequestRejectReason = {
+    key: "other",
+    value: "Other",
+    customPlaceholder: "Please describe",
+    isMandatory: true,
+  };
+
+  it("renders both Fixed-kind and Flexible-kind sections with the right header", () => {
+    const out = formatRejectReasons({ fixed: [FIXED], flexible: [FLEXIBLE_MANDATORY] });
+    expect(out).toContain("Fixed-kind reasons");
+    expect(out).toContain("Flexible-kind reasons");
+  });
+
+  it("marks mandatory rows with the ✱ marker and unmarked rows without it", () => {
+    const out = formatRejectReasons({ fixed: [FIXED], flexible: [FLEXIBLE_MANDATORY] });
+    // Non-mandatory rate_too_low has no marker — the columns end with spaces only.
+    const fixedLine = out.split("\n").find((l) => l.includes("rate_too_low")) ?? "";
+    expect(fixedLine).not.toContain("✱");
+    const flexLine = out.split("\n").find((l) => l.includes("other")) ?? "";
+    expect(flexLine).toContain("✱");
+  });
+
+  it("renders '(none)' placeholder when a section has zero rows", () => {
+    const out = formatRejectReasons({ fixed: [], flexible: [FLEXIBLE_MANDATORY] });
+    expect(out).toContain("Fixed-kind reasons");
+    expect(out.split("Fixed-kind reasons")[1] ?? "").toContain("(none)");
+  });
+
+  it("renders both sections empty when both arrays are empty (defensive)", () => {
+    const out = formatRejectReasons({ fixed: [], flexible: [] });
+    // Two '(none)' occurrences expected.
+    const noneCount = (out.match(/\(none\)/g) ?? []).length;
+    expect(noneCount).toBe(2);
   });
 });
 

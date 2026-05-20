@@ -67,6 +67,16 @@ function parseOlderThanHours(input: string): number | null {
 export interface InterestRequestRow {
   /** Activity-item id; pass to `ttctl_applications_show` for detail. */
   id: string;
+  /**
+   * **AvailabilityRequest id** (#411). The handle the write-side IR
+   * mutations (`ttctl_interest_requests_accept` /
+   * `ttctl_interest_requests_reject`) require. Distinct from `id`
+   * above, which is the activity-item id used by `_show`. `null` when
+   * the activity row carries no AR (theoretically possible if a row
+   * is classified into `ON_RECRUITER_REVIEW` without an underlying AR,
+   * though every observed IR in the wild has carried one).
+   */
+  availabilityRequestId: string | null;
   /** Server-rendered status label (e.g. "Job Interest Request"). */
   statusVerbose: string;
   /** Underlying job title (may be null if the wire elided it). */
@@ -97,6 +107,7 @@ export function projectRow(
     lastUpdatedAt: string;
     statusV2: { verbose: string };
     job: { title: string | null; url: string | null; client: { fullName: string | null } | null };
+    availabilityRequest: { id: string } | null;
     fixedRate: applications.FixedRate | null;
   },
   now: number,
@@ -107,6 +118,7 @@ export function projectRow(
     : null;
   return {
     id: row.id,
+    availabilityRequestId: row.availabilityRequest?.id ?? null,
     statusVerbose: row.statusV2.verbose,
     jobTitle: row.job.title,
     clientName: row.job.client?.fullName ?? null,
@@ -227,6 +239,195 @@ export function registerInterestRequestsTools(server: McpServer, ctx: ToolRegist
             ? projected
             : projected.filter((row) => row.daysPending !== null && row.daysPending * 24 >= olderThanHours);
         return jsonResponse(filtered);
+      } catch (err) {
+        return mapInterestRequestsError(err);
+      }
+    },
+  );
+
+  // #411 — IR write surface. Three tools mirroring the talent-side
+  // ergonomic spec of #411: accept (→ confirm wire mutation), reject
+  // (→ reject wire mutation), reject-reasons (→ platform-config
+  // inventory). All three accept the **AvailabilityRequest id** as the
+  // handle (NOT the activity-item id); chain from
+  // `ttctl_interest_requests_list` rows via `availabilityRequestId`.
+  registerInterestRequestsAcceptTool(server, ctx);
+  registerInterestRequestsRejectTool(server, ctx);
+  registerInterestRequestsRejectReasonsTool(server, ctx);
+}
+
+function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_interest_requests_accept",
+    {
+      title: "Accept an Interest Request",
+      description: [
+        "Accept (confirm) a Toptal Interest Request — the wire mutation",
+        "`ConfirmAvailabilityRequest` (mobile-gateway). Mirror of the",
+        '"View Job Interest Request → Respond" button on the Toptal portal.',
+        "",
+        "**DESTRUCTIVE** — accepting an IR transitions the AvailabilityRequest",
+        "from PENDING to CONFIRMED, creating a `JobApplication` for the underlying",
+        "job. There is no withdraw operation on the wire. Always preview with",
+        "`dryRun: true` first if uncertain.",
+        "",
+        "**Input id**: the `availabilityRequestId` from `ttctl_interest_requests_list`",
+        "rows (NOT the `id` field, which is the activity-item id used by `_show`).",
+        "Both ids are surfaced on the list output; pick `availabilityRequestId`.",
+        "",
+        "**Fields**:",
+        "  - `id` (required): AvailabilityRequest id.",
+        "  - `message` (optional): talent free-text accompanying the response.",
+        "    Maps to the wire's `talentComment` field. Renders next to the",
+        '    "Respond" button in the recruiter\'s portal view.',
+        "  - `rate` (optional): requested hourly rate, decimal string (e.g.",
+        '    `"80.00"`). Auto-filled from the AR\'s recruiter-pinned Fixed rate',
+        "    when omitted. REQUIRED for FLEXIBLE / MARKETPLACE_FLEXIBLE ARs",
+        "    (no recruiter-pinned rate to default to).",
+        "  - `kind` (optional): AR kind (FIXED / FLEXIBLE / MARKETPLACE_FLEXIBLE).",
+        "    Auto-detected from the AR's metadata `__typename` when omitted.",
+        "",
+        "Example user prompts:",
+        '  - "Accept Interest Request <id>." (uses recruiter-pinned rate by default)',
+        '  - "Accept IR <id> with the message \\"Available starting next Monday\\"."',
+        '  - "Accept Interest Request <id> at $90/hr." (override the Fixed rate)',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("AvailabilityRequest id (NOT the activity-item id)"),
+        message: z.string().optional().describe("Optional talent free-text. Wire field: talentComment."),
+        rate: z
+          .string()
+          .optional()
+          .describe(
+            "Optional decimal hourly rate (e.g. '80.00'). Auto-filled from the AR's Fixed rate when omitted; required for FLEXIBLE / MARKETPLACE_FLEXIBLE ARs.",
+          ),
+        kind: z
+          .enum([...applications.AVAILABILITY_REQUEST_KINDS])
+          .optional()
+          .describe("AR kind (auto-detected from metadata when omitted)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+
+      const input: applications.ConfirmInput = {};
+      if (args.message !== undefined) input.comment = args.message;
+      if (args.rate !== undefined) input.requestedHourlyRate = args.rate;
+      if (args.kind !== undefined) input.kind = args.kind;
+
+      try {
+        const outcome = await applications.confirm(auth.token, args.id, input, {
+          dryRun: args.dryRun === true,
+        });
+        if (outcome.kind === "preview") {
+          return dryRunResponse(outcome.preview);
+        }
+        return jsonResponse(outcome.result);
+      } catch (err) {
+        return mapInterestRequestsError(err);
+      }
+    },
+  );
+}
+
+function registerInterestRequestsRejectTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_interest_requests_reject",
+    {
+      title: "Reject an Interest Request",
+      description: [
+        "Reject (decline) a Toptal Interest Request — the wire mutation",
+        "`RejectAvailabilityRequest` (mobile-gateway). Mirror of the",
+        '"View Job Interest Request → Decline" form on the Toptal portal.',
+        "",
+        "**DESTRUCTIVE** — rejecting an IR transitions the AvailabilityRequest",
+        "to REJECTED (terminal, archived). No undo. Always preview with",
+        "`dryRun: true` first if uncertain.",
+        "",
+        "**Input id**: the `availabilityRequestId` from `ttctl_interest_requests_list`",
+        "rows (NOT the `id` field, which is the activity-item id used by `_show`).",
+        "",
+        "**Fields**:",
+        "  - `id` (required): AvailabilityRequest id.",
+        "  - `reason` (required): one of the `key` values from",
+        "    `ttctl_interest_requests_reject_reasons`. The wire rejects unknown",
+        "    keys with a top-level GraphQL error.",
+        "  - `comment` (optional): accompanying free-text. Required when the",
+        "    chosen reason has `isMandatory: true` on the inventory.",
+        "",
+        "Example user prompts:",
+        '  - "Decline Interest Request <id> with reason rate_too_low."',
+        '  - "Reject IR <id> as scope_mismatch, note: \\"Not aligned with my Python expertise.\\""',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("AvailabilityRequest id (NOT the activity-item id)"),
+        reason: z
+          .string()
+          .describe("Decline reason key (see ttctl_interest_requests_reject_reasons for the inventory)"),
+        comment: z.string().optional().describe("Optional accompanying free-text (required for mandatory reasons)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+
+      const input: applications.RejectInput = { reason: args.reason };
+      if (args.comment !== undefined) input.comment = args.comment;
+
+      try {
+        const outcome = await applications.reject(auth.token, args.id, input, {
+          dryRun: args.dryRun === true,
+        });
+        if (outcome.kind === "preview") {
+          return dryRunResponse(outcome.preview);
+        }
+        return jsonResponse(outcome.result);
+      } catch (err) {
+        return mapInterestRequestsError(err);
+      }
+    },
+  );
+}
+
+function registerInterestRequestsRejectReasonsTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_interest_requests_reject_reasons",
+    {
+      title: "List Interest Request decline-reason inventory",
+      description: [
+        "List the Interest Request decline-reason inventory — the `key` /",
+        "`value` / `isMandatory` rows the portal's Decline form uses. Pass one",
+        "of the surfaced `key` values to `ttctl_interest_requests_reject`.",
+        "",
+        "Returns `{ fixed: [...], flexible: [...] }` — the portal renders only",
+        "the slice matching the AR's `kind`, so clients should likewise pick",
+        "the slice that matches the AR being declined.",
+        "",
+        "Read-only, idempotent. Server-localised (the `value` text matches the",
+        "session's locale).",
+        "",
+        "Example user prompts:",
+        '  - "What reasons can I decline Interest Requests with?"',
+        '  - "Show me the reject-reason inventory for Fixed-kind IRs."',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("AvailabilityRequestRejectReasons", "mobile-gateway", {}, auth.token),
+        );
+      }
+
+      try {
+        const reasons = await applications.rejectReasons(auth.token);
+        return jsonResponse(reasons);
       } catch (err) {
         return mapInterestRequestsError(err);
       }

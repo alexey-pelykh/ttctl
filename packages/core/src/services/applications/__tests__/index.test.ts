@@ -14,7 +14,17 @@ vi.mock("../../../transport.js", async () => {
   };
 });
 
-import { STATUS_GROUPS, list, show, stats } from "../index.js";
+import {
+  AVAILABILITY_REQUEST_KINDS,
+  STATUS_GROUPS,
+  ApplicationsError,
+  confirm,
+  list,
+  reject,
+  rejectReasons,
+  show,
+  stats,
+} from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
@@ -372,5 +382,490 @@ describe("applications.stats", () => {
     const result = await stats(TOKEN);
     expect(result.total).toBe(0);
     expect(result.groups.every((g) => g.count === 0)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------
+// IR write-side ops (#411).
+//
+// `confirm` and `reject` exercise the `callGatewayNoViewer` helper —
+// the wire mutations root at `availabilityRequest.{confirm,reject}` and
+// NOT at `viewer.*`. `rejectReasons` similarly roots at
+// `platformConfiguration.availabilityRequestRejectReasonsV3`. The
+// `requireViewer: true` check that gates the read-side ops is OFF for
+// these three.
+//
+// `confirm` exercises one extra wire call when `kind`/`rate` are
+// omitted: the `GetAvailabilityRequestKind` pre-fetch that resolves
+// kind from the AR's metadata `__typename` (and the default rate from
+// Fixed metadata's `offeredHourlyRate`). The fixtures below sequence
+// the `reply()` mocks so the pre-fetch is responded to FIRST.
+// ---------------------------------------------------------------------
+
+const AR_ID = "ar-9";
+
+function fixedKindFixture(rate = "80.00"): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "TalentUser",
+        id: "v1",
+        availabilityRequest: {
+          __typename: "AvailabilityRequest",
+          id: AR_ID,
+          metadata: {
+            __typename: "AvailabilityRequestFixedMetadata",
+            offeredHourlyRate: { __typename: "Money", decimal: rate, verbose: `$${rate}/hr` },
+          },
+        },
+      },
+    },
+  };
+}
+
+function flexibleKindFixture(): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "TalentUser",
+        id: "v1",
+        availabilityRequest: {
+          __typename: "AvailabilityRequest",
+          id: AR_ID,
+          metadata: {
+            __typename: "AvailabilityRequestFlexibleMetadata",
+          },
+        },
+      },
+    },
+  };
+}
+
+function confirmSuccessFixture(rate = "80.00"): unknown {
+  return {
+    data: {
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        confirm: {
+          __typename: "AvailabilityRequestRespondPayload",
+          success: true,
+          errors: null,
+          availabilityRequest: {
+            __typename: "AvailabilityRequest",
+            id: AR_ID,
+            answeredAt: "2026-05-20T00:00:00Z",
+            statusV2: {
+              __typename: "AvailabilityRequestStatus",
+              value: "AVAILABILITY_REQUEST_CONFIRMED",
+              verbose: "Confirmed",
+            },
+            talentComment: null,
+            requestedHourlyRate: { __typename: "Money", decimal: rate, verbose: `$${rate}/hr` },
+            rejectReason: null,
+          },
+        },
+      },
+    },
+  };
+}
+
+function rejectSuccessFixture(reason = "rate_too_low"): unknown {
+  return {
+    data: {
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        reject: {
+          __typename: "AvailabilityRequestRespondPayload",
+          success: true,
+          errors: null,
+          availabilityRequest: {
+            __typename: "AvailabilityRequest",
+            id: AR_ID,
+            answeredAt: "2026-05-20T00:00:00Z",
+            statusV2: {
+              __typename: "AvailabilityRequestStatus",
+              value: "AVAILABILITY_REQUEST_REJECTED",
+              verbose: "Rejected",
+            },
+            talentComment: null,
+            requestedHourlyRate: null,
+            rejectReason: reason,
+          },
+        },
+      },
+    },
+  };
+}
+
+describe("applications.confirm (#411)", () => {
+  it("AVAILABILITY_REQUEST_KINDS exposes FIXED, FLEXIBLE, MARKETPLACE_FLEXIBLE in declaration order", () => {
+    expect(AVAILABILITY_REQUEST_KINDS).toEqual(["FIXED", "FLEXIBLE", "MARKETPLACE_FLEXIBLE"]);
+  });
+
+  it("dryRun: short-circuits before any wire call and returns a preview envelope", async () => {
+    const outcome = await confirm(TOKEN, AR_ID, { requestedHourlyRate: "80.00", kind: "FIXED" }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.operationName).toBe("ConfirmAvailabilityRequest");
+    expect(outcome.preview.variables).toMatchObject({
+      id: AR_ID,
+      requestedHourlyRate: "80.00",
+      kind: "FIXED",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dryRun: substitutes placeholders when kind/rate are unresolved (zero pre-fetch calls)", async () => {
+    const outcome = await confirm(TOKEN, AR_ID, {}, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.variables).toMatchObject({
+      kind: "<resolved at apply time>",
+      requestedHourlyRate: "<resolved at apply time>",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("auto-resolves Fixed-kind + default rate via GetAvailabilityRequestKind pre-fetch when both inputs omitted", async () => {
+    reply({ body: fixedKindFixture("77.00") }, { body: confirmSuccessFixture("77.00") });
+    const outcome = await confirm(TOKEN, AR_ID);
+    expect(mockedStock).toHaveBeenCalledTimes(2);
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result.id).toBe(AR_ID);
+    expect(outcome.result.statusV2.value).toBe("AVAILABILITY_REQUEST_CONFIRMED");
+    expect(outcome.result.requestedHourlyRate?.decimal).toBe("77.00");
+
+    // Verify the pre-fetch operation name + the mutation kind/rate are
+    // threaded through.
+    const preFetchBody = mockedStock.mock.calls[0]?.[0]?.body as { operationName: string };
+    const mutationBody = mockedStock.mock.calls[1]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(preFetchBody.operationName).toBe("GetAvailabilityRequestKind");
+    expect(mutationBody.operationName).toBe("ConfirmAvailabilityRequest");
+    expect(mutationBody.variables["kind"]).toBe("FIXED");
+    expect(mutationBody.variables["requestedHourlyRate"]).toBe("77.00");
+  });
+
+  it("skips the pre-fetch when caller passes both kind and rate explicitly", async () => {
+    reply({ body: confirmSuccessFixture("90.00") });
+    const outcome = await confirm(TOKEN, AR_ID, { kind: "FIXED", requestedHourlyRate: "90.00" });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    const body = mockedStock.mock.calls[0]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(body.operationName).toBe("ConfirmAvailabilityRequest");
+    expect(body.variables["requestedHourlyRate"]).toBe("90.00");
+  });
+
+  it("throws MUTATION_ERROR when AR is FLEXIBLE and rate is omitted (no default to pick)", async () => {
+    reply({ body: flexibleKindFixture() });
+    await expect(confirm(TOKEN, AR_ID)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "MUTATION_ERROR",
+    });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-resolves kind=FLEXIBLE and uses caller-supplied rate (no pre-fetch rate default needed)", async () => {
+    reply({ body: flexibleKindFixture() }, { body: confirmSuccessFixture("100.00") });
+    const outcome = await confirm(TOKEN, AR_ID, { requestedHourlyRate: "100.00" });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    const body = mockedStock.mock.calls[1]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(body.variables["kind"]).toBe("FLEXIBLE");
+  });
+
+  it("throws NOT_FOUND when the pre-fetch surfaces 'Record not found' GraphQL error", async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(confirm(TOKEN, "missing-ar")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws NOT_FOUND when the pre-fetch viewer or AR is null", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { __typename: "TalentUser", id: "v1", availabilityRequest: null },
+        },
+      },
+    });
+    await expect(confirm(TOKEN, "missing-ar")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws WIRE_SHAPE_ERROR when the pre-fetch returns an unrecognized metadata typename", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "TalentUser",
+            id: "v1",
+            availabilityRequest: {
+              __typename: "AvailabilityRequest",
+              id: AR_ID,
+              metadata: { __typename: "FutureMetadataVariant" },
+            },
+          },
+        },
+      },
+    });
+    await expect(confirm(TOKEN, AR_ID)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "WIRE_SHAPE_ERROR",
+    });
+  });
+
+  it("throws MUTATION_ERROR with formatted error details on success:false", async () => {
+    reply({ body: confirmSuccessFixture() }); // not used; overridden below
+    mockedStock.mockReset();
+    reply({
+      body: {
+        data: {
+          availabilityRequest: {
+            __typename: "AvailabilityRequest",
+            confirm: {
+              __typename: "AvailabilityRequestRespondPayload",
+              success: false,
+              errors: [
+                {
+                  __typename: "MutationResultError",
+                  code: "INVALID_KIND",
+                  key: "kind",
+                  message: "Unknown enum value",
+                },
+              ],
+              availabilityRequest: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(confirm(TOKEN, AR_ID, { kind: "FIXED", requestedHourlyRate: "80.00" })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "MUTATION_ERROR",
+    });
+  });
+
+  it("throws UNKNOWN when success:true but availabilityRequest echo is null (wire violation)", async () => {
+    reply({
+      body: {
+        data: {
+          availabilityRequest: {
+            __typename: "AvailabilityRequest",
+            confirm: {
+              __typename: "AvailabilityRequestRespondPayload",
+              success: true,
+              errors: null,
+              availabilityRequest: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(confirm(TOKEN, AR_ID, { kind: "FIXED", requestedHourlyRate: "80.00" })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "UNKNOWN",
+    });
+  });
+
+  it("threads comment into the wire variables as `comment` (mapped to talentComment in the document)", async () => {
+    reply({ body: confirmSuccessFixture() });
+    await confirm(TOKEN, AR_ID, { kind: "FIXED", requestedHourlyRate: "80.00", comment: "Hello recruiter" });
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(body.variables["comment"]).toBe("Hello recruiter");
+  });
+});
+
+describe("applications.reject (#411)", () => {
+  it("dryRun: short-circuits before any wire call and returns a preview envelope", async () => {
+    const outcome = await reject(TOKEN, AR_ID, { reason: "rate_too_low" }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.operationName).toBe("RejectAvailabilityRequest");
+    expect(outcome.preview.variables).toMatchObject({
+      id: AR_ID,
+      reason: "rate_too_low",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("apply path: sends reason + (optional) comment to the mutation and projects the echo payload", async () => {
+    reply({ body: rejectSuccessFixture("scope_mismatch") });
+    const outcome = await reject(TOKEN, AR_ID, { reason: "scope_mismatch", comment: "not a fit" });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result.rejectReason).toBe("scope_mismatch");
+    expect(outcome.result.statusV2.value).toBe("AVAILABILITY_REQUEST_REJECTED");
+
+    const body = mockedStock.mock.calls[0]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(body.operationName).toBe("RejectAvailabilityRequest");
+    expect(body.variables).toMatchObject({ id: AR_ID, reason: "scope_mismatch", comment: "not a fit" });
+  });
+
+  it("sends comment=null when caller omits it", async () => {
+    reply({ body: rejectSuccessFixture() });
+    await reject(TOKEN, AR_ID, { reason: "rate_too_low" });
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(body.variables["comment"]).toBeNull();
+  });
+
+  it("throws MUTATION_ERROR with the formatted message on success:false", async () => {
+    reply({
+      body: {
+        data: {
+          availabilityRequest: {
+            __typename: "AvailabilityRequest",
+            reject: {
+              __typename: "AvailabilityRequestRespondPayload",
+              success: false,
+              errors: [
+                {
+                  __typename: "MutationResultError",
+                  code: "MANDATORY_COMMENT_MISSING",
+                  key: "comment",
+                  message: "comment required for this reason",
+                },
+              ],
+              availabilityRequest: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(reject(TOKEN, AR_ID, { reason: "other" })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "MUTATION_ERROR",
+    });
+  });
+
+  it("throws UNKNOWN when the wire response is null (defensive)", async () => {
+    reply({ body: { data: { availabilityRequest: null } } });
+    await expect(reject(TOKEN, AR_ID, { reason: "rate_too_low" })).rejects.toBeInstanceOf(ApplicationsError);
+  });
+});
+
+describe("applications.rejectReasons (#411)", () => {
+  it("returns the fixed + flexible inventory verbatim", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            availabilityRequestRejectReasonsV3: {
+              __typename: "AvailabilityRequestRejectReasonsV3",
+              fixed: [
+                {
+                  __typename: "AvailabilityRequestRejectReason",
+                  key: "rate_too_low",
+                  value: "Rate too low",
+                  customPlaceholder: null,
+                  isMandatory: false,
+                },
+              ],
+              flexible: [
+                {
+                  __typename: "AvailabilityRequestRejectReason",
+                  key: "other",
+                  value: "Other",
+                  customPlaceholder: "Please describe",
+                  isMandatory: true,
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const reasons = await rejectReasons(TOKEN);
+    expect(reasons.fixed).toHaveLength(1);
+    expect(reasons.flexible).toHaveLength(1);
+    expect(reasons.fixed[0]?.key).toBe("rate_too_low");
+    expect(reasons.fixed[0]?.isMandatory).toBe(false);
+    expect(reasons.flexible[0]?.key).toBe("other");
+    expect(reasons.flexible[0]?.isMandatory).toBe(true);
+    expect(reasons.flexible[0]?.customPlaceholder).toBe("Please describe");
+  });
+
+  it("treats missing fixed/flexible arrays as empty (defensive)", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            availabilityRequestRejectReasonsV3: {
+              __typename: "AvailabilityRequestRejectReasonsV3",
+              fixed: null,
+              flexible: null,
+            },
+          },
+        },
+      },
+    });
+    const reasons = await rejectReasons(TOKEN);
+    expect(reasons.fixed).toEqual([]);
+    expect(reasons.flexible).toEqual([]);
+  });
+
+  it("throws WIRE_SHAPE_ERROR when platformConfiguration is null", async () => {
+    reply({ body: { data: { platformConfiguration: null } } });
+    await expect(rejectReasons(TOKEN)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "WIRE_SHAPE_ERROR",
+    });
+  });
+
+  it("throws WIRE_SHAPE_ERROR when availabilityRequestRejectReasonsV3 is null", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            availabilityRequestRejectReasonsV3: null,
+          },
+        },
+      },
+    });
+    await expect(rejectReasons(TOKEN)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "WIRE_SHAPE_ERROR",
+    });
+  });
+
+  it("operationName is AvailabilityRequestRejectReasons", async () => {
+    reply({
+      body: {
+        data: {
+          platformConfiguration: {
+            __typename: "PlatformConfiguration",
+            id: "pc-1",
+            availabilityRequestRejectReasonsV3: {
+              __typename: "AvailabilityRequestRejectReasonsV3",
+              fixed: [],
+              flexible: [],
+            },
+          },
+        },
+      },
+    });
+    await rejectReasons(TOKEN);
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { operationName: string };
+    expect(body.operationName).toBe("AvailabilityRequestRejectReasons");
   });
 });

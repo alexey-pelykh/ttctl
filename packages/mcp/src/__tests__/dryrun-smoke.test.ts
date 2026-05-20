@@ -139,9 +139,11 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_engagements_list: {},
   ttctl_engagements_show: { id: "act_123" },
   ttctl_engagements_stats: {},
-  // interest_requests (1 — #371; LLM-agent affordance over the
-  // ON_RECRUITER_REVIEW projection of applications.list)
+  // interest_requests (4 — #371 list + #411 accept/reject/reject_reasons)
   ttctl_interest_requests_list: {},
+  ttctl_interest_requests_accept: { id: "ar_123" },
+  ttctl_interest_requests_reject: { id: "ar_123", reason: "rate_too_low" },
+  ttctl_interest_requests_reject_reasons: {},
   // jobs (13)
   ttctl_jobs_clear_interest: { id: "job_123" },
   ttctl_jobs_list: {},
@@ -283,10 +285,10 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 104 tools (sanity for the smoke loop)", () => {
-    // 103 pre-#374 + 1 new `ttctl_timesheet_pending_list` (surface-honest
-    // viewer-wide pending pagination, ADR-007 row 3).
-    expect(Object.keys(tools)).toHaveLength(104);
+  it("registers exactly 107 tools (sanity for the smoke loop)", () => {
+    // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
+    // reject, reject_reasons.
+    expect(Object.keys(tools)).toHaveLength(107);
   });
 
   it("every registered tool has a fixture", () => {

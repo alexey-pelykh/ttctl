@@ -108,9 +108,13 @@ const EXPECTED_TOOLS = [
   "ttctl_applications_list",
   "ttctl_applications_show",
   "ttctl_applications_stats",
-  // interest_requests (#371) — 1 LLM-agent affordance over the
-  // ON_RECRUITER_REVIEW status-group projection of applications.list
+  // interest_requests (#371, #411) — 4 affordances:
+  // - list (#371): LLM-agent surface over ON_RECRUITER_REVIEW status group
+  // - accept/reject/reject_reasons (#411): IR write surface
   "ttctl_interest_requests_list",
+  "ttctl_interest_requests_accept",
+  "ttctl_interest_requests_reject",
+  "ttctl_interest_requests_reject_reasons",
   // contracts (#195) — 2 read-only tools at top-level (talent-level legal
   // documents via `viewer.contracts` on the portal surface; distinct from
   // the engagement-attached `EngagementAgreement` surfaced by engagements_show)
@@ -201,7 +205,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (104 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 1 #371 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (107 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);
