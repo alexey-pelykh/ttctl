@@ -465,6 +465,30 @@ export async function add(token: string, fields: EmploymentFields, options: AddO
     );
   }
 
+  // CREATE-side anchor contract (#484, live-settled 2026-05-20): on the
+  // `noEmployer:true` path the Rails server's `employer_id` `.blank?`
+  // validator runs unless the row carries an anchor — either (a) a
+  // `companyWebsite` URL signal OR (b) an explicit `noWebsite:true`
+  // "intentionally no website" signal. With neither, the server falls
+  // through to demanding `employer_id` and returns the confusing
+  // `USER_ERROR: employment add rejected (employerId): You can't leave
+  // this empty` — which is the SAME wire signature as the #401 / WORM
+  // gate on UPDATE, but the cause is different (the CREATE path can be
+  // satisfied with `noWebsite:true`; the UPDATE path on a null-
+  // employerId row CANNOT — see WORM note). Refuse client-side with an
+  // actionable message instead of letting the wire produce that error.
+  // Settled by E2E #484 (`45-profile-employment-add.e2e.test.ts`).
+  if (
+    fields.noEmployer === true &&
+    (fields.companyWebsite === undefined || fields.companyWebsite === null || fields.companyWebsite === "") &&
+    fields.noWebsite !== true
+  ) {
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      "employment add: a custom workplace (--no-employer) requires either --website <url> (the company's website) OR --no-website (explicit no-website signal). Without either, the Toptal server rejects the row with a misleading `employerId: You can't leave this empty` error. See research/notes/15-employment-custom-workplace-worm.md § CREATE-side anchor contract.",
+    );
+  }
+
   // Resolve employerId BEFORE branching on dryRun so the preview's wire
   // shape matches what the live mutation would transmit (#395 explicit
   // AC). The autocomplete query is a read, not a mutation — it fires in

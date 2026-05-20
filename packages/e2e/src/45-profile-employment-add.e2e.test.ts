@@ -596,3 +596,174 @@ describe("profile employment #401 custom (non-catalog) workplace add()→show()�
     },
   );
 });
+
+/**
+ * E2E coverage for `profile.employment.add` with the #484 custom-workplace-
+ * without-website path.
+ *
+ * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
+ * `CreateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`, and the
+ * `noWebsite:true + employerId:null + companyWebsite:undefined` field-
+ * presence permutation is an INFERRED contract that the #401 E2E above
+ * does NOT exercise (it only covers the `companyWebsite:<url>` anchor).
+ *
+ * **Originating bug ([#484](https://github.com/alexey-pelykh/ttctl/issues/484))**:
+ * a maintainer-reported wire-broke against rc.6's MCP surface. The MCP
+ * call `ttctl_profile_employment_add { noEmployer: true, ... }` (without
+ * `website`) sent `employerId: null` with neither `companyWebsite` nor
+ * `noWebsite` populated. The live `talent_profile/graphql` server
+ * rejected with `USER_ERROR: employment add rejected (employerId): You
+ * can't leave this empty` — the same Rails `.blank?` gate that fires on
+ * UPDATE for null-employerId rows (#401 / WORM note).
+ *
+ * The empirical settlement (this E2E + the existing #401 sibling above):
+ *   • `noEmployer:true + companyWebsite:".invalid" + noWebsite:false`
+ *     → SUCCESS (existing #401 test — anchor leg (a): URL signal).
+ *   • `noEmployer:true + noWebsite:true   + companyWebsite:undefined`
+ *     → SUCCESS (THIS TEST — anchor leg (b): explicit no-website signal).
+ *   • `noEmployer:true + companyWebsite:undefined + noWebsite:undefined`
+ *     → FAILURE with Rails `.blank?` on `employerId` (the reporter's
+ *     case; settled at the client layer by a VALIDATION_ERROR thrown
+ *     BEFORE the wire — see `add()` in `services/profile/employment/`).
+ *
+ * **The CREATE-side anchor contract** (inferred from this trio): on the
+ * `noEmployer:true` path, the Rails server validates `employer_id` as
+ * `.blank?` UNLESS the row carries either (a) a `companyWebsite` URL
+ * signal OR (b) an explicit `noWebsite:true` "intentionally no website"
+ * signal. With neither anchor, the server falls through to demanding
+ * `employer_id`. The reporter's MCP call (no `website` flag → no anchor)
+ * tripped the latter; ttctl now refuses the call client-side with an
+ * actionable message instead of letting the server return the confusing
+ * `employerId: You can't leave this empty` error.
+ *
+ * **Track 1 disposition**: shares the committed `CreateEmployment.snapshot.json`
+ * with #395 and #401 — the RESPONSE shape is invariant across these
+ * three request-shape permutations.
+ *
+ * **Non-destructive**: created row is removed in `finally`.
+ *
+ * **NO USER_ERROR silent-skip**: a `USER_ERROR` mentioning `employerId`
+ * is precisely the #484 contract-violation class — propagated as a hard
+ * failure, never hidden.
+ */
+describe("profile employment #484 custom workplace WITHOUT website add() lifecycle (live talent-profile, INFERRED noWebsite:true-alone-as-anchor contract; settles the wire shape that rc.6 MCP could not produce)", () => {
+  let sandboxConfigPath: string;
+
+  beforeAll(() => {
+    if (!e2eEnabled) return;
+    sandboxConfigPath = getSharedSession().sandboxConfigPath;
+  });
+
+  it.skipIf(!e2eEnabled)(
+    "lifecycle: add({ noEmployer:true, noWebsite:true, companyWebsite:undefined }) → show() → remove() — employerId:null persists; noWebsite:true is sufficient anchor (no companyWebsite needed); self-cleaning. update() OMITTED per WORM (see #401 sibling).",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+
+      // Cascade fixture — identical to the #401 sibling. The
+      // CreateEmployment wire requires `skills` and `industries`
+      // populated regardless of the employer-anchor permutation.
+      const basic = await profile.basic.show(token);
+      const basicShape = basic as unknown as { viewer?: { viewerRole?: { profile?: { id?: string } } } };
+      const profileId = basicShape.viewer?.viewerRole?.profile?.id;
+      if (profileId === undefined) {
+        throw new Error("Cannot extract profileId from basic.show response — test fixture needs adjustment.");
+      }
+      const skillsList = await profile.skills.list(token, profileId);
+      const firstSkill = skillsList[0];
+      const industryMatches = await profile.industries.autocomplete(token, "Software", 5);
+      const firstIndustry = industryMatches[0];
+      if (firstSkill === undefined || firstIndustry === undefined) {
+        // HARD failure — deliberately NOT a green-skip. This subtest is
+        // the SOLE live settler of the INFERRED `noWebsite:true-alone-
+        // as-anchor` contract that CLAUDE.md § Schema/contract rule
+        // mandates for #484. Per the #401 sibling's reasoning, a green-
+        // skip would let the mandated gate pass vacuously.
+        throw new Error(
+          "#484 PRECONDITION UNMET: the test account lacks a skill and/or a " +
+            "catalog industry (both server-required for the custom-workplace " +
+            "CreateEmployment). The mandated noWebsite:true-anchor contract " +
+            "gate must not pass vacuously — seed at least one skill/industry " +
+            "on the test account and re-run TTCTL_E2E=1.",
+        );
+      }
+
+      // Unique free-text name — autocomplete would never resolve it.
+      const customName = `TTCtl Custom Workplace #484 ${Date.now().toString()}`;
+
+      let createdId: string | undefined;
+      try {
+        const outcome = await profile.employment.add(token, {
+          company: customName,
+          position: "E2E Engineer (#484 custom workplace, no website)",
+          startDate: 2024,
+          // The #401 signal: custom (non-catalog) workplace.
+          noEmployer: true,
+          // The #484 signal: explicit "no website" — the ALTERNATIVE
+          // anchor to `companyWebsite:<url>`. companyWebsite intentionally
+          // omitted to settle the inferred contract that `noWebsite:true`
+          // alone is sufficient.
+          noWebsite: true,
+          experienceItems: [
+            "Founded and operated a custom (non-catalog) workplace with no website; exercises the #484 noWebsite-alone-anchor path.",
+            "Validated that the free-text company name persists verbatim when neither catalog nor URL anchor is present.",
+            "Confirmed that an explicit noWebsite:true signal substitutes for companyWebsite as the server's anchor requirement.",
+          ],
+          skills: [{ id: firstSkill.id, name: firstSkill.name ?? "skill" }],
+          industryIds: [firstIndustry.id],
+        });
+        expect(outcome.kind).toBe("created");
+        if (outcome.kind !== "created") throw new Error("unreachable");
+        const created = outcome.result;
+        createdId = created.id;
+
+        expect(typeof created.id).toBe("string");
+        expect(created.id.length).toBeGreaterThan(0);
+        expect(created.company).toBe(customName);
+        // THE #484 contract — leg 1 (mutation echo):
+        // CreateEmployment accepts `employerId: null` with `noWebsite:true`
+        // as the SOLE anchor (no companyWebsite). Mutation echoes input.
+        expect(created.employerId).toBeNull();
+        expect(created.noWebsite).toBe(true);
+        // companyWebsite was not sent → server has nothing to echo. The
+        // read-side projection treats absence as `null` (mapEmploymentNode
+        // coerces missing/null wire scalars to `null`).
+        expect(created.companyWebsite).toBeNull();
+
+        // Read back via show() — THE persistence assertion. The
+        // noWebsite:true signal persists; the inferred contract holds.
+        const shown = await profile.employment.show(token, created.id);
+        expect(shown.id).toBe(created.id);
+        expect(shown.company).toBe(customName);
+        // THE #484 contract — leg 2 (persistence):
+        // With noWebsite:true as the sole anchor, the row persists with
+        // `employerId: null` AND `noWebsite: true` AND `companyWebsite: null`.
+        expect(shown.employerId).toBeNull();
+        expect(shown.noWebsite).toBe(true);
+        expect(shown.companyWebsite).toBeNull();
+
+        // ── update() OMITTED per Toptal-side WORM limitation ──
+        // Per the #401 sibling's investigation, custom workplaces
+        // (CreateEmployment with `employerId: null`) cannot be updated
+        // via talent-profile (see `research/notes/15-employment-custom-workplace-worm.md`).
+      } catch (err) {
+        if (err !== null && typeof err === "object" && "code" in err) {
+          const code = (err as { code?: unknown; message?: unknown }).code;
+          const msg = (err as { message?: unknown }).message;
+          if (code === "USER_ERROR" && typeof msg === "string" && /employerId/i.test(msg)) {
+            throw new Error(
+              `#484 CONTRACT VIOLATION: live CreateEmployment rejected employerId:null even with noWebsite:true as anchor: ${msg}. ` +
+                `The hypothesis that noWebsite:true alone satisfies the server's anchor requirement is FALSE. ` +
+                `Fix scope must downgrade from "add --no-website flag" to "error-remap only".`,
+              { cause: err },
+            );
+          }
+        }
+        throw err;
+      } finally {
+        if (createdId !== undefined) {
+          await profile.employment.remove(token, createdId);
+        }
+      }
+    },
+  );
+});

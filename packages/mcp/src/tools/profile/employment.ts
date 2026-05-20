@@ -44,7 +44,10 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         "The `company` string is resolved to the server-side `employerId` via the employer-autocomplete catalog: " +
         "0 matches or 2+ matches return a VALIDATION_ERROR with disambiguation guidance. Pass an explicit `employerId` to " +
         "bypass autocomplete entirely. Set `noEmployer: true` for a custom (non-catalog) workplace — sends the free-text " +
-        "`company` with employerId:null and skips autocomplete (orthogonal to `website`; cannot be combined with `employerId`). " +
+        "`company` with employerId:null and skips autocomplete (cannot be combined with `employerId`). " +
+        "On the `noEmployer:true` path the Toptal server requires an anchor: pass EITHER `website` (a URL) OR " +
+        "`noWebsite: true` (the explicit no-website signal). Without either, the server rejects the row with " +
+        "`USER_ERROR: employerId: You can't leave this empty` (#484 — settled by `45-profile-employment-add.e2e.test.ts`). " +
         "`industryIds` (at least one required) attaches catalog industries to the entry — " +
         "discover ids via `ttctl_profile_industries_autocomplete`. " +
         "Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
@@ -67,16 +70,33 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .describe(
             'Catalog Industry ids (at least one required). Discover via `ttctl_profile_industries_autocomplete` or `ttctl profile industries autocomplete "<query>"`.',
           ),
+        skills: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("catalog Skill id"),
+              name: z.string().optional().describe("display name (optional; supplied verbatim if known)"),
+            }),
+          )
+          .optional()
+          .describe(
+            "Catalog skills to attach (optional). Discover ids via `ttctl_profile_skills_list`. Required on the live wire when `noEmployer: true` is set (#484); the catalog-employer path may inherit skills from the resolved Employer.",
+          ),
         noEmployer: z
           .boolean()
           .optional()
           .describe(
-            "custom (non-catalog) workplace: send the free-text `company` with employerId:null and skip the employer-autocomplete catalog. Orthogonal to `website`; cannot be combined with `employerId`.",
+            "custom (non-catalog) workplace: send the free-text `company` with employerId:null and skip the employer-autocomplete catalog. Cannot be combined with `employerId`. Requires either `website` (a URL) or `noWebsite: true` per the #484 CREATE-side anchor contract.",
           ),
         from: dateInput.optional().describe("start date — ISO-8601 or year"),
         to: dateInput.optional().describe("end date — ISO-8601 or year"),
         current: z.boolean().optional().describe("mark as current position (no end date)"),
-        website: z.url().optional().describe("company website"),
+        website: z.url().optional().describe("company website (mutually exclusive with `noWebsite: true`)"),
+        noWebsite: z
+          .boolean()
+          .optional()
+          .describe(
+            "explicit no-website signal (#484): required with `noEmployer: true` when `website` is not supplied — the Toptal server rejects custom workplaces with neither anchor. Mutually exclusive with `website`.",
+          ),
         description: z
           .string()
           .optional()
@@ -110,12 +130,37 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         return presentToolError("profile.employment.add", err);
       }
       if (input.current === true) fields.endDate = null;
+      // Anchor handling (#484): `website` and `noWebsite` are the two
+      // anchor signals required on the `noEmployer:true` path. They are
+      // mutually exclusive — the wire's `EmploymentInput` expresses no
+      // website by sending `companyWebsite: null` together with
+      // `noWebsite: true`, and (a URL with `noWebsite: true`) would be
+      // a contradictory shape. Refuse client-side; otherwise core's
+      // anchor validator will throw with a less specific message.
+      if (input.website !== undefined && input.noWebsite === true) {
+        return presentToolError(
+          "profile.employment.add",
+          new profile.basic.ProfileError(
+            "VALIDATION_ERROR",
+            "profile.employment.add: `website` and `noWebsite: true` are mutually exclusive. Supply one or the other.",
+          ),
+        );
+      }
       if (input.website !== undefined) {
         fields.companyWebsite = input.website;
         fields.noWebsite = false;
+      } else if (input.noWebsite === true) {
+        fields.noWebsite = true;
       }
       if (input.description !== undefined) {
         fields.experienceItems = splitParagraphs(input.description);
+      }
+      // #484: surface `skills` so the noEmployer path can satisfy the
+      // live wire's `skills: [≥1 SkillRefInput]` requirement. Caller
+      // supplies catalog ids (discoverable via `ttctl_profile_skills_list`);
+      // the `name` field is optional and passed verbatim when supplied.
+      if (input.skills !== undefined) {
+        fields.skills = input.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));
       }
 
       // Per-#395: dry-run path is delegated to the core service so the
