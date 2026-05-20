@@ -68,6 +68,8 @@
 
 import type { z } from "zod";
 
+import { buildDryRunPreview } from "../../transport.js";
+import type { DryRunPreview } from "../../transport.js";
 import { callGatewayShared } from "../_shared/transport.js";
 import type { GraphQLErrorEntry } from "../profile/shared.js";
 
@@ -90,6 +92,7 @@ export type ApplicationsErrorCode =
   | "NO_VIEWER"
   | "NOT_FOUND"
   | "GRAPHQL_ERROR"
+  | "MUTATION_ERROR"
   | "NETWORK_ERROR"
   | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
@@ -230,6 +233,209 @@ export interface FixedRate {
   decimal: string;
   verbose: string;
 }
+
+/**
+ * `AvailabilityRequestKindEnum` values (#411). **INFERRED — UNVERIFIED**
+ * from the synthesized schema, which declares the enum as `_UNKNOWN` (line
+ * 2729 of `../research/graphql/gateway/schema.graphql` — "values not
+ * statically extractable; observe via API responses"). The three values
+ * exposed here mirror the three `AvailabilityRequest.metadata` union
+ * variants:
+ *
+ *   - `FIXED` ← `AvailabilityRequestFixedMetadata` (recruiter pinned a
+ *     hard hourly rate; the captured Fixed rate from #410)
+ *   - `FLEXIBLE` ← `AvailabilityRequestFlexibleMetadata` (rate negotiable)
+ *   - `MARKETPLACE_FLEXIBLE` ← `MarketplaceAvailabilityRequestFlexibleMetadata`
+ *
+ * Live E2E verification (`packages/e2e/src/44-applications-confirm.e2e.test.ts`)
+ * is the authority on which spellings the gateway actually accepts. If
+ * the wire rejects a value with an UNKNOWN_ENUM_VALUE GraphQL error, the
+ * literal here is the place to fix.
+ *
+ * The {@link confirm} service auto-detects the kind from the
+ * AR's metadata `__typename` when {@link ConfirmInput.kind} is omitted,
+ * so callers without explicit knowledge of the enum spelling can still
+ * confirm correctly.
+ */
+export type AvailabilityRequestKind = "FIXED" | "FLEXIBLE" | "MARKETPLACE_FLEXIBLE";
+
+export const AVAILABILITY_REQUEST_KINDS: readonly AvailabilityRequestKind[] = [
+  "FIXED",
+  "FLEXIBLE",
+  "MARKETPLACE_FLEXIBLE",
+] as const;
+
+/**
+ * One row of `PlatformConfiguration.availabilityRequestRejectReasonsV3.{fixed,flexible}`.
+ * The `key` is the wire-side `rejectReason` value the talent must pass
+ * when declining an IR. `value` is the human-readable label the portal
+ * renders next to the radio button. `customPlaceholder` is the
+ * placeholder text the portal shows in the free-text comment box when
+ * this reason is selected (server-localised). `isMandatory` indicates
+ * whether the comment is required for this reason (`true` → talent
+ * must accompany the decline with a free-text note).
+ */
+export interface AvailabilityRequestRejectReason {
+  key: string;
+  value: string;
+  customPlaceholder: string | null;
+  isMandatory: boolean;
+}
+
+/**
+ * Reject-reason inventory split by AR kind (`PlatformConfiguration
+ * .availabilityRequestRejectReasonsV3` shape). The portal renders only
+ * the slice matching the AR's `kind`; client code should likewise pick
+ * the slice that matches the AR being declined.
+ */
+export interface AvailabilityRequestRejectReasons {
+  /** Reasons valid for Fixed-kind ARs (recruiter pinned a rate). */
+  fixed: AvailabilityRequestRejectReason[];
+  /** Reasons valid for Flexible-kind ARs (incl. marketplace flexible). */
+  flexible: AvailabilityRequestRejectReason[];
+}
+
+/**
+ * Per-mutation option object for the dry-run short-circuit (issue #164
+ * pattern; sibling to `availability.DryRunOptions`). When `dryRun ===
+ * true`, the mutation builds a {@link DryRunPreview} and returns
+ * `{ kind: "preview", preview }` WITHOUT invoking the gateway transport
+ * — including any pre-fetch the apply path would normally issue
+ * (`confirm` may resolve `kind` from a `show(id)` pre-fetch when
+ * `ConfirmInput.kind` is omitted; under `dryRun`, that pre-fetch is
+ * skipped and the variable is filled with a placeholder string).
+ * Default `false` — the apply path runs and a `{ kind: "applied",
+ * result }` outcome is returned.
+ */
+export interface DryRunOptions {
+  /**
+   * When `true`, short-circuit before any transport call and return a
+   * {@link DryRunPreview}-bearing outcome instead of executing the
+   * mutation. Default: `false` — normal apply path.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * Echo shape returned by {@link confirm} and {@link reject} (#411).
+ * Carries the post-mutation AR state with the fields the trimmed mobile
+ * selection set extends over the captured operations
+ * (`ConfirmAvailabilityRequest`, `RejectAvailabilityRequest`):
+ *
+ *   - `id`, `answeredAt`, `statusV2` — from the captured selections
+ *   - `talentComment`, `requestedHourlyRate`, `rejectReason` — extended
+ *     here so callers (CLI / MCP) can render a meaningful confirmation
+ *     of "what was sent to the server" without an extra round-trip
+ *
+ * The wire-side type is `AvailabilityRequest`; this projection picks
+ * only the fields we surface. Live E2E
+ * (`packages/e2e/src/44-applications-confirm.e2e.test.ts`,
+ * `45-applications-reject.e2e.test.ts`) is the authority on the
+ * extended selection — the schema declares `talentComment: String!`
+ * (line 819) and `requestedHourlyRate: Money!` (line 817), and
+ * `rejectReason: Unknown` (line 816, schema gap — treated as `string |
+ * null` at the projection layer until the live wire pins the shape).
+ */
+export interface AvailabilityRequestRespondPayload {
+  id: string;
+  answeredAt: string | null;
+  statusV2: ApplicationStatus;
+  talentComment: string | null;
+  requestedHourlyRate: { decimal: string; verbose: string } | null;
+  rejectReason: string | null;
+}
+
+/**
+ * Input for {@link confirm}. The wire mutation's input takes
+ * `talentComment, matcherQuestionsAnswers, expertiseQuestionsAnswers,
+ * pitchData, requestedHourlyRate, kind` (per
+ * `../research/graphql/gateway/operations/mobile/ConfirmAvailabilityRequest.graphql`).
+ *
+ * - `requestedHourlyRate` is **REQUIRED** by the wire (`BigDecimal!`).
+ *   When omitted, the service auto-fills from the AR's
+ *   `metadata.offeredHourlyRate` (the recruiter-pinned Fixed rate); when
+ *   the AR has no Fixed-metadata variant (i.e., the AR kind is
+ *   `FLEXIBLE` or `MARKETPLACE_FLEXIBLE`) the caller MUST supply a rate
+ *   explicitly — the service throws `MUTATION_ERROR` if neither is
+ *   available.
+ * - `kind` is **REQUIRED** by the wire
+ *   (`AvailabilityRequestKindEnum!`). When omitted, the service
+ *   auto-detects from the AR's `metadata.__typename`. INFERRED — see
+ *   {@link AvailabilityRequestKind} for the value spellings.
+ * - `comment` (optional) — the talent's free-text accompanying message.
+ *   Mapped to the wire's `talentComment` field.
+ * - `matcherQuestionsAnswers`, `expertiseQuestionsAnswers`, `pitchData`
+ *   (optional) — structural inputs for AR confirmations that require
+ *   matcher / expertise question answers or a custom pitch. These are
+ *   wire pass-throughs; the service does NOT introspect them. v1
+ *   exposes them as `unknown` arrays — callers passing them are
+ *   responsible for the wire shape (`JobPositionAnswerInput[]`,
+ *   `JobExpertiseAnswerInput[]`, `PitchInput`).
+ */
+export interface ConfirmInput {
+  /** Optional talent-side free-text message. Wire field: `talentComment`. */
+  comment?: string;
+  /** Hourly rate the talent requests for this engagement. Decimal string (matches `BigDecimal!`). Auto-filled from the AR's Fixed metadata when omitted. */
+  requestedHourlyRate?: string;
+  /** AR kind. Auto-detected from `metadata.__typename` when omitted. INFERRED enum values — see {@link AvailabilityRequestKind}. */
+  kind?: AvailabilityRequestKind;
+  /** Optional matcher-questions answers (`JobPositionAnswerInput[]`). v1: opaque pass-through. */
+  matcherQuestionsAnswers?: unknown[];
+  /** Optional expertise-questions answers (`JobExpertiseAnswerInput[]`). v1: opaque pass-through. */
+  expertiseQuestionsAnswers?: unknown[];
+  /** Optional pitch input (`PitchInput`). v1: opaque pass-through. */
+  pitchInput?: Record<string, unknown>;
+}
+
+/**
+ * Input for {@link reject}. The wire mutation's input takes
+ * `talentComment, rejectReason` (per
+ * `../research/graphql/gateway/operations/mobile/RejectAvailabilityRequest.graphql`).
+ *
+ * - `reason` is **REQUIRED** — the wire `rejectReason: String!` field.
+ *   Pass a `key` from {@link rejectReasons} (e.g. `"rate_too_low"`).
+ *   The service does NOT validate the key against the inventory at
+ *   call time; the wire rejects unknown keys with a top-level GraphQL
+ *   error.
+ * - `comment` (optional) — talent free-text. Wire field: `talentComment`.
+ *   When the chosen `reason` has `isMandatory: true`, the wire requires
+ *   a non-empty comment.
+ */
+export interface RejectInput {
+  /** Wire `rejectReason` string key (from {@link rejectReasons}). */
+  reason: string;
+  /** Optional accompanying free-text. Wire field: `talentComment`. */
+  comment?: string;
+}
+
+/**
+ * Apply-path outcome for {@link confirm} / {@link reject}. Carries the
+ * post-mutation AR projection in `result`; the discriminant `kind:
+ * "applied"` distinguishes apply from dry-run preview.
+ */
+export interface AvailabilityRequestAppliedOutcome {
+  kind: "applied";
+  result: AvailabilityRequestRespondPayload;
+}
+
+/**
+ * Dry-run outcome shared by `confirm` and `reject` (#411). Mirrors the
+ * `availability.AvailabilityDryRunPreviewOutcome` pattern.
+ */
+export interface AvailabilityRequestDryRunPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link confirm}.
+ */
+export type ConfirmOutcome = AvailabilityRequestAppliedOutcome | AvailabilityRequestDryRunPreviewOutcome;
+
+/**
+ * Discriminated-union return type for {@link reject}.
+ */
+export type RejectOutcome = AvailabilityRequestAppliedOutcome | AvailabilityRequestDryRunPreviewOutcome;
 
 /**
  * One row in the activity list — the CLI's `applications list` and the
@@ -638,6 +844,32 @@ async function callGateway<T extends { viewer: { id: string } | null }>(
 }
 
 /**
+ * Sibling of {@link callGateway} for IR write-side ops whose response
+ * root is `availabilityRequest` (confirm / reject mutations) or
+ * `platformConfiguration` (reject-reasons query) — both are
+ * top-level Query / Mutation fields that DO NOT carry a `viewer`
+ * wrapper. The shared `requireViewer: true` check would always fail
+ * on these shapes. Used only by the #411 write-side ops; existing
+ * read-side ops keep the viewer-required wrapper.
+ */
+async function callGatewayNoViewer<T>(
+  token: string,
+  operationName: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  return callGatewayShared<T, ApplicationsError>(
+    "mobile-gateway",
+    token,
+    operationName,
+    query,
+    variables,
+    ApplicationsError,
+    {},
+  );
+}
+
+/**
  * List the signed-in user's job activity items (applications,
  * availability requests, interviews, engagements).
  *
@@ -792,4 +1024,509 @@ export async function stats(token: string): Promise<ApplicationsStats> {
   );
   const total = groupResults.reduce((sum, g) => sum + g.count, 0);
   return { total, groups: groupResults };
+}
+
+// ---------------------------------------------------------------------
+// Interest Request write-side ops (#411) — `confirm` / `reject` /
+// `rejectReasons`. All three are HAND-AUTHORED inline strings, NOT
+// codegen-driven:
+//
+//   - `ConfirmAvailabilityRequest` and `RejectAvailabilityRequest` are
+//     listed in `codegen.config.ts`'s `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`
+//     (lines 222, 259). They reference `AvailabilityRequestKindEnum`
+//     (the schema-gap enum `_UNKNOWN`) and the inferred input shape;
+//     codegen refuses to emit types for them.
+//   - `AvailabilityRequestRejectReasons` is a NEW minimal query (mobile-
+//     side, not in research/graphql today). It selects only
+//     `platformConfiguration.availabilityRequestRejectReasonsV3` —
+//     the trimmed cousin of the portal's heavy `GetPlatformConfiguration`.
+//     New ops follow the inline-string convention pinned by the
+//     applications module precedent (`JobActivityItems` / `JobActivityItem`).
+//
+// CLAUDE.md schema/contract validation rule TRIGGERED for this file.
+// The gated E2E tests at `packages/e2e/src/{44,45,46}-applications-*.e2e.test.ts`
+// are the wire-shape authority. Track 1 disposition (snapshots, not
+// codegen-Zod) per the hybrid wire-validation model: all three ops are
+// excluded from codegen, so no generated Zod schema exists.
+// ---------------------------------------------------------------------
+
+const CONFIRM_AVAILABILITY_REQUEST_MUTATION = `mutation ConfirmAvailabilityRequest($id: ID!, $comment: String, $matcherQuestionsAnswers: [JobPositionAnswerInput!], $expertiseQuestionsAnswers: [JobExpertiseAnswerInput!], $requestedHourlyRate: BigDecimal!, $pitchInput: PitchInput, $kind: AvailabilityRequestKindEnum!) {
+  availabilityRequest(id: $id) {
+    __typename
+    confirm(input: {
+      talentComment: $comment
+      matcherQuestionsAnswers: $matcherQuestionsAnswers
+      expertiseQuestionsAnswers: $expertiseQuestionsAnswers
+      pitchData: $pitchInput
+      requestedHourlyRate: $requestedHourlyRate
+      kind: $kind
+    }) {
+      __typename
+      success
+      errors { __typename code key message }
+      availabilityRequest {
+        __typename
+        id
+        answeredAt
+        statusV2 { __typename value verbose }
+        talentComment
+        requestedHourlyRate { __typename decimal verbose }
+        rejectReason
+      }
+    }
+  }
+}`;
+
+const REJECT_AVAILABILITY_REQUEST_MUTATION = `mutation RejectAvailabilityRequest($id: ID!, $reason: String!, $comment: String) {
+  availabilityRequest(id: $id) {
+    __typename
+    reject(input: {
+      talentComment: $comment
+      rejectReason: $reason
+    }) {
+      __typename
+      success
+      errors { __typename code key message }
+      availabilityRequest {
+        __typename
+        id
+        answeredAt
+        statusV2 { __typename value verbose }
+        talentComment
+        requestedHourlyRate { __typename decimal verbose }
+        rejectReason
+      }
+    }
+  }
+}`;
+
+const AVAILABILITY_REQUEST_REJECT_REASONS_QUERY = `query AvailabilityRequestRejectReasons {
+  platformConfiguration {
+    __typename
+    id
+    availabilityRequestRejectReasonsV3 {
+      __typename
+      fixed { __typename key value customPlaceholder isMandatory }
+      flexible { __typename key value customPlaceholder isMandatory }
+    }
+  }
+}`;
+
+// Query to resolve the AR `kind` from its metadata `__typename` when
+// the caller of `confirm()` omits `ConfirmInput.kind`. Minimal selection
+// — id + metadata typename + offeredHourlyRate for the Fixed-kind
+// rate-default. This is a separate hand-authored query (NOT
+// `AvailabilityRequest($id)` which is in `KNOWN_UNTRUSTED_OPS` because
+// it selects subfields on `Unknown`-typed positions). Renamed
+// (`GetAvailabilityRequestKind`) to avoid the operation-name collision
+// with the captured-but-untrusted op.
+const GET_AVAILABILITY_REQUEST_KIND_QUERY = `query GetAvailabilityRequestKind($id: ID!) {
+  viewer {
+    __typename
+    id
+    availabilityRequest(id: $id) {
+      __typename
+      id
+      metadata {
+        __typename
+        ... on AvailabilityRequestFixedMetadata {
+          __typename
+          offeredHourlyRate { __typename decimal verbose }
+        }
+        ... on AvailabilityRequestFlexibleMetadata { __typename }
+        ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
+      }
+    }
+  }
+}`;
+
+interface MutationResultErrors {
+  code?: string | null;
+  key?: string | null;
+  message?: string | null;
+}
+
+interface AvailabilityRequestRespondWire {
+  id: string;
+  answeredAt: string | null;
+  statusV2: ApplicationStatus;
+  talentComment: string | null;
+  requestedHourlyRate: { decimal: string; verbose: string } | null;
+  rejectReason: string | null;
+}
+
+interface AvailabilityRequestOpsPayloadWire {
+  success: boolean;
+  errors: MutationResultErrors[] | null;
+  availabilityRequest: AvailabilityRequestRespondWire | null;
+}
+
+interface ConfirmAvailabilityRequestResponse {
+  availabilityRequest: {
+    confirm: AvailabilityRequestOpsPayloadWire | null;
+  } | null;
+}
+
+interface RejectAvailabilityRequestResponse {
+  availabilityRequest: {
+    reject: AvailabilityRequestOpsPayloadWire | null;
+  } | null;
+}
+
+interface AvailabilityRequestRejectReasonsResponse {
+  platformConfiguration: {
+    id: string;
+    availabilityRequestRejectReasonsV3: {
+      fixed: AvailabilityRequestRejectReason[] | null;
+      flexible: AvailabilityRequestRejectReason[] | null;
+    } | null;
+  } | null;
+}
+
+type FixedMetadataKindWire = {
+  __typename: "AvailabilityRequestFixedMetadata";
+  offeredHourlyRate: { decimal: string; verbose: string };
+};
+
+type FlexibleMetadataKindWire = {
+  __typename: "AvailabilityRequestFlexibleMetadata";
+};
+
+type MarketplaceFlexibleMetadataKindWire = {
+  __typename: "MarketplaceAvailabilityRequestFlexibleMetadata";
+};
+
+type AvailabilityRequestKindMetadataWire =
+  | FixedMetadataKindWire
+  | FlexibleMetadataKindWire
+  | MarketplaceFlexibleMetadataKindWire;
+
+interface GetAvailabilityRequestKindResponse {
+  viewer: {
+    id: string;
+    availabilityRequest: {
+      id: string;
+      metadata: AvailabilityRequestKindMetadataWire | null;
+    } | null;
+  } | null;
+}
+
+function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | null | undefined): string {
+  if (errors == null || errors.length === 0) {
+    return `${prefix}: no error detail returned.`;
+  }
+  const parts = errors.map((e) => {
+    const fields: string[] = [];
+    if (e.code != null) fields.push(`code=${e.code}`);
+    if (e.key != null) fields.push(`key=${e.key}`);
+    const head = fields.length > 0 ? `[${fields.join(", ")}] ` : "";
+    return `${head}${e.message ?? "(no message)"}`;
+  });
+  return `${prefix}: ${parts.join("; ")}`;
+}
+
+function projectRespondPayload(wire: AvailabilityRequestRespondWire): AvailabilityRequestRespondPayload {
+  return {
+    id: wire.id,
+    answeredAt: wire.answeredAt,
+    statusV2: wire.statusV2,
+    talentComment: wire.talentComment,
+    requestedHourlyRate:
+      wire.requestedHourlyRate === null
+        ? null
+        : { decimal: wire.requestedHourlyRate.decimal, verbose: wire.requestedHourlyRate.verbose },
+    rejectReason: wire.rejectReason,
+  };
+}
+
+/**
+ * Map an AR metadata `__typename` to the INFERRED
+ * {@link AvailabilityRequestKind} enum value. Returns `null` when the
+ * typename is not one of the three known variants — defensive: callers
+ * fall back to throwing rather than guessing.
+ */
+function kindFromMetadataTypename(typename: string | null | undefined): AvailabilityRequestKind | null {
+  switch (typename) {
+    case "AvailabilityRequestFixedMetadata":
+      return "FIXED";
+    case "AvailabilityRequestFlexibleMetadata":
+      return "FLEXIBLE";
+    case "MarketplaceAvailabilityRequestFlexibleMetadata":
+      return "MARKETPLACE_FLEXIBLE";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve `kind` and (when Fixed) the default `requestedHourlyRate`
+ * from the AR's metadata. Called by {@link confirm} when the caller
+ * omits either field. Single dedicated query — avoids reusing the
+ * untrusted `AvailabilityRequest($id)` op.
+ *
+ * Returns `null` when the AR doesn't resolve (analogous to
+ * `show()`'s NOT_FOUND); the caller surfaces a typed error.
+ */
+async function resolveConfirmDefaults(
+  token: string,
+  id: string,
+): Promise<{ kind: AvailabilityRequestKind; defaultRate: string | null } | null> {
+  let data: GetAvailabilityRequestKindResponse;
+  try {
+    data = await callGateway<GetAvailabilityRequestKindResponse>(
+      token,
+      "GetAvailabilityRequestKind",
+      GET_AVAILABILITY_REQUEST_KIND_QUERY,
+      { id },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      return null;
+    }
+    throw err;
+  }
+  if (data.viewer === null || data.viewer.availabilityRequest === null) {
+    return null;
+  }
+  const metadata = data.viewer.availabilityRequest.metadata;
+  const kind = kindFromMetadataTypename(metadata?.__typename ?? null);
+  if (kind === null) {
+    throw new ApplicationsError(
+      "WIRE_SHAPE_ERROR",
+      `AvailabilityRequest "${id}" returned an unknown metadata typename: ${metadata?.__typename ?? "null"}.`,
+    );
+  }
+  const defaultRate =
+    metadata !== null && metadata.__typename === "AvailabilityRequestFixedMetadata"
+      ? metadata.offeredHourlyRate.decimal
+      : null;
+  return { kind, defaultRate };
+}
+
+/**
+ * Confirm an Interest Request — wire `ConfirmAvailabilityRequest` (#411).
+ *
+ * - `id` is the **`AvailabilityRequest.id`** (NOT the
+ *   `TalentJobActivityItem.id`). Activity-item callers should chain via
+ *   `show(token, activityId).availabilityRequest?.id` or
+ *   `list(...).items[].availabilityRequest?.id`.
+ * - When {@link ConfirmInput.kind} is omitted, the service issues a
+ *   `GetAvailabilityRequestKind($id)` pre-fetch to resolve the kind
+ *   from the AR's metadata `__typename`. When the AR is Fixed-kind and
+ *   `requestedHourlyRate` is also omitted, the pre-fetch additionally
+ *   supplies the recruiter's offered rate as the default.
+ * - When the AR is Flexible / MarketplaceFlexible AND
+ *   `requestedHourlyRate` is omitted, throws
+ *   `MUTATION_ERROR("requestedHourlyRate is required for FLEXIBLE/MARKETPLACE_FLEXIBLE
+ *   ARs — pass an explicit rate")`.
+ *
+ * Dry-run path (`options.dryRun === true`): skips the pre-fetch
+ * entirely and emits a {@link DryRunPreview} with placeholder strings
+ * for any fields that would have been resolved live. Matches the
+ * `availability.workingHours.set` skipped-prefetch pattern.
+ *
+ * Bad-id behavior (per project auto-memory `project_toptal_wire_quirks.md`):
+ * mutations against bad ids return HTTP 500. The service does NOT
+ * pre-validate id existence; callers see `GRAPHQL_ERROR` and may
+ * recover by issuing a `show()` first.
+ *
+ * Throws `MUTATION_ERROR` when the gateway responds with
+ * `success: false` (validation failure, e.g. already-confirmed AR,
+ * unknown enum value, malformed BigDecimal).
+ */
+export async function confirm(
+  token: string,
+  id: string,
+  input: ConfirmInput = {},
+  options: DryRunOptions = {},
+): Promise<ConfirmOutcome> {
+  if (options.dryRun === true) {
+    // Skip the pre-fetch entirely (zero transport calls under dry-run)
+    // and emit a preview with placeholders for unresolved fields. The
+    // wire SHAPE (operation + variable types + nullness) is verbatim;
+    // only the resolved values differ.
+    const previewVariables: Record<string, unknown> = {
+      id,
+      comment: input.comment ?? null,
+      matcherQuestionsAnswers: input.matcherQuestionsAnswers ?? null,
+      expertiseQuestionsAnswers: input.expertiseQuestionsAnswers ?? null,
+      requestedHourlyRate: input.requestedHourlyRate ?? "<resolved at apply time>",
+      pitchInput: input.pitchInput ?? null,
+      kind: input.kind ?? "<resolved at apply time>",
+    };
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "ConfirmAvailabilityRequest",
+          query: CONFIRM_AVAILABILITY_REQUEST_MUTATION,
+          variables: previewVariables,
+        },
+      }),
+    };
+  }
+
+  // Resolve kind + defaultRate if either is missing. Pre-fetch is
+  // skipped when both are supplied — fewer round-trips for advanced
+  // callers.
+  let kind = input.kind;
+  let requestedHourlyRate = input.requestedHourlyRate;
+  if (kind === undefined || requestedHourlyRate === undefined) {
+    const defaults = await resolveConfirmDefaults(token, id);
+    if (defaults === null) {
+      throw new ApplicationsError(
+        "NOT_FOUND",
+        `No availability request found with id "${id}" (or you don't have access to it).`,
+      );
+    }
+    if (kind === undefined) kind = defaults.kind;
+    if (requestedHourlyRate === undefined) {
+      if (defaults.defaultRate === null) {
+        throw new ApplicationsError(
+          "MUTATION_ERROR",
+          `requestedHourlyRate is required for ${kind} AvailabilityRequests — pass an explicit rate.`,
+        );
+      }
+      requestedHourlyRate = defaults.defaultRate;
+    }
+  }
+
+  const variables: Record<string, unknown> = {
+    id,
+    comment: input.comment ?? null,
+    matcherQuestionsAnswers: input.matcherQuestionsAnswers ?? null,
+    expertiseQuestionsAnswers: input.expertiseQuestionsAnswers ?? null,
+    requestedHourlyRate,
+    pitchInput: input.pitchInput ?? null,
+    kind,
+  };
+
+  const data = await callGatewayNoViewer<ConfirmAvailabilityRequestResponse>(
+    token,
+    "ConfirmAvailabilityRequest",
+    CONFIRM_AVAILABILITY_REQUEST_MUTATION,
+    variables,
+  );
+  if (data.availabilityRequest === null || data.availabilityRequest.confirm === null) {
+    throw new ApplicationsError("UNKNOWN", "ConfirmAvailabilityRequest returned a null payload.");
+  }
+  const payload = data.availabilityRequest.confirm;
+  if (!payload.success) {
+    throw new ApplicationsError(
+      "MUTATION_ERROR",
+      formatMutationErrors("ConfirmAvailabilityRequest failed", payload.errors),
+    );
+  }
+  if (payload.availabilityRequest === null) {
+    throw new ApplicationsError(
+      "UNKNOWN",
+      "ConfirmAvailabilityRequest returned success but the availabilityRequest echo was null.",
+    );
+  }
+  return { kind: "applied", result: projectRespondPayload(payload.availabilityRequest) };
+}
+
+/**
+ * Reject an Interest Request — wire `RejectAvailabilityRequest` (#411).
+ *
+ * - `id` is the **`AvailabilityRequest.id`** (same as {@link confirm}).
+ * - `input.reason` is the `key` from {@link rejectReasons}. The
+ *   service does NOT validate the key locally; the wire rejects
+ *   unknown keys with a top-level GraphQL error.
+ * - `input.comment` is optional; required by the wire only when the
+ *   chosen reason has `isMandatory: true`. The service does not
+ *   pre-validate (cheaper to let the wire be the authority).
+ *
+ * Dry-run path (`options.dryRun === true`): emits a {@link DryRunPreview}
+ * without invoking the gateway. No pre-fetch is performed in any path
+ * (reject does not need to resolve kind / rate).
+ *
+ * Throws `MUTATION_ERROR` on `success: false`.
+ */
+export async function reject(
+  token: string,
+  id: string,
+  input: RejectInput,
+  options: DryRunOptions = {},
+): Promise<RejectOutcome> {
+  const variables: Record<string, unknown> = {
+    id,
+    reason: input.reason,
+    comment: input.comment ?? null,
+  };
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "RejectAvailabilityRequest",
+          query: REJECT_AVAILABILITY_REQUEST_MUTATION,
+          variables,
+        },
+      }),
+    };
+  }
+  const data = await callGatewayNoViewer<RejectAvailabilityRequestResponse>(
+    token,
+    "RejectAvailabilityRequest",
+    REJECT_AVAILABILITY_REQUEST_MUTATION,
+    variables,
+  );
+  if (data.availabilityRequest === null || data.availabilityRequest.reject === null) {
+    throw new ApplicationsError("UNKNOWN", "RejectAvailabilityRequest returned a null payload.");
+  }
+  const payload = data.availabilityRequest.reject;
+  if (!payload.success) {
+    throw new ApplicationsError(
+      "MUTATION_ERROR",
+      formatMutationErrors("RejectAvailabilityRequest failed", payload.errors),
+    );
+  }
+  if (payload.availabilityRequest === null) {
+    throw new ApplicationsError(
+      "UNKNOWN",
+      "RejectAvailabilityRequest returned success but the availabilityRequest echo was null.",
+    );
+  }
+  return { kind: "applied", result: projectRespondPayload(payload.availabilityRequest) };
+}
+
+/**
+ * Fetch the IR decline-reason inventory from
+ * `Query.platformConfiguration.availabilityRequestRejectReasonsV3`.
+ *
+ * Returns `{ fixed, flexible }` arrays — the portal renders only the
+ * slice matching the AR's `kind`. Callers should likewise pick the
+ * slice that matches the AR being declined.
+ *
+ * Empty arrays (no reasons of that kind) are surfaced verbatim.
+ * Throws `WIRE_SHAPE_ERROR` if the platform config is absent (the
+ * field is non-null in the schema; absence is wire-shape drift).
+ */
+export async function rejectReasons(token: string): Promise<AvailabilityRequestRejectReasons> {
+  const data = await callGatewayNoViewer<AvailabilityRequestRejectReasonsResponse>(
+    token,
+    "AvailabilityRequestRejectReasons",
+    AVAILABILITY_REQUEST_REJECT_REASONS_QUERY,
+    {},
+  );
+  if (data.platformConfiguration === null || data.platformConfiguration.availabilityRequestRejectReasonsV3 === null) {
+    throw new ApplicationsError(
+      "WIRE_SHAPE_ERROR",
+      "PlatformConfiguration.availabilityRequestRejectReasonsV3 was null — schema declares non-null.",
+    );
+  }
+  const reasons = data.platformConfiguration.availabilityRequestRejectReasonsV3;
+  return {
+    fixed: reasons.fixed ?? [],
+    flexible: reasons.flexible ?? [],
+  };
 }

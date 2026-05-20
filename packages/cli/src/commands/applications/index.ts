@@ -8,7 +8,10 @@ import { applications } from "@ttctl/core";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
+import { runApplicationsConfirm } from "./confirm.js";
 import { runApplicationsList } from "./list.js";
+import { runApplicationsReject } from "./reject.js";
+import { runApplicationsRejectReasons } from "./reject-reasons.js";
 import { runApplicationsShow } from "./show.js";
 import { runApplicationsStats } from "./stats.js";
 
@@ -118,6 +121,80 @@ export function buildApplicationsCommand(): Command {
     )
     .action(async (options: { output: OutputFormat }) => {
       await runApplicationsStats(options.output);
+    });
+
+  // #411 — Interest Request write surface. Three leaves: confirm,
+  // reject, reject-reasons. The `<id>` argument on confirm / reject is
+  // the AvailabilityRequest id (NOT the activity-item id) — discover
+  // it via `applications show <activityId>` (look for the "Availability
+  // request: <id>" line).
+  cmd
+    .command("confirm")
+    .description("Confirm an Interest Request (DESTRUCTIVE — creates a JobApplication; no undo)")
+    .argument("<id>", "AvailabilityRequest id (NOT the activity-item id)", parseIdArg)
+    .option("-m, --message <text>", "optional talent free-text accompanying the confirmation")
+    .option(
+      "--rate <decimal>",
+      "requested hourly rate (decimal string, e.g. 80.00). Auto-filled from the AR's Fixed rate when omitted; required for FLEXIBLE / MARKETPLACE_FLEXIBLE ARs",
+    )
+    .addOption(
+      new Option("--kind <kind>", "AR kind (auto-detected from metadata when omitted)").choices([
+        ...applications.AVAILABILITY_REQUEST_KINDS,
+      ]),
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(
+      async (
+        id: string,
+        options: {
+          message?: string;
+          rate?: string;
+          kind?: applications.AvailabilityRequestKind;
+          output: OutputFormat;
+        },
+      ) => {
+        const runOpts: import("./confirm.js").ApplicationsConfirmOptions = { output: options.output };
+        if (options.message !== undefined) runOpts.message = options.message;
+        if (options.rate !== undefined) runOpts.rate = options.rate;
+        if (options.kind !== undefined) runOpts.kind = options.kind;
+        await runApplicationsConfirm(id, runOpts);
+      },
+    );
+
+  cmd
+    .command("reject")
+    .description("Reject an Interest Request (DESTRUCTIVE — terminal ARCHIVED state; no undo)")
+    .argument("<id>", "AvailabilityRequest id (NOT the activity-item id)", parseIdArg)
+    .requiredOption("--reason <key>", "decline reason key (see `applications reject-reasons` for the inventory)")
+    .option("-c, --comment <text>", "optional accompanying free-text (required for mandatory reasons)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { reason: string; comment?: string; output: OutputFormat }) => {
+      const runOpts: import("./reject.js").ApplicationsRejectOptions = {
+        reason: options.reason,
+        output: options.output,
+      };
+      if (options.comment !== undefined) runOpts.comment = options.comment;
+      await runApplicationsReject(id, runOpts);
+    });
+
+  cmd
+    .command("reject-reasons")
+    .description("List the Interest Request decline-reason inventory (server-localised; read-only)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runApplicationsRejectReasons(options.output);
     });
 
   return cmd;

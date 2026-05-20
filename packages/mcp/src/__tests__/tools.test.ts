@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (103 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 1 #371 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 3 #13 timesheet + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (107 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -92,9 +92,14 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_engagements_list",
       "ttctl_engagements_show",
       "ttctl_engagements_stats",
-      // #371 — interest_requests (1, LLM-agent affordance over the
-      // ON_RECRUITER_REVIEW projection of applications.list).
+      // #371 + #411 — interest_requests (4):
+      //   - list (#371): LLM-agent affordance over ON_RECRUITER_REVIEW
+      //   - accept/reject/reject_reasons (#411): IR write surface
+      // Order is alphabetical (the test sorts before comparing).
+      "ttctl_interest_requests_accept",
       "ttctl_interest_requests_list",
+      "ttctl_interest_requests_reject",
+      "ttctl_interest_requests_reject_reasons",
       // #148 — jobs (13, browse + interest + search subscription)
       "ttctl_jobs_clear_interest",
       "ttctl_jobs_list",
