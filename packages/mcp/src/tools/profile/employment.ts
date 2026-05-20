@@ -143,7 +143,9 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       title: "Update employment entry",
       description:
         "Update an existing employment entry by id. At least one field must be supplied. `description` is multi-paragraph free-text and splits on blank lines. " +
-        "`industryIds`, when supplied, replaces the entry's entire industry set (omit to preserve the current set) — discover ids via `ttctl_profile_industries_autocomplete`.",
+        "`industryIds`, when supplied, replaces the entry's entire industry set (omit to preserve the current set) — discover ids via `ttctl_profile_industries_autocomplete`. " +
+        "`publicationPermit`, `showViaToptal`, and `toptalRelated` are server-gated booleans that callers may explicitly override (#402); each carries a distinct server constraint — see per-field descriptions. " +
+        '`publicationPermit` is Rails `.blank?`-gated: the server rejects `false` with `USER_ERROR: "You can\'t leave this empty"`, so any update on a row currently at `false` requires passing `true` explicitly — otherwise the read-current+merge preserves the `false` and the wire rejects.',
       inputSchema: {
         id: z.string().min(1).describe("employment id (V1-Employment-NNN)"),
         company: z.string().optional(),
@@ -160,6 +162,24 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .optional()
           .describe(
             "Catalog Industry ids — when supplied, replaces the entry's industry set (partial update; omit to preserve). Discover via `ttctl_profile_industries_autocomplete`.",
+          ),
+        publicationPermit: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this entry is publicly listable. Rails `.blank?`-gated on the server (#402): the server rejects `false` with USER_ERROR. When supplied, overrides the merged current value; when omitted, current state is preserved (defaulting to `true` for null current). Updating any field on a row currently at `false` requires passing `true` explicitly to avoid the blank-gate USER_ERROR.",
+          ),
+        showViaToptal: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this entry was sourced via Toptal. Wire-required non-null (#344): the merge unconditionally sends the current value. When supplied, overrides the merged current value.",
+          ),
+        toptalRelated: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this entry is a Toptal-related engagement. Server-determined (#402 discovery 2026-05-20): the wire accepts any boolean input, but the server applies business logic (likely keyed on employer affiliation) and may override the supplied value on read. The override THROUGHPUT works (client → wire); the persisted state is server-determined regardless of caller input.",
           ),
         dryRun: DRY_RUN_FIELD,
       },
@@ -190,6 +210,23 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       // over the merge placeholder (dry-run) / current-state projection
       // (apply path, via `buildUpdateEmploymentInput`'s `...fields`).
       if (input.industryIds !== undefined) fields.industryIds = input.industryIds;
+      // #402 server-gate overrides. `publicationPermit` and `showViaToptal`
+      // participate in `buildUpdateEmploymentInput`'s merge (`{ ...merged,
+      // ...fields }`) — supplying either beats the current-state fallback,
+      // which is the rc.4-preserving behavior. `publicationPermit`
+      // specifically unblocks rows where the current value is `false` (the
+      // server's Rails `.blank?` gate rejects `false` on update with
+      // USER_ERROR).
+      //
+      // `toptalRelated` is NOT in `buildUpdateEmploymentInput`'s merged
+      // object — when supplied it lands directly on the wire payload via
+      // the `...fields` spread. The server applies its own business logic
+      // (per #402 empirical discovery 2026-05-20) and may override the
+      // supplied value on read; client-side throughput works, persisted
+      // state is server-determined.
+      if (input.publicationPermit !== undefined) fields.publicationPermit = input.publicationPermit;
+      if (input.showViaToptal !== undefined) fields.showViaToptal = input.showViaToptal;
+      if (input.toptalRelated !== undefined) fields.toptalRelated = input.toptalRelated;
 
       if (input.dryRun === true) {
         // Dry-run preview shows the full merged shape — the wire-required
