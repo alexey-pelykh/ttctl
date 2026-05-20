@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.7] - 2026-05-20
+
 ### Fixed
 
 - **`profile.employment.add --no-employer`: settle the CREATE-side
