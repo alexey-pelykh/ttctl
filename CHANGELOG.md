@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.6] - 2026-05-20
+
+### Added
+
+- **`profile.employment.update`: expose `publicationPermit` /
+  `showViaToptal` / `toptalRelated` params (Rails `.blank?` gate
+  fields) (#402)**. Extends #394's employment.update by exposing 3
+  optional boolean params on the MCP tool
+  `ttctl_profile_employment_update`. Unblocks updates on rows where
+  `publicationPermit` is currently `false` — the server's Rails
+  `.blank?` check rejects `false` as "blank", so the read-current+merge
+  path would re-send the rejected value without an explicit override.
+  Pattern mirrors the `industryIds` exposure from #403 (surface-only;
+  the core service's `EmploymentFields` already declared all 3 fields
+  and `buildUpdateEmploymentInput`'s `{ ...merged, ...fields }`
+  provides override semantics).
+  - **New surface — update (override-on-supply)**: MCP
+    `ttctl_profile_employment_update` gains `publicationPermit`,
+    `showViaToptal`, `toptalRelated` (all `z.boolean().optional()`).
+    When supplied, the user value overrides the merged current state;
+    when omitted, the rc.4 read-current+merge behavior is preserved
+    via the `undefined` guard.
+  - **Per-field server semantics** (empirical, captured 2026-05-20):
+    - `publicationPermit` — Rails `.blank?`-gated (the originating bug;
+      `false` rejected on update).
+    - `showViaToptal` — wire-required non-null (freely settable; already
+      in `buildUpdateEmploymentInput`'s `merged`).
+    - `toptalRelated` — server-determined (live API accepts any input
+      without error but returns its own determination — likely keyed on
+      whether `employerId` resolves to a Toptal-affiliated engagement).
+  - **Tool description**: documents the Rails `.blank?` gate behavior
+    and recommends explicit override on rows where the current value is
+    `false`. Per-field describe text differentiates the three server
+    semantics above.
+  - **Schema/contract rule**: NOT triggered — no file under
+    `packages/core/src/services/profile/**` changed; only the MCP tool
+    surface is modified. The core service's `EmploymentFields`
+    interface already declared all 3 fields and the merge/override path
+    already existed.
+  - **Track 1 vs Track 2**: T1 — `UpdateEmployment` is in
+    `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` per
+    `docs/wire-validation-routing.md`. The existing T1 snapshot at
+    `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json`
+    (captured 2026-05-19 in #394) remains valid — this PR alters input
+    shape only, not response shape. Live `TTCTL_E2E=1` coverage at
+    `packages/e2e/src/52-profile-employment-update-blank-gate-overrides.e2e.test.ts`
+    exercises all 3 AC scenarios (publicationPermit:true sentinel + minimal update merge succeeds; explicit `publicationPermit: false`
+    on update rejected with `USER_ERROR`; explicit `publicationPermit:
+true` override succeeds) plus sibling override-throughput proof for
+    `showViaToptal` and `toptalRelated`.
+
 ## [v0.1.0-rc.5] - 2026-05-20
 
 ### Added
