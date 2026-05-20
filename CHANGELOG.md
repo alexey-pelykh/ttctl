@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`profile.employment.add --no-employer`: settle the CREATE-side
+  anchor contract; expose `--no-website` / `noWebsite` parameter
+  (#484).** Reporter (rc.6 MCP) observed `USER_ERROR: employment add
+rejected (employerId): You can't leave this empty` when calling
+  `ttctl_profile_employment_add { noEmployer: true, ... }` WITHOUT a
+  `website` argument. The error message is misleading — the server's
+  Rails `.blank?` validator on `employer_id` fires only because the row
+  carries no other anchor signal. Empirical settlement (new E2E
+  `45-profile-employment-add.e2e.test.ts` #484 describe, live-passed
+  2026-05-20):
+  - `noEmployer:true + companyWebsite:"<url>" + noWebsite:false`
+    → SUCCESS (the existing #401 path).
+  - `noEmployer:true + noWebsite:true + companyWebsite:undefined`
+    → SUCCESS (newly settled — `noWebsite:true` alone is sufficient
+    anchor; no URL needed).
+  - `noEmployer:true + neither anchor` → server rejects with
+    `employerId: You can't leave this empty` (the reporter's case;
+    now refused client-side before the wire).
+  - **CLI surface**: `ttctl profile employment add` gains `--no-website`
+    (the explicit no-website signal). Commander's `--website <url>` and
+    `--no-website` are mutually exclusive — `options.website` becomes a
+    `string | false | undefined` union and `runAdd` discriminates.
+    Additionally exposes `--skill-id <id>` (repeatable, optional) so the
+    `--no-employer` path can satisfy the live wire's `skills: [≥1
+SkillRefInput]` requirement (cascade-of-required-fields per #395).
+    Discover skill ids via `ttctl profile skills list`.
+  - **MCP surface**: `ttctl_profile_employment_add` gains
+    `noWebsite: z.boolean().optional()` and a mutual-exclusion guard
+    with `website` (returns `VALIDATION_ERROR` when both are supplied).
+    Additionally exposes `skills: z.array(z.object({ id, name? }))` so
+    callers can satisfy the live wire's `skills: [≥1 SkillRefInput]`
+    requirement on the `noEmployer:true` path (previously the field was
+    declared on `@ttctl/core`'s `EmploymentFields` but not surfaced
+    through MCP). Discover via `ttctl_profile_skills_list`.
+  - **Core validation**: `add()` in
+    `packages/core/src/services/profile/employment/index.ts` now
+    refuses `noEmployer:true` without a `companyWebsite` URL OR
+    `noWebsite:true`, surfacing an actionable `VALIDATION_ERROR` that
+    names the missing flag and references the WORM note. Empty-string
+    and explicit-null `companyWebsite` are NOT anchors (covered by
+    dedicated unit tests).
+  - **Schema/contract rule**: TRIGGERED. The new
+    `noWebsite:true + companyWebsite:undefined` wire-shape permutation
+    was previously untested; settled by the new `#484` E2E describe in
+    `45-profile-employment-add.e2e.test.ts` (T1 — `CreateEmployment` is
+    in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`; shares the committed
+    `CreateEmployment.snapshot.json`). Live transcript:
+    `.tmp/484-e2e-noWebsite.log`.
+  - **Track 1 vs Track 2**: T1 (unchanged) —
+    `CreateEmployment` has no generated operation type. Wire-shape
+    snapshot shared across #395 / #401 / #484 (response shape
+    invariant; only the request permutations differ).
+  - **Documentation**: research note
+    `research/notes/15-employment-custom-workplace-worm.md` is a
+    sibling-repo artifact and remains accurate for the UPDATE-side
+    WORM. The CREATE-side anchor contract documented here will be
+    folded into that note in a follow-up research-repo update.
+
 ## [v0.1.0-rc.6] - 2026-05-20
 
 ### Added

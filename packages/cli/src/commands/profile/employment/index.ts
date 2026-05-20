@@ -59,6 +59,10 @@ export function buildProfileEmploymentCommand(): Command {
     .option("--current", "current position (no end date)", false)
     .option("--website <url>", "company website (optional)")
     .option(
+      "--no-website",
+      "explicit no-website signal — required with --no-employer when --website is not supplied (the server rejects custom workplaces with neither anchor; see #484)",
+    )
+    .option(
       "--employer-id <id>",
       "explicit employerId (bypasses autocomplete; use `ttctl profile employment employer-autocomplete <query>` to discover)",
     )
@@ -68,8 +72,13 @@ export function buildProfileEmploymentCommand(): Command {
       (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
     )
     .option(
+      "--skill-id <id>",
+      "catalog Skill id (repeatable; optional). Discover via `ttctl profile skills list`. Required on the live wire when --no-employer is set; the catalog-employer path may inherit skills from the resolved Employer.",
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
+    .option(
       "--no-employer",
-      "custom (non-catalog) workplace: send the free-text --company with employerId:null and skip the employer-autocomplete catalog (orthogonal to --website; cannot be combined with --employer-id)",
+      "custom (non-catalog) workplace: send the free-text --company with employerId:null and skip the employer-autocomplete catalog (cannot be combined with --employer-id; requires either --website or --no-website per the #484 CREATE-side anchor contract)",
     )
     .addOption(
       new Option("-o, --output <format>", "output format")
@@ -185,12 +194,19 @@ interface AddOptions {
   from?: string;
   to?: string;
   current: boolean;
-  website?: string;
+  // Commander's `--website <url>` + `--no-website` produces this union:
+  // - `string` when `--website https://...` is supplied
+  // - `false` when `--no-website` is supplied (explicit no-website signal, #484)
+  // - `undefined` when neither flag is present
+  // See `runAdd` for the discriminator.
+  website?: string | false;
   employerId?: string;
   industryId?: string[];
   // Commander maps `--no-employer` to `employer: false` (default true
   // when the flag is absent) — the custom-workplace signal (#401).
   employer: boolean;
+  // Catalog skill ids supplied via `--skill-id` (repeatable, #484).
+  skillId?: string[];
   output: OutputFormat;
 }
 
@@ -219,11 +235,20 @@ async function runAdd(options: AddOptions): Promise<void> {
   // `--no-employer` → Commander sets `options.employer` false (default
   // true). Maps to the custom-workplace signal; orthogonal to --website
   // (#401). The --no-employer + --employer-id contradiction is validated
-  // in core (single source of truth, shared by the MCP surface).
+  // in core (single source of truth, shared by the MCP surface). The
+  // --no-employer + (no --website AND no --no-website) anchor-missing
+  // case is also validated in core (#484).
   if (!options.employer) {
     fields.noEmployer = true;
   }
-  if (options.website !== undefined) {
+  // Commander's `--website <url>` / `--no-website` discriminator (#484):
+  // - `options.website === false` → `--no-website` was passed → explicit
+  //   no-website signal (the alternative anchor for noEmployer:true).
+  // - `typeof options.website === "string"` → `--website <url>` was passed.
+  // - `undefined` → neither flag.
+  if (options.website === false) {
+    fields.noWebsite = true;
+  } else if (typeof options.website === "string") {
     fields.companyWebsite = options.website;
     fields.noWebsite = false;
   }
@@ -251,6 +276,15 @@ async function runAdd(options: AddOptions): Promise<void> {
     });
   }
   fields.industryIds = options.industryId;
+
+  // #484: surface `--skill-id` (optional, repeatable) so the noEmployer
+  // path can satisfy the live wire's `skills: [≥1 SkillRefInput]`
+  // requirement (cascade-of-required-fields per the #395 file header).
+  // The catalog-employer path may inherit skills from the resolved
+  // Employer record — passing skills there is optional.
+  if (options.skillId !== undefined && options.skillId.length > 0) {
+    fields.skills = options.skillId.map((id) => ({ id, name: "" }));
+  }
 
   const token = await loadAuthTokenOrExit("profile employment add", options.output);
   let result: profile.employment.Employment;

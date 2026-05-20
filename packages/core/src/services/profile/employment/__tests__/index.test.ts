@@ -444,6 +444,9 @@ describe("add", () => {
       position: "Founder",
       startDate: 2021,
       noEmployer: true,
+      // #484 anchor: companyWebsite satisfies the CREATE-side gate.
+      companyWebsite: "https://custom.test",
+      noWebsite: false,
     });
     expect(outcome.kind).toBe("created");
     if (outcome.kind !== "created") throw new Error("unreachable");
@@ -465,6 +468,8 @@ describe("add", () => {
           position: "Founder",
           startDate: 2021,
           employerId: null,
+          companyWebsite: "https://custom.test",
+          noWebsite: false,
         },
       },
     });
@@ -516,7 +521,10 @@ describe("add", () => {
   it("custom workplace + dry-run fires ZERO network calls and previews employerId:null", async () => {
     const outcome = await add(
       TOKEN,
-      { company: "Custom Place", position: "Founder", noEmployer: true },
+      // #484: the noEmployer:true path requires an anchor — supply
+      // noWebsite:true (the alternative to companyWebsite) so the
+      // anchor validator does not fire before dry-run is reached.
+      { company: "Custom Place", position: "Founder", noEmployer: true, noWebsite: true },
       { dryRun: true },
     );
     expect(outcome.kind).toBe("preview");
@@ -548,6 +556,104 @@ describe("add", () => {
     // The contradiction guard fires before any transport.
     expect(mockedImpersonated).not.toHaveBeenCalled();
     expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  // #484 — CREATE-side anchor contract: noEmployer:true requires either
+  // companyWebsite OR noWebsite:true. Without either, refuse client-side
+  // before the wire produces the misleading `employerId: You can't leave
+  // this empty` error. See `45-profile-employment-add.e2e.test.ts` for
+  // the live-settled empirical evidence.
+  it("rejects --no-employer without companyWebsite or noWebsite anchor (#484 VALIDATION_ERROR, no network)", async () => {
+    await expect(add(TOKEN, { company: "Custom Place", position: "Founder", noEmployer: true })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("--website") as unknown,
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects --no-employer with companyWebsite:'' (empty-string is not an anchor) (#484)", async () => {
+    await expect(
+      add(TOKEN, { company: "Custom Place", position: "Founder", noEmployer: true, companyWebsite: "" }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("--website") as unknown,
+    });
+  });
+
+  it("rejects --no-employer with companyWebsite:null (explicit null is not an anchor) (#484)", async () => {
+    await expect(
+      add(TOKEN, { company: "Custom Place", position: "Founder", noEmployer: true, companyWebsite: null }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("--website") as unknown,
+    });
+  });
+
+  it("rejects --no-employer with noWebsite:false (explicit false is not an anchor) (#484)", async () => {
+    await expect(
+      add(TOKEN, { company: "Custom Place", position: "Founder", noEmployer: true, noWebsite: false }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("--website") as unknown,
+    });
+  });
+
+  it("accepts --no-employer with noWebsite:true (no companyWebsite needed) — the #484 happy path", async () => {
+    // Apply path: VIEWER_OK → list (empty before) → create. No
+    // autocomplete fires on the noEmployer:true path.
+    const EMP_484 = {
+      id: "V1-Employment-484",
+      company: "Custom Place 484",
+      position: "Founder",
+      companyWebsite: null,
+      noWebsite: true,
+      startDate: 2024,
+      endDate: null,
+      experienceItems: [],
+      highlight: false,
+      showViaToptal: true,
+      toptalRelated: false,
+      publicationPermit: true,
+      reportingTo: null,
+      industries: { nodes: [] },
+      primaryGeography: null,
+    };
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [EMP_484] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await add(TOKEN, {
+      company: "Custom Place 484",
+      position: "Founder",
+      startDate: 2024,
+      noEmployer: true,
+      noWebsite: true,
+    });
+    expect(outcome.kind).toBe("created");
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+    const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const emp = (
+      createCall.body.variables as {
+        input: { employment: { employerId: string | null; noWebsite: boolean; companyWebsite?: string } };
+      }
+    ).input.employment;
+    expect(emp.employerId).toBeNull();
+    expect(emp.noWebsite).toBe(true);
+    // The wire payload carries noWebsite:true with companyWebsite NOT
+    // populated (caller never supplied a URL; the anchor is the boolean
+    // signal alone).
+    expect(emp).not.toHaveProperty("companyWebsite");
   });
 });
 
