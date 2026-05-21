@@ -53,6 +53,8 @@ export interface Employment {
    * `skills` to be non-empty on update).
    */
   skills: { id: string; name: string }[];
+  /** Management experience descriptor; force-echoed on UPDATE per #508. */
+  managementExperience: { isLeadPosition: boolean; reportsRange: string | null } | null;
 }
 
 /**
@@ -105,6 +107,8 @@ export interface EmploymentFields {
    * rejects empty arrays on update).
    */
   skills?: { id: string; name: string }[];
+  /** Wire: `ManagementExperienceInput { isLeadPosition: Boolean!, reportsRange: String }`. */
+  managementExperience?: { isLeadPosition: boolean; reportsRange: string | null } | null;
   // write-only: request-shaping signal for the custom (non-catalog)
   // workplace path (#401). An add()-only signal: it selects
   // `employerId: null` + the free-text `company` verbatim and skips
@@ -201,6 +205,7 @@ const EMPLOYMENT_FRAGMENT = `fragment Employment on Employment {
   primaryGeography { id code name }
   employer { id }
   skills { nodes { id name } }
+  managementExperience { isLeadPosition reportsRange }
 }`;
 
 const GET_WORK_EXPERIENCE_QUERY = `query GET_WORK_EXPERIENCE($profileId: ID!) {
@@ -305,6 +310,14 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
         typeof s.id === "string" && typeof s.name === "string" ? [{ id: s.id, name: s.name }] : [],
       )
     : [];
+  const meRaw = node["managementExperience"] as { isLeadPosition?: unknown; reportsRange?: unknown } | null | undefined;
+  const managementExperience =
+    meRaw && typeof meRaw.isLeadPosition === "boolean"
+      ? {
+          isLeadPosition: meRaw.isLeadPosition,
+          reportsRange: typeof meRaw.reportsRange === "string" ? meRaw.reportsRange : null,
+        }
+      : null;
   const rawItems = node["experienceItems"];
   return {
     id: typeof node["id"] === "string" ? node["id"] : "",
@@ -321,11 +334,12 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
     showViaToptal: Boolean(node["showViaToptal"]),
     toptalRelated: Boolean(node["toptalRelated"]),
     publicationPermit: (node["publicationPermit"] as boolean | null | undefined) ?? null,
-    reportingTo: (node["reportingTo"] as string | null | undefined) ?? null,
+    reportingTo: typeof node["reportingTo"] === "string" ? node["reportingTo"] : null,
     industries,
     primaryGeography,
     employerId,
     skills,
+    managementExperience,
   };
 }
 
@@ -695,26 +709,29 @@ export const DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER = "<resolved at send-time by r
  * **Per-field caution on the broader force-echo class**: a tempting
  * generalization is "echo every read-side-surfaced field from
  * current state" as a defense-in-depth invariant. Empirically this
- * was attempted and rolled back during #487's PR cycle: echoing
- * `(companyWebsite, noWebsite)` on a catalog-employer row triggers
- * the Rails anchor gate (same class as the #484 CREATE-side anchor
- * contract): `(employerId): You should specify either employer or
- * company website` — observed against tests 46 / 52 sentinels using
- * a real catalog employer. The wire treats explicit-null/false on
- * those fields differently from absence. `highlight` and
- * `toptalRelated` were rolled back at the same time, pending per-
- * field live verification (untested individually). The "echo
- * everything" invariant is therefore NOT universal on this surface;
- * the per-field empirical evidence matters. Other nullable optionals
- * on this surface may exhibit the same #487 omission-is-null wire
+ * was attempted and rolled back during #487's PR cycle on the
+ * CATALOG-employer branch: echoing `(companyWebsite, noWebsite)` on
+ * a catalog-employer row triggers a Rails anchor gate (same class
+ * as the #484 CREATE-side anchor contract): `(employerId): You
+ * should specify either employer or company website` — observed
+ * against tests 46 / 52 sentinels using a real catalog employer.
+ * The wire treats explicit-null/false on those fields differently
+ * from absence on catalog rows. `highlight` and `toptalRelated`
+ * were rolled back at the same time, pending per-field live
+ * verification (untested individually). The "echo everything"
+ * invariant is therefore NOT universal on this surface; the per-
+ * field empirical evidence matters. Other nullable optionals on
+ * this surface may exhibit the same #487 omission-is-null wire
  * semantic; if reported, treat each as a separate live-capture
  * regression.
  *
- * Conditional echoes remain for fields whose `null` from current
- * must not become an explicit-null on the wire: `employerId` (#401
- * WORM — both absence AND explicit null fail the Rails `.blank?`
- * gate on a null-employerId row), `primaryGeographyId`,
- * `reportingTo`.
+ * **#508 noEmployer branch**: on `current.employerId === null` rows the
+ * `(noWebsite, companyWebsite)` anchor pair MUST be echoed — otherwise
+ * the Rails apply path emits the misleading
+ * `(employerId): You can't leave this empty`. `employerId` stays
+ * omitted on this branch (per captured 2026-05-21 payload).
+ * `toptalRelated` and `managementExperience` are force-echoed
+ * unconditionally for the same captured-payload reason.
  *
  * **Known limitation (#394)**: `skills` defaults to `[]` because the
  * current read fragment does not surface skills. Calling `update()` on a
@@ -756,16 +773,6 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
   // the current row has a non-null value — sending an explicit null
   // would change the row's state, which would defeat "merge".
   //
-  // #401 WORM limitation (2026-05-19 live capture): the UpdateEmployment
-  // wire treats BOTH absence AND explicit null of `employerId` as Rails
-  // `.blank?` and rejects with "employerId: You can't leave this
-  // empty". Custom workplaces (CreateEmployment with `employerId: null`)
-  // therefore CANNOT be updated via this surface — they are write-once-
-  // read-many on Toptal. The "omit when null" branch below reflects
-  // this honestly: there is no employerId payload we can send that
-  // satisfies the wire for a null-employerId row. update() on such a
-  // row will surface the USER_ERROR verbatim. See
-  // `research/notes/15-employment-custom-workplace-worm.md` and #401.
   const merged: EmploymentFields = {
     // Wire-required non-null (GraphQL `Expected value to not be null`):
     experienceItems: current.experienceItems ?? [],
@@ -782,6 +789,8 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
     // empty, which is what the live wire was rejecting.
     skills: current.skills,
     showViaToptal: current.showViaToptal,
+    // #508 — echoed; see helper-doc § #508 noEmployer branch.
+    toptalRelated: current.toptalRelated,
     startDate,
     // #487 — force-echoed because the wire treats omission as null-set
     // (NOT preservation). See helper-doc § endDate force-echo. Other
@@ -795,13 +804,23 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
     // on the apply path.
     industryIds: current.industries.map((i) => i.id),
   };
+  // #508 — branch on current.employerId:
+  //   catalog rows  → echo employerId, OMIT anchor pair (echoing trips
+  //                   "either employer or company website" gate, #487).
+  //   noEmployer rows → OMIT employerId, echo anchor pair (captured
+  //                   2026-05-21 payload — needed to satisfy the
+  //                   inverted .blank? on employer_id Rails gate).
   if (current.employerId !== null) {
     merged.employerId = current.employerId;
+  } else {
+    merged.noWebsite = current.noWebsite;
+    merged.companyWebsite = current.companyWebsite;
   }
+  merged.managementExperience = current.managementExperience;
   if (current.primaryGeography !== null) {
     merged.primaryGeographyId = current.primaryGeography.id;
   }
-  if (current.reportingTo !== null) {
+  if (typeof current.reportingTo === "string") {
     merged.reportingTo = current.reportingTo;
   }
   return { ...merged, ...fields };

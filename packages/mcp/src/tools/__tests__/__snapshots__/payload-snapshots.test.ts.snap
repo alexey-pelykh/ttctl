@@ -512,7 +512,8 @@ exports[`MCP profile_employment — payload snapshots > payload: full profile em
         "id": "sk_test_typescript",
         "name": "TypeScript"
       }
-    ]
+    ],
+    "managementExperience": null
   },
   {
     "id": "emp_test_002",
@@ -548,7 +549,8 @@ exports[`MCP profile_employment — payload snapshots > payload: full profile em
         "id": "sk_test_typescript",
         "name": "TypeScript"
       }
-    ]
+    ],
+    "managementExperience": null
   }
 ]"
 `;

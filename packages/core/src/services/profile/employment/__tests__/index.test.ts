@@ -85,6 +85,7 @@ const EMP_1_MAPPED = {
   primaryGeography: null,
   employerId: null,
   skills: [],
+  managementExperience: null,
 };
 
 // EMP_2: the four #344 fields PRESENT in their nested wire shape —
@@ -118,6 +119,7 @@ const EMP_2_MAPPED = {
   industries: [{ id: "V1-Industry-1", name: "Software" }],
   employerId: null,
   skills: [],
+  managementExperience: null,
 };
 
 beforeEach(() => {
@@ -689,13 +691,6 @@ describe("update", () => {
     // to the wire-required set.
     const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(updateCall.body.operationName).toBe("UpdateEmployment");
-    // The merge injects GraphQL-required (5) + Rails-blank gates
-    // (company, publicationPermit) + catalog refs (industryIds; employerId
-    // / primaryGeographyId / reportingTo only when current has them).
-    // EMP_1 (the #344-fields-absent fixture) → industries [], no employer.
-    // (#401 WORM limitation: null-employerId rows cannot be updated on
-    // the live wire; absence and explicit null both fail the same Rails
-    // `.blank?` gate. The merge omits employerId honestly when null.)
     expect(updateCall.body.variables).toEqual({
       input: {
         employmentId: EMP_1.id,
@@ -703,19 +698,15 @@ describe("update", () => {
           experienceItems: EMP_1.experienceItems,
           skills: [],
           showViaToptal: EMP_1.showViaToptal,
+          toptalRelated: EMP_1.toptalRelated,
           startDate: EMP_1.startDate,
-          // #487 — endDate is force-echoed from current state (the
-          // server treats omission as null-set, NOT preservation, so
-          // the pre-fix wire payload silently wiped endDate on partial
-          // updates of closed roles). EMP_1.endDate is 2020. Other
-          // nullable optionals (companyWebsite/noWebsite/highlight/
-          // toptalRelated) intentionally NOT echoed — see helper
-          // docstring § Per-field caution; a tried-and-rolled-back
-          // generalization during PR cycle.
           endDate: EMP_1.endDate,
           company: EMP_1.company,
           publicationPermit: true,
           industryIds: [],
+          noWebsite: EMP_1.noWebsite,
+          companyWebsite: EMP_1.companyWebsite,
+          managementExperience: null,
           position: "Lead Engineer",
         },
       },
@@ -821,31 +812,16 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     // (publicationPermit null → defaults to true).
     expect(merged.company).toBe(EMP_1.company);
     expect(merged.publicationPermit).toBe(true);
-    // Catalog refs: industryIds always injected from current.industries;
-    // employerId only injected when current has one (EMP_1 has none).
-    // (#401 WORM limitation: explicit null was also tried — Toptal's
-    // Rails apply path rejects both absence AND explicit null the same
-    // way. Custom workplaces are write-once-read-many; the helper
-    // honestly omits null employerId rather than send an explicit null
-    // that the wire also rejects.)
     expect(merged.industryIds).toEqual([]);
     expect(merged).not.toHaveProperty("employerId");
-    // primaryGeographyId / reportingTo only injected when current has
-    // non-null value (EMP_1 has neither).
+    expect(merged.noWebsite).toBe(EMP_1.noWebsite);
+    expect(merged.companyWebsite).toBe(EMP_1.companyWebsite);
     expect(merged).not.toHaveProperty("primaryGeographyId");
     expect(merged).not.toHaveProperty("reportingTo");
-    // User-supplied field wins.
     expect(merged.position).toBe("Lead");
-    // Other nullable optionals on this surface (companyWebsite,
-    // noWebsite, highlight, toptalRelated) are NOT force-echoed —
-    // see helper docstring § Per-field caution. The empirically-safe
-    // class is endDate only (asserted above); the others were rolled
-    // back during PR cycle after the (companyWebsite, noWebsite) pair
-    // tripped the Rails anchor gate on catalog-employer rows.
-    expect(merged).not.toHaveProperty("companyWebsite");
-    expect(merged).not.toHaveProperty("noWebsite");
+    expect(merged.toptalRelated).toBe(EMP_1.toptalRelated);
+    expect(merged.managementExperience).toBeNull();
     expect(merged).not.toHaveProperty("highlight");
-    expect(merged).not.toHaveProperty("toptalRelated");
   });
 
   // -------------------------------------------------------------------
@@ -943,6 +919,43 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.reportingTo).toBe("VP Engineering");
     expect(merged.industryIds).toEqual(["V1-Industry-1"]);
     expect(merged.skills).toEqual([{ id: "V1-Skill-1", name: "TypeScript" }]);
+  });
+
+  it("#508 echoes the (noWebsite, companyWebsite) anchor pair from current when current.employerId is null", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { position: "Lead" });
+    expect(merged.noWebsite).toBe(true);
+    expect(merged.companyWebsite).toBeNull();
+    expect(merged).not.toHaveProperty("employerId");
+  });
+
+  it("#508 echoes companyWebsite URL when current is noEmployer WITH a website", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_2_MAPPED), { position: "Lead" });
+    expect(merged.noWebsite).toBe(false);
+    expect(merged.companyWebsite).toBe("https://globex.test");
+    expect(merged).not.toHaveProperty("employerId");
+  });
+
+  it("#508 does NOT echo the anchor pair when current has a catalog employerId (#487 preservation)", () => {
+    const merged = buildUpdateEmploymentInput(
+      fromMapped({
+        ...EMP_2_MAPPED,
+        employerId: "V1-Employer-99",
+      } as Employment),
+      { position: "Lead" },
+    );
+    expect(merged.employerId).toBe("V1-Employer-99");
+    expect(merged).not.toHaveProperty("noWebsite");
+    expect(merged).not.toHaveProperty("companyWebsite");
+  });
+
+  it("#508 lets user-supplied noWebsite/companyWebsite override the anchor echo", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
+      position: "Lead",
+      noWebsite: false,
+      companyWebsite: "https://example.com",
+    });
+    expect(merged.noWebsite).toBe(false);
+    expect(merged.companyWebsite).toBe("https://example.com");
   });
 
   it("falls back to [] when current.experienceItems is null", () => {

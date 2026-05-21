@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`profile employment update` on `noEmployer:true` rows (#508).**
+  The Rails apply path has a symmetric anchor gate on
+  `UpdateEmployment`, mirror of the #484 CREATE-side contract:
+  noEmployer rows require the `(noWebsite, companyWebsite)` anchor
+  pair echoed PLUS `managementExperience` and `toptalRelated` on the
+  wire input — otherwise the path falls through to the
+  `employer_id .blank?` validator and produces the misleading
+  `employerId: You can't leave this empty` error. The fix in
+  `buildUpdateEmploymentInput`: (a) echoes the anchor pair from
+  current on the null-employerId branch; (b) force-echoes
+  `managementExperience` and `toptalRelated` on every UPDATE; (c)
+  extends `EMPLOYMENT_FRAGMENT` to read `managementExperience` so
+  the echo has source data; (d) fixes `mapEmploymentNode` to coerce
+  non-string `reportingTo` to `null` (was incorrectly typed as
+  `unknown[]` on rows where the wire returned an empty array).
+  Catalog-employer rows continue to omit the anchor pair per the
+  #487 rollback (where echoing trips a DIFFERENT anchor gate,
+  "either employer or company website"). Supersedes the WORM framing
+  in `research/notes/15-employment-custom-workplace-worm.md` and
+  refutes the catalog-Employer hypothesis in #505 (closed as not
+  planned). Verified on the live talent-profile wire via
+  `45-profile-employment-add.e2e.test.ts` (now exercises a full
+  `update → restore` on a real noEmployer row). Wire-shape snapshots
+  refreshed for `CreateEmployment`, `UpdateEmployment`, and
+  `GET_WORK_EXPERIENCE` to reflect the extended fragment.
+
 ### Changed
 
 - **Stage-2 surface tightening (#438) — `ConfirmInput` / `ApplyInput`

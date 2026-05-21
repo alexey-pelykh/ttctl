@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-18T07:30:54.820Z",
+  "capturedAt": "2026-05-21T16:43:01.524Z",
   "operationName": "GET_WORK_EXPERIENCE",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -18,8 +18,17 @@
             "kind": "string"
           }
         },
+        "employerId": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
         "endDate": {
-          "kind": "number"
+          "kind": "nullable",
+          "inner": {
+            "kind": "number"
+          }
         },
         "experienceItems": {
           "kind": "array",
@@ -47,6 +56,20 @@
             }
           }
         },
+        "managementExperience": {
+          "kind": "object",
+          "fields": {
+            "isLeadPosition": {
+              "kind": "boolean"
+            },
+            "reportsRange": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            }
+          }
+        },
         "noWebsite": {
           "kind": "boolean"
         },
@@ -60,13 +83,24 @@
           "kind": "boolean"
         },
         "reportingTo": {
-          "kind": "array",
-          "item": {
-            "kind": "unknown"
-          }
+          "kind": "null"
         },
         "showViaToptal": {
           "kind": "boolean"
+        },
+        "skills": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
         },
         "startDate": {
           "kind": "number"
