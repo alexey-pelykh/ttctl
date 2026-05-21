@@ -286,11 +286,41 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
         "    (no recruiter-pinned rate to default to).",
         "  - `kind` (optional): AR kind (FIXED / FLEXIBLE / MARKETPLACE_FLEXIBLE).",
         "    Auto-detected from the AR's metadata `__typename` when omitted.",
+        "  - `matcherAnswers` (optional): array of matcher-question answers. Each",
+        "    item is an opaque object of shape `{ questionId: string, answer: ... }`;",
+        "    discover question identifiers via `ttctl_applications_show <activityId>`.",
+        "    Forwarded as the wire's `matcherQuestionsAnswers` variable; the",
+        "    inner shape is `JobPositionAnswerInput` — Stage-1 opaque per",
+        "    ADR-008 § Decision Part 3 (schema-recovery spike #425 / #438",
+        "    will tighten this to a typed Zod schema in Stage-2).",
+        "  - `expertiseAnswers` (optional): array of expertise-question answers,",
+        "    same opaque `{ questionId, answer }` shape as `matcherAnswers`.",
+        "    Question identifiers also discovered via `ttctl_applications_show`.",
+        "    Forwarded as the wire's `expertiseQuestionsAnswers` variable",
+        "    (`JobExpertiseAnswerInput[]`).",
+        "  - `pitchData` (optional): a `PitchInput` object — typically",
+        '    `{ message: "..." }` carrying the talent\'s free-text pitch. Stage-1',
+        "    opaque per ADR-008; full schema recovery deferred to #438.",
         "",
         "Example user prompts:",
         '  - "Accept Interest Request <id>." (uses recruiter-pinned rate by default)',
         '  - "Accept IR <id> with the message \\"Available starting next Monday\\"."',
         '  - "Accept Interest Request <id> at $90/hr." (override the Fixed rate)',
+        "",
+        "Example call with question answers and a pitch:",
+        "  ```json",
+        "  {",
+        '    "id": "<availabilityRequestId>",',
+        '    "matcherAnswers": [',
+        '      { "questionId": "MQ-1", "answer": "..." },',
+        '      { "questionId": "MQ-2", "answer": "..." }',
+        "    ],",
+        '    "expertiseAnswers": [',
+        '      { "questionId": "EQ-1", "answer": "..." }',
+        "    ],",
+        '    "pitchData": { "message": "Pitch text" }',
+        "  }",
+        "  ```",
       ].join("\n"),
       inputSchema: {
         id: z.string().describe("AvailabilityRequest id (NOT the activity-item id)"),
@@ -305,6 +335,24 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
           .enum([...applications.AVAILABILITY_REQUEST_KINDS])
           .optional()
           .describe("AR kind (auto-detected from metadata when omitted)"),
+        matcherAnswers: z
+          .array(z.unknown())
+          .optional()
+          .describe(
+            "Optional matcher-questions answers. Array of opaque `{ questionId, answer }` objects (`JobPositionAnswerInput[]`). Discover `questionId` values via `ttctl_applications_show <activityId>`. Forwarded as the wire's `matcherQuestionsAnswers` variable. Stage-1 opaque per ADR-008 § Decision Part 3.",
+          ),
+        expertiseAnswers: z
+          .array(z.unknown())
+          .optional()
+          .describe(
+            "Optional expertise-questions answers. Same opaque `{ questionId, answer }` shape as `matcherAnswers` (`JobExpertiseAnswerInput[]`); identifiers discovered via `ttctl_applications_show`. Forwarded as the wire's `expertiseQuestionsAnswers` variable. Stage-1 opaque per ADR-008.",
+          ),
+        pitchData: z
+          .unknown()
+          .optional()
+          .describe(
+            "Optional `PitchInput` object (typically `{ message: '...' }`) carrying the talent's free-text pitch. Forwarded as the wire's `pitchInput` variable. Stage-1 opaque per ADR-008; #438 will tighten to a typed Zod schema.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -316,6 +364,14 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
       if (args.message !== undefined) input.comment = args.message;
       if (args.rate !== undefined) input.requestedHourlyRate = args.rate;
       if (args.kind !== undefined) input.kind = args.kind;
+      if (args.matcherAnswers !== undefined) input.matcherQuestionsAnswers = args.matcherAnswers;
+      if (args.expertiseAnswers !== undefined) input.expertiseQuestionsAnswers = args.expertiseAnswers;
+      // `args.pitchData` is `unknown` at the schema layer (ADR-008 Stage-1
+      // opaque pass-through). The core service treats `pitchInput` as a
+      // typed `Record<string, unknown>` — the cast here is the boundary
+      // where the opaque MCP wire shape meets the core's documented
+      // service-layer shape. The wire sends the raw JSON regardless.
+      if (args.pitchData !== undefined) input.pitchInput = args.pitchData as Record<string, unknown>;
 
       try {
         const outcome = await applications.confirm(auth.token, args.id, input, {

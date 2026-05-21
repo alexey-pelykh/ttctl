@@ -46,6 +46,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     CLI wiring and unit tests against `applications.confirm` mock
     only.
 
+- **MCP `ttctl_interest_requests_accept`: expose
+  `matcherAnswers` / `expertiseAnswers` / `pitchData` answer-payload
+  fields (#429)**. Mirrors the CLI half of the application-funnel
+  write-side shipped service-side by #423. The opaque
+  `applications.ConfirmInput` pass-throughs
+  (`matcherQuestionsAnswers` / `expertiseQuestionsAnswers` /
+  `pitchInput`) now reach the MCP surface so LLM agents can confirm
+  Interest Requests with attached question answers and a pitch.
+  - `matcherAnswers: z.array(z.unknown()).optional()` — opaque
+    `{ questionId, answer }` array (`JobPositionAnswerInput[]`);
+    forwarded as the wire's `matcherQuestionsAnswers` variable.
+    Question identifiers discovered via
+    `ttctl_applications_show <activityId>`.
+  - `expertiseAnswers: z.array(z.unknown()).optional()` — same opaque
+    shape (`JobExpertiseAnswerInput[]`); forwarded as the wire's
+    `expertiseQuestionsAnswers` variable.
+  - `pitchData: z.unknown().optional()` — opaque `PitchInput` object
+    (typically `{ message: "..." }`); forwarded as the wire's
+    `pitchInput` variable.
+  - **Tool description**: extended with an example call showing the
+    answers payload structure and a pointer to
+    `ttctl_applications_show` for `questionId` discovery.
+  - **Backward compat**: existing `id` / `message` / `rate` / `kind`
+    fields work unchanged when the new fields are absent (#411
+    regression guard pinned by new unit tests).
+  - **Schema/contract rule**: TRIGGERED indirectly — extends the active
+    `ConfirmAvailabilityRequest` wire call (covered by #445 E2E).
+  - **Diagnostic redaction**: the three new field names are owned by
+    cross-cutting issue #446 (extends `redactBody` allowlist).
+
 ## [v0.1.0-rc.7] - 2026-05-20
 
 ### Fixed

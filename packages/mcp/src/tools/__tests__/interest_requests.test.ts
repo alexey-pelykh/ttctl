@@ -372,6 +372,207 @@ describe("ttctl_interest_requests_accept — handler", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text ?? "").toContain("(Code: MUTATION_ERROR)");
   });
+
+  // -------------------------------------------------------------------
+  // #429 — matcherAnswers / expertiseAnswers / pitchData answer payloads.
+  //
+  // The MCP layer is a thin pass-through: it accepts the three optional
+  // fields under their user-facing names (matcherAnswers,
+  // expertiseAnswers, pitchData) and forwards them to the core service
+  // under the wire-side names (matcherQuestionsAnswers,
+  // expertiseQuestionsAnswers, pitchInput). The shapes are opaque per
+  // ADR-008 § Decision Part 3 — Stage-2 tightening lands via #438.
+  //
+  // Live wire-shape validation is built by #445; this PR pins the
+  // forwarding contract at the MCP layer only.
+  // -------------------------------------------------------------------
+
+  it("apply path: forwards matcherAnswers + expertiseAnswers + pitchData to ConfirmInput wire-side names", async () => {
+    confirmSpy.mockResolvedValue(applied(RESPOND_PAYLOAD_FIXTURE));
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    const matcherAnswers = [
+      { questionId: "MQ-1", answer: "matcher answer 1" },
+      { questionId: "MQ-2", answer: "matcher answer 2" },
+    ];
+    const expertiseAnswers = [{ questionId: "EQ-1", answer: "expertise answer" }];
+    const pitchData = { message: "Pitch text" };
+
+    await handler({
+      id: "ar-1",
+      matcherAnswers,
+      expertiseAnswers,
+      pitchData,
+    });
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "stub-bearer-for-tests",
+      "ar-1",
+      {
+        matcherQuestionsAnswers: matcherAnswers,
+        expertiseQuestionsAnswers: expertiseAnswers,
+        pitchInput: pitchData,
+      },
+      { dryRun: false },
+    );
+  });
+
+  it("apply path: omitting matcherAnswers / expertiseAnswers / pitchData leaves them off the ConfirmInput (backward compat)", async () => {
+    confirmSpy.mockResolvedValue(applied(RESPOND_PAYLOAD_FIXTURE));
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    await handler({ id: "ar-1" });
+    // The forwarded ConfirmInput must be empty when only `id` is passed;
+    // the #411 regression guard pins this so the new pass-throughs do
+    // not change the pre-#429 wire payload for callers who never supply
+    // them.
+    expect(confirmSpy).toHaveBeenCalledWith("stub-bearer-for-tests", "ar-1", {}, { dryRun: false });
+  });
+
+  it("apply path: forwards matcherAnswers alone (independent of expertiseAnswers / pitchData)", async () => {
+    confirmSpy.mockResolvedValue(applied(RESPOND_PAYLOAD_FIXTURE));
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    const matcherAnswers = [{ questionId: "MQ-1", answer: "alone" }];
+    await handler({ id: "ar-1", matcherAnswers });
+    expect(confirmSpy.mock.calls[0]?.[2]).toEqual({ matcherQuestionsAnswers: matcherAnswers });
+  });
+
+  it("apply path: forwards pitchData alone (independent of matcher/expertise answers)", async () => {
+    confirmSpy.mockResolvedValue(applied(RESPOND_PAYLOAD_FIXTURE));
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    const pitchData = { message: "Solo pitch" };
+    await handler({ id: "ar-1", pitchData });
+    expect(confirmSpy.mock.calls[0]?.[2]).toEqual({ pitchInput: pitchData });
+  });
+
+  it("apply path: composes message + rate + kind + matcherAnswers + expertiseAnswers + pitchData on the same ConfirmInput", async () => {
+    confirmSpy.mockResolvedValue(applied(RESPOND_PAYLOAD_FIXTURE));
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    await handler({
+      id: "ar-1",
+      message: "available Monday",
+      rate: "90.00",
+      kind: "FLEXIBLE",
+      matcherAnswers: [{ questionId: "MQ-1", answer: "..." }],
+      expertiseAnswers: [{ questionId: "EQ-1", answer: "..." }],
+      pitchData: { message: "Pitch text" },
+    });
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "stub-bearer-for-tests",
+      "ar-1",
+      {
+        comment: "available Monday",
+        requestedHourlyRate: "90.00",
+        kind: "FLEXIBLE",
+        matcherQuestionsAnswers: [{ questionId: "MQ-1", answer: "..." }],
+        expertiseQuestionsAnswers: [{ questionId: "EQ-1", answer: "..." }],
+        pitchInput: { message: "Pitch text" },
+      },
+      { dryRun: false },
+    );
+  });
+
+  it("accepts opaque (Stage-1) shapes for matcherAnswers / expertiseAnswers / pitchData — no schema introspection at MCP layer", async () => {
+    confirmSpy.mockResolvedValue(applied(RESPOND_PAYLOAD_FIXTURE));
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    // The Stage-1 opaque grammar (ADR-008 § Decision Part 3) does NOT
+    // introspect or validate the inner element shapes — `z.unknown()`
+    // accepts any JSON, including unusual or future-typed payloads.
+    // This test pins that contract: the MCP layer forwards whatever was
+    // supplied, character-for-character, to the core service.
+    const oddballMatcher = [
+      "string answer (not the typical { questionId, answer } object)",
+      42,
+      null,
+      { questionId: "MQ-future", answer: { nested: { deeply: ["yes"] } } },
+    ];
+    const oddballExpertise = [{ totallyDifferentShape: true, futureField: ["x"] }];
+    const oddballPitch = { not_a_message: "yes", extraField: [1, 2, 3] };
+    await handler({
+      id: "ar-1",
+      matcherAnswers: oddballMatcher,
+      expertiseAnswers: oddballExpertise,
+      pitchData: oddballPitch,
+    });
+    expect(confirmSpy.mock.calls[0]?.[2]).toEqual({
+      matcherQuestionsAnswers: oddballMatcher,
+      expertiseQuestionsAnswers: oddballExpertise,
+      pitchInput: oddballPitch,
+    });
+  });
+
+  it("registers the new matcherAnswers / expertiseAnswers / pitchData fields on the tool's inputSchema", () => {
+    // The tool registration carries its zod schema in the internal
+    // _registeredTools map. Pinning the field presence guards against
+    // a refactor that accidentally drops one of the three new fields
+    // from the surface (and likewise against an LLM client tool-listing
+    // probe regressing).
+    const internal = server as unknown as {
+      _registeredTools: Record<string, { inputSchema?: { shape?: Record<string, unknown> } } | undefined>;
+    };
+    const acceptTool = internal._registeredTools["ttctl_interest_requests_accept"];
+    expect(acceptTool).toBeDefined();
+    const shape = acceptTool?.inputSchema?.shape;
+    expect(shape).toBeDefined();
+    expect(shape).toHaveProperty("matcherAnswers");
+    expect(shape).toHaveProperty("expertiseAnswers");
+    expect(shape).toHaveProperty("pitchData");
+    // Pre-existing fields still present (regression guard for #411).
+    expect(shape).toHaveProperty("id");
+    expect(shape).toHaveProperty("message");
+    expect(shape).toHaveProperty("rate");
+    expect(shape).toHaveProperty("kind");
+    expect(shape).toHaveProperty("dryRun");
+  });
+
+  it("dryRun: threads matcherAnswers / expertiseAnswers / pitchData through to the service so the preview reflects the wire payload", async () => {
+    confirmSpy.mockResolvedValue({
+      kind: "preview",
+      preview: {
+        surface: "mobile-gateway",
+        transport: "stock",
+        endpoint: "https://example/gw",
+        operationName: "ConfirmAvailabilityRequest",
+        variables: {
+          id: "ar-1",
+          kind: "FIXED",
+          requestedHourlyRate: "80.00",
+          matcherQuestionsAnswers: [{ questionId: "MQ-1", answer: "x" }],
+          expertiseQuestionsAnswers: [],
+          pitchInput: { message: "Pitch text" },
+        },
+        headers: { authorization: "Token token=<redacted>" },
+        body: {
+          operationName: "ConfirmAvailabilityRequest",
+          query: "<query>",
+          variables: { id: "ar-1" },
+        },
+      },
+    } satisfies applications.ConfirmOutcome);
+    const handler = getRegisteredHandler(server, "ttctl_interest_requests_accept");
+    const result = await handler({
+      id: "ar-1",
+      matcherAnswers: [{ questionId: "MQ-1", answer: "x" }],
+      expertiseAnswers: [],
+      pitchData: { message: "Pitch text" },
+      dryRun: true,
+    });
+    expect(result.isError).toBeUndefined();
+    // The MCP layer forwarded the user-facing names to the wire-side
+    // names BEFORE the dry-run service call; the service-side preview
+    // therefore carries the wire-side variable names.
+    expect(confirmSpy.mock.calls[0]?.[2]).toEqual({
+      matcherQuestionsAnswers: [{ questionId: "MQ-1", answer: "x" }],
+      expertiseQuestionsAnswers: [],
+      pitchInput: { message: "Pitch text" },
+    });
+    expect(confirmSpy.mock.calls[0]?.[3]).toMatchObject({ dryRun: true });
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as {
+      preview: { variables: Record<string, unknown> };
+    };
+    expect(parsed.preview.variables).toMatchObject({
+      matcherQuestionsAnswers: [{ questionId: "MQ-1", answer: "x" }],
+      pitchInput: { message: "Pitch text" },
+    });
+  });
 });
 
 describe("ttctl_interest_requests_reject — handler", () => {
