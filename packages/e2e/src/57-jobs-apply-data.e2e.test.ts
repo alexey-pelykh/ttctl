@@ -202,7 +202,7 @@ describe("jobs apply pre-apply read suite (live mobile-gateway)", () => {
 
   it.skipIf(!e2eEnabled)("applyData returns NOT_FOUND for a valid-format non-existent job id", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
-    const fakeId = "VjEtSm9iLTk5OTk5OTk5OQ"; // same probe as 24-jobs / 53-jobs-apply
+    const fakeId = "VjEtSm9iLTk5OTk5OTk5OQ"; // same probe as 24-jobs / 56-jobs-apply
     let caught: unknown;
     try {
       await applications.applyData(token, fakeId);
