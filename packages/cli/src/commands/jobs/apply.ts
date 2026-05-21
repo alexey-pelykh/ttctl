@@ -2,10 +2,11 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { applications } from "@ttctl/core";
+import { z } from "zod";
 
 import { getCliDryRun } from "../../lib/dry-run.js";
 import { emitDryRunSuccess, emitErrorAndExit, emitUpdateSuccess } from "../../lib/envelopes.js";
-import { JsonInputError, readJsonInput } from "../../lib/json-input.js";
+import { JsonInputError, parseAsRecovered, readJsonInput } from "../../lib/json-input.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { handleApplicationsError, loadAuthTokenOrExit } from "../applications/shared.js";
@@ -22,8 +23,8 @@ import { handleApplicationsError, loadAuthTokenOrExit } from "../applications/sh
  * `--answers-file` / `--pitch-file` follow the ADR-008 § Decision Part 2
  * JSON-file grammar (sibling to `applications confirm` per #428): a
  * path (or `-` for stdin) pointing at a JSON document; the wrapper
- * shape is verified before any wire call, the inner content is
- * Stage-1-opaque pass-through to the wire.
+ * shape AND inner content are validated against the recovered Zod
+ * schemas per #438 Stage-2 before any wire call.
  */
 export interface JobsApplyOptions {
   /**
@@ -48,16 +49,16 @@ export interface JobsApplyOptions {
   /**
    * Path to a JSON file (or `-` for stdin) containing
    * `{ matcherAnswers: [...], expertiseAnswers: [...] }` per ADR-008
-   * § Decision Part 2. Wrapper shape verified before any wire call;
-   * inner content forwarded opaquely (Stage 1) — Stage 2 (#438)
-   * tightens to recovered Zod schemas.
+   * § Decision Part 2. Wrapper shape AND inner items validated against
+   * the recovered Zod schemas before any wire call (#438 Stage-2).
    */
   answersFile?: string;
   /**
    * Path to a JSON file (or `-` for stdin) containing a `PitchInput`
    * object. Forwarded to `applications.apply` as `pitchData`, mapping
-   * to the wire `$talentCard` variable. Wrapper shape verified;
-   * inner content opaque (Stage 1).
+   * to the wire `$talentCard` variable. Validated against the recovered
+   * `PitchInputSchema` (#438 Stage-2); extra unknown keys reject with a
+   * field-path error.
    */
   pitchFile?: string;
   /**
@@ -80,15 +81,32 @@ const DECIMAL_PATTERN = /^\d+(\.\d+)?$/;
  * acceptable but normally meaningless and the wire will likely reject —
  * left to the server as the authority.
  *
- * Stage-1 opaque (ADR-008 § Decision Part 3): both arrays are `unknown[]`
- * — the JSON content is forwarded verbatim to the wire. Stage-2 (#438)
- * will narrow these to the recovered Zod schemas
- * (`JobPositionAnswerInput[]` / `JobExpertiseAnswerInput[]`).
+ * Stage-2 (ADR-008 § Decision Part 3, #438): arrays are typed against
+ * the recovered Zod schemas (`JobPositionAnswerInput[]` /
+ * `JobExpertiseAnswerInput[]`). The inner schemas are wrapped with
+ * `.strict()` at the call site so extra unknown keys reject with a
+ * field-path Zod issue (per the AC behavioral scenarios).
  */
 interface AnswersFilePayload {
-  matcherAnswers?: unknown[];
-  expertiseAnswers?: unknown[];
+  matcherAnswers?: applications.JobPositionAnswerInput[];
+  expertiseAnswers?: applications.JobExpertiseAnswerInput[];
 }
+
+/**
+ * Stage-2 Zod schemas for `--answers-file` / `--pitch-file` payload
+ * validation (#438). Materialized once at module load and reused across
+ * parse invocations — the codegen factory pattern returns a fresh
+ * `z.object(...)` per call, so we cache the result.
+ *
+ * `.strict()` is mandatory at this boundary: codegen emits schemas with
+ * default "strip unknown" semantics; the AC requires extra unknown keys
+ * to reject with a field-path error.
+ */
+const STRICT_MATCHER_ANSWER_SCHEMA = applications.JobPositionAnswerInputSchema().strict();
+const STRICT_EXPERTISE_ANSWER_SCHEMA = applications.JobExpertiseAnswerInputSchema().strict();
+const STRICT_PITCH_INPUT_SCHEMA = applications.PitchInputSchema().strict();
+const MATCHER_ANSWERS_ARRAY_SCHEMA = z.array(STRICT_MATCHER_ANSWER_SCHEMA);
+const EXPERTISE_ANSWERS_ARRAY_SCHEMA = z.array(STRICT_EXPERTISE_ANSWER_SCHEMA);
 
 /**
  * Projection emitted on the `--show-questions` preview path. Carries
@@ -301,6 +319,8 @@ function hintForJsonInputCode(code: string): string {
       return "Check filesystem permissions on the file (and its parent directory).";
     case "PARSE_ERROR":
       return "Fix the JSON syntax at the cited line/column; the file shape should be { matcherAnswers: [...], expertiseAnswers: [...] }.";
+    case "SCHEMA_ERROR":
+      return "Fix the payload to match the recovered shape — matcher answers use { id, answer }; expertise answers use { questionId, other, subjectId }; pitch uses PitchInput.";
     case "STDIN_UNAVAILABLE":
       return "Pipe JSON into stdin (e.g. `cat answers.json | ttctl ...`) or pass a file path.";
     case "STDIN_DOUBLE_CLAIM":
@@ -313,11 +333,14 @@ function hintForJsonInputCode(code: string): string {
 /**
  * Narrow the parsed JSON from `--answers-file` into the
  * {@link AnswersFilePayload} shape. Surfaces a `VALIDATION_ERROR`
- * envelope (NOT a wire call) when the top-level shape is wrong — e.g. a
- * bare array, a string, or a non-object. Per ADR-008 § Stage-1 opaque
- * pass-through, the contents of `matcherAnswers` / `expertiseAnswers`
- * are NOT introspected here — only the top-level wrapper shape is
- * verified.
+ * envelope (NOT a wire call) when the top-level wrapper shape is wrong
+ * — e.g. a bare array, a string, or a non-object — OR when the inner
+ * arrays fail the recovered Zod schemas (per #438 Stage-2 tightening).
+ * Each inner schema is wrapped with `.strict()` so extra unknown keys
+ * surface as a field-path Zod issue (e.g. `matcherAnswers[2].questionId:
+ * unrecognized_keys (Unrecognized key(s) in object)`) — the AC's
+ * behavioral scenario 2 "Extra unknown key in payload rejected with
+ * field-path error".
  *
  * Sibling to `narrowAnswersPayload` in `applications/confirm.ts` —
  * domain-local twin per the project's one-copy-per-CLI-surface
@@ -343,49 +366,35 @@ function narrowAnswersPayload(payload: unknown, format: OutputFormat): AnswersFi
   const record = payload as Record<string, unknown>;
   const result: AnswersFilePayload = {};
   if (record["matcherAnswers"] !== undefined) {
-    if (!Array.isArray(record["matcherAnswers"])) {
-      emitErrorAndExit({
-        operation: "jobs.apply",
-        format,
-        errors: [
-          {
-            code: "VALIDATION_ERROR",
-            message: "--answers-file: `matcherAnswers` must be an array (was not).",
-          },
-        ],
-        prettySummary: "jobs apply failed (VALIDATION_ERROR): --answers-file `matcherAnswers` must be an array.",
-      });
-    }
-    result.matcherAnswers = record["matcherAnswers"];
+    result.matcherAnswers = validateRecoveredOrExit(
+      record["matcherAnswers"],
+      MATCHER_ANSWERS_ARRAY_SCHEMA,
+      "answers-file:matcherAnswers",
+      format,
+    );
   }
   if (record["expertiseAnswers"] !== undefined) {
-    if (!Array.isArray(record["expertiseAnswers"])) {
-      emitErrorAndExit({
-        operation: "jobs.apply",
-        format,
-        errors: [
-          {
-            code: "VALIDATION_ERROR",
-            message: "--answers-file: `expertiseAnswers` must be an array (was not).",
-          },
-        ],
-        prettySummary: "jobs apply failed (VALIDATION_ERROR): --answers-file `expertiseAnswers` must be an array.",
-      });
-    }
-    result.expertiseAnswers = record["expertiseAnswers"];
+    result.expertiseAnswers = validateRecoveredOrExit(
+      record["expertiseAnswers"],
+      EXPERTISE_ANSWERS_ARRAY_SCHEMA,
+      "answers-file:expertiseAnswers",
+      format,
+    );
   }
   return result;
 }
 
 /**
  * Narrow the parsed JSON from `--pitch-file` into the `pitchData`
- * record shape. Per ADR-008 § Stage-1 opaque pass-through, the inner
- * fields are NOT introspected — only the top-level wrapper shape
- * (object, not array / string / null) is verified.
+ * shape. Stage-2 (#438): the inner shape is validated against the
+ * recovered `PitchInput` Zod schema (wrapped with `.strict()` so extra
+ * unknown keys reject with a field-path error). Wrong top-level shape
+ * (array / string / null) still surfaces as a CLI-level
+ * `VALIDATION_ERROR` envelope BEFORE the recovered-schema parse runs.
  *
  * Sibling to `narrowPitchPayload` in `applications/confirm.ts`.
  */
-function narrowPitchPayload(payload: unknown, format: OutputFormat): Record<string, unknown> {
+function narrowPitchPayload(payload: unknown, format: OutputFormat): applications.PitchInput {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     emitErrorAndExit({
       operation: "jobs.apply",
@@ -394,13 +403,42 @@ function narrowPitchPayload(payload: unknown, format: OutputFormat): Record<stri
         {
           code: "VALIDATION_ERROR",
           message: "--pitch-file: expected a JSON object matching the `PitchInput` shape.",
-          hint: "File shape: a JSON object (TBD per ADR-008 § Decision Part 2 — Stage-2 will pin the inner Zod schema).",
+          hint: "File shape: a JSON object matching the `PitchInput` schema (see `packages/core/src/__generated__/zod-schemas.ts` § PitchInputSchema).",
         },
       ],
       prettySummary: "jobs apply failed (VALIDATION_ERROR): --pitch-file shape is not a JSON object.",
     });
   }
-  return payload as Record<string, unknown>;
+  return validateRecoveredOrExit(payload, STRICT_PITCH_INPUT_SCHEMA, "pitch-file", format);
+}
+
+/**
+ * Wrapper around {@link parseAsRecovered} that maps the typed
+ * `SCHEMA_ERROR` from {@link JsonInputError} to the structured
+ * `VALIDATION_ERROR` envelope this command emits. Mirrors
+ * {@link loadJsonInputOrExit} — failure path is uniform across all
+ * input-validation errors (parse, syntax, schema).
+ */
+function validateRecoveredOrExit<T>(value: unknown, schema: z.ZodType<T>, flagName: string, format: OutputFormat): T {
+  try {
+    return parseAsRecovered(value, schema, flagName);
+  } catch (err) {
+    if (err instanceof JsonInputError) {
+      emitErrorAndExit({
+        operation: "jobs.apply",
+        format,
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            message: err.message,
+            hint: hintForJsonInputCode(err.code),
+          },
+        ],
+        prettySummary: `jobs apply failed (VALIDATION_ERROR): ${err.message}`,
+      });
+    }
+    throw err;
+  }
 }
 
 /**

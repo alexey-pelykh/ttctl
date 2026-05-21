@@ -7,7 +7,7 @@ import { join, resolve as resolveAbsolutePath } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@ttctl/core", () => {
+vi.mock("@ttctl/core", async () => {
   // Local error class so the `instanceof` checks in confirm.ts and the
   // shared error router resolve against THESE constructors (vi.mock
   // replaces the imports). Tracks the real shape from
@@ -32,10 +32,21 @@ vi.mock("@ttctl/core", () => {
   }
   const confirm = vi.fn();
   const AVAILABILITY_REQUEST_KINDS = ["FIXED", "FLEXIBLE", "MARKETPLACE_FLEXIBLE"] as const;
+  // #438: confirm.ts materializes the recovered Zod schemas at module
+  // load time (`JobPositionAnswerInputSchema()` etc.). Pull the real
+  // schema factories from the un-mocked `@ttctl/core` so the
+  // strict-mode tightening assertions are exercised against the actual
+  // recovered SDL shape — any schema regression in
+  // `__generated__/zod-schemas.ts` therefore surfaces in this test
+  // suite as an immediate failure.
+  const actual = await vi.importActual<typeof import("@ttctl/core")>("@ttctl/core");
   return {
     applications: {
       ApplicationsError,
       AVAILABILITY_REQUEST_KINDS,
+      JobExpertiseAnswerInputSchema: actual.applications.JobExpertiseAnswerInputSchema,
+      JobPositionAnswerInputSchema: actual.applications.JobPositionAnswerInputSchema,
+      PitchInputSchema: actual.applications.PitchInputSchema,
       confirm,
     },
     TtctlError,
@@ -121,12 +132,15 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
     const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-test-"));
     try {
       const answersPath = join(dir, "answers.json");
+      // #438 Stage-2: matcher answers use `id` (NOT `questionId`) per
+      // the recovered `JobPositionAnswerInput`; expertise answers use
+      // `questionId` per `JobExpertiseAnswerInput` (asymmetric).
       const payload = {
         matcherAnswers: [
-          { questionId: "MQ-1", answer: "matcher answer one" },
-          { questionId: "MQ-2", answer: "matcher answer two" },
+          { id: "MQ-1", answer: "matcher answer one" },
+          { id: "MQ-2", answer: "matcher answer two" },
         ],
-        expertiseAnswers: [{ questionId: "EQ-1", answer: "expertise answer" }],
+        expertiseAnswers: [{ questionId: "EQ-1", other: null, subjectId: null }],
       };
       await writeFile(answersPath, JSON.stringify(payload), "utf-8");
 
@@ -154,7 +168,22 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
     const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-test-"));
     try {
       const pitchPath = join(dir, "pitch.json");
-      const pitch = { summary: "Strong fit", highlights: ["Years of TS experience"] };
+      // #438 Stage-2: pitchInput is validated against the recovered
+      // `PitchInputSchema().strict()`. Codegen emits nullable fields as
+      // required-present-but-null (per `codegen.config.ts` §
+      // `nullishBehavior: "nullable"` — "no omitted-field tolerance,
+      // desirable for wire-drift detection"). So callers must provide
+      // every PitchInput slot explicitly; `null` for the empty case.
+      const pitch = {
+        certificationPitchItems: null,
+        educationPitchItems: null,
+        employmentPitchItems: null,
+        industryPitchItems: null,
+        mentorship: null,
+        portfolioPitchItems: null,
+        publicationPitchItems: null,
+        skillPitchItems: null,
+      };
       await writeFile(pitchPath, JSON.stringify(pitch), "utf-8");
 
       await runApplicationsConfirm("ar-1", {
@@ -181,10 +210,21 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
       const answersPath = join(dir, "answers.json");
       const pitchPath = join(dir, "pitch.json");
       const answersPayload = {
-        matcherAnswers: [{ questionId: "MQ-1", answer: "ans" }],
-        expertiseAnswers: [{ questionId: "EQ-1", answer: "expertise" }],
+        matcherAnswers: [{ id: "MQ-1", answer: "ans" }],
+        expertiseAnswers: [{ questionId: "EQ-1", other: null, subjectId: null }],
       };
-      const pitch = { message: "Hello" };
+      // #438: Pitch input strict-mode requires every nullable slot
+      // explicit. Provide one slot with a real item + the rest null.
+      const pitch = {
+        certificationPitchItems: null,
+        educationPitchItems: null,
+        employmentPitchItems: null,
+        industryPitchItems: null,
+        mentorship: null,
+        portfolioPitchItems: null,
+        publicationPitchItems: null,
+        skillPitchItems: [{ skillSetId: "S1" }],
+      };
       await writeFile(answersPath, JSON.stringify(answersPayload), "utf-8");
       await writeFile(pitchPath, JSON.stringify(pitch), "utf-8");
 
@@ -384,7 +424,8 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
     const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-test-"));
     try {
       const answersPath = join(dir, "matcher-only.json");
-      await writeFile(answersPath, '{"matcherAnswers":[{"questionId":"MQ-1","answer":"a"}]}', "utf-8");
+      // #438 Stage-2: matcher answers use `id`, not `questionId`.
+      await writeFile(answersPath, '{"matcherAnswers":[{"id":"MQ-1","answer":"a"}]}', "utf-8");
 
       await runApplicationsConfirm("ar-1", {
         kind: "FIXED",
@@ -398,8 +439,168 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
         matcherQuestionsAnswers?: unknown;
         expertiseQuestionsAnswers?: unknown;
       };
-      expect(confirmInput.matcherQuestionsAnswers).toEqual([{ questionId: "MQ-1", answer: "a" }]);
+      expect(confirmInput.matcherQuestionsAnswers).toEqual([{ id: "MQ-1", answer: "a" }]);
       expect(confirmInput.expertiseQuestionsAnswers).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------- #438 — Stage-2 Zod tightening behavioral scenarios ----------
+
+describe("runApplicationsConfirm: --answers-file / --pitch-file Zod tightening (#438)", () => {
+  it("refuses with VALIDATION_ERROR and a field-path message when --answers-file contains a matcher entry with `questionId` (the wrong field — matcher uses `id`)", async () => {
+    captureExit();
+    const streams = captureStreams();
+    const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-438-"));
+    try {
+      const answersPath = join(dir, "answers.json");
+      // Behavioral scenario 2: extra unknown key in payload rejected
+      // with field-path error. Matcher answers carry `id` (NOT
+      // `questionId`) per the recovered SDL — passing `questionId`
+      // surfaces as an unknown-keys rejection in strict mode AND as
+      // a missing-required-key (`id`) rejection.
+      const payload = {
+        matcherAnswers: [{ questionId: "MQ-1", answer: "wrong shape" }],
+      };
+      await writeFile(answersPath, JSON.stringify(payload), "utf-8");
+
+      await expect(
+        runApplicationsConfirm("ar-1", {
+          kind: "FIXED",
+          rate: "80.00",
+          answersFile: answersPath,
+          output: "json",
+        }),
+      ).rejects.toThrow(ExitInvoked);
+
+      // The wire call MUST NOT fire when the schema rejects.
+      expect(mockedConfirm).not.toHaveBeenCalled();
+      // The envelope code is `VALIDATION_ERROR` per the AC, and the
+      // message names the offending field.
+      const stdout = streams.stdout.join("");
+      const parsed = JSON.parse(stdout) as { errors: { code: string; message: string }[] };
+      expect(parsed.errors[0]?.code).toBe("VALIDATION_ERROR");
+      expect(parsed.errors[0]?.message).toContain("matcherAnswers");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses with VALIDATION_ERROR and a field-path message when --answers-file contains an expertise entry missing the required `questionId`", async () => {
+    captureExit();
+    const streams = captureStreams();
+    const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-438-"));
+    try {
+      const answersPath = join(dir, "answers.json");
+      // Behavioral scenario 3: missing required field rejected with
+      // field-path error. Expertise answers require `questionId` per
+      // `JobExpertiseAnswerInput`.
+      const payload = {
+        expertiseAnswers: [{ other: null, subjectId: null }],
+      };
+      await writeFile(answersPath, JSON.stringify(payload), "utf-8");
+
+      await expect(
+        runApplicationsConfirm("ar-1", {
+          kind: "FIXED",
+          rate: "80.00",
+          answersFile: answersPath,
+          output: "json",
+        }),
+      ).rejects.toThrow(ExitInvoked);
+
+      expect(mockedConfirm).not.toHaveBeenCalled();
+      const stdout = streams.stdout.join("");
+      const parsed = JSON.parse(stdout) as { errors: { code: string; message: string }[] };
+      expect(parsed.errors[0]?.code).toBe("VALIDATION_ERROR");
+      expect(parsed.errors[0]?.message).toContain("expertiseAnswers");
+      expect(parsed.errors[0]?.message).toContain("questionId");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses with VALIDATION_ERROR when --pitch-file contains an unknown key (strict-mode rejection of extras)", async () => {
+    captureExit();
+    const streams = captureStreams();
+    const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-438-"));
+    try {
+      const pitchPath = join(dir, "pitch.json");
+      // Behavioral scenario 2 (pitch flavor): the recovered
+      // PitchInput shape uses typed `*PitchItem*Input` arrays; an
+      // arbitrary `message: "..."` field is NOT part of the shape and
+      // is rejected as `unrecognized_keys` in strict mode.
+      const payload = {
+        certificationPitchItems: null,
+        educationPitchItems: null,
+        employmentPitchItems: null,
+        industryPitchItems: null,
+        mentorship: null,
+        portfolioPitchItems: null,
+        publicationPitchItems: null,
+        skillPitchItems: null,
+        message: "extra key not in PitchInput",
+      };
+      await writeFile(pitchPath, JSON.stringify(payload), "utf-8");
+
+      await expect(
+        runApplicationsConfirm("ar-1", {
+          kind: "FIXED",
+          rate: "80.00",
+          pitchFile: pitchPath,
+          output: "json",
+        }),
+      ).rejects.toThrow(ExitInvoked);
+
+      expect(mockedConfirm).not.toHaveBeenCalled();
+      const stdout = streams.stdout.join("");
+      const parsed = JSON.parse(stdout) as { errors: { code: string; message: string }[] };
+      expect(parsed.errors[0]?.code).toBe("VALIDATION_ERROR");
+      // Field-path message — strict mode flags the offending key.
+      expect(parsed.errors[0]?.message).toContain("pitch-file");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("happy path: valid tightened-shape payload threads through unchanged (behavioral scenario 1)", async () => {
+    captureExit();
+    captureStreams();
+    mockedConfirm.mockResolvedValue({
+      kind: "applied",
+      result: {
+        id: "ar-1",
+        answeredAt: "2026-05-20T00:00:00Z",
+        statusV2: { value: "AVAILABILITY_REQUEST_CONFIRMED", verbose: "Confirmed" },
+        talentComment: null,
+        requestedHourlyRate: { decimal: "80.00", verbose: "$80.00/hr" },
+        rejectReason: null,
+      },
+    });
+    const dir = await mkdtemp(join(tmpdir(), "ttctl-confirm-438-"));
+    try {
+      const answersPath = join(dir, "answers.json");
+      const payload = {
+        matcherAnswers: [{ id: "MQ-1", answer: "yes" }],
+        expertiseAnswers: [{ questionId: "EQ-1", other: null, subjectId: null }],
+      };
+      await writeFile(answersPath, JSON.stringify(payload), "utf-8");
+
+      await runApplicationsConfirm("ar-1", {
+        kind: "FIXED",
+        rate: "80.00",
+        answersFile: answersPath,
+        output: "json",
+      });
+
+      expect(mockedConfirm).toHaveBeenCalledTimes(1);
+      const [, , input] = mockedConfirm.mock.calls[0] ?? [];
+      const confirmInput = input as { matcherQuestionsAnswers?: unknown; expertiseQuestionsAnswers?: unknown };
+      // Behavioral scenario 1: payload threads through byte-identically.
+      expect(confirmInput.matcherQuestionsAnswers).toEqual(payload.matcherAnswers);
+      expect(confirmInput.expertiseQuestionsAnswers).toEqual(payload.expertiseAnswers);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

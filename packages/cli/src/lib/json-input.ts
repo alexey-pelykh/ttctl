@@ -4,6 +4,8 @@
 import { readFile as defaultReadFile } from "node:fs/promises";
 import { resolve as resolveAbsolutePath } from "node:path";
 
+import type { z, ZodType } from "zod";
+
 /**
  * Stable error codes carried by {@link JsonInputError}. Script consumers
  * branch on `error.code` rather than parsing the user-facing prose. Codes
@@ -13,11 +15,19 @@ import { resolve as resolveAbsolutePath } from "node:path";
  *
  * Sibling to `FreeTextError` in `freetext.ts`: same diagnostic posture,
  * different input grammar (a bare path here vs. `@path` prefix there).
+ *
+ * `SCHEMA_ERROR` (#438) fires when {@link parseAsRecovered} rejects the
+ * parsed JSON against a recovered Zod schema — i.e. the file syntax is
+ * valid JSON but the SHAPE (field names, types, required keys) does not
+ * match the recovered SDL input type. Surfaced as the same `VALIDATION_ERROR`
+ * envelope as the syntax-level codes by the caller; the JSON-pointer-style
+ * field path lives in the error `message`.
  */
 export type JsonInputErrorCode =
   | "FILE_NOT_FOUND"
   | "FILE_READ_ERROR"
   | "PARSE_ERROR"
+  | "SCHEMA_ERROR"
   | "STDIN_UNAVAILABLE"
   | "STDIN_DOUBLE_CLAIM";
 
@@ -187,6 +197,82 @@ function parseJsonOrThrow(content: string, flagName: string, source: string): un
     const hint = location !== null ? ` (line ${location.line.toString()}, column ${location.column.toString()})` : "";
     throw new JsonInputError("PARSE_ERROR", `--${flagName}: invalid JSON from ${source}: ${reason}${hint}`);
   }
+}
+
+/**
+ * Validate a previously-parsed JSON value against a recovered Zod schema
+ * (#438 W1-2 — Stage-2 surface tightening per ADR-008 § Decision Part 3).
+ *
+ * Returns the parsed `T` on success; on schema mismatch throws a
+ * {@link JsonInputError} with code `SCHEMA_ERROR` and a message that names
+ * the failing field path AND the failure reason — built from
+ * `ZodError.issues[]` so the caller can map ANY issue to a recovery hint
+ * without parsing the prose. Multiple issues fold into a single message
+ * separated by `; ` so the envelope stays one error.
+ *
+ * Two flavors of validation:
+ *
+ *   - **Single object** — pass a Zod object schema; the value must match
+ *     the schema exactly. Use for `--pitch-file`-style single-payload
+ *     flags.
+ *   - **Array** — wrap the inner object schema with `z.array(...)` at the
+ *     call site; per-entry failures surface their array index in the
+ *     field path (e.g. `matcherAnswers[2].id: Required`).
+ *
+ * The helper does NOT read files / streams — it operates on a value the
+ * caller has already parsed via {@link readJsonInput}. The separation
+ * keeps `readJsonInput` Stage-1-compatible (callers that don't want
+ * inner-shape validation can ignore the helper).
+ *
+ * **Strict-mode posture**: callers pass schemas built from the
+ * `__generated__/zod-schemas.ts` factories (e.g.
+ * `JobPositionAnswerInputSchema()`). Codegen emits these with implicit
+ * "strip unknown keys" semantics — extra keys SILENTLY pass. For the
+ * #438 AC "extra unknown key in payload rejected with field-path error",
+ * the caller MUST wrap the inner schema with `.strict()` at the call
+ * site. See {@link parseAsRecovered} caller in `applications/confirm.ts`
+ * for the canonical pattern.
+ */
+export function parseAsRecovered<T>(value: unknown, schema: ZodType<T>, flagName: string): T {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  const issues = parsed.error.issues;
+  const formattedIssues = issues.map(formatZodIssue).join("; ");
+  throw new JsonInputError(
+    "SCHEMA_ERROR",
+    `--${flagName}: payload does not match the recovered schema — ${formattedIssues}`,
+  );
+}
+
+/**
+ * Render one Zod issue as `path: code reason` — a field-path-first form
+ * that matches the AC's "stderr contains a Zod field-path indicating the
+ * unknown key" scenario.
+ *
+ * Path rendering:
+ *   - Empty path (issue at root) → `<root>`
+ *   - String segments → dot-joined (`pitchData.mentorship`)
+ *   - Numeric segments → square-bracketed (`matcherAnswers[2].id`)
+ */
+function formatZodIssue(issue: z.core.$ZodIssue): string {
+  const path = renderZodPath(issue.path);
+  const code = issue.code;
+  const message = issue.message;
+  return `${path}: ${code} (${message})`;
+}
+
+function renderZodPath(path: ReadonlyArray<PropertyKey>): string {
+  if (path.length === 0) return "<root>";
+  let buf = "";
+  for (const seg of path) {
+    if (typeof seg === "number") {
+      buf += `[${String(seg)}]`;
+    } else {
+      if (buf !== "") buf += ".";
+      buf += String(seg);
+    }
+  }
+  return buf;
 }
 
 /**

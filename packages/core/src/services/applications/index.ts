@@ -68,10 +68,33 @@
 
 import type { z } from "zod";
 
+import type { JobExpertiseAnswerInput, JobPositionAnswerInput, PitchInput } from "../../__generated__/zod-schemas.js";
+import {
+  JobExpertiseAnswerInputSchema,
+  JobPositionAnswerInputSchema,
+  PitchInputSchema,
+} from "../../__generated__/zod-schemas.js";
 import { buildDryRunPreview } from "../../transport.js";
 import type { DryRunPreview } from "../../transport.js";
 import { callGatewayShared } from "../_shared/transport.js";
 import type { GraphQLErrorEntry } from "../profile/shared.js";
+
+// Re-export the recovered input types AND their Zod schema factories so
+// the CLI / MCP layers can consume them via `@ttctl/core`
+// (`applications.JobPositionAnswerInput`,
+// `applications.JobPositionAnswerInputSchema()`, …) without crossing the
+// `__generated__/` boundary directly. Mirrors the re-export posture for
+// other recovered types in this module (e.g. `MutationResult` fields
+// surface here, not as direct codegen imports).
+//
+// The schema factories return fresh Zod objects on each call — callers
+// that want strict-mode rejection of unknown keys must wrap with
+// `.strict()` at the call site (`JobPositionAnswerInputSchema().strict()`).
+// Codegen's default is "strip unknown" which would silently pass extra
+// keys; the AC "extra unknown key in payload rejected with field-path
+// error" requires the caller's explicit `.strict()`.
+export type { JobExpertiseAnswerInput, JobPositionAnswerInput, PitchInput };
+export { JobExpertiseAnswerInputSchema, JobPositionAnswerInputSchema, PitchInputSchema };
 
 /**
  * Applications-domain error codes. Mirrors the `ProfileError` /
@@ -382,13 +405,17 @@ export interface AvailabilityRequestRespondPayload {
  *   {@link AvailabilityRequestKind} for the value spellings.
  * - `comment` (optional) — the talent's free-text accompanying message.
  *   Mapped to the wire's `talentComment` field.
- * - `matcherQuestionsAnswers`, `expertiseQuestionsAnswers`, `pitchData`
+ * - `matcherQuestionsAnswers`, `expertiseQuestionsAnswers`, `pitchInput`
  *   (optional) — structural inputs for AR confirmations that require
- *   matcher / expertise question answers or a custom pitch. These are
- *   wire pass-throughs; the service does NOT introspect them. v1
- *   exposes them as `unknown` arrays — callers passing them are
- *   responsible for the wire shape (`JobPositionAnswerInput[]`,
- *   `JobExpertiseAnswerInput[]`, `PitchInput`).
+ *   matcher / expertise question answers or a custom pitch. Stage-2
+ *   (#438) types these against the recovered SDL shapes —
+ *   {@link JobPositionAnswerInput}, {@link JobExpertiseAnswerInput},
+ *   {@link PitchInput} (regenerated from #425's recovery output).
+ *   `matcherQuestionsAnswers` entries use `id` (NOT `questionId`) per
+ *   the SDL; `expertiseQuestionsAnswers` entries use `questionId`.
+ *   The service still passes them through to the wire opaquely; the
+ *   typing is the boundary contract for CLI / MCP / direct-Core
+ *   callers.
  */
 export interface ConfirmInput {
   /** Optional talent-side free-text message. Wire field: `talentComment`. */
@@ -397,12 +424,12 @@ export interface ConfirmInput {
   requestedHourlyRate?: string;
   /** AR kind. Auto-detected from `metadata.__typename` when omitted. INFERRED enum values — see {@link AvailabilityRequestKind}. */
   kind?: AvailabilityRequestKind;
-  /** Optional matcher-questions answers (`JobPositionAnswerInput[]`). v1: opaque pass-through. */
-  matcherQuestionsAnswers?: unknown[];
-  /** Optional expertise-questions answers (`JobExpertiseAnswerInput[]`). v1: opaque pass-through. */
-  expertiseQuestionsAnswers?: unknown[];
-  /** Optional pitch input (`PitchInput`). v1: opaque pass-through. */
-  pitchInput?: Record<string, unknown>;
+  /** Optional matcher-questions answers — wire shape `JobPositionAnswerInput[]` (`{ id, answer }`). */
+  matcherQuestionsAnswers?: JobPositionAnswerInput[];
+  /** Optional expertise-questions answers — wire shape `JobExpertiseAnswerInput[]` (`{ questionId, other, subjectId }`). */
+  expertiseQuestionsAnswers?: JobExpertiseAnswerInput[];
+  /** Optional pitch input — wire shape `PitchInput`. */
+  pitchInput?: PitchInput;
 }
 
 /**
@@ -1165,10 +1192,12 @@ export interface PreApplyData {
  * uniform across matcher and expertise variants per REQ-Q1:
  *
  *   - `identifier` — the wire `id` field (`JobPositionQuestion.id` /
- *     `JobExpertiseQuestion.id`). Used as the `questionId` key when
- *     building the apply-mutation `JobPositionAnswerInput[]` /
- *     `JobExpertiseAnswerInput[]` arrays per ADR-008 § Decision Part 2
- *     `--answers-file` grammar.
+ *     `JobExpertiseQuestion.id`). Threaded into the apply-mutation
+ *     answer arrays at asymmetric field names per the recovered SDL:
+ *     `JobPositionAnswerInput.id` (matcher) and
+ *     `JobExpertiseAnswerInput.questionId` (expertise). Both reference
+ *     this same `identifier`; see ADR-008 § Decision Part 2 and #438
+ *     for the recovered-shape rationale.
  *   - `prompt` — the human-readable question text. For matcher
  *     questions: the wire `question` field. For expertise questions:
  *     the `subject.name` (`Industry.name` or `Skill.name`) — expertise
@@ -2335,14 +2364,15 @@ export async function rejectReasons(token: string): Promise<AvailabilityRequestR
  * additional guidance for the caller (CLI / MCP / agent) — not as a
  * silent default; callers surface it to the user before the apply.
  *
- * **Answer arrays**: `matcherAnswers` / `expertiseAnswers` are
- * `unknown[]` (ADR-008 Stage 1) until the recovered Zod schemas
- * (#438 W1-2) tighten them to `JobPositionAnswerInputSchema[]` /
- * `JobExpertiseAnswerInputSchema[]` (Stage 2). The service validates
- * each entry's `questionId` against the inventory returned by
- * `applyQuestions(jobId)` and rejects unknown ids with
- * `WIRE_SHAPE_ERROR` — the validation is structural; the actual
- * answer payload shape passes through opaquely.
+ * **Answer arrays**: `matcherAnswers` / `expertiseAnswers` are typed
+ * against the recovered `JobPositionAnswerInput[]` /
+ * `JobExpertiseAnswerInput[]` shapes (Stage 2 per #438; the recovered
+ * schemas are committed in `packages/core/src/__generated__/zod-schemas.ts`).
+ * The service validates each entry's id field against the inventory
+ * returned by `applyQuestions(jobId)` and rejects unknown ids with
+ * `WIRE_SHAPE_ERROR`. The id-field name is **asymmetric** per the
+ * recovered SDL — matcher entries carry `id`, expertise entries carry
+ * `questionId`.
  */
 export interface ApplyInput {
   /**
@@ -2364,24 +2394,31 @@ export interface ApplyInput {
   message?: string;
   /**
    * Matcher-question answers (`JobPositionAnswerInput[]`). Each
-   * entry MUST carry a `questionId` matching one returned from
+   * entry MUST carry an `id` field matching one returned from
    * `applyQuestions(jobId).matcherQuestions[].identifier` — the
-   * service rejects unknown ids with `WIRE_SHAPE_ERROR`. Stage 1
-   * opaque pass-through; Stage 2 tightens to typed Zod after #438.
+   * service rejects unknown ids with `WIRE_SHAPE_ERROR`. Stage 2
+   * (#438) types the array against the recovered SDL shape
+   * `{ answer: string, id: string }` (NOT `questionId` — distinct
+   * from the expertise shape; this field-name asymmetry is per the
+   * recovered SDL).
    */
-  matcherAnswers?: unknown[];
+  matcherAnswers?: JobPositionAnswerInput[];
   /**
-   * Expertise-question answers (`JobExpertiseAnswerInput[]`). Same
-   * validation + Stage-1/Stage-2 transition as `matcherAnswers`.
+   * Expertise-question answers (`JobExpertiseAnswerInput[]`). Each
+   * entry's `questionId` is validated against
+   * `applyQuestions(jobId).expertiseQuestions[].identifier`. Stage 2
+   * (#438) types the array against the recovered SDL shape
+   * `{ other: string|null, questionId: string, subjectId: string|null }`.
    */
-  expertiseAnswers?: unknown[];
+  expertiseAnswers?: JobExpertiseAnswerInput[];
   /**
    * Pitch input (`PitchInput`). Mapped to the wire's `$talentCard`
-   * variable / `JobApplyInput.pitchData` field. Opaque
-   * pass-through; Stage 2 tightens to `PitchInputSchema()` (with
-   * `mentorship` remaining opaque per ADR-008 spike outcome).
+   * variable / `JobApplyInput.pitchData` field. Stage 2 (#438) types
+   * the field against the recovered `PitchInput` shape (`mentorship`
+   * remains `unknown` per ADR-008 spike outcome — the position is
+   * untyped in the SDL).
    */
-  pitchData?: Record<string, unknown>;
+  pitchData?: PitchInput;
 }
 
 /**
@@ -2509,28 +2546,41 @@ function projectJobApplicationRecord(activityItem: JobApplyActivityItemWire): Jo
 
 /**
  * Structural validation: every entry in `answers[]` must carry a
- * string `questionId` matching one of `validIds`. Rejects unknown
+ * string id at `idField` matching one of `validIds`. Rejects unknown
  * ids with `WIRE_SHAPE_ERROR` carrying the offending array path
  * (e.g. `matcherAnswers[2]`) so callers can fix the input.
+ *
+ * `idField` is parameterized because the recovered SDL uses
+ * **asymmetric field names** across the two answer types — matcher
+ * answers (`JobPositionAnswerInput`) carry the id at `id`, while
+ * expertise answers (`JobExpertiseAnswerInput`) carry it at
+ * `questionId`. See #438 § Stage-2 tightening (the recovered shapes
+ * are committed in `packages/core/src/__generated__/zod-schemas.ts`
+ * and treated as the canonical wire-contract authority).
  */
-function validateAnswerIds(answers: unknown[] | undefined, validIds: Set<string>, path: string): void {
+function validateAnswerIds(
+  answers: readonly unknown[] | undefined,
+  validIds: Set<string>,
+  path: string,
+  idField: "id" | "questionId",
+): void {
   if (answers === undefined) return;
   for (let i = 0; i < answers.length; i++) {
     const entry = answers[i];
     if (typeof entry !== "object" || entry === null) {
       throw new ApplicationsError(
         "WIRE_SHAPE_ERROR",
-        `${path}[${i}]: not an object — expected { questionId, answer, ... }.`,
+        `${path}[${i}]: not an object — expected { ${idField}, answer, ... }.`,
       );
     }
-    const qid = (entry as Record<string, unknown>)["questionId"];
+    const qid = (entry as Record<string, unknown>)[idField];
     if (typeof qid !== "string") {
-      throw new ApplicationsError("WIRE_SHAPE_ERROR", `${path}[${i}]: missing or non-string "questionId" property.`);
+      throw new ApplicationsError("WIRE_SHAPE_ERROR", `${path}[${i}]: missing or non-string "${idField}" property.`);
     }
     if (!validIds.has(qid)) {
       throw new ApplicationsError(
         "WIRE_SHAPE_ERROR",
-        `${path}[${i}]: questionId "${qid}" does not match any question returned from applyQuestions().`,
+        `${path}[${i}]: ${idField} "${qid}" does not match any question returned from applyQuestions().`,
       );
     }
   }
@@ -2652,12 +2702,14 @@ export async function apply(
     rateInsight(token, jobId),
   ]);
 
-  // Structural validation: every answer's questionId must resolve
-  // against the inventory.
+  // Structural validation: every answer's id must resolve against
+  // the inventory. The id-field name is asymmetric per the recovered
+  // SDL — matcher answers use `id`, expertise answers use
+  // `questionId` (see {@link validateAnswerIds} for the rationale).
   const matcherIds = new Set(questions.matcherQuestions.map((q) => q.identifier));
   const expertiseIds = new Set(questions.expertiseQuestions.map((q) => q.identifier));
-  validateAnswerIds(input.matcherAnswers, matcherIds, "matcherAnswers");
-  validateAnswerIds(input.expertiseAnswers, expertiseIds, "expertiseAnswers");
+  validateAnswerIds(input.matcherAnswers, matcherIds, "matcherAnswers", "id");
+  validateAnswerIds(input.expertiseAnswers, expertiseIds, "expertiseAnswers", "questionId");
 
   // Rate default per REQ-A4 — caller-supplied overrides
   // `PreApplyData.suggestedRate`. Throw `MUTATION_ERROR` if neither

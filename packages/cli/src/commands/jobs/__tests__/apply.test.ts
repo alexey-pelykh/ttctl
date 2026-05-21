@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // shared error router resolve against THESE constructors (vi.mock
 // replaces the imports). Tracks the real shape from
 // `packages/core/src/services/applications/index.ts`.
-vi.mock("@ttctl/core", () => {
+vi.mock("@ttctl/core", async () => {
   class ApplicationsError extends Error {
     override readonly name = "ApplicationsError";
     constructor(
@@ -33,9 +33,20 @@ vi.mock("@ttctl/core", () => {
   const apply = vi.fn();
   const applyData = vi.fn();
   const applyQuestions = vi.fn();
+  // #438: apply.ts materializes the recovered Zod schemas at module
+  // load time (`JobPositionAnswerInputSchema()` etc.). Pull the real
+  // schema factories from the un-mocked `@ttctl/core` so the
+  // strict-mode tightening assertions are exercised against the actual
+  // recovered SDL shape — any schema regression in
+  // `__generated__/zod-schemas.ts` therefore surfaces in this test
+  // suite as an immediate failure.
+  const actual = await vi.importActual<typeof import("@ttctl/core")>("@ttctl/core");
   return {
     applications: {
       ApplicationsError,
+      JobExpertiseAnswerInputSchema: actual.applications.JobExpertiseAnswerInputSchema,
+      JobPositionAnswerInputSchema: actual.applications.JobPositionAnswerInputSchema,
+      PitchInputSchema: actual.applications.PitchInputSchema,
       apply,
       applyData,
       applyQuestions,
@@ -169,12 +180,25 @@ describe("runJobsApply: happy path with --consent + --answers-file + --rate + --
       const pitchPath = join(dir, "pitch.json");
       const answersPayload = {
         matcherAnswers: [
-          { questionId: "MQ-1", answer: "Yes, available immediately" },
-          { questionId: "MQ-2", answer: "8 years" },
+          { id: "MQ-1", answer: "Yes, available immediately" },
+          { id: "MQ-2", answer: "8 years" },
         ],
-        expertiseAnswers: [{ questionId: "EQ-1", answer: "Strong" }],
+        expertiseAnswers: [{ questionId: "EQ-1", other: "Strong", subjectId: null }],
       };
-      const pitch = { summary: "Great fit", highlights: ["TS expert"] };
+      // #438 Stage-2: pitchInput is validated against the recovered
+      // `PitchInputSchema().strict()`. Codegen emits nullable fields as
+      // required-present-but-null (per `codegen.config.ts` §
+      // `nullishBehavior: "nullable"`). Provide every slot explicitly.
+      const pitch = {
+        certificationPitchItems: null,
+        educationPitchItems: null,
+        employmentPitchItems: null,
+        industryPitchItems: null,
+        mentorship: null,
+        portfolioPitchItems: null,
+        publicationPitchItems: null,
+        skillPitchItems: null,
+      };
       await writeFile(answersPath, JSON.stringify(answersPayload), "utf-8");
       await writeFile(pitchPath, JSON.stringify(pitch), "utf-8");
 

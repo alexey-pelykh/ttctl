@@ -8,7 +8,15 @@ import { Readable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { _resetStdinClaimForTesting, JsonInputError, type JsonInputErrorCode, readJsonInput } from "../json-input.js";
+import { z } from "zod";
+
+import {
+  _resetStdinClaimForTesting,
+  JsonInputError,
+  type JsonInputErrorCode,
+  parseAsRecovered,
+  readJsonInput,
+} from "../json-input.js";
 
 beforeEach(() => {
   _resetStdinClaimForTesting();
@@ -164,5 +172,114 @@ describe("JsonInputError", () => {
     expect(err.code).toBe("PARSE_ERROR");
     expect(err.message).toBe("broken at line 1");
     expect(err).toBeInstanceOf(Error);
+  });
+
+  it("accepts the SCHEMA_ERROR code added in #438", () => {
+    const err = new JsonInputError(
+      "SCHEMA_ERROR",
+      "--answers-file: payload does not match the recovered schema — matcherAnswers[0].id: invalid_type",
+    );
+    expect(err.code).toBe("SCHEMA_ERROR" satisfies JsonInputErrorCode);
+    expect(err.message).toContain("matcherAnswers[0].id");
+  });
+});
+
+// ---------- parseAsRecovered (#438 Stage-2 surface tightening) ----------
+
+describe("parseAsRecovered", () => {
+  const innerSchema = z
+    .object({
+      id: z.string(),
+      answer: z.string(),
+    })
+    .strict();
+  const arraySchema = z.array(innerSchema);
+
+  it("returns the typed value on a happy-path payload (single object)", () => {
+    const result = parseAsRecovered({ id: "MQ-1", answer: "yes" }, innerSchema, "answers-file");
+    expect(result).toEqual({ id: "MQ-1", answer: "yes" });
+  });
+
+  it("returns the typed value on a happy-path array payload", () => {
+    const result = parseAsRecovered(
+      [
+        { id: "MQ-1", answer: "a" },
+        { id: "MQ-2", answer: "b" },
+      ],
+      arraySchema,
+      "answers-file",
+    );
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ id: "MQ-1", answer: "a" });
+  });
+
+  it("throws SCHEMA_ERROR with a field-path when a required key is missing (AC behavioral scenario 3)", () => {
+    expect(() => parseAsRecovered({ answer: "no id" }, innerSchema, "answers-file")).toThrowError(JsonInputError);
+    try {
+      parseAsRecovered({ answer: "no id" }, innerSchema, "answers-file");
+    } catch (err) {
+      expect(err).toBeInstanceOf(JsonInputError);
+      const typedErr = err as JsonInputError;
+      expect(typedErr.code).toBe("SCHEMA_ERROR" satisfies JsonInputErrorCode);
+      // Field-path naming in the rendered message — the AC requires
+      // "stderr contains a Zod field-path indicating the missing required field".
+      expect(typedErr.message).toContain("--answers-file:");
+      expect(typedErr.message).toContain("id");
+    }
+  });
+
+  it("throws SCHEMA_ERROR with a field-path when an unknown key appears (AC behavioral scenario 2 — strict-mode rejection)", () => {
+    try {
+      parseAsRecovered({ id: "MQ-1", answer: "yes", extraField: "intruder" }, innerSchema, "answers-file");
+      throw new Error("expected SCHEMA_ERROR");
+    } catch (err) {
+      expect(err).toBeInstanceOf(JsonInputError);
+      const typedErr = err as JsonInputError;
+      expect(typedErr.code).toBe("SCHEMA_ERROR" satisfies JsonInputErrorCode);
+      // Strict-mode Zod rejects extra keys with `unrecognized_keys`.
+      expect(typedErr.message).toContain("unrecognized_keys");
+    }
+  });
+
+  it("includes the array index in the field path for per-entry failures (e.g. matcherAnswers[2].id)", () => {
+    try {
+      parseAsRecovered(
+        [{ id: "MQ-1", answer: "a" }, { id: "MQ-2", answer: "b" }, { answer: "no id at index 2" }],
+        arraySchema,
+        "answers-file",
+      );
+      throw new Error("expected SCHEMA_ERROR");
+    } catch (err) {
+      expect(err).toBeInstanceOf(JsonInputError);
+      const typedErr = err as JsonInputError;
+      expect(typedErr.message).toContain("[2]");
+      expect(typedErr.message).toContain("id");
+    }
+  });
+
+  it("renders the empty-path root as `<root>` when the entire value fails to match", () => {
+    try {
+      parseAsRecovered("not an object", innerSchema, "answers-file");
+      throw new Error("expected SCHEMA_ERROR");
+    } catch (err) {
+      expect(err).toBeInstanceOf(JsonInputError);
+      expect((err as JsonInputError).message).toContain("<root>");
+    }
+  });
+
+  it("collapses multiple issues into a single semicolon-separated message", () => {
+    try {
+      // Two failures in one payload: missing `id` AND missing `answer`.
+      parseAsRecovered({}, innerSchema, "answers-file");
+      throw new Error("expected SCHEMA_ERROR");
+    } catch (err) {
+      expect(err).toBeInstanceOf(JsonInputError);
+      const typedErr = err as JsonInputError;
+      // Both field paths surface so the user can fix all issues in one
+      // pass rather than playing whack-a-mole.
+      expect(typedErr.message).toContain("id");
+      expect(typedErr.message).toContain("answer");
+      expect(typedErr.message).toContain(";");
+    }
   });
 });

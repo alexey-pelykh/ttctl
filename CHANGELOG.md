@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Stage-2 surface tightening (#438) — `ConfirmInput` / `ApplyInput`
+  / MCP IR-accept + jobs-apply Zod schemas now validate against the
+  recovered SDL shapes from #425.** Replaces the opaque
+  `z.array(z.unknown())` / `z.unknown()` pass-throughs shipped in
+  Wave 0 with typed Zod schemas
+  (`JobPositionAnswerInputSchema().strict()`,
+  `JobExpertiseAnswerInputSchema().strict()`,
+  `PitchInputSchema().strict()`) per ADR-008 § Decision Part 3.
+  Surfaces affected: Core `ConfirmInput.matcherQuestionsAnswers` /
+  `.expertiseQuestionsAnswers` / `.pitchInput`; Core
+  `ApplyInput.matcherAnswers` / `.expertiseAnswers` / `.pitchData`;
+  CLI `applications confirm` AND CLI `jobs apply` (both validate via
+  the new `parseAsRecovered<T>(value, schema, flagName)` helper in
+  `packages/cli/src/lib/json-input.ts`); MCP
+  `ttctl_interest_requests_accept` AND MCP `ttctl_jobs_apply` tool
+  inputSchemas (replaces `z.array(z.unknown())` / `z.unknown()` with
+  `z.array(...InputSchema().strict())` / `...InputSchema().strict()`).
+  - **Pre-1.0 minor breaking change**: agents / scripts passing
+    malformed shapes now fail at client-side schema validation
+    (typed `VALIDATION_ERROR` envelope at the CLI; typed Zod
+    rejection at the MCP framework) rather than at the wire. The
+    behavioral change is fail-fast — the previously-opaque
+    pass-through would have flowed through to the wire and either
+    been silently accepted (if the wire was permissive) or
+    rejected with a generic `GRAPHQL_ERROR`.
+  - **Field-name fix (matcher answers)**: the previous opaque
+    Wave-0 documentation said matcher answers used `questionId`;
+    per the recovered SDL, `JobPositionAnswerInput` uses `id` —
+    **NOT** `questionId`. The runtime `validateAnswerIds` check
+    in `applications.apply()` is updated to validate
+    `matcherAnswers[*].id` against the inventory (expertise
+    answers continue to use `questionId` per
+    `JobExpertiseAnswerInput`; the field-name asymmetry is per the
+    recovered SDL). Callers passing matcher answers with
+    `questionId` will now be rejected at the CLI/MCP boundary
+    BEFORE the wire call. Recovery: rename `questionId` → `id`
+    in matcher answer entries.
+  - **Example-shape migration**: the example payloads in
+    `applications confirm` / `jobs apply` `--help` output and the
+    `ttctl_interest_requests_accept` / `ttctl_jobs_apply` tool
+    descriptions are updated to reflect the recovered shapes
+    (matcher uses `{ id, answer }`; expertise uses
+    `{ questionId, other, subjectId }`; pitch uses the typed
+    `PitchInput` schema — every nullable slot must be present,
+    `null` for the empty case, per `codegen.config.ts`'s
+    `nullishBehavior: "nullable"`).
+  - **Schema/contract rule**: NOT TRIGGERED (no new wire ops); the
+    behavior change is in client-side validation routing. The
+    existing E2E coverage for `confirm` (and #445's apply
+    coverage once it lands) must continue passing — the
+    wire-format itself is unchanged.
+
 ### Added
 
 - **`applications confirm`: expose matcher / expertise question
