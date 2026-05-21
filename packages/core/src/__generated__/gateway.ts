@@ -1124,9 +1124,9 @@ export type JobEstimatedLengthEnum =
   | 'UNKNOWN';
 
 export type JobExpertiseAnswerInput = {
-  other: InputMaybe<Scalars['Unknown']['input']>;
+  other: InputMaybe<Scalars['String']['input']>;
   questionId: Scalars['String']['input'];
-  subjectId: InputMaybe<Scalars['Unknown']['input']>;
+  subjectId: InputMaybe<Scalars['String']['input']>;
 };
 
 export type JobHiringStatus = {
@@ -2006,14 +2006,14 @@ export type Photo = {
 };
 
 export type PitchInput = {
-  certificationPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  educationPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  employmentPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  industryPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
+  certificationPitchItems: InputMaybe<Array<PitchItemCertificationInput>>;
+  educationPitchItems: InputMaybe<Array<PitchItemEducationInput>>;
+  employmentPitchItems: InputMaybe<Array<PitchItemEmploymentInput>>;
+  industryPitchItems: InputMaybe<Array<PitchItemIndustryInput>>;
   mentorship: InputMaybe<Scalars['Unknown']['input']>;
-  portfolioPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  publicationPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  skillPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
+  portfolioPitchItems: InputMaybe<Array<PitchItemPortfolioInput>>;
+  publicationPitchItems: InputMaybe<Array<PitchItemPublicationInput>>;
+  skillPitchItems: InputMaybe<Array<PitchItemSkillInput>>;
 };
 
 export type PitchItemCertificationInput = {

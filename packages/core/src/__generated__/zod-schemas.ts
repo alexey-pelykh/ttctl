@@ -1020,9 +1020,9 @@ export type JobEstimatedLengthEnum =
   | 'UNKNOWN';
 
 export type JobExpertiseAnswerInput = {
-  other: InputMaybe<Scalars['Unknown']['input']>;
+  other: InputMaybe<Scalars['String']['input']>;
   questionId: Scalars['String']['input'];
-  subjectId: InputMaybe<Scalars['Unknown']['input']>;
+  subjectId: InputMaybe<Scalars['String']['input']>;
 };
 
 export type JobHiringStatus = {
@@ -1845,14 +1845,14 @@ export type Photo = {
 };
 
 export type PitchInput = {
-  certificationPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  educationPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  employmentPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  industryPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
+  certificationPitchItems: InputMaybe<Array<PitchItemCertificationInput>>;
+  educationPitchItems: InputMaybe<Array<PitchItemEducationInput>>;
+  employmentPitchItems: InputMaybe<Array<PitchItemEmploymentInput>>;
+  industryPitchItems: InputMaybe<Array<PitchItemIndustryInput>>;
   mentorship: InputMaybe<Scalars['Unknown']['input']>;
-  portfolioPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  publicationPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
-  skillPitchItems: InputMaybe<Array<InputMaybe<Scalars['Unknown']['input']>>>;
+  portfolioPitchItems: InputMaybe<Array<PitchItemPortfolioInput>>;
+  publicationPitchItems: InputMaybe<Array<PitchItemPublicationInput>>;
+  skillPitchItems: InputMaybe<Array<PitchItemSkillInput>>;
 };
 
 export type PitchItemCertificationInput = {
@@ -4600,9 +4600,9 @@ export function JobEstimatedLengthSchema(): z.ZodObject<Properties<JobEstimatedL
 
 export function JobExpertiseAnswerInputSchema(): z.ZodObject<Properties<JobExpertiseAnswerInput>> {
   return z.object({
-    other: z.unknown().nullable(),
+    other: z.string().nullable(),
     questionId: z.string(),
-    subjectId: z.unknown().nullable()
+    subjectId: z.string().nullable()
   })
 }
 
@@ -5237,14 +5237,14 @@ export function PhotoSchema(): z.ZodObject<Properties<Photo>> {
 
 export function PitchInputSchema(): z.ZodObject<Properties<PitchInput>> {
   return z.object({
-    certificationPitchItems: z.array(z.unknown().nullable()).nullable(),
-    educationPitchItems: z.array(z.unknown().nullable()).nullable(),
-    employmentPitchItems: z.array(z.unknown().nullable()).nullable(),
-    industryPitchItems: z.array(z.unknown().nullable()).nullable(),
+    certificationPitchItems: z.array(z.lazy(() => PitchItemCertificationInputSchema())).nullable(),
+    educationPitchItems: z.array(z.lazy(() => PitchItemEducationInputSchema())).nullable(),
+    employmentPitchItems: z.array(z.lazy(() => PitchItemEmploymentInputSchema())).nullable(),
+    industryPitchItems: z.array(z.lazy(() => PitchItemIndustryInputSchema())).nullable(),
     mentorship: z.unknown().nullable(),
-    portfolioPitchItems: z.array(z.unknown().nullable()).nullable(),
-    publicationPitchItems: z.array(z.unknown().nullable()).nullable(),
-    skillPitchItems: z.array(z.unknown().nullable()).nullable()
+    portfolioPitchItems: z.array(z.lazy(() => PitchItemPortfolioInputSchema())).nullable(),
+    publicationPitchItems: z.array(z.lazy(() => PitchItemPublicationInputSchema())).nullable(),
+    skillPitchItems: z.array(z.lazy(() => PitchItemSkillInputSchema())).nullable()
   })
 }
 
