@@ -213,6 +213,10 @@ export function buildJobsCommand(): Command {
         "--show-questions",
         "preview-only: fetch pre-apply data (canApply, suggestedRate) and the matcher/expertise question inventory WITHOUT issuing the apply mutation. Does not require --consent.",
       )
+      .option(
+        "--suggest-answers",
+        "opt-in (#452): fetch the talent's historical answers to similar prior questions as advisory autocomplete suggestions. Off the critical path — does NOT auto-fill --answers-file; failures surface as a stderr warning and do not block apply. Works in --dry-run (suggestion fetch is suppressed alongside the apply call). Works with --show-questions (suggestion fetch runs against the question inventory).",
+      )
       .addOption(
         new Option("-o, --output <format>", "output format")
           .choices(OUTPUT_FORMATS)
@@ -228,6 +232,7 @@ export function buildJobsCommand(): Command {
             answersFile?: string;
             pitchFile?: string;
             showQuestions?: boolean;
+            suggestAnswers?: boolean;
             output: OutputFormat;
           },
         ) => {
@@ -240,6 +245,7 @@ export function buildJobsCommand(): Command {
           if (options.answersFile !== undefined) runOpts.answersFile = options.answersFile;
           if (options.pitchFile !== undefined) runOpts.pitchFile = options.pitchFile;
           if (options.showQuestions !== undefined) runOpts.showQuestions = options.showQuestions;
+          if (options.suggestAnswers !== undefined) runOpts.suggestAnswers = options.suggestAnswers;
           await runJobsApply(id, runOpts);
         },
       ),

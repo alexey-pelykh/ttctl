@@ -60,11 +60,12 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
  * 3 `applications` (#15) + 1 `interest_requests` (#371) + 8 `engagements`
  * (#147 + #155 + #156) + 5 `availability` (#146 amended) + 13 `jobs` (#148)
- * + 4 `jobs.apply` (#436 — apply + 3 pre-apply reads) + 3 `timesheet`
- * (#13) — partial Wave-3 snapshot, not exhaustive. Canonical inventory:
- * `tools/__tests__/registration.test.ts`'s `EXPECTED_TOOLS` list
- * (currently 111 tools; includes additions from #195, #341, #342, #343,
- * #374, #411, #149 not enumerated above).
+ * + 4 `jobs.apply` (#436 — apply + 3 pre-apply reads) +
+ * 1 `jobs.apply_similar_answers` (#452 — opt-in suggestion read) +
+ * 3 `timesheet` (#13) — partial Wave-3 snapshot, not exhaustive.
+ * Canonical inventory: `tools/__tests__/registration.test.ts`'s
+ * `EXPECTED_TOOLS` list (currently 112 tools; includes additions from
+ * #195, #341, #342, #343, #374, #411, #149 not enumerated above).
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`

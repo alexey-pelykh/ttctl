@@ -672,9 +672,14 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
   // ADR-008 § Decision Part 4 is the consent-gate substrate; Part 5
   // is the apply core fn substrate.
   //
-  // **`SimilarJobQuestionAnswers` is intentionally out of scope** —
-  // that's the opt-in `ttctl_jobs_apply_similar_answers` tool that
-  // ships in #452.
+  // **`SimilarJobQuestionAnswers`**: the opt-in
+  // `ttctl_jobs_apply_similar_answers` tool (#452) registered below
+  // surfaces the talent's historical answers to questions
+  // semantically similar to those on a given job's apply form. The
+  // tool is read-only and explicitly OFF the agent's critical apply
+  // path — it is provided as a separate read tool so the LLM agent
+  // can choose to consult it before authoring `matcherAnswers` /
+  // `expertiseAnswers` for `ttctl_jobs_apply`.
   //
   // **Redaction**: the `matcherAnswers`, `expertiseAnswers`, and
   // `pitchData` payloads are free-text talent-authored content and
@@ -688,6 +693,7 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
   registerJobsApplyQuestionsTool(server, ctx);
   registerJobsApplyRateInsightTool(server, ctx);
   registerJobsApplyTool(server, ctx);
+  registerJobsApplySimilarAnswersTool(server, ctx);
 }
 
 // ---------------------------------------------------------------------
@@ -971,6 +977,86 @@ function registerJobsApplyTool(server: McpServer, ctx: ToolRegistrationContext):
           return dryRunResponse(outcome.preview);
         }
         return successResponse(outcome.result);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+}
+
+function registerJobsApplySimilarAnswersTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_jobs_apply_similar_answers",
+    {
+      title: "Fetch similar historical answers for a job's apply-form questions",
+      description: [
+        "Fetch the talent's own historical answers to questions",
+        "semantically similar to those on a given job's apply form —",
+        "advisory autocomplete suggestions an LLM agent can offer the",
+        "user when authoring `matcherAnswers` / `expertiseAnswers` for",
+        "`ttctl_jobs_apply`.",
+        "",
+        "Read-only — does not mutate any server state.",
+        "",
+        "**Off the critical apply path**: this tool is intentionally a",
+        "SEPARATE read step from `ttctl_jobs_apply_data` /",
+        "`ttctl_jobs_apply_questions` / `ttctl_jobs_apply_rate_insight`.",
+        "The underlying wire query (`SimilarJobQuestionAnswers`) is",
+        "heavier (server-side semantic-similarity computation) and many",
+        "talent accounts — especially new specializations — have no",
+        "similar-job history, so the result is often empty. Call this",
+        "tool when the user wants autocomplete suggestions; skip it",
+        "otherwise.",
+        "",
+        "**How to use the output**: the tool returns one",
+        "`SimilarJobAnswerGroup` per question on the job's apply form",
+        "(matcher AND expertise, interleaved in the same order as the",
+        "`ttctl_jobs_apply_questions` inventory). Each group's",
+        "`suggestions` array carries `{ id, answer, createdAt }` entries.",
+        "The `answer` text can be surfaced to the user as candidate",
+        "values for the corresponding question; **DO NOT** silently",
+        "auto-fill the apply payload — these are advisory suggestions,",
+        "not the talent's stated answers.",
+        "",
+        "Returns `[]` when the job has no questions on its apply form,",
+        "or one group per question with an empty `suggestions` array",
+        "when the talent has no similar-job history for that question.",
+        "",
+        "**Cardinality note**: under the hood, this issues one",
+        "`SimilarJobQuestionAnswers` call per question on the job's",
+        "apply form (one per matcher + one per expertise question). The",
+        "fan-out is internal; a single tool invocation returns the",
+        "aggregated result.",
+        "",
+        "Example user prompts:",
+        '  - "What past answers do I have that might fit job <id>?"',
+        '  - "Suggest answers for the apply form of job <id>."',
+        '  - "Show me autocomplete candidates for job <id>\'s questions."',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (NOT the activity-item id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        // Dry-run preview surfaces the OUTER `JobApplicationQuestions`
+        // pre-fetch (which `similarAnswers` calls first to enumerate
+        // question identifiers). The N parallel
+        // `SimilarJobQuestionAnswers` calls that fan out from there
+        // are internal to the core fn and are NOT represented in the
+        // preview envelope — the agent can read the question inventory
+        // separately via `ttctl_jobs_apply_questions` if they want to
+        // see what the fan-out would touch.
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobApplicationQuestions", "mobile-gateway", { jobId: args.id }, auth.token),
+        );
+      }
+      try {
+        const suggestions = await applications.similarAnswers(auth.token, args.id);
+        return successResponse(suggestions);
       } catch (err) {
         return mapApplicationsError(err);
       }

@@ -33,6 +33,7 @@ vi.mock("@ttctl/core", async () => {
   const apply = vi.fn();
   const applyData = vi.fn();
   const applyQuestions = vi.fn();
+  const similarAnswers = vi.fn();
   // #438: apply.ts materializes the recovered Zod schemas at module
   // load time (`JobPositionAnswerInputSchema()` etc.). Pull the real
   // schema factories from the un-mocked `@ttctl/core` so the
@@ -50,6 +51,7 @@ vi.mock("@ttctl/core", async () => {
       apply,
       applyData,
       applyQuestions,
+      similarAnswers,
     },
     TtctlError,
   };
@@ -75,6 +77,7 @@ import { runJobsApply } from "../apply.js";
 const mockedApply = vi.mocked(applications.apply);
 const mockedApplyData = vi.mocked(applications.applyData);
 const mockedApplyQuestions = vi.mocked(applications.applyQuestions);
+const mockedSimilarAnswers = vi.mocked(applications.similarAnswers);
 const mockedGetCliDryRun = vi.mocked(getCliDryRun);
 
 class ExitInvoked extends Error {
@@ -152,14 +155,32 @@ const APPLY_QUESTIONS_FIXTURE = {
   expertiseQuestions: [{ identifier: "EQ-1", prompt: "TypeScript", type: "expertise" as const, isMandatory: true }],
 };
 
+const SIMILAR_ANSWERS_FIXTURE = [
+  {
+    questionId: "MQ-1",
+    suggestions: [
+      { id: "ans-1a", answer: "Yes, immediately", createdAt: "2025-04-01T00:00:00Z" },
+      { id: "ans-1b", answer: "Available in 2 weeks", createdAt: "2025-03-15T00:00:00Z" },
+    ],
+  },
+  { questionId: "MQ-2", suggestions: [{ id: "ans-2", answer: "8 years", createdAt: "2025-04-15T00:00:00Z" }] },
+  { questionId: "MQ-3", suggestions: [] },
+  {
+    questionId: "EQ-1",
+    suggestions: [{ id: "ans-4", answer: "Daily use, 5+ years", createdAt: "2025-05-01T00:00:00Z" }],
+  },
+];
+
 beforeEach(() => {
   mockedApply.mockReset();
   mockedApplyData.mockReset();
   mockedApplyQuestions.mockReset();
+  mockedSimilarAnswers.mockReset();
   mockedGetCliDryRun.mockReset();
   mockedApply.mockResolvedValue(APPLIED_FIXTURE);
   mockedApplyData.mockResolvedValue(PRE_APPLY_DATA_FIXTURE);
   mockedApplyQuestions.mockResolvedValue(APPLY_QUESTIONS_FIXTURE);
+  mockedSimilarAnswers.mockResolvedValue(SIMILAR_ANSWERS_FIXTURE);
   mockedGetCliDryRun.mockReturnValue(false);
   _resetStdinClaimForTesting();
 });
@@ -586,5 +607,205 @@ describe("runJobsApply: --message forwarding (#430)", () => {
     expect(mockedApply).toHaveBeenCalledTimes(1);
     const [, , input] = mockedApply.mock.calls[0] ?? [];
     expect((input as { message?: string }).message).toBe("Excited to apply!");
+  });
+});
+
+// ---------- --suggest-answers (#452) — opt-in similar-answer fetch ----------
+//
+// Behavioral parity with the four Gherkin scenarios in the issue body:
+//   1. Opt-in with past similar answers — suggestions displayed.
+//   2. Opt-in with no past similar answers — empty suggestions, no error.
+//   3. Default (no flag) — no extra wire call.
+//   4. Suggestion query fails — apply continues without suggestions.
+
+describe("runJobsApply: --suggest-answers (#452)", () => {
+  it("scenario 1: --suggest-answers with similar answers — suggestions displayed alongside apply success", async () => {
+    captureExit();
+    const streams = captureStreams();
+
+    await runJobsApply("JOB-456", {
+      consent: true,
+      suggestAnswers: true,
+      output: "json",
+    });
+
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+    expect(mockedSimilarAnswers).toHaveBeenCalledTimes(1);
+    expect(mockedSimilarAnswers).toHaveBeenCalledWith("tok-test-123", "JOB-456");
+
+    const stdout = streams.stdout.join("");
+    const parsed = JSON.parse(stdout) as {
+      ok: boolean;
+      updated: {
+        application: { id: string };
+        suggestions: { questionId: string; suggestions: { answer: string }[] }[];
+      };
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.updated.application.id).toBe("app-123");
+    expect(parsed.updated.suggestions).toHaveLength(4);
+    expect(parsed.updated.suggestions[0]?.questionId).toBe("MQ-1");
+    expect(parsed.updated.suggestions[0]?.suggestions[0]?.answer).toBe("Yes, immediately");
+  });
+
+  it("scenario 1 (pretty): suggestions section renders below the apply confirmation", async () => {
+    captureExit();
+    const streams = captureStreams();
+    await runJobsApply("JOB-456", { consent: true, suggestAnswers: true, output: "pretty" });
+    const stdout = streams.stdout.join("");
+    expect(stdout).toContain("Application: app-123");
+    expect(stdout).toContain("Suggestions (4 question(s))");
+    expect(stdout).toContain("MQ-1 (2 suggestion(s))");
+    expect(stdout).toContain('"Yes, immediately"');
+    expect(stdout).toContain("MQ-3 (0 suggestion(s))");
+    expect(stdout).toContain("(none)");
+  });
+
+  it("does NOT auto-fill --answers-file from suggestions (advisory only — per AC 'NOT a single answer is silently rewritten')", async () => {
+    captureExit();
+    captureStreams();
+
+    await runJobsApply("JOB-456", {
+      consent: true,
+      suggestAnswers: true,
+      output: "json",
+    });
+
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+    const [, , input] = mockedApply.mock.calls[0] ?? [];
+    // The KEY assertion: even though suggestions returned 4 groups
+    // with non-empty answer text, the apply() input has NO
+    // matcherAnswers / expertiseAnswers — the CLI did NOT
+    // auto-fill from the suggestions.
+    expect((input as { matcherAnswers?: unknown }).matcherAnswers).toBeUndefined();
+    expect((input as { expertiseAnswers?: unknown }).expertiseAnswers).toBeUndefined();
+  });
+
+  it("scenario 2: --suggest-answers with empty inventory — no error, suggestions section shows zero count", async () => {
+    captureExit();
+    const streams = captureStreams();
+    mockedSimilarAnswers.mockResolvedValue([]);
+
+    await runJobsApply("JOB-456", { consent: true, suggestAnswers: true, output: "pretty" });
+
+    const stdout = streams.stdout.join("");
+    // Apply still succeeds.
+    expect(stdout).toContain("Application: app-123");
+    // Suggestions header still renders (so the user sees "we checked,
+    // nothing similar found" rather than "the section vanished").
+    expect(stdout).toContain("Suggestions (0 question(s))");
+    expect(stdout).toContain("(no suggestions returned");
+  });
+
+  it("scenario 3: default (no --suggest-answers) — applications.similarAnswers is NEVER called", async () => {
+    captureExit();
+    captureStreams();
+
+    await runJobsApply("JOB-456", { consent: true, output: "json" });
+
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+    // The KEY assertion: no suggestion wire call.
+    expect(mockedSimilarAnswers).not.toHaveBeenCalled();
+  });
+
+  it("scenario 4: --suggest-answers fetch fails — stderr warning + apply succeeds + suggestions empty", async () => {
+    const exit = captureExit();
+    const streams = captureStreams();
+    mockedSimilarAnswers.mockRejectedValue(
+      new applications.ApplicationsError("NETWORK_ERROR", "Transient transport failure"),
+    );
+
+    await runJobsApply("JOB-456", {
+      consent: true,
+      suggestAnswers: true,
+      output: "json",
+    });
+
+    // Apply succeeded (no exit).
+    expect(exit.exit).toBeNull();
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+
+    const stderr = streams.stderr.join("");
+    expect(stderr).toContain("--suggest-answers fetch failed");
+    expect(stderr).toContain("Transient transport failure");
+
+    // The apply confirmation IS in stdout — apply path completed.
+    const stdout = streams.stdout.join("");
+    const parsed = JSON.parse(stdout) as {
+      ok: boolean;
+      updated: { application: { id: string }; suggestions: unknown[] };
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.updated.application.id).toBe("app-123");
+    // Suggestions array is empty on graceful-fail (NOT auto-filled,
+    // NOT crashed).
+    expect(parsed.updated.suggestions).toEqual([]);
+  });
+
+  it("--suggest-answers + --dry-run: suggestion fetch is SUPPRESSED alongside the apply mutation (matching dry-run posture)", async () => {
+    captureExit();
+    captureStreams();
+    mockedGetCliDryRun.mockReturnValue(true);
+    mockedApply.mockResolvedValue(DRY_RUN_PREVIEW_FIXTURE);
+
+    await runJobsApply("JOB-456", {
+      consent: true,
+      suggestAnswers: true,
+      output: "json",
+    });
+
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+    // The KEY assertion: suggestions are NOT fetched in dry-run mode.
+    expect(mockedSimilarAnswers).not.toHaveBeenCalled();
+  });
+
+  it("--suggest-answers + --show-questions: suggestion fetch runs alongside the question inventory, no apply mutation", async () => {
+    captureExit();
+    const streams = captureStreams();
+
+    await runJobsApply("JOB-456", {
+      showQuestions: true,
+      suggestAnswers: true,
+      output: "json",
+    });
+
+    expect(mockedApplyData).toHaveBeenCalledTimes(1);
+    expect(mockedApplyQuestions).toHaveBeenCalledTimes(1);
+    expect(mockedSimilarAnswers).toHaveBeenCalledTimes(1);
+    // No apply mutation (matches --show-questions semantics).
+    expect(mockedApply).not.toHaveBeenCalled();
+
+    const stdout = streams.stdout.join("");
+    const parsed = JSON.parse(stdout) as {
+      jobId: string;
+      suggestions?: { questionId: string; suggestions: { answer: string }[] }[];
+    };
+    expect(parsed.jobId).toBe("JOB-456");
+    expect(parsed.suggestions).toBeDefined();
+    expect(parsed.suggestions?.[0]?.questionId).toBe("MQ-1");
+  });
+
+  it("--suggest-answers + --show-questions + fetch fails: stderr warning + preview rendered without suggestions section", async () => {
+    captureExit();
+    const streams = captureStreams();
+    mockedSimilarAnswers.mockRejectedValue(
+      new applications.ApplicationsError("NETWORK_ERROR", "Transient transport failure"),
+    );
+
+    await runJobsApply("JOB-456", {
+      showQuestions: true,
+      suggestAnswers: true,
+      output: "json",
+    });
+
+    const stderr = streams.stderr.join("");
+    expect(stderr).toContain("--suggest-answers fetch failed");
+
+    const stdout = streams.stdout.join("");
+    const parsed = JSON.parse(stdout) as { jobId: string; suggestions?: unknown };
+    expect(parsed.jobId).toBe("JOB-456");
+    // suggestions field is OMITTED entirely on fetch-fail (vs []
+    // empty on success-but-zero-history — both are valid signals).
+    expect(parsed.suggestions).toBeUndefined();
   });
 });

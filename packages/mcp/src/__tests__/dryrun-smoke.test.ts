@@ -149,6 +149,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_jobs_apply_data: { id: "job_123" },
   ttctl_jobs_apply_questions: { id: "job_123" },
   ttctl_jobs_apply_rate_insight: { id: "job_123" },
+  ttctl_jobs_apply_similar_answers: { id: "job_123" },
   ttctl_jobs_clear_interest: { id: "job_123" },
   ttctl_jobs_list: {},
   ttctl_jobs_mark_viewed: { id: "job_123" },
@@ -289,11 +290,12 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 111 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 112 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
-    // apply, apply_data, apply_questions, apply_rate_insight.
-    expect(Object.keys(tools)).toHaveLength(111);
+    // apply, apply_data, apply_questions, apply_rate_insight + 1
+    // new opt-in suggestion tool (#452): apply_similar_answers.
+    expect(Object.keys(tools)).toHaveLength(112);
   });
 
   it("every registered tool has a fixture", () => {
