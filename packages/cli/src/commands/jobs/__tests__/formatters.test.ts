@@ -3,10 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { jobs } from "@ttctl/core";
+import type { applications, jobs } from "@ttctl/core";
 
 import { formatInterestEntity } from "../interest.js";
-import { formatJobDetail } from "../show.js";
+import { formatJobDetail, formatQuestionsSections } from "../show.js";
 import {
   buildJobsPageInfo,
   formatDate,
@@ -294,5 +294,57 @@ describe("formatInterestEntity", () => {
     expect(output).toContain("Saved: yes");
     expect(output).toContain("Not interested: no");
     expect(output).toContain("Viewed: no");
+  });
+});
+
+// =======================================================================
+// formatQuestionsSections — `--with-questions` inlined sections (#437)
+// =======================================================================
+
+describe("formatQuestionsSections (#437)", () => {
+  const QUESTIONS_FIXTURE: applications.ApplicationQuestions = {
+    matcherQuestions: [
+      { identifier: "MQ-1", prompt: "Years of TS?", type: "matcher", isMandatory: true },
+      { identifier: "MQ-2", prompt: "Remote-only?", type: "matcher", isMandatory: false },
+    ],
+    expertiseQuestions: [{ identifier: "EQ-1", prompt: "React", type: "expertise", isMandatory: true }],
+  };
+
+  it("renders both section headers with the inventory count", () => {
+    const output = formatQuestionsSections({
+      matcher: QUESTIONS_FIXTURE.matcherQuestions,
+      expertise: QUESTIONS_FIXTURE.expertiseQuestions,
+    });
+    expect(output).toContain("Matcher Questions (2)");
+    expect(output).toContain("Expertise Questions (1)");
+  });
+
+  it("renders each question with identifier and prompt", () => {
+    const output = formatQuestionsSections({
+      matcher: QUESTIONS_FIXTURE.matcherQuestions,
+      expertise: QUESTIONS_FIXTURE.expertiseQuestions,
+    });
+    expect(output).toContain("MQ-1: Years of TS?");
+    expect(output).toContain("MQ-2: Remote-only?");
+    expect(output).toContain("EQ-1: React");
+  });
+
+  it("emits both section headers with (0) when both inventories are empty", () => {
+    const output = formatQuestionsSections({ matcher: [], expertise: [] });
+    expect(output).toContain("Matcher Questions (0)");
+    expect(output).toContain("Expertise Questions (0)");
+  });
+
+  it("renders an empty-prompt question as identifier-with-trailing-colon (no trailing space)", () => {
+    // Defensive: the applications service projects expertise-question
+    // subjects with `?? ""` when neither inline fragment matched. The
+    // formatter must not append a stray space after the colon.
+    const output = formatQuestionsSections({
+      matcher: [],
+      expertise: [{ identifier: "EQ-bare", prompt: "", type: "expertise", isMandatory: true }],
+    });
+    expect(output).toContain("• EQ-bare:");
+    // Negative check: no trailing space (`":"` + `" "` + empty prompt).
+    expect(output).not.toContain("EQ-bare: ");
   });
 });

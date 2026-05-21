@@ -1,11 +1,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { jobs } from "@ttctl/core";
+import { applications, jobs } from "@ttctl/core";
 
+import { handleApplicationsError } from "../applications/shared.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { formatDate, formatFixedRate, formatRate, handleJobsError, loadAuthTokenOrExit } from "./shared.js";
+
+/**
+ * Options for {@link runJobsShow}. `withQuestions` (issue #437) opts
+ * the user-facing detail view into a parallel `applications.applyQuestions`
+ * fetch so the matcher + expertise question inventory inlines under a
+ * `questions` field — discoverability convenience for authoring an
+ * answers-file payload without a second command. Default `false`
+ * preserves pre-#437 behavior verbatim.
+ */
+export interface JobsShowOptions {
+  withQuestions?: boolean;
+}
+
+/**
+ * Compact JSON / YAML envelope projection of the matcher + expertise
+ * questions when `--with-questions` is supplied. Short field names
+ * (`matcher` / `expertise`) under a `questions` namespace per the issue's
+ * behavioral scenarios — distinct from the service-layer's
+ * `ApplicationQuestions` shape (`matcherQuestions` / `expertiseQuestions`)
+ * where the longer names disambiguate when those arrays are referenced
+ * standalone.
+ */
+export interface JobsShowQuestionsProjection {
+  matcher: applications.ApplicationQuestion[];
+  expertise: applications.ApplicationQuestion[];
+}
+
+/**
+ * Combined detail-view projection emitted when `--with-questions` is
+ * supplied (issue #437). The bare {@link jobs.JobDetail} flows through
+ * unchanged; a top-level `questions` field carries the matcher +
+ * expertise inventory. JSON / YAML consumers project further as needed.
+ */
+export type JobsShowDetailWithQuestions = jobs.JobDetail & { questions: JobsShowQuestionsProjection };
 
 /**
  * Action handler for `ttctl jobs show <id>`. Fetches a single job's
@@ -17,20 +52,92 @@ import { formatDate, formatFixedRate, formatRate, handleJobsError, loadAuthToken
  *
  * `json` / `yaml` emit the full projection — machine consumers may
  * project further as needed.
+ *
+ * Issue #437: when `opts.withQuestions === true`, additionally invokes
+ * `applications.applyQuestions(token, id)` in parallel with the existing
+ * `jobs.show()` fetch (Promise.all so both round-trips overlap), then
+ * merges the four-field {@link applications.ApplicationQuestion}
+ * inventories under a top-level `questions` field. Pretty output gains
+ * the Matcher Questions / Expertise Questions sections (rendered even
+ * when the inventory is empty — the section header surfaces the zero
+ * count so the user reads "Toptal returned an empty inventory" not "the
+ * CLI silently dropped the section"). When `withQuestions` is omitted
+ * or false, behavior is identical to the pre-#437 surface — no
+ * `JobApplicationQuestions` wire query is sent.
  */
-export async function runJobsShow(id: string, output: OutputFormat): Promise<void> {
+export async function runJobsShow(id: string, output: OutputFormat, opts: JobsShowOptions = {}): Promise<void> {
   const token = await loadAuthTokenOrExit("jobs show", output);
 
+  const withQuestions = opts.withQuestions === true;
   let item: jobs.JobDetail;
+  let questions: applications.ApplicationQuestions | null = null;
   try {
-    item = await jobs.show(token, id);
+    if (withQuestions) {
+      // Promise.all so the two wire calls overlap. Rejection from
+      // either side short-circuits the other; the error-routing dispatch
+      // below picks the matching domain handler so the user sees the
+      // correct `(<CODE>)` envelope (jobs vs applications).
+      [item, questions] = await Promise.all([jobs.show(token, id), applications.applyQuestions(token, id)]);
+    } else {
+      item = await jobs.show(token, id);
+    }
   } catch (err) {
+    if (err instanceof applications.ApplicationsError) {
+      handleApplicationsError("jobs show", err, output);
+    }
     handleJobsError("jobs show", err, output);
   }
 
-  emitResult(item, output, {
-    pretty: (data) => formatJobDetail(data),
+  if (questions === null) {
+    emitResult(item, output, {
+      pretty: (data) => formatJobDetail(data),
+    });
+    return;
+  }
+  const combined: JobsShowDetailWithQuestions = {
+    ...item,
+    questions: {
+      matcher: questions.matcherQuestions,
+      expertise: questions.expertiseQuestions,
+    },
+  };
+  emitResult(combined, output, {
+    pretty: (data) => `${formatJobDetail(data)}\n${formatQuestionsSections(data.questions)}`,
   });
+}
+
+/**
+ * Render the matcher + expertise question inventories as two
+ * sectioned multi-line blocks. Sections fire unconditionally when
+ * `--with-questions` is supplied — the count in the header (e.g.
+ * "Matcher Questions (0)") makes empty inventories self-evident
+ * instead of silently omitted. Pure — directly unit-testable.
+ *
+ * Each question renders as `  • <identifier>: <prompt>` so the
+ * identifier (the wire `id` used as the `questionId` key when
+ * building answers-file payloads) is visually disambiguated from
+ * the human prompt that follows the colon. Empty prompts (defensive
+ * — the service projects expertise-question subjects with `?? ""`
+ * when neither inline fragment matched) render as
+ * `  • <identifier>:` with no trailing prompt text.
+ */
+export function formatQuestionsSections(questions: JobsShowQuestionsProjection): string {
+  const lines: string[] = [];
+  lines.push(`Matcher Questions (${questions.matcher.length.toString()})`);
+  for (const q of questions.matcher) {
+    lines.push(formatQuestionEntry(q));
+  }
+  lines.push("");
+  lines.push(`Expertise Questions (${questions.expertise.length.toString()})`);
+  for (const q of questions.expertise) {
+    lines.push(formatQuestionEntry(q));
+  }
+  return lines.join("\n");
+}
+
+function formatQuestionEntry(q: applications.ApplicationQuestion): string {
+  const tail = q.prompt === "" ? "" : ` ${q.prompt}`;
+  return `  • ${q.identifier}:${tail}`;
 }
 
 /**

@@ -142,13 +142,17 @@ export function buildJobsCommand(): Command {
     .command("show")
     .description("Show one job by id")
     .argument("<id>", "job id (from `jobs list`)", parseIdArg)
+    .option(
+      "--with-questions",
+      "additionally fetch and inline the job's matcher + expertise application questions (issue #437)",
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
-    .action(async (id: string, options: { output: OutputFormat }) => {
-      await runJobsShow(id, options.output);
+    .action(async (id: string, options: { output: OutputFormat; withQuestions?: boolean }) => {
+      await runJobsShow(id, options.output, { withQuestions: options.withQuestions === true });
     });
 
   // Marked as a mutation (issue #162) so the global `--dry-run` flag
