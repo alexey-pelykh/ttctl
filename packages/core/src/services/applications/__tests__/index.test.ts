@@ -18,8 +18,11 @@ import {
   AVAILABILITY_REQUEST_KINDS,
   STATUS_GROUPS,
   ApplicationsError,
+  applyData,
+  applyQuestions,
   confirm,
   list,
+  rateInsight,
   reject,
   rejectReasons,
   show,
@@ -902,5 +905,572 @@ describe("applications.rejectReasons (#411)", () => {
     await rejectReasons(TOKEN);
     const body = mockedStock.mock.calls[0]?.[0]?.body as { operationName: string };
     expect(body.operationName).toBe("AvailabilityRequestRejectReasons");
+  });
+});
+
+// ---------------------------------------------------------------------
+// Pre-apply read suite (#424). All three fns exercise the
+// `callGateway` wrapper (mobile-gateway, requireViewer:true) and the
+// shared widened `NOT_FOUND_MESSAGE_PATTERN`. Fixtures below mock the
+// captured wire shape (selection set trimmed to what each public
+// projection surfaces).
+// ---------------------------------------------------------------------
+
+const JOB_ID = "job-456";
+
+function applyDataFixture(
+  opts: {
+    applyErrors?: { code: string; message: string }[] | null;
+    hourlyRate?: string | null;
+    rateValidation?: { minRate: string; rateStep: number } | null;
+    isCoaching?: boolean | null;
+    hasRequiredApplicationPitch?: boolean | null;
+  } = {},
+): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "Viewer",
+        id: "v1",
+        viewerRole:
+          opts.hourlyRate === null
+            ? null
+            : {
+                __typename: "ViewerRole",
+                rates: { __typename: "TalentRate", hourly: opts.hourlyRate ?? "85.00" },
+              },
+        job: {
+          __typename: "TalentJob",
+          id: JOB_ID,
+          isCoaching: opts.isCoaching ?? false,
+          hasRequiredApplicationPitch: opts.hasRequiredApplicationPitch ?? false,
+          operations: {
+            __typename: "JobOperations",
+            apply: {
+              __typename: "JobOperationsApply",
+              errors: (opts.applyErrors ?? []).map((e) => ({
+                __typename: "JobOperationsApplyError",
+                ...e,
+              })),
+            },
+          },
+        },
+      },
+      platformConfiguration:
+        opts.rateValidation === null
+          ? null
+          : {
+              __typename: "PlatformConfiguration",
+              id: "pc-1",
+              rateValidationRules: {
+                __typename: "TalentRateValidationRules",
+                hourly: {
+                  __typename: "TalentRateValidationRule",
+                  minRate: opts.rateValidation?.minRate ?? "5.00",
+                  rateStep: opts.rateValidation?.rateStep ?? 1,
+                },
+              },
+            },
+    },
+  };
+}
+
+describe("applications.applyData (#424)", () => {
+  it("returns the projected PreApplyData on a successful response", async () => {
+    reply({
+      body: applyDataFixture({
+        hourlyRate: "100.00",
+        isCoaching: true,
+        hasRequiredApplicationPitch: true,
+      }),
+    });
+    const out = await applyData(TOKEN, JOB_ID);
+    expect(out.job).toEqual({ id: JOB_ID, isCoaching: true, hasRequiredApplicationPitch: true });
+    expect(out.suggestedRate).toBe("100.00");
+    expect(out.rateValidation).toEqual({ minRate: "5.00", rateStep: 1 });
+    expect(out.applyErrors).toEqual([]);
+    expect(out.canApply).toBe(true);
+  });
+
+  it("returns canApply:false and the populated applyErrors when wire reports apply errors", async () => {
+    reply({
+      body: applyDataFixture({
+        applyErrors: [
+          { code: "ALREADY_APPLIED", message: "You already applied to this job." },
+          { code: "JOB_CLOSED", message: "This job is no longer accepting applications." },
+        ],
+      }),
+    });
+    const out = await applyData(TOKEN, JOB_ID);
+    expect(out.canApply).toBe(false);
+    expect(out.applyErrors).toEqual([
+      { code: "ALREADY_APPLIED", message: "You already applied to this job." },
+      { code: "JOB_CLOSED", message: "This job is no longer accepting applications." },
+    ]);
+  });
+
+  it("filters out null entries from operations.apply.errors (defensive — list-of-nullable per schema)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            viewerRole: { __typename: "ViewerRole", rates: { __typename: "TalentRate", hourly: "80.00" } },
+            job: {
+              __typename: "TalentJob",
+              id: JOB_ID,
+              isCoaching: false,
+              hasRequiredApplicationPitch: false,
+              operations: {
+                __typename: "JobOperations",
+                apply: {
+                  __typename: "JobOperationsApply",
+                  errors: [null, { __typename: "JobOperationsApplyError", code: "X", message: "msg" }, null],
+                },
+              },
+            },
+          },
+          platformConfiguration: null,
+        },
+      },
+    });
+    const out = await applyData(TOKEN, JOB_ID);
+    expect(out.applyErrors).toEqual([{ code: "X", message: "msg" }]);
+    expect(out.canApply).toBe(false);
+  });
+
+  it("returns suggestedRate:null when viewerRole is null", async () => {
+    reply({ body: applyDataFixture({ hourlyRate: null }) });
+    const out = await applyData(TOKEN, JOB_ID);
+    expect(out.suggestedRate).toBeNull();
+  });
+
+  it("returns rateValidation:null when platformConfiguration is null", async () => {
+    reply({ body: applyDataFixture({ rateValidation: null }) });
+    const out = await applyData(TOKEN, JOB_ID);
+    expect(out.rateValidation).toBeNull();
+  });
+
+  it("threads jobId + operationName into the wire variables", async () => {
+    reply({ body: applyDataFixture() });
+    await applyData(TOKEN, JOB_ID);
+    const body = mockedStock.mock.calls[0]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(body.operationName).toBe("JobApplyData");
+    expect(body.variables).toEqual({ jobId: JOB_ID });
+  });
+
+  it("maps top-level 'Record not found' GraphQL error to NOT_FOUND (legacy pattern preserved)", async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(applyData(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps top-level 'Invalid ID' GraphQL error to NOT_FOUND (#424 widened pattern, jobs-service precedent)", async () => {
+    reply({ body: { errors: [{ message: 'Invalid ID "abc"' }] } });
+    await expect(applyData(TOKEN, "abc")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps top-level Relay decode error 'Node id ... resolves to ...' to NOT_FOUND (#424 widened pattern)", async () => {
+    reply({
+      body: {
+        errors: [{ message: "Node id 'bogus' resolves to an unknown type Job. Please check ..." }],
+      },
+    });
+    await expect(applyData(TOKEN, "bogus")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps successful response with viewer.job === null to NOT_FOUND (defensive)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { __typename: "Viewer", id: "v1", viewerRole: null, job: null },
+          platformConfiguration: null,
+        },
+      },
+    });
+    await expect(applyData(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(applyData(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("propagates non-NOT_FOUND GraphQL errors verbatim (not auth-revoked, not Record-not-found)", async () => {
+    reply({ body: { errors: [{ message: "Some other server error" }] } });
+    await expect(applyData(TOKEN, JOB_ID)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "GRAPHQL_ERROR",
+    });
+  });
+});
+
+function questionsFixture(
+  opts: {
+    matcher?: { id: string; question: string; isRequired: boolean | null }[];
+    expertise?: {
+      id: string;
+      subject: { __typename: "Industry" | "Skill" | string; id?: string; name?: string } | null;
+    }[];
+  } = {},
+): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "Viewer",
+        id: "v1",
+        job: {
+          __typename: "TalentJob",
+          id: JOB_ID,
+          questions: (opts.matcher ?? []).map((q) => ({ __typename: "JobPositionQuestion", ...q })),
+          expertiseQuestions: (opts.expertise ?? []).map((q) => ({
+            __typename: "JobExpertiseQuestion",
+            ...q,
+          })),
+        },
+      },
+    },
+  };
+}
+
+describe("applications.applyQuestions (#424)", () => {
+  it("projects matcher + expertise questions in the four-field shape", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [
+          { id: "m1", question: "How many years of experience?", isRequired: true },
+          { id: "m2", question: "Are you a citizen?", isRequired: false },
+        ],
+        expertise: [
+          { id: "e1", subject: { __typename: "Industry", id: "ind-1", name: "FinTech" } },
+          { id: "e2", subject: { __typename: "Skill", id: "sk-1", name: "TypeScript" } },
+        ],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions).toEqual([
+      { identifier: "m1", prompt: "How many years of experience?", type: "matcher", isMandatory: true },
+      { identifier: "m2", prompt: "Are you a citizen?", type: "matcher", isMandatory: false },
+    ]);
+    expect(out.expertiseQuestions).toEqual([
+      { identifier: "e1", prompt: "FinTech", type: "expertise", isMandatory: true },
+      { identifier: "e2", prompt: "TypeScript", type: "expertise", isMandatory: true },
+    ]);
+  });
+
+  it("returns empty arrays when the job has no matcher or expertise questions (REQ-Q1 empty-path)", async () => {
+    reply({ body: questionsFixture({ matcher: [], expertise: [] }) });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions).toEqual([]);
+    expect(out.expertiseQuestions).toEqual([]);
+  });
+
+  it("treats null `questions` / `expertiseQuestions` lists as empty (defensive)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            job: {
+              __typename: "TalentJob",
+              id: JOB_ID,
+              questions: null,
+              expertiseQuestions: null,
+            },
+          },
+        },
+      },
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions).toEqual([]);
+    expect(out.expertiseQuestions).toEqual([]);
+  });
+
+  it("projects matcher isRequired:null as isMandatory:false (defensive default)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Q?", isRequired: null }],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions[0]?.isMandatory).toBe(false);
+  });
+
+  it("filters out null wire entries from both arrays (defensive)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            job: {
+              __typename: "TalentJob",
+              id: JOB_ID,
+              questions: [null, { __typename: "JobPositionQuestion", id: "m1", question: "Q", isRequired: true }],
+              expertiseQuestions: [
+                {
+                  __typename: "JobExpertiseQuestion",
+                  id: "e1",
+                  subject: { __typename: "Skill", id: "s1", name: "Go" },
+                },
+                null,
+              ],
+            },
+          },
+        },
+      },
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions).toHaveLength(1);
+    expect(out.expertiseQuestions).toHaveLength(1);
+  });
+
+  it("projects expertise prompt as empty string when subject is null (defensive)", async () => {
+    reply({
+      body: questionsFixture({
+        expertise: [{ id: "e1", subject: null }],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.expertiseQuestions[0]?.prompt).toBe("");
+    // Expertise isMandatory stays `true` even when subject is null —
+    // the projection's mandatory-ness inference is driven by apply-
+    // flow semantics, not subject content (see ApplicationQuestion
+    // JSDoc).
+    expect(out.expertiseQuestions[0]?.isMandatory).toBe(true);
+  });
+
+  it("threads jobId + operationName into the wire variables", async () => {
+    reply({ body: questionsFixture() });
+    await applyQuestions(TOKEN, JOB_ID);
+    const body = mockedStock.mock.calls[0]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(body.operationName).toBe("JobApplicationQuestions");
+    expect(body.variables).toEqual({ jobId: JOB_ID });
+  });
+
+  it("maps top-level 'Record not found' GraphQL error to NOT_FOUND (shared NOT_FOUND_MESSAGE_PATTERN coverage symmetry)", async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(applyQuestions(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps top-level 'Invalid ID' GraphQL error to NOT_FOUND (shared NOT_FOUND_MESSAGE_PATTERN coverage symmetry)", async () => {
+    reply({ body: { errors: [{ message: 'Invalid ID "abc"' }] } });
+    await expect(applyQuestions(TOKEN, "abc")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps top-level Relay decode error to NOT_FOUND (#424 widened pattern)", async () => {
+    reply({
+      body: {
+        errors: [{ message: "Node id 'bogus' resolves to an unknown type Job. Please check ..." }],
+      },
+    });
+    await expect(applyQuestions(TOKEN, "bogus")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps viewer.job === null to NOT_FOUND (defensive)", async () => {
+    reply({
+      body: { data: { viewer: { __typename: "Viewer", id: "v1", job: null } } },
+    });
+    await expect(applyQuestions(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(applyQuestions(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
+function rateInsightCompetitiveFixture(): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "Viewer",
+        id: "v1",
+        job: {
+          __typename: "TalentJob",
+          id: JOB_ID,
+          hourlyRateInsights: {
+            __typename: "TalentJobRateInsightCompetitive",
+            estimatedRevenue: "12500.00",
+            estimatedRevenueExplanation: "Estimated revenue per month at the proposed rate.",
+            longTermDisclaimer: "Long-term engagements assume sustained availability.",
+          },
+        },
+      },
+    },
+  };
+}
+
+function rateInsightUncompetitiveFixture(): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "Viewer",
+        id: "v1",
+        job: {
+          __typename: "TalentJob",
+          id: JOB_ID,
+          hourlyRateInsights: {
+            __typename: "TalentJobRateInsightUncompetitive",
+            estimatedRevenue: "8800.00",
+            estimatedRevenueExplanation: "Below the recent-applicant median.",
+            recentApplicationRate: "95.00",
+            recommendedRate: "100.00",
+          },
+        },
+      },
+    },
+  };
+}
+
+describe("applications.rateInsight (#424)", () => {
+  it("returns the competitive variant with the right kind + fields", async () => {
+    reply({ body: rateInsightCompetitiveFixture() });
+    const out = await rateInsight(TOKEN, JOB_ID);
+    expect(out).toEqual({
+      kind: "competitive",
+      estimatedRevenue: "12500.00",
+      estimatedRevenueExplanation: "Estimated revenue per month at the proposed rate.",
+      longTermDisclaimer: "Long-term engagements assume sustained availability.",
+    });
+  });
+
+  it("returns the uncompetitive variant with the right kind + range-guidance fields", async () => {
+    reply({ body: rateInsightUncompetitiveFixture() });
+    const out = await rateInsight(TOKEN, JOB_ID);
+    expect(out).toEqual({
+      kind: "uncompetitive",
+      estimatedRevenue: "8800.00",
+      estimatedRevenueExplanation: "Below the recent-applicant median.",
+      recentApplicationRate: "95.00",
+      recommendedRate: "100.00",
+    });
+  });
+
+  it("returns null when the gateway omits the rateInsight payload (hourlyRateInsights:null)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            job: { __typename: "TalentJob", id: JOB_ID, hourlyRateInsights: null },
+          },
+        },
+      },
+    });
+    const out = await rateInsight(TOKEN, JOB_ID);
+    expect(out).toBeNull();
+  });
+
+  it("threads $requestedRate:null + jobId + operationName into the wire variables", async () => {
+    reply({ body: rateInsightCompetitiveFixture() });
+    await rateInsight(TOKEN, JOB_ID);
+    const body = mockedStock.mock.calls[0]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(body.operationName).toBe("JobApplicationRateInsight");
+    expect(body.variables).toEqual({ jobId: JOB_ID, requestedRate: null });
+  });
+
+  it("maps top-level 'Record not found' GraphQL error to NOT_FOUND (shared NOT_FOUND_MESSAGE_PATTERN coverage symmetry)", async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(rateInsight(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps top-level 'Invalid ID' GraphQL error to NOT_FOUND (shared NOT_FOUND_MESSAGE_PATTERN coverage symmetry)", async () => {
+    reply({ body: { errors: [{ message: 'Invalid ID "abc"' }] } });
+    await expect(rateInsight(TOKEN, "abc")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps top-level Relay decode error to NOT_FOUND (#424 widened pattern)", async () => {
+    reply({
+      body: {
+        errors: [{ message: "Node id 'bogus' resolves to an unknown type Job. Please check ..." }],
+      },
+    });
+    await expect(rateInsight(TOKEN, "bogus")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("maps viewer.job === null to NOT_FOUND (defensive)", async () => {
+    reply({
+      body: { data: { viewer: { __typename: "Viewer", id: "v1", job: null } } },
+    });
+    await expect(rateInsight(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(rateInsight(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("throws WIRE_SHAPE_ERROR with the offending typename echoed when the wire returns an unknown rate-insight variant (defends against future union extension on a GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS surface)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            job: {
+              __typename: "TalentJob",
+              id: JOB_ID,
+              hourlyRateInsights: {
+                __typename: "TalentJobRateInsightUnknownVariantV2",
+                estimatedRevenue: "5000.00",
+              },
+            },
+          },
+        },
+      },
+    });
+    await expect(rateInsight(TOKEN, JOB_ID)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "WIRE_SHAPE_ERROR",
+      message: expect.stringContaining("TalentJobRateInsightUnknownVariantV2"),
+    });
   });
 });

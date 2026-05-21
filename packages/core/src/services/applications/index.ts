@@ -933,16 +933,20 @@ export async function list(token: string, opts: ListOptions = {}): Promise<JobAc
  * Throws `ApplicationsError("NOT_FOUND")` for two distinct wire shapes
  * — both meaning "id doesn't resolve to a viewable item":
  *
- * 1. **Top-level GraphQL error `Record not found`** (the empirical
- *    happy-sad path — verified live on 2026-05-10). The gateway
- *    short-circuits with a top-level `errors[]` carrying the literal
- *    message "Record not found" rather than returning `data: null`.
- *    `callGateway` raises `GRAPHQL_ERROR`; we catch and translate.
+ * 1. **Top-level GraphQL error matched by {@link NOT_FOUND_MESSAGE_PATTERN}**
+ *    — the shared regex covers `Record not found` (the empirical
+ *    happy-sad path on `JobActivityItem(id:)`, verified live on
+ *    2026-05-10), `Invalid ID` (jobs-service precedent), and
+ *    `Node id ... resolves to ...` (the Relay decode error per
+ *    `project-toptal-wire-quirks` memory; load-bearing for the
+ *    pre-apply read suite added in #424 where `viewer.job(id:)`
+ *    bad-ids surface as Relay decode errors). `callGateway` raises
+ *    `GRAPHQL_ERROR`; we catch and translate.
  * 2. **Successful response with `viewer.jobActivityItem === null`** —
  *    not observed in practice but kept as defensive coverage in case
  *    the gateway ever switches to the data-shape sentinel.
  */
-const NOT_FOUND_MESSAGE_PATTERN = /Record not found/i;
+const NOT_FOUND_MESSAGE_PATTERN = /Record not found|Invalid ID|Node id .*? resolves to/i;
 
 export async function show(token: string, id: string): Promise<JobActivityItemDetail> {
   let data: JobActivityItemResponse["data"] & object;
@@ -1024,6 +1028,723 @@ export async function stats(token: string): Promise<ApplicationsStats> {
   );
   const total = groupResults.reduce((sum, g) => sum + g.count, 0);
   return { total, groups: groupResults };
+}
+
+// ---------------------------------------------------------------------
+// Pre-apply read suite (#424) — `applyData`, `applyQuestions`,
+// `rateInsight`. All three wrap viewer-rooted queries against
+// `mobile-gateway`, returning trimmed projections of the captured
+// `JobApplyData`, `JobApplicationQuestions`, and
+// `JobApplicationRateInsight` operation documents (see
+// `../research/graphql/gateway/operations/mobile/`). All three captured
+// operation names appear in `codegen.config.ts`'s
+// `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` — they touch schema-gap regions
+// (`JobOperationsApply.errors` types, the unresolved `JobExpertiseQuestion`
+// type, the `TalentJobRateInsight` union when `BigDecimal` fields land
+// on the schema-gap side), so codegen refuses to emit types and the
+// inline-string convention pinned by the rest of this module applies.
+//
+// The trimmed selection sets below select ONLY what the public
+// projection surfaces (REQ-A4 rate default, REQ-D1 rate insight,
+// REQ-Q1 / REQ-Q2 question discovery, partial REQ-A1 pre-fetch source
+// per ADR-008 § Decision Part 5). The captured `JobApplyData`
+// additionally pulls in the pitch / talent-card / market-condition
+// cascades; those are deliberately elided here. Downstream issues that
+// need extra fields widen these queries additively without changing
+// the public projection's shape.
+//
+// CLAUDE.md schema/contract validation rule TRIGGERED — the three
+// operations are hand-authored from captured wire. Live E2E coverage
+// is deferred to #445 (`51-jobs-apply-data.e2e.test.ts`) per ADR-008
+// § Decision Part 5; PR body declares the trigger + Track 1
+// (snapshots) disposition. Wire-shape snapshots commit in #445.
+//
+// The CLI `schema-contract-disposition` CI gate's file-path triggers
+// cover `packages/core/src/auth.ts` + `packages/core/src/services/profile/**`
+// — `applications/` is not in the gate's scan set, so the gate doesn't
+// mechanically fire for this issue. The rule's INTENT is preserved
+// via the explicit cross-issue commitment to #445.
+//
+// Surface coverage gate (`scripts/check-surface-coverage.ts`) does
+// not currently scope `applications/` either (covered domains:
+// `profile`, `engagements`, `payments`, `timesheet`, `scheduler`).
+// The `// surface-exempt:` markers below are documentary +
+// forward-compatible per the #424 issue's instruction; they take
+// mechanical effect only if the gate's domain set is later extended
+// to include `applications/`. Remove the markers once #426 (apply
+// core fn), #436 (MCP tools), and #437 (`jobs show --with-questions`)
+// wire the fns to user-facing surfaces.
+// ---------------------------------------------------------------------
+
+/**
+ * One entry of `viewer.job.operations.apply.errors` (#424). Schema
+ * declares both fields as `String!` — non-null — but the projection
+ * helper {@link projectApplyErrors} keeps a defensive list-entry null
+ * filter because the WIRE shape on the schema-gap path (this op is in
+ * `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`) is best-effort.
+ */
+export interface ApplyError {
+  code: string;
+  message: string;
+}
+
+/**
+ * Aggregate pre-apply context returned by {@link applyData} (#424).
+ *
+ * Surfaces the load-bearing scalars from the captured `JobApplyData`
+ * operation — the suggested rate (REQ-A4), platform validation
+ * bounds, the apply-state errors, and basic job context — trimmed of
+ * the heavy pitch / talent-card / market-condition cascades the
+ * captured op also pulls in. Downstream consumers:
+ *
+ *   - **#426 (apply core fn)** — reads `canApply` to short-circuit
+ *     before the mutation, uses `suggestedRate` as the
+ *     `requestedHourlyRate` default, validates against `rateValidation`.
+ *   - **#437 (`jobs show`)** — surfaces `applyErrors` so the user can
+ *     see WHY they can't apply (already applied, job closed, etc.)
+ *     directly on the job-detail view.
+ *
+ * `canApply` is a convenience boolean derived from
+ * `applyErrors.length === 0` — kept as a separate field so callers
+ * don't have to recompute it.
+ */
+export interface PreApplyData {
+  job: {
+    id: string;
+    isCoaching: boolean | null;
+    hasRequiredApplicationPitch: boolean | null;
+  };
+  /** Empty when the talent may apply; populated lists the blocking reasons. */
+  applyErrors: ApplyError[];
+  /** Convenience: `true` iff `applyErrors` is empty. */
+  canApply: boolean;
+  /**
+   * Talent's configured hourly rate (`viewerRole.rates.hourly`). The
+   * apply path uses this as the `requestedHourlyRate` default
+   * (REQ-A4). `null` when the viewerRole is absent (defensive — the
+   * schema declares `ViewerRole.rates.hourly: String!`, but absence
+   * is treated as null projection rather than a hard error).
+   */
+  suggestedRate: string | null;
+  /**
+   * Platform hourly-rate validation bounds. `null` when the platform
+   * configuration block is absent (defensive — the schema declares
+   * `PlatformConfiguration.rateValidationRules: TalentRateValidationRules!`
+   * non-null, but gateway-side absence is surfaced as null projection
+   * rather than a hard error). Note `rateStep` is `Int` on the wire,
+   * not a decimal string.
+   */
+  rateValidation: { minRate: string; rateStep: number } | null;
+}
+
+/**
+ * One question on the apply form (#424). The four-field shape is
+ * uniform across matcher and expertise variants per REQ-Q1:
+ *
+ *   - `identifier` — the wire `id` field (`JobPositionQuestion.id` /
+ *     `JobExpertiseQuestion.id`). Used as the `questionId` key when
+ *     building the apply-mutation `JobPositionAnswerInput[]` /
+ *     `JobExpertiseAnswerInput[]` arrays per ADR-008 § Decision Part 2
+ *     `--answers-file` grammar.
+ *   - `prompt` — the human-readable question text. For matcher
+ *     questions: the wire `question` field. For expertise questions:
+ *     the `subject.name` (`Industry.name` or `Skill.name`) — expertise
+ *     questions ask "which of your profile items demonstrates this
+ *     skill / industry?", so the subject's name IS the prompt the
+ *     user sees.
+ *   - `type` — TTCtl-side discriminant `"matcher" | "expertise"`,
+ *     making each question self-describing if consumers flatten the
+ *     two arrays (e.g., #426's answers-file template builder).
+ *   - `isMandatory` — for matcher questions, the wire `isRequired`
+ *     field. For expertise questions: projected as `true`. The
+ *     captured `JobApplicationQuestions` operation selects no
+ *     per-question mandatory flag on `expertiseQuestions` (and the
+ *     synthesized schema doesn't even declare `JobExpertiseQuestion`),
+ *     but the `JobApply` mutation takes
+ *     `$expertiseQuestionsAnswers: [JobExpertiseAnswerInput!]` as a
+ *     required apply-payload field (research note
+ *     `03-applications.md` § Apply flow specifics: "Both question
+ *     types ... must be fetched first ... The client cannot guess
+ *     them"). Documented inference; #445 live E2E is the wire
+ *     authority and may refine this projection if real data surfaces
+ *     a more nuanced mandatory-ness signal.
+ */
+export interface ApplicationQuestion {
+  identifier: string;
+  prompt: string;
+  type: "matcher" | "expertise";
+  isMandatory: boolean;
+}
+
+/**
+ * Questions inventory returned by {@link applyQuestions} (#424).
+ * Mirrors the captured `JobApplicationQuestions` operation's two
+ * parallel selections — `viewer.job.questions(hideExpertiseQuestion:
+ * true)` for matcher questions, `viewer.job.expertiseQuestions` for
+ * expertise — projecting each entry to the four-field
+ * {@link ApplicationQuestion} shape. Empty arrays surface verbatim
+ * when the job has no questions of that kind.
+ */
+export interface ApplicationQuestions {
+  matcherQuestions: ApplicationQuestion[];
+  expertiseQuestions: ApplicationQuestion[];
+}
+
+/**
+ * Rate insight when the talent's rate (or default rate) is judged
+ * COMPETITIVE relative to the job's market (#424). Discriminated-union
+ * member of {@link RateInsight}; surfaces the captured wire's
+ * `TalentJobRateInsightCompetitive` fields verbatim.
+ *
+ * All revenue / rate fields are `BigDecimal` decimal-string scalars
+ * per the captured wire (the captured
+ * `JobApplicationRateInsight.graphql` operation selects them bare,
+ * no `{ }` sub-selection; the synthesized schema confirms
+ * `BigDecimal`). They are NOT a `Money { decimal verbose }` shape —
+ * see PR body for the deviation from the issue parenthetical.
+ */
+export interface CompetitiveRateInsight {
+  kind: "competitive";
+  /** Estimated revenue at the supplied rate (BigDecimal scalar). */
+  estimatedRevenue: string | null;
+  /** Server-localised prose explaining the revenue estimate. */
+  estimatedRevenueExplanation: string | null;
+  /** Server-localised disclaimer about long-term engagement assumptions. */
+  longTermDisclaimer: string | null;
+}
+
+/**
+ * Rate insight when the talent's rate (or default rate) is judged
+ * UNCOMPETITIVE relative to the job's market (#424).
+ * Discriminated-union member of {@link RateInsight}; surfaces the
+ * captured wire's `TalentJobRateInsightUncompetitive` fields verbatim.
+ *
+ * `recentApplicationRate` + `recommendedRate` together form the
+ * "range guidance" the apply path uses to inform the talent
+ * (`recentApplicationRate` = empirical rate of recent successful
+ * applicants on this specific job; `recommendedRate` = Toptal's
+ * suggested rate to be competitive). Both are `BigDecimal`
+ * decimal-string scalars on the wire.
+ */
+export interface UncompetitiveRateInsight {
+  kind: "uncompetitive";
+  estimatedRevenue: string | null;
+  estimatedRevenueExplanation: string | null;
+  /** Empirical rate of recent successful applicants (BigDecimal scalar). */
+  recentApplicationRate: string | null;
+  /** Toptal's suggested rate to be competitive (BigDecimal scalar). */
+  recommendedRate: string | null;
+}
+
+/**
+ * Discriminated-union projection of the wire's `TalentJobRateInsight`
+ * union (members `TalentJobRateInsightCompetitive` |
+ * `TalentJobRateInsightUncompetitive`). The `kind` discriminant
+ * narrows access to the variant-specific fields. Returned by
+ * {@link rateInsight}; `null` when the gateway omits the rate-insight
+ * payload (viewer null, job null, or `rateInsight` field null).
+ */
+export type RateInsight = CompetitiveRateInsight | UncompetitiveRateInsight;
+
+// ---------------------------------------------------------------------
+// Trimmed inline query strings for the three pre-apply read ops
+// (#424). Operation NAMES are kept verbatim from the captured wire
+// (`JobApplyData`, `JobApplicationQuestions`,
+// `JobApplicationRateInsight`) — any future server-side allowlisting
+// that gates on operation name continues to recognize them.
+//
+// Schema gaps acknowledged:
+//   - `TalentJob.operations { apply { errors } }` — `JobOperationsApply.errors`
+//     types are in the schema (`JobOperationsApplyError { code, message }`),
+//     but the OP shape itself is captured-only; the captured-op
+//     selection is the wire authority.
+//   - `TalentJob.expertiseQuestions` — not present in the synthesized
+//     schema at all; selection mirrors the captured-op shape verbatim
+//     (`{ id subject { ... on Industry / Skill } }`).
+//   - `TalentJob.rateInsight(onlyHourlyRates, requestedRate)` — also
+//     not in the synthesized schema with that argument signature; the
+//     captured op passes both args, schema declares the field with no
+//     args (same pattern as `jobActivityList`).
+//   - Un-aliased union-member fields on `TalentJobRateInsight`: the
+//     captured `JobApplicationRateInsight.graphql` aliases
+//     `competitiveRevenue: estimatedRevenue` /
+//     `uncompetitiveRevenue: estimatedRevenue` (Apollo client-side
+//     normalization hint to avoid same-name-different-meaning
+//     collisions on the cache side). The inline query below selects
+//     them BARE — spec-conformant per GraphQL FieldsInSetCanMerge
+//     since both wire members carry `BigDecimal estimatedRevenue` /
+//     `BigDecimal estimatedRevenueExplanation` (same scalar type, so
+//     same-name selection across union members merges cleanly).
+//     {@link projectRateInsight} consumes the un-aliased response
+//     keys. If the server ever rejects un-aliased selections, #445
+//     E2E catches it on the live wire (this is a Track 1 op).
+// ---------------------------------------------------------------------
+
+const JOB_APPLY_DATA_QUERY = `query JobApplyData($jobId: ID!) {
+  viewer {
+    __typename
+    id
+    viewerRole {
+      __typename
+      rates { __typename hourly }
+    }
+    job(id: $jobId) {
+      __typename
+      id
+      isCoaching
+      hasRequiredApplicationPitch
+      operations {
+        __typename
+        apply {
+          __typename
+          errors { __typename code message }
+        }
+      }
+    }
+  }
+  platformConfiguration {
+    __typename
+    id
+    rateValidationRules {
+      __typename
+      hourly { __typename minRate rateStep }
+    }
+  }
+}`;
+
+const JOB_APPLICATION_QUESTIONS_QUERY = `query JobApplicationQuestions($jobId: ID!) {
+  viewer {
+    __typename
+    id
+    job(id: $jobId) {
+      __typename
+      id
+      questions(hideExpertiseQuestion: true) {
+        __typename
+        id
+        question
+        isRequired
+      }
+      expertiseQuestions {
+        __typename
+        id
+        subject {
+          __typename
+          ... on Industry { __typename id name }
+          ... on Skill { __typename id name }
+        }
+      }
+    }
+  }
+}`;
+
+// `$requestedRate: BigDecimal` is kept in the operation signature to
+// stay verbatim-faithful to the captured wire (per the
+// schema/contract rule's "live API is the authority" principle).
+// The public {@link rateInsight} signature does NOT expose
+// `requestedRate` per #424 AC; the variable is always threaded as
+// `null`, which the wire treats equivalently to "show me the insight
+// for my default rate". Re-exposing the parameter is a future-issue
+// widening — surface stays additive.
+const JOB_APPLICATION_RATE_INSIGHT_QUERY = `query JobApplicationRateInsight($jobId: ID!, $requestedRate: BigDecimal) {
+  viewer {
+    __typename
+    id
+    job(id: $jobId) {
+      __typename
+      id
+      hourlyRateInsights: rateInsight(onlyHourlyRates: true, requestedRate: $requestedRate) {
+        __typename
+        ... on TalentJobRateInsightCompetitive {
+          __typename
+          estimatedRevenue
+          estimatedRevenueExplanation
+          longTermDisclaimer
+        }
+        ... on TalentJobRateInsightUncompetitive {
+          __typename
+          estimatedRevenue
+          estimatedRevenueExplanation
+          recentApplicationRate
+          recommendedRate
+        }
+      }
+    }
+  }
+}`;
+
+// ---------------------------------------------------------------------
+// Wire-side response shapes for the three pre-apply queries. The
+// projection helpers + public fns below collapse these into the
+// `PreApplyData` / `ApplicationQuestions` / `RateInsight` public
+// types.
+// ---------------------------------------------------------------------
+
+interface ApplyErrorWire {
+  code: string;
+  message: string;
+}
+
+interface JobApplyDataWireJob {
+  id: string;
+  isCoaching: boolean | null;
+  hasRequiredApplicationPitch: boolean | null;
+  operations: {
+    apply: {
+      errors: (ApplyErrorWire | null)[] | null;
+    };
+  };
+}
+
+interface JobApplyDataResponse {
+  data?: {
+    viewer: {
+      id: string;
+      viewerRole: { rates: { hourly: string } } | null;
+      job: JobApplyDataWireJob | null;
+    } | null;
+    platformConfiguration: {
+      id: string;
+      rateValidationRules: {
+        hourly: { minRate: string; rateStep: number };
+      } | null;
+    } | null;
+  } | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+interface MatcherQuestionWire {
+  id: string;
+  question: string;
+  isRequired: boolean | null;
+}
+
+interface ExpertiseQuestionSubjectWire {
+  __typename: string;
+  id?: string;
+  name?: string;
+}
+
+interface ExpertiseQuestionWire {
+  id: string;
+  subject: ExpertiseQuestionSubjectWire | null;
+}
+
+interface JobApplicationQuestionsResponse {
+  data?: {
+    viewer: {
+      id: string;
+      job: {
+        id: string;
+        questions: (MatcherQuestionWire | null)[] | null;
+        expertiseQuestions: (ExpertiseQuestionWire | null)[] | null;
+      } | null;
+    } | null;
+  } | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+type RateInsightWire =
+  | {
+      __typename: "TalentJobRateInsightCompetitive";
+      estimatedRevenue: string | null;
+      estimatedRevenueExplanation: string | null;
+      longTermDisclaimer: string | null;
+    }
+  | {
+      __typename: "TalentJobRateInsightUncompetitive";
+      estimatedRevenue: string | null;
+      estimatedRevenueExplanation: string | null;
+      recentApplicationRate: string | null;
+      recommendedRate: string | null;
+    };
+
+interface JobApplicationRateInsightResponse {
+  data?: {
+    viewer: {
+      id: string;
+      job: {
+        id: string;
+        hourlyRateInsights: RateInsightWire | null;
+      } | null;
+    } | null;
+  } | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Project `viewer.job.operations.apply.errors` from the captured wire
+ * shape into the public {@link ApplyError}[] form. Filters list-entry
+ * nulls defensively (the schema declares
+ * `JobOperationsApply.errors: [JobOperationsApplyError]!` — non-null
+ * LIST but nullable ENTRIES); the resulting list always carries
+ * non-null entries.
+ */
+function projectApplyErrors(errors: (ApplyErrorWire | null)[] | null | undefined): ApplyError[] {
+  if (errors == null) return [];
+  return errors.filter((e): e is ApplyErrorWire => e !== null).map((e) => ({ code: e.code, message: e.message }));
+}
+
+function projectMatcherQuestion(wire: MatcherQuestionWire): ApplicationQuestion {
+  return {
+    identifier: wire.id,
+    prompt: wire.question,
+    type: "matcher",
+    isMandatory: wire.isRequired ?? false,
+  };
+}
+
+function projectExpertiseQuestion(wire: ExpertiseQuestionWire): ApplicationQuestion {
+  // `subject.name` is selected on both `Industry` and `Skill` inline
+  // fragments in the captured op; defensive `?? ""` covers a
+  // wire-shape regression where neither inline fragment matched (the
+  // server returned an as-yet-unknown subject variant). #445 live
+  // E2E is the wire authority on what subject variants exist.
+  const prompt = wire.subject?.name ?? "";
+  return {
+    identifier: wire.id,
+    prompt,
+    type: "expertise",
+    // The captured `JobApplicationQuestions` operation selects no
+    // `isRequired` on `expertiseQuestions` — projected as `true`
+    // here because the apply flow requires expertise answers. See
+    // {@link ApplicationQuestion.isMandatory} JSDoc for the
+    // grounded inference + the #445 wire-authority follow-up.
+    isMandatory: true,
+  };
+}
+
+function projectRateInsight(wire: RateInsightWire): RateInsight {
+  if (wire.__typename === "TalentJobRateInsightCompetitive") {
+    return {
+      kind: "competitive",
+      estimatedRevenue: wire.estimatedRevenue,
+      estimatedRevenueExplanation: wire.estimatedRevenueExplanation,
+      longTermDisclaimer: wire.longTermDisclaimer,
+    };
+  }
+  // Capture the discriminant through a widened `string` local so the
+  // runtime defense below survives ESLint's `no-unnecessary-condition`
+  // rule — without the widening, the narrower would prove the
+  // !== arm dead (TS exhausts the closed union to
+  // `TalentJobRateInsightUncompetitive` after the early return above).
+  // At RUNTIME, this op is in `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` and
+  // the wire may carry a `__typename` outside the closed type union
+  // (future server-side union extension lands here even though the
+  // type system thinks it's unreachable). Mirrors the
+  // {@link kindFromMetadataTypename} pattern below (L1939+):
+  // unknown typename → typed `WIRE_SHAPE_ERROR` with the offending
+  // value echoed, instead of silently mislabelling as `uncompetitive`
+  // with `undefined` `recentApplicationRate` / `recommendedRate`.
+  const typename: string = wire.__typename;
+  if (typename !== "TalentJobRateInsightUncompetitive") {
+    throw new ApplicationsError("WIRE_SHAPE_ERROR", `Unknown rate insight variant: "${typename}".`);
+  }
+  return {
+    kind: "uncompetitive",
+    estimatedRevenue: wire.estimatedRevenue,
+    estimatedRevenueExplanation: wire.estimatedRevenueExplanation,
+    recentApplicationRate: wire.recentApplicationRate,
+    recommendedRate: wire.recommendedRate,
+  };
+}
+
+/**
+ * Pre-apply aggregate context for a job (#424). Wraps `JobApplyData
+ * ($jobId)` — the mobile gateway's aggregate pre-apply query — and
+ * trims the response to the load-bearing scalars (REQ-A4 rate
+ * default, apply-state errors, platform validation bounds, plus
+ * basic job context). The captured operation also pulls in the
+ * pitch / talent-card / market-condition cascades; those are
+ * deliberately elided here. The apply path (#426) takes the pitch
+ * from `--pitch-file` per ADR-008's grammar, NOT from
+ * `suggestedPitch` / `lastPitches`, and `applyQuestions` /
+ * `rateInsight` cover the other captured slices. Future widening is
+ * additive.
+ *
+ * **Wire authority**: hand-authored from the captured
+ * `JobApplyData.graphql` selection set; CLAUDE.md schema/contract
+ * rule TRIGGERED for #424, live E2E coverage in #445.
+ *
+ * **Bad-id behavior**: `viewer.job(id:)` returns the Relay decode
+ * error (per `project-toptal-wire-quirks` memory) when the supplied
+ * id doesn't resolve to a viewable job; remapped to
+ * `ApplicationsError("NOT_FOUND")` via the shared
+ * {@link NOT_FOUND_MESSAGE_PATTERN} (widened in #424).
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` when the job id doesn't
+ *   resolve (Relay decode error, `Invalid ID`, `Record not found`,
+ *   or successful response with `viewer.job === null`).
+ * @throws `ApplicationsError("NO_VIEWER")` when the session is valid
+ *   but no viewer is bound (defensive — `callGateway` with
+ *   `requireViewer: true` already raises this case, but the
+ *   post-call null check keeps the type narrowing clean).
+ */
+// surface-exempt: covered by downstream apply path (#426, #436, #437)
+export async function applyData(token: string, jobId: string): Promise<PreApplyData> {
+  let data: JobApplyDataResponse["data"] & object;
+  try {
+    data = await callGateway<JobApplyDataResponse["data"] & object>(token, "JobApplyData", JOB_APPLY_DATA_QUERY, {
+      jobId,
+    });
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.job === null) {
+    throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+  }
+  const jobWire = data.viewer.job;
+  const applyErrors = projectApplyErrors(jobWire.operations.apply.errors);
+  const suggestedRate = data.viewer.viewerRole?.rates.hourly ?? null;
+  const rateValidationWire = data.platformConfiguration?.rateValidationRules?.hourly ?? null;
+  const rateValidation: PreApplyData["rateValidation"] =
+    rateValidationWire === null ? null : { minRate: rateValidationWire.minRate, rateStep: rateValidationWire.rateStep };
+  return {
+    job: {
+      id: jobWire.id,
+      isCoaching: jobWire.isCoaching,
+      hasRequiredApplicationPitch: jobWire.hasRequiredApplicationPitch,
+    },
+    applyErrors,
+    canApply: applyErrors.length === 0,
+    suggestedRate,
+    rateValidation,
+  };
+}
+
+/**
+ * Pre-apply matcher + expertise questions inventory for a job (#424).
+ * Wraps `JobApplicationQuestions($jobId)`; trims the captured
+ * operation's `subject.possibleAnswers` cascades — the four-field
+ * {@link ApplicationQuestion} shape is the public projection per
+ * #424 AC.
+ *
+ * The two arrays surface verbatim presence: empty when the job has
+ * no questions of that kind. Order is server-supplied; no
+ * client-side re-sorting.
+ *
+ * **Bad-id behavior + NOT_FOUND mapping**: identical to
+ * {@link applyData}.
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` for unresolved job ids.
+ * @throws `ApplicationsError("NO_VIEWER")` for sessions with no
+ *   bound viewer.
+ */
+// surface-exempt: covered by downstream apply path (#426, #436, #437)
+export async function applyQuestions(token: string, jobId: string): Promise<ApplicationQuestions> {
+  let data: JobApplicationQuestionsResponse["data"] & object;
+  try {
+    data = await callGateway<JobApplicationQuestionsResponse["data"] & object>(
+      token,
+      "JobApplicationQuestions",
+      JOB_APPLICATION_QUESTIONS_QUERY,
+      { jobId },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.job === null) {
+    throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+  }
+  const jobWire = data.viewer.job;
+  const matcherWire = jobWire.questions ?? [];
+  const expertiseWire = jobWire.expertiseQuestions ?? [];
+  return {
+    matcherQuestions: matcherWire.filter((q): q is MatcherQuestionWire => q !== null).map(projectMatcherQuestion),
+    expertiseQuestions: expertiseWire
+      .filter((q): q is ExpertiseQuestionWire => q !== null)
+      .map(projectExpertiseQuestion),
+  };
+}
+
+/**
+ * Pre-apply rate guidance for a job (#424). Wraps
+ * `JobApplicationRateInsight($jobId)`; surfaces the captured
+ * operation's `TalentJobRateInsight` discriminated union as
+ * {@link RateInsight}. Returns `null` when the gateway omits the
+ * insight payload (the `rateInsight` field on the job resolves to
+ * null).
+ *
+ * The operation declares `$requestedRate: BigDecimal` (verbatim from
+ * the captured wire) but the public signature does NOT expose
+ * `requestedRate` per #424 AC — the variable is threaded as `null`,
+ * which the gateway treats as "show me the insight for the talent's
+ * default rate". Re-exposing the parameter is a future widening.
+ *
+ * **Wire shape**: union members carry `BigDecimal` scalar fields
+ * (`estimatedRevenue`, `recommendedRate`, `recentApplicationRate`)
+ * — NOT `Money { decimal verbose }` objects. The captured
+ * `JobApplicationRateInsight.graphql` operation selects them bare
+ * (no sub-selection), and the synthesized schema confirms
+ * `BigDecimal`. The #424 issue parenthetical "Money shape `{ decimal,
+ * verbose }` + range guidance" reflects an intuition rather than the
+ * captured wire; the captured operation's selection set is
+ * authoritative per the issue's own primary directive ("define shape
+ * based on captured operation's selection set"). PR body documents
+ * the deviation.
+ *
+ * **Bad-id behavior + NOT_FOUND mapping**: identical to
+ * {@link applyData}.
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` for unresolved job ids.
+ * @throws `ApplicationsError("NO_VIEWER")` for sessions with no
+ *   bound viewer.
+ */
+// surface-exempt: covered by downstream apply path (#426, #436, #437)
+export async function rateInsight(token: string, jobId: string): Promise<RateInsight | null> {
+  let data: JobApplicationRateInsightResponse["data"] & object;
+  try {
+    data = await callGateway<JobApplicationRateInsightResponse["data"] & object>(
+      token,
+      "JobApplicationRateInsight",
+      JOB_APPLICATION_RATE_INSIGHT_QUERY,
+      { jobId, requestedRate: null },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.job === null) {
+    throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+  }
+  const insightWire = data.viewer.job.hourlyRateInsights;
+  if (insightWire === null) return null;
+  return projectRateInsight(insightWire);
 }
 
 // ---------------------------------------------------------------------
