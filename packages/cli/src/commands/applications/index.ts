@@ -43,8 +43,12 @@ function perPageOption(): Option {
  * | `show <id>` | Detail view for one row                                  |
  * | `stats`   | Per-status-group counts (5 server calls in parallel)       |
  *
- * Per project non-goals (#15): no apply / withdraw / edit operations
- * are exposed. The CLI is read-only by design.
+ * Write operations on the application funnel are in scope per ADR-008
+ * (ttctl) — `hq/engineering/adr/ADR-008-application-funnel-write-side.md`.
+ * ADR-008 § Decision relaxes the #15 read-only non-goal and bounds the
+ * write surface: Interest Request confirm / reject (shipped in #411)
+ * and direct job application are in scope; `withdraw` / `edit`, bulk
+ * apply, and interview accept / reject remain explicitly out of scope.
  *
  * **Pagination (#377)**: the `list` leaf declares `--page` /
  * `--per-page` (1-indexed positive integers; same `parsePaginationFlag`

@@ -1,6 +1,6 @@
 # ADR-008 — Application Funnel Write-Side (relax read-only non-goal; lock answers-file grammar)
 
-- **Status**: PROPOSED
+- **Status**: ACCEPTED
 - **Date**: 2026-05-20
 - **Deciders**: User (arbitrating); `/scope` orchestrator (Stage 2 — `/design-solution`); Claude Opus 4.7
 

@@ -86,9 +86,13 @@
  * underlying pages and applies a client-side filter); `totalCount`
  * is the post-filter total.
  *
+ * **Application funnel** (`jobs apply`): in scope per ADR-008 (ttctl)
+ * — `hq/engineering/adr/ADR-008-application-funnel-write-side.md`. The
+ * `ttctl jobs apply <job-id>` CLI verb delegates to
+ * `applications.apply()`; see ADR-008 § Decision Part 5 for the
+ * service-module placement rationale.
+ *
  * **Out of scope for v1**:
- * - Application funnel (`jobs apply` etc.) — lives in `applications`
- *   group (#15) as the funnel-crossing verb.
  * - Bulk save / bulk dismiss — single-id verbs only per the issue's
  *   safety boundary.
  * - Recommendation tuning / preference editing — deferred to post-v1.
