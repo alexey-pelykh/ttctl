@@ -136,9 +136,11 @@ const EXPECTED_TOOLS = [
   "ttctl_availability_working_hours_set",
   "ttctl_availability_allocated_hours_show",
   "ttctl_availability_allocated_hours_set",
-  // jobs (#148) — 13 tools (browse + interest + search subscription).
-  // Per AC: MCP names use canonical `jobs_*` prefix only — no
-  // `opportunities_*` aliasing.
+  // jobs (#148 + #436) — 17 tools (13 base: browse + interest + search
+  // subscription) + 4 #436 apply-funnel: 1 DESTRUCTIVE mutation
+  // (`apply`) + 3 read-only pre-apply tools (`apply_data`,
+  // `apply_questions`, `apply_rate_insight`). Per AC: MCP names use
+  // canonical `jobs_*` prefix only — no `opportunities_*` aliasing.
   "ttctl_jobs_list",
   "ttctl_jobs_show",
   "ttctl_jobs_save",
@@ -152,6 +154,10 @@ const EXPECTED_TOOLS = [
   "ttctl_jobs_search_list",
   "ttctl_jobs_search_save",
   "ttctl_jobs_search_remove",
+  "ttctl_jobs_apply",
+  "ttctl_jobs_apply_data",
+  "ttctl_jobs_apply_questions",
+  "ttctl_jobs_apply_rate_insight",
   // timesheet (#13) — 3 tools (list/show/submit) plus #374 pending_list.
   // Submit is destructive (one-way at the wire level); LLM clients must
   // confirm with the user. #374 pending_list exposes surface-honest
@@ -205,7 +211,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (107 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (111 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 17 #148/#436 jobs [13 + 4 #436 apply-funnel] + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

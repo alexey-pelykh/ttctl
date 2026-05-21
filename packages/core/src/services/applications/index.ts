@@ -1086,12 +1086,17 @@ export async function stats(token: string): Promise<ApplicationsStats> {
 // Surface coverage gate (`scripts/check-surface-coverage.ts`) does
 // not currently scope `applications/` either (covered domains:
 // `profile`, `engagements`, `payments`, `timesheet`, `scheduler`).
-// The `// surface-exempt:` markers below are documentary +
-// forward-compatible per the #424 issue's instruction; they take
-// mechanical effect only if the gate's domain set is later extended
-// to include `applications/`. Remove the markers once #426 (apply
-// core fn), #436 (MCP tools), and #437 (`jobs show --with-questions`)
-// wire the fns to user-facing surfaces.
+// The `applyData` / `applyQuestions` / `rateInsight` fns are wired
+// to user-facing surfaces:
+//   - `apply()` — `ttctl_jobs_apply` (#436)
+//   - `applyData()` — `ttctl_jobs_apply_data` (#436) + (CLI #437 will
+//     surface the questions-only projection via `jobs show
+//     --with-questions`)
+//   - `applyQuestions()` — `ttctl_jobs_apply_questions` (#436) +
+//     `jobs show --with-questions` (#437)
+//   - `rateInsight()` — `ttctl_jobs_apply_rate_insight` (#436)
+// The forward-compatible `// surface-exempt:` markers below have
+// therefore been removed (the fns are now genuinely surfaced).
 // ---------------------------------------------------------------------
 
 /**
@@ -1598,7 +1603,6 @@ function projectRateInsight(wire: RateInsightWire): RateInsight {
  *   `requireViewer: true` already raises this case, but the
  *   post-call null check keeps the type narrowing clean).
  */
-// surface-exempt: covered by downstream apply path (#426, #436, #437)
 export async function applyData(token: string, jobId: string): Promise<PreApplyData> {
   let data: JobApplyDataResponse["data"] & object;
   try {
@@ -1660,7 +1664,6 @@ export async function applyData(token: string, jobId: string): Promise<PreApplyD
  * @throws `ApplicationsError("NO_VIEWER")` for sessions with no
  *   bound viewer.
  */
-// surface-exempt: covered by downstream apply path (#426, #436, #437)
 export async function applyQuestions(token: string, jobId: string): Promise<ApplicationQuestions> {
   let data: JobApplicationQuestionsResponse["data"] & object;
   try {
@@ -1732,7 +1735,6 @@ export async function applyQuestions(token: string, jobId: string): Promise<Appl
  * @throws `ApplicationsError("NO_VIEWER")` for sessions with no
  *   bound viewer.
  */
-// surface-exempt: covered by downstream apply path (#426, #436, #437)
 export async function rateInsight(token: string, jobId: string): Promise<RateInsight | null> {
   let data: JobApplicationRateInsightResponse["data"] & object;
   try {

@@ -60,7 +60,11 @@ export type { ToolRegistrationContext } from "./_shared.js";
  * 4 `profile.reviews` (#76, one tool per file) = 56 profile tools, plus
  * 3 `applications` (#15) + 1 `interest_requests` (#371) + 8 `engagements`
  * (#147 + #155 + #156) + 5 `availability` (#146 amended) + 13 `jobs` (#148)
- * + 3 `timesheet` (#13) = 89 tools total.
+ * + 4 `jobs.apply` (#436 — apply + 3 pre-apply reads) + 3 `timesheet`
+ * (#13) — partial Wave-3 snapshot, not exhaustive. Canonical inventory:
+ * `tools/__tests__/registration.test.ts`'s `EXPECTED_TOOLS` list
+ * (currently 111 tools; includes additions from #195, #341, #342, #343,
+ * #374, #411, #149 not enumerated above).
  *
  * Post-#113: takes a `ToolRegistrationContext` carrying the per-session
  * auth resolvers bound to the config path captured at `buildServer()`
@@ -137,12 +141,14 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // breaks) stays on `engagements` and is NOT mirrored here.
   registerAvailabilityTools(server, ctx);
 
-  // jobs — 13 leaves (#148). Browse opportunities (list/show/saved/viewed/
-  // not-interested-list) + interest mutations (save/unsave/mark-viewed/
-  // not-interested/clear-interest) + search-subscription management
-  // (list/save/remove — single-subscription model per R2). Per the AC, MCP
-  // tool names use canonical `jobs_*` prefix only (no `opportunities_*`
-  // aliasing).
+  // jobs — 17 leaves (#148 + #436). Browse opportunities (list/show/saved/
+  // viewed/not-interested-list) + interest mutations (save/unsave/
+  // mark-viewed/not-interested/clear-interest) + search-subscription
+  // management (list/save/remove — single-subscription model per R2) +
+  // apply-funnel (#436): three pre-apply read tools (apply_data,
+  // apply_questions, apply_rate_insight) + the DESTRUCTIVE,
+  // consent-gated `apply` mutation. Per the AC, MCP tool names use
+  // canonical `jobs_*` prefix only (no `opportunities_*` aliasing).
   registerJobsTools(server, ctx);
 
   // payments — 7 leaves (#149). Read-only payouts (list/show) and

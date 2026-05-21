@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (107 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 13 #148 jobs + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (111 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 17 #148/#436 jobs [13 base + 4 #436 apply-funnel] + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -100,7 +100,11 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_interest_requests_list",
       "ttctl_interest_requests_reject",
       "ttctl_interest_requests_reject_reasons",
-      // #148 — jobs (13, browse + interest + search subscription)
+      // #148 + #436 — jobs (17, 13 base + 4 #436 apply-funnel)
+      "ttctl_jobs_apply",
+      "ttctl_jobs_apply_data",
+      "ttctl_jobs_apply_questions",
+      "ttctl_jobs_apply_rate_insight",
       "ttctl_jobs_clear_interest",
       "ttctl_jobs_list",
       "ttctl_jobs_mark_viewed",
