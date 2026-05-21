@@ -678,10 +678,43 @@ export const DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER = "<resolved at send-time by r
  * state where the EMPLOYMENT_FRAGMENT surfaces them (`experienceItems`,
  * `position`, `showViaToptal`, `startDate`) and defaults `skills: []`
  * because the fragment does not currently select the read-side `skills`
- * connection. Other fields are left undefined and omitted from the wire
- * payload — the server keeps the existing value for any field absent
- * from the input (the omission-is-preservation half of the merge
- * contract; only the five required-non-null fields force-echo).
+ * connection.
+ *
+ * **endDate force-echo (#487)**: `endDate` is NOT a wire-required-non-
+ * null field (the schema declares it nullable), but the Rails server
+ * treats absence of `endDate` from `UpdateEmploymentInput` as `null`
+ * — NOT as "preserve current". Live-confirmed (#487, 2026-05-21):
+ * partial updates on closed roles silently wiped the stored end date,
+ * converting "Year – Year" to "Year – Present" on the public profile.
+ * Fix: force-echo `endDate` symmetric to `startDate`, with a three-
+ * state semantic (caller `undefined` → preserve current; `null` →
+ * clear / mark as current role; `number` → set to year). The
+ * explicit identity check (not `??`) is required because `null` is
+ * a meaningful intentional value here.
+ *
+ * **Per-field caution on the broader force-echo class**: a tempting
+ * generalization is "echo every read-side-surfaced field from
+ * current state" as a defense-in-depth invariant. Empirically this
+ * was attempted and rolled back during #487's PR cycle: echoing
+ * `(companyWebsite, noWebsite)` on a catalog-employer row triggers
+ * the Rails anchor gate (same class as the #484 CREATE-side anchor
+ * contract): `(employerId): You should specify either employer or
+ * company website` — observed against tests 46 / 52 sentinels using
+ * a real catalog employer. The wire treats explicit-null/false on
+ * those fields differently from absence. `highlight` and
+ * `toptalRelated` were rolled back at the same time, pending per-
+ * field live verification (untested individually). The "echo
+ * everything" invariant is therefore NOT universal on this surface;
+ * the per-field empirical evidence matters. Other nullable optionals
+ * on this surface may exhibit the same #487 omission-is-null wire
+ * semantic; if reported, treat each as a separate live-capture
+ * regression.
+ *
+ * Conditional echoes remain for fields whose `null` from current
+ * must not become an explicit-null on the wire: `employerId` (#401
+ * WORM — both absence AND explicit null fail the Rails `.blank?`
+ * gate on a null-employerId row), `primaryGeographyId`,
+ * `reportingTo`.
  *
  * **Known limitation (#394)**: `skills` defaults to `[]` because the
  * current read fragment does not surface skills. Calling `update()` on a
@@ -710,6 +743,10 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
       `Cannot update employment "${current.id}": startDate is required and current value is null. Supply --from to set a year.`,
     );
   }
+  // #487 — endDate three-state merge. Explicit identity check (not
+  // `??`) because `null` is an intentional value (mark a closed role
+  // as current). Echoed unconditionally below.
+  const endDate = fields.endDate === undefined ? current.endDate : fields.endDate;
   // Server-side Rails `.blank?` gates (USER_ERROR "You can't leave this
   // empty") — surfaced by the #394 live capture (2026-05-19): when the
   // caller omits these, the wire layer accepts the partial input but
@@ -746,6 +783,11 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
     skills: current.skills,
     showViaToptal: current.showViaToptal,
     startDate,
+    // #487 — force-echoed because the wire treats omission as null-set
+    // (NOT preservation). See helper-doc § endDate force-echo. Other
+    // nullable optionals on this surface intentionally NOT echoed per
+    // the per-field caution noted in the helper-doc.
+    endDate,
     // Rails `.blank?` gates:
     company: current.company,
     publicationPermit: current.publicationPermit ?? true,
