@@ -102,14 +102,19 @@ describe("readJsonInput: file mode (bare path)", () => {
     });
   });
 
-  it("preserves absolute paths verbatim in the FILE_NOT_FOUND message (scenario: /nonexistent.json)", async () => {
+  it("renders the platform-absolute form of the user-supplied path in the FILE_NOT_FOUND message (POSIX: /nonexistent.json verbatim; Windows: drive-prefixed)", async () => {
     const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     const fakeReader = vi.fn().mockRejectedValue(enoent);
-    await expect(
-      readJsonInput("/nonexistent.json", { flagName: "answers-file", readFile: fakeReader }),
-    ).rejects.toMatchObject({
+    // The AC's "stderr contains the absolute path" intent is platform-specific.
+    // On POSIX, `/nonexistent.json` IS already absolute and surfaces verbatim;
+    // on Windows, `path.resolve("/nonexistent.json")` rewrites to drive-prefixed
+    // form (e.g. `D:\nonexistent.json`). Compute the expected via the same
+    // resolver the implementation uses so the assertion is platform-aware.
+    const rawPath = "/nonexistent.json";
+    const expectedAbsolute = resolveAbsolutePath(rawPath);
+    await expect(readJsonInput(rawPath, { flagName: "answers-file", readFile: fakeReader })).rejects.toMatchObject({
       code: "FILE_NOT_FOUND" satisfies JsonInputErrorCode,
-      message: expect.stringContaining("/nonexistent.json") as string,
+      message: expect.stringContaining(expectedAbsolute) as string,
     });
   });
 

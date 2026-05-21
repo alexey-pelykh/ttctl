@@ -3,7 +3,7 @@
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolveAbsolutePath } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -241,14 +241,16 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
     }
   });
 
-  it("refuses with VALIDATION_ERROR and the ABSOLUTE path when --answers-file path does not exist", async () => {
+  it("refuses with VALIDATION_ERROR and the platform-absolute path when --answers-file path does not exist", async () => {
     const exit = captureExit();
     const streams = captureStreams();
+    const rawPath = "/nonexistent-428.json";
+    const expectedAbsolute = resolveAbsolutePath(rawPath);
     await expect(
       runApplicationsConfirm("ar-1", {
         kind: "FIXED",
         rate: "80.00",
-        answersFile: "/nonexistent-428.json",
+        answersFile: rawPath,
         output: "json",
       }),
     ).rejects.toBeInstanceOf(ExitInvoked);
@@ -258,7 +260,11 @@ describe("runApplicationsConfirm: --answers-file / --pitch-file (#428)", () => {
     const parsed = JSON.parse(stdout) as { ok: boolean; errors: { code: string; message: string }[] };
     expect(parsed.ok).toBe(false);
     expect(parsed.errors[0]?.code).toBe("VALIDATION_ERROR");
-    expect(parsed.errors[0]?.message).toContain("/nonexistent-428.json");
+    // On POSIX, expectedAbsolute === "/nonexistent-428.json"; on Windows,
+    // resolveAbsolutePath rewrites it to drive-prefixed form. Either way,
+    // the error message must contain the platform-absolute form — that IS
+    // the AC's "absolute path" intent.
+    expect(parsed.errors[0]?.message).toContain(expectedAbsolute);
   });
 
   it("refuses with VALIDATION_ERROR when --answers-file top-level value is not an object (e.g. a JSON array)", async () => {
