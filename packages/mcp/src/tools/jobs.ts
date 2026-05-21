@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { jobs } from "@ttctl/core";
+import { applications, jobs } from "@ttctl/core";
 import { z } from "zod";
 
 import { ttctlErrorToToolResponseOrNull } from "../errors.js";
@@ -98,7 +98,7 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * `opportunities_*` aliasing (MCP tool names must be deterministic for
  * LLM clients).
  *
- * Tool surface (13 tools):
+ * Tool surface (17 tools):
  *   - `ttctl_jobs_list`
  *   - `ttctl_jobs_show`
  *   - `ttctl_jobs_save`
@@ -112,6 +112,10 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  *   - `ttctl_jobs_search_list`
  *   - `ttctl_jobs_search_save`
  *   - `ttctl_jobs_search_remove`
+ *   - `ttctl_jobs_apply_data` (#436 — read)
+ *   - `ttctl_jobs_apply_questions` (#436 — read)
+ *   - `ttctl_jobs_apply_rate_insight` (#436 — read)
+ *   - `ttctl_jobs_apply` (#436 — DESTRUCTIVE; consent-gated)
  *
  * **Wire-shape notes** (R1 / R2): `jobs_viewed` aggregates the FULL
  * eligibleJobs pool and applies a client-side filter on the `viewed`
@@ -657,6 +661,321 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       }
     },
   );
+
+  // -------- apply tools (#436) -------------------------------------------
+  // Application-funnel write side: one DESTRUCTIVE mutation tool
+  // (`ttctl_jobs_apply`) + three read-only pre-apply tools
+  // (`ttctl_jobs_apply_data`, `ttctl_jobs_apply_questions`,
+  // `ttctl_jobs_apply_rate_insight`). The four tools mirror the CLI's
+  // application-funnel surface (#437 / #430) on the MCP side and
+  // delegate to the `applications.*` core fns landed in #424 / #426.
+  // ADR-008 § Decision Part 4 is the consent-gate substrate; Part 5
+  // is the apply core fn substrate.
+  //
+  // **`SimilarJobQuestionAnswers` is intentionally out of scope** —
+  // that's the opt-in `ttctl_jobs_apply_similar_answers` tool that
+  // ships in #452.
+  //
+  // **Redaction**: the `matcherAnswers`, `expertiseAnswers`, and
+  // `pitchData` payloads are free-text talent-authored content and
+  // SHOULD be added to the diagnostic-log redaction allowlist
+  // (`packages/core/src/lib/redact.ts § SECRET_BODY_FIELD_NAMES`)
+  // so the MCP debug taxonomy's `args_redacted` slot does not echo
+  // them. That extension ships in #446 (docs + redaction) per the
+  // #436 AC; this tool registers the surface, #446 closes the
+  // redaction loop. Tracking comment lives at #446.
+  registerJobsApplyDataTool(server, ctx);
+  registerJobsApplyQuestionsTool(server, ctx);
+  registerJobsApplyRateInsightTool(server, ctx);
+  registerJobsApplyTool(server, ctx);
+}
+
+// ---------------------------------------------------------------------
+// Apply-funnel write-side tools (#436)
+// ---------------------------------------------------------------------
+
+function registerJobsApplyDataTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_jobs_apply_data",
+    {
+      title: "Fetch pre-apply data for a job",
+      description: [
+        "Fetch the pre-apply data the Toptal portal renders on the",
+        "apply screen for a given job: position summary, recruiter-pinned",
+        "rate, suggested rate (defaults to the talent's configured rate),",
+        "currency, application status, and a `canApply` flag.",
+        "",
+        "Read-only — does not mutate any server state.",
+        "",
+        "Use this together with `ttctl_jobs_apply_questions` and",
+        "`ttctl_jobs_apply_rate_insight` to compose the context an LLM",
+        "agent needs before authoring an application via `ttctl_jobs_apply`.",
+        "",
+        "Example user prompts:",
+        '  - "What\'s the apply context for Toptal job <id>?"',
+        '  - "What rate is suggested for job <id>?"',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (NOT the activity-item id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("JobApplyData", "mobile-gateway", { jobId: args.id }, auth.token));
+      }
+      try {
+        const data = await applications.applyData(auth.token, args.id);
+        return successResponse(data);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+}
+
+function registerJobsApplyQuestionsTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_jobs_apply_questions",
+    {
+      title: "Fetch matcher + expertise questions for a job's apply form",
+      description: [
+        "Fetch the matcher-questions and expertise-questions a job's",
+        "apply form requires the talent to answer. Returns",
+        "`{ matcherQuestions: [...], expertiseQuestions: [...] }` with",
+        "each entry carrying `identifier`, `body`, and any choice metadata",
+        "(for choice-style questions).",
+        "",
+        "Read-only — does not mutate any server state.",
+        "",
+        "Pair the returned `identifier` values with answers in the",
+        "`matcherAnswers` / `expertiseAnswers` payloads passed to",
+        "`ttctl_jobs_apply`; unknown identifiers are rejected by the",
+        "apply path with `WIRE_SHAPE_ERROR`.",
+        "",
+        "Example user prompts:",
+        '  - "What questions does Toptal job <id> ask on the apply form?"',
+        '  - "List the matcher and expertise questions for job <id>."',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (NOT the activity-item id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobApplicationQuestions", "mobile-gateway", { jobId: args.id }, auth.token),
+        );
+      }
+      try {
+        const questions = await applications.applyQuestions(auth.token, args.id);
+        return successResponse(questions);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+}
+
+function registerJobsApplyRateInsightTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_jobs_apply_rate_insight",
+    {
+      title: "Fetch rate-competitiveness insight for a job",
+      description: [
+        "Fetch the rate-competitiveness insight the Toptal portal renders",
+        "alongside the apply screen's rate input. Returns either a",
+        "`competitive` variant (talent's rate is in range; carries a",
+        "`recommendedRate`) or an `uncompetitive` variant (talent's rate",
+        "is above the platform's expected band for this job).",
+        "",
+        "Read-only — does not mutate any server state.",
+        "",
+        "Pair this with `ttctl_jobs_apply_data` (which supplies the",
+        "suggested rate) to compose the rate-decision context an LLM",
+        "agent needs before invoking `ttctl_jobs_apply`. Returns `null`",
+        "when the platform does not surface an insight for this job.",
+        "",
+        "Example user prompts:",
+        '  - "Is my rate competitive for Toptal job <id>?"',
+        '  - "Get rate insight for job <id>."',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (NOT the activity-item id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("JobApplicationRateInsight", "mobile-gateway", { jobId: args.id }, auth.token),
+        );
+      }
+      try {
+        const insight = await applications.rateInsight(auth.token, args.id);
+        return successResponse(insight);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+}
+
+function registerJobsApplyTool(server: McpServer, ctx: ToolRegistrationContext): void {
+  server.registerTool(
+    "ttctl_jobs_apply",
+    {
+      title: "Apply to a Toptal job",
+      description: [
+        "Submit a direct application to a Toptal job — the wire mutation",
+        "`JobApply` (mobile-gateway). Mirror of the Toptal portal's",
+        "apply screen submit action.",
+        "",
+        "**DESTRUCTIVE** — applying creates a new `JobApplication` row on",
+        "the user's Toptal activity and notifies the recruiter. There is",
+        "no withdraw operation on the wire. Always preview with",
+        "`dryRun: true` first if uncertain.",
+        "",
+        "**Consent gate (legal compliance)**: `consentIssued` MUST be the",
+        "literal `true` — represents the talent's acceptance of Toptal's",
+        "apply terms (the consent affirmation rendered on the apply",
+        "screen). Auto-filling this on the talent's behalf without",
+        "explicit user direction is FORBIDDEN per ADR-008 § Decision",
+        "Part 4. The Zod schema enforces the literal at the input-",
+        "validation boundary; the core service repeats the runtime check",
+        "before any wire call.",
+        "",
+        "**Fields**:",
+        "  - `id` (required): Job id (NOT the activity-item id). Discover",
+        "    via `ttctl_jobs_list` or `ttctl_jobs_search_*`.",
+        "  - `consentIssued` (required, MUST be `true`): legal-compliance",
+        "    attestation. See gate above.",
+        "  - `requestedHourlyRate` (required): decimal hourly rate (e.g.",
+        '    `"95.00"`) the talent requests. The portal pre-fills this',
+        "    from `ttctl_jobs_apply_data.suggestedRate`; agents SHOULD",
+        "    surface that value to the user and pass it back explicitly.",
+        "  - `message` (optional): free-text accompanying message. Mapped",
+        "    to the wire's `comment` field.",
+        "  - `matcherAnswers` (optional): array of matcher-question",
+        "    answers. Each entry is an opaque object of shape",
+        "    `{ questionId, answer, ... }`; the `questionId` MUST match",
+        "    an `identifier` returned from `ttctl_jobs_apply_questions`.",
+        "    Forwarded as the wire's `matcherQuestionsAnswers` variable",
+        "    (`JobPositionAnswerInput[]`). Stage-1 opaque per ADR-008",
+        "    § Decision Part 3; #438 will tighten to a typed Zod schema.",
+        "  - `expertiseAnswers` (optional): same opaque",
+        "    `{ questionId, answer }` shape as `matcherAnswers`. Forwarded",
+        "    as the wire's `expertiseQuestionsAnswers` variable",
+        "    (`JobExpertiseAnswerInput[]`). Stage-1 opaque per ADR-008.",
+        "  - `pitchData` (optional): a `PitchInput` object — typically",
+        '    `{ message: "..." }` carrying the talent\'s free-text pitch.',
+        "    Forwarded as the wire's `talentCard` variable. Stage-1",
+        "    opaque per ADR-008; #438 will tighten to a typed Zod schema.",
+        "",
+        "Example call with question answers and a pitch:",
+        "  ```json",
+        "  {",
+        '    "id": "<jobId>",',
+        '    "consentIssued": true,',
+        '    "requestedHourlyRate": "95.00",',
+        '    "matcherAnswers": [',
+        '      { "questionId": "MQ-1", "answer": "..." },',
+        '      { "questionId": "MQ-2", "answer": "..." }',
+        "    ],",
+        '    "expertiseAnswers": [',
+        '      { "questionId": "EQ-1", "answer": "..." }',
+        "    ],",
+        '    "pitchData": { "message": "Pitch text" },',
+        '    "message": "Available starting next Monday."',
+        "  }",
+        "  ```",
+        "",
+        "Returns the new `JobApplication` record (`id`, `statusV2`,",
+        "`requestedHourlyRate`, `jobActivityItemId`) on success.",
+        "Already-applied requests surface as a structured",
+        "`(ALREADY_APPLIED)` error with a hint pointing at",
+        "`ttctl_applications_show <activity-id>` for the existing row.",
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (NOT the activity-item id)"),
+        consentIssued: z
+          .literal(true)
+          .describe(
+            "MUST be true. Legal-compliance gate per Toptal apply screen — represents the talent's acceptance of Toptal's apply terms. Auto-filling without explicit user direction is FORBIDDEN.",
+          ),
+        requestedHourlyRate: z
+          .string()
+          .describe(
+            "Decimal hourly rate (e.g. '95.00'). The portal pre-fills this from `ttctl_jobs_apply_data.suggestedRate` — surface that value to the user and pass it back explicitly.",
+          ),
+        message: z
+          .string()
+          .optional()
+          .describe("Optional talent free-text accompanying message. Wire field: `comment`."),
+        matcherAnswers: z
+          .array(z.unknown())
+          .optional()
+          .describe(
+            "Optional matcher-questions answers. Array of opaque `{ questionId, answer }` objects (`JobPositionAnswerInput[]`). Discover `questionId` values via `ttctl_jobs_apply_questions`. Forwarded as the wire's `matcherQuestionsAnswers` variable. Stage-1 opaque per ADR-008 § Decision Part 3.",
+          ),
+        expertiseAnswers: z
+          .array(z.unknown())
+          .optional()
+          .describe(
+            "Optional expertise-questions answers. Same opaque `{ questionId, answer }` shape as `matcherAnswers` (`JobExpertiseAnswerInput[]`); identifiers discovered via `ttctl_jobs_apply_questions`. Forwarded as the wire's `expertiseQuestionsAnswers` variable. Stage-1 opaque per ADR-008.",
+          ),
+        pitchData: z
+          .unknown()
+          .optional()
+          .describe(
+            "Optional `PitchInput` object (typically `{ message: '...' }`) carrying the talent's free-text pitch. Forwarded as the wire's `talentCard` variable. Stage-1 opaque per ADR-008; #438 will tighten to a typed Zod schema.",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+
+      // The Zod schema's `consentIssued: z.literal(true)` already
+      // enforces the consent gate at the input-validation boundary —
+      // any other value (false / undefined / wrong type) rejects
+      // BEFORE this handler runs. The runtime narrowing here just
+      // propagates the literal type into the `ApplyInput` shape.
+      const input: applications.ApplyInput = {
+        consentIssued: args.consentIssued,
+        requestedHourlyRate: args.requestedHourlyRate,
+      };
+      if (args.message !== undefined) input.message = args.message;
+      if (args.matcherAnswers !== undefined) input.matcherAnswers = args.matcherAnswers;
+      if (args.expertiseAnswers !== undefined) input.expertiseAnswers = args.expertiseAnswers;
+      // `args.pitchData` is `unknown` at the schema layer (ADR-008 Stage-1
+      // opaque pass-through). The core service treats `pitchData` as a
+      // typed `Record<string, unknown>` — the cast is the boundary
+      // between the opaque MCP wire shape and the core's documented
+      // service-layer shape. The wire sends the raw JSON regardless.
+      if (args.pitchData !== undefined) input.pitchData = args.pitchData as Record<string, unknown>;
+
+      try {
+        const outcome = await applications.apply(auth.token, args.id, input, {
+          dryRun: args.dryRun === true,
+        });
+        if (outcome.kind === "preview") {
+          return dryRunResponse(outcome.preview);
+        }
+        return successResponse(outcome.result);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
 }
 
 interface ToolSuccessResponse {
@@ -687,6 +1006,65 @@ function mapJobsError(err: unknown): ToolErrorResponse {
               : err.code === "MUTATION_ERROR"
                 ? "Recovery: Check the mutation input — the server reported a per-field validation failure."
                 : "Recovery: Adjust the tool input or retry; see the code below.",
+            "",
+            `(Code: ${err.code})`,
+          ].join("\n"),
+        },
+      ],
+    };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: [
+          `Error: jobs request failed: ${message}`,
+          "",
+          "Recovery: Retry; if the failure persists, file an issue.",
+          "",
+          "(Code: UNKNOWN)",
+        ].join("\n"),
+      },
+    ],
+  };
+}
+
+/**
+ * Error mapping for the `ttctl_jobs_apply*` tools (#436). The four
+ * apply-funnel tools all delegate to `applications.*` core fns, which
+ * throw {@link applications.ApplicationsError} (NOT
+ * {@link jobs.JobsError}). Mirrors the `mapInterestRequestsError`
+ * pattern in `interest_requests.ts`, with apply-specific recovery
+ * hints for `NOT_FOUND` (verify job id), `CONSENT_REQUIRED`
+ * (defense-in-depth — the Zod literal gate already covers the input
+ * boundary), and `ALREADY_APPLIED` (route the caller to
+ * `ttctl_applications_show` for the existing row).
+ */
+function mapApplicationsError(err: unknown): ToolErrorResponse {
+  const typed = ttctlErrorToToolResponseOrNull(err);
+  if (typed !== null) return typed;
+  if (err instanceof applications.ApplicationsError) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: [
+            `Error: ${err.message}`,
+            "",
+            err.code === "NOT_FOUND"
+              ? "Recovery: Verify the job id (use ttctl_jobs_list to discover it)."
+              : err.code === "CONSENT_REQUIRED"
+                ? "Recovery: Pass `consentIssued: true` explicitly. Do NOT auto-fill on the talent's behalf without explicit user direction (ADR-008 § Decision Part 4)."
+                : err.code === "ALREADY_APPLIED"
+                  ? "Recovery: You have already applied to this job. Use `ttctl_applications_show <activity-id>` to view the existing application."
+                  : err.code === "MUTATION_ERROR"
+                    ? "Recovery: Check the mutation input — the server reported a per-field validation failure."
+                    : err.code === "WIRE_SHAPE_ERROR"
+                      ? "Recovery: One of the supplied answers references a `questionId` not returned from `ttctl_jobs_apply_questions`. Re-fetch the questions and retry with valid identifiers."
+                      : "Recovery: Adjust the tool input or retry; see the code below.",
             "",
             `(Code: ${err.code})`,
           ].join("\n"),
