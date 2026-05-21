@@ -685,6 +685,41 @@ describe("applications.confirm (#411)", () => {
     const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: Record<string, unknown> };
     expect(body.variables["comment"]).toBe("Hello recruiter");
   });
+
+  // #423 — #411 shipped the matcher / expertise / pitch forwarding in
+  // confirm()'s variables map but without dedicated coverage. These two
+  // tests pin the Stage-1 opaque pass-through contract (ADR-008 § Decision
+  // Part 3): confirm() forwards the three payloads verbatim and `?? null`-
+  // coalesces each when omitted, never introspecting the wire shape.
+  it("forwards matcher/expertise/pitch payloads verbatim into the mutation variables (#423)", async () => {
+    reply({ body: confirmSuccessFixture() });
+    const matcherQuestionsAnswers = [
+      { questionId: "MQ-1", answer: "matcher answer one" },
+      { questionId: "MQ-2", answer: "matcher answer two" },
+    ];
+    const expertiseQuestionsAnswers = [{ questionId: "EQ-1", answer: "expertise answer" }];
+    const pitchInput = { message: "Pitch text" };
+    await confirm(TOKEN, AR_ID, {
+      kind: "FIXED",
+      requestedHourlyRate: "80.00",
+      matcherQuestionsAnswers,
+      expertiseQuestionsAnswers,
+      pitchInput,
+    });
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(body.variables["matcherQuestionsAnswers"]).toEqual(matcherQuestionsAnswers);
+    expect(body.variables["expertiseQuestionsAnswers"]).toEqual(expertiseQuestionsAnswers);
+    expect(body.variables["pitchInput"]).toEqual(pitchInput);
+  });
+
+  it("sends null for matcher/expertise/pitch payloads when omitted (#411 regression, #423)", async () => {
+    reply({ body: confirmSuccessFixture() });
+    await confirm(TOKEN, AR_ID, { kind: "FIXED", requestedHourlyRate: "80.00" });
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(body.variables["matcherQuestionsAnswers"]).toBeNull();
+    expect(body.variables["expertiseQuestionsAnswers"]).toBeNull();
+    expect(body.variables["pitchInput"]).toBeNull();
+  });
 });
 
 describe("applications.reject (#411)", () => {
