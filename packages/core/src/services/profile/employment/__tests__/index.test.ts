@@ -704,6 +704,15 @@ describe("update", () => {
           skills: [],
           showViaToptal: EMP_1.showViaToptal,
           startDate: EMP_1.startDate,
+          // #487 — endDate is force-echoed from current state (the
+          // server treats omission as null-set, NOT preservation, so
+          // the pre-fix wire payload silently wiped endDate on partial
+          // updates of closed roles). EMP_1.endDate is 2020. Other
+          // nullable optionals (companyWebsite/noWebsite/highlight/
+          // toptalRelated) intentionally NOT echoed — see helper
+          // docstring § Per-field caution; a tried-and-rolled-back
+          // generalization during PR cycle.
+          endDate: EMP_1.endDate,
           company: EMP_1.company,
           publicationPermit: true,
           industryIds: [],
@@ -805,6 +814,9 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.skills).toEqual([]); // EMP_1_MAPPED.skills is []
     expect(merged.showViaToptal).toBe(EMP_1.showViaToptal);
     expect(merged.startDate).toBe(EMP_1.startDate);
+    // #487 — endDate force-echoed because the wire treats omission as
+    // null-set (NOT preservation). EMP_1.endDate is 2020.
+    expect(merged.endDate).toBe(EMP_1.endDate);
     // Rails `.blank?` gates: company + publicationPermit always injected
     // (publicationPermit null → defaults to true).
     expect(merged.company).toBe(EMP_1.company);
@@ -824,9 +836,65 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged).not.toHaveProperty("reportingTo");
     // User-supplied field wins.
     expect(merged.position).toBe("Lead");
-    // Truly-optional fields the caller did not supply are NOT injected.
-    expect(merged).not.toHaveProperty("highlight");
+    // Other nullable optionals on this surface (companyWebsite,
+    // noWebsite, highlight, toptalRelated) are NOT force-echoed —
+    // see helper docstring § Per-field caution. The empirically-safe
+    // class is endDate only (asserted above); the others were rolled
+    // back during PR cycle after the (companyWebsite, noWebsite) pair
+    // tripped the Rails anchor gate on catalog-employer rows.
     expect(merged).not.toHaveProperty("companyWebsite");
+    expect(merged).not.toHaveProperty("noWebsite");
+    expect(merged).not.toHaveProperty("highlight");
+    expect(merged).not.toHaveProperty("toptalRelated");
+  });
+
+  // -------------------------------------------------------------------
+  // #487 — endDate three-state merge (preserve / clear / set).
+  //
+  // Pre-#487, `buildUpdateEmploymentInput` did NOT include `endDate` in
+  // the `merged` object; the spread `{ ...merged, ...fields }` carried
+  // endDate to the wire ONLY when the caller supplied it. The live
+  // server treats absence of `endDate` from `UpdateEmploymentInput` as
+  // `null` — NOT as "preserve current" — so partial updates of closed
+  // roles silently wiped the stored end date (data corruption: "Year –
+  // Year" rendered as "Year – Present" on the public profile).
+  //
+  // Fix: force-echo endDate from current state symmetric to startDate,
+  // with explicit `=== undefined` check (NOT `??`) because `null` is
+  // an intentional value (caller is marking a previously-closed role
+  // as current). Three states must round-trip:
+  //   - caller `undefined` → preserve current.endDate (the regression)
+  //   - caller `null`      → clear (mark as current role)
+  //   - caller `number`    → set to the supplied year
+  // -------------------------------------------------------------------
+
+  it("#487 preserves current.endDate when caller omits endDate (the regression)", () => {
+    // EMP_1.endDate is 2020 (closed role).
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { position: "Lead" });
+    expect(merged.endDate).toBe(EMP_1.endDate);
+  });
+
+  it("#487 lets caller-supplied endDate:null clear the end date (mark as current role)", () => {
+    // The intentional `null` value converts a finished role to a
+    // current one. Cannot be conflated with "omitted" (which means
+    // "preserve current"). `EmploymentFields.endDate?: number | null`
+    // declares null as a valid input — round-trip it.
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { endDate: null });
+    expect(merged.endDate).toBeNull();
+  });
+
+  it("#487 lets caller-supplied endDate:number override current.endDate", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { endDate: 2023 });
+    expect(merged.endDate).toBe(2023);
+  });
+
+  it("#487 preserves null when current.endDate is null and caller omits (open-role idempotency)", () => {
+    // Edge case: row with no endDate (current role) being updated for
+    // an unrelated field. endDate stays null — the merge sends explicit
+    // null rather than omitting, so this is round-trip-safe.
+    const currentNullEnd = { ...EMP_1_MAPPED, endDate: null } as Employment;
+    const merged = buildUpdateEmploymentInput(currentNullEnd, { position: "X" });
+    expect(merged.endDate).toBeNull();
   });
 
   it("lets user-supplied required-non-null fields override the current-derived defaults", () => {
