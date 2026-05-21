@@ -7,6 +7,7 @@ import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
+import { runJobsApply } from "./apply.js";
 import {
   runJobsClearInterest,
   runJobsMarkViewed,
@@ -35,13 +36,15 @@ function perPageOption(): Option {
 }
 
 /**
- * Build the `ttctl jobs` command tree (#148). Surfaces ten verbs
- * across the top-level group and one nested sub-group (`search`):
+ * Build the `ttctl jobs` command tree (#148; `apply` added in #430).
+ * Surfaces eleven verbs across the top-level group and one nested
+ * sub-group (`search`):
  *
  * | Leaf                                                  | Description                                |
  * |-------------------------------------------------------|--------------------------------------------|
  * | `list [filters]`                                      | Browse current job opportunities           |
  * | `show <id>`                                           | Job detail view                            |
+ * | `apply <id> --consent [...]`                          | Direct-apply to a job (DESTRUCTIVE — see ADR-008) |
  * | `save <id>`                                           | Mark a job as saved (bookmark)             |
  * | `unsave <id>`                                         | Clear interest flags (the wire's only unsave path; also clears not-interested) |
  * | `saved`                                               | List saved jobs                            |
@@ -79,9 +82,21 @@ function perPageOption(): Option {
  * integers). All four share `JobsListResponse` and the
  * `eligibleJobs(page, pageSize)` wire path.
  *
- * **Out of scope for v1** (per #148):
- *   - Application funnel (`jobs apply` etc.) — lives in `applications`.
- *   - Bulk-save / bulk-dismiss (single-id only).
+ * **Application funnel write-side** (ADR-008, #430): `jobs apply <id>`
+ * is the user-facing direct-apply verb; the underlying service module
+ * is `applications.apply()` per ADR-008 § Decision Part 5 (the verb
+ * lives on `jobs` for readability while the funnel-crossing
+ * implementation lives on `applications`). The relaxation of the #15
+ * read-only stance is tracked in
+ * `hq/engineering/adr/ADR-008-application-funnel-write-side.md`.
+ *
+ * **Still out of scope** (per #148 + ADR-008 § What We're NOT Solving):
+ *   - `JobApplication.withdraw` / `JobApplication.edit` — separate
+ *     scope; Toptal support is uncertain.
+ *   - Bulk-apply / bulk-save / bulk-dismiss (single-id only; matches
+ *     the safety boundary established by #411 for IR ops).
+ *   - Interview accept / reject — separate scope, separate catalog
+ *     (`InterviewRejectReason`).
  */
 export function buildJobsCommand(): Command {
   const cmd = new Command("jobs")
@@ -154,6 +169,81 @@ export function buildJobsCommand(): Command {
     .action(async (id: string, options: { output: OutputFormat; withQuestions?: boolean }) => {
       await runJobsShow(id, options.output, { withQuestions: options.withQuestions === true });
     });
+
+  // #430 — Direct-apply to a job. Per ADR-008 § Decision Part 5: the
+  // CLI verb lives on `jobs` (reads naturally: "apply to a job") while
+  // the underlying service module is `applications.apply()` — the
+  // funnel-crossing implementation lives alongside the other apply-flow
+  // write verbs (`applications confirm`, `applications reject` from
+  // #411). `--consent` is REQUIRED (no default) per ADR-008 § Decision
+  // Part 4 — the legal-compliance attestation cannot be auto-filled.
+  //
+  // Help text for the JSON-file flags mirrors `applications confirm`
+  // (#428) since the ADR-008-locked grammar is identical across the
+  // funnel's write surface.
+  const APPLY_ANSWERS_FILE_HELP =
+    "JSON file (or `-` for stdin) containing matcher/expertise answers. Shape:\n" +
+    "  {\n" +
+    '    "matcherAnswers": [{"questionId": "<id>", "answer": "<value>"}],\n' +
+    '    "expertiseAnswers": [{"questionId": "<id>", "answer": "<value>"}]\n' +
+    "  }\n" +
+    "Question identifiers come from `jobs show <id> --with-questions` (or `jobs apply <id> --show-questions`). Stdin escape: `--answers-file -`.";
+  const APPLY_PITCH_FILE_HELP =
+    "JSON file (or `-` for stdin) containing the PitchInput payload (single JSON object). Stdin escape: `--pitch-file -`.";
+
+  markMutation(
+    cmd
+      .command("apply")
+      .description(
+        "Apply to a job (DESTRUCTIVE — creates a JobApplication; no undo via TTCtl). `--consent` is REQUIRED and represents your acceptance of Toptal's apply terms (a legal-compliance attestation; auto-filling is forbidden).",
+      )
+      .argument("<id>", "job id (from `jobs list` / `jobs show`)", parseIdArg)
+      .option(
+        "--consent",
+        "REQUIRED — your explicit acceptance of Toptal's apply terms (a legal-compliance attestation). Auto-filling on your behalf is forbidden per ADR-008. Absence raises CONSENT_REQUIRED with no wire call.",
+      )
+      .option(
+        "--rate <decimal>",
+        "requested hourly rate (decimal string, e.g. 80.00). Defaults from the rate-insight / suggested-rate context when omitted.",
+      )
+      .option("-m, --message <text>", "optional talent-side free-text accompanying the application")
+      .option("--answers-file <path>", APPLY_ANSWERS_FILE_HELP)
+      .option("--pitch-file <path>", APPLY_PITCH_FILE_HELP)
+      .option(
+        "--show-questions",
+        "preview-only: fetch pre-apply data (canApply, suggestedRate) and the matcher/expertise question inventory WITHOUT issuing the apply mutation. Does not require --consent.",
+      )
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(
+        async (
+          id: string,
+          options: {
+            consent?: boolean;
+            rate?: string;
+            message?: string;
+            answersFile?: string;
+            pitchFile?: string;
+            showQuestions?: boolean;
+            output: OutputFormat;
+          },
+        ) => {
+          // exactOptionalPropertyTypes — build additively so omitted-vs-
+          // undefined semantics stay clean at the API boundary.
+          const runOpts: import("./apply.js").JobsApplyOptions = { output: options.output };
+          if (options.consent !== undefined) runOpts.consent = options.consent;
+          if (options.rate !== undefined) runOpts.rate = options.rate;
+          if (options.message !== undefined) runOpts.message = options.message;
+          if (options.answersFile !== undefined) runOpts.answersFile = options.answersFile;
+          if (options.pitchFile !== undefined) runOpts.pitchFile = options.pitchFile;
+          if (options.showQuestions !== undefined) runOpts.showQuestions = options.showQuestions;
+          await runJobsApply(id, runOpts);
+        },
+      ),
+  );
 
   // Marked as a mutation (issue #162) so the global `--dry-run` flag
   // routes through to `jobs.save()`'s `dryRun` option.
