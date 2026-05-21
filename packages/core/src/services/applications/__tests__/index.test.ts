@@ -18,6 +18,7 @@ import {
   AVAILABILITY_REQUEST_KINDS,
   STATUS_GROUPS,
   ApplicationsError,
+  apply,
   applyData,
   applyQuestions,
   confirm,
@@ -28,6 +29,7 @@ import {
   show,
   stats,
 } from "../index.js";
+import type { ApplyInput } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
@@ -1472,5 +1474,371 @@ describe("applications.rateInsight (#424)", () => {
       code: "WIRE_SHAPE_ERROR",
       message: expect.stringContaining("TalentJobRateInsightUnknownVariantV2"),
     });
+  });
+});
+
+// ---------------------------------------------------------------------
+// Direct-apply core fn (#426). `apply` orchestrates a 3-call pre-fetch
+// (`applyData` + `applyQuestions` + `rateInsight`) via Promise.all,
+// validates answer ids against the question inventory, defaults the
+// rate from PreApplyData.suggestedRate, then issues the JobApply
+// mutation. The mocks below sequence `reply()` calls in pre-fetch
+// order: applyData → applyQuestions → rateInsight → JobApply (4 wire
+// calls total in the happy path).
+// ---------------------------------------------------------------------
+
+function jobApplySuccessFixture(
+  opts: { applicationId?: string; activityItemId?: string; rate?: string } = {},
+): unknown {
+  return {
+    data: {
+      job: {
+        __typename: "TalentJob",
+        apply: {
+          __typename: "JobApplyPayload",
+          success: true,
+          errors: null,
+          job: {
+            __typename: "TalentJob",
+            id: JOB_ID,
+            activityItem: {
+              __typename: "TalentJobActivityItem",
+              id: opts.activityItemId ?? "act-99",
+              statusV2: {
+                __typename: "JobActivityItemStatus",
+                value: "ON_RECRUITER_REVIEW",
+                verbose: "On recruiter review",
+              },
+              jobApplication: {
+                __typename: "JobApplication",
+                id: opts.applicationId ?? "app-77",
+                requestedHourlyRate: { __typename: "Money", decimal: opts.rate ?? "85.00" },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function jobApplyAlreadyAppliedFixture(): unknown {
+  return {
+    data: {
+      job: {
+        __typename: "TalentJob",
+        apply: {
+          __typename: "JobApplyPayload",
+          success: false,
+          errors: [
+            {
+              __typename: "MutationResultError",
+              code: "VALIDATION_ERROR",
+              key: "already_applied",
+              message: "You already applied to this job.",
+            },
+          ],
+          job: null,
+        },
+      },
+    },
+  };
+}
+
+// Reply sequence for the 3-call pre-fetch. Mocks are popped in the
+// order Promise.all() initializes the awaits: applyData first, then
+// applyQuestions, then rateInsight.
+function replyPreApplySuccess(
+  opts: { suggestedRate?: string | null; matcherIds?: string[]; expertiseIds?: string[] } = {},
+): void {
+  reply({
+    body: applyDataFixture({
+      hourlyRate: opts.suggestedRate === undefined ? "85.00" : opts.suggestedRate,
+    }),
+  });
+  reply({
+    body: questionsFixture({
+      matcher: (opts.matcherIds ?? []).map((id) => ({ id, question: `Matcher ${id}?`, isRequired: true })),
+      expertise: (opts.expertiseIds ?? []).map((id) => ({
+        id,
+        subject: { __typename: "Skill", id: `subj-${id}`, name: `Subject ${id}` },
+      })),
+    }),
+  });
+  reply({ body: rateInsightCompetitiveFixture() });
+}
+
+describe("applications.apply (#426)", () => {
+  it("happy path: pre-fetches, validates ids, threads rate default, projects the JobApplicationRecord", async () => {
+    replyPreApplySuccess({
+      suggestedRate: "95.00",
+      matcherIds: ["m1", "m2"],
+      expertiseIds: ["e1"],
+    });
+    reply({ body: jobApplySuccessFixture({ rate: "95.00" }) });
+
+    const outcome = await apply(TOKEN, JOB_ID, {
+      consentIssued: true,
+      matcherAnswers: [
+        { questionId: "m1", answer: "5 years" },
+        { questionId: "m2", answer: "yes" },
+      ],
+      expertiseAnswers: [{ questionId: "e1", answer: "TypeScript" }],
+      message: "I'm a great fit for this job.",
+      pitchData: { headline: "Senior Engineer" },
+    });
+
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result.id).toBe("app-77");
+    expect(outcome.result.jobActivityItemId).toBe("act-99");
+    expect(outcome.result.requestedHourlyRate?.decimal).toBe("95.00");
+    expect(outcome.result.statusV2.value).toBe("ON_RECRUITER_REVIEW");
+
+    // 4 calls in total: 3 pre-fetch + 1 mutation.
+    expect(mockedStock).toHaveBeenCalledTimes(4);
+    const mutationBody = mockedStock.mock.calls[3]?.[0]?.body as {
+      operationName: string;
+      variables: Record<string, unknown>;
+    };
+    expect(mutationBody.operationName).toBe("JobApply");
+    expect(mutationBody.variables).toMatchObject({
+      id: JOB_ID,
+      consentIssued: true,
+      requestedHourlyRate: "95.00",
+      comment: "I'm a great fit for this job.",
+      talentCard: { headline: "Senior Engineer" },
+    });
+    expect(mutationBody.variables["matcherQuestionsAnswers"]).toEqual([
+      { questionId: "m1", answer: "5 years" },
+      { questionId: "m2", answer: "yes" },
+    ]);
+    expect(mutationBody.variables["expertiseQuestionsAnswers"]).toEqual([{ questionId: "e1", answer: "TypeScript" }]);
+  });
+
+  it("uses caller-supplied requestedHourlyRate when provided (overrides PreApplyData.suggestedRate)", async () => {
+    replyPreApplySuccess({ suggestedRate: "85.00" });
+    reply({ body: jobApplySuccessFixture({ rate: "120.00" }) });
+
+    await apply(TOKEN, JOB_ID, { consentIssued: true, requestedHourlyRate: "120.00" });
+    const mutationBody = mockedStock.mock.calls[3]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(mutationBody.variables["requestedHourlyRate"]).toBe("120.00");
+  });
+
+  it("CONSENT_REQUIRED: refuses BEFORE any wire call when consentIssued is omitted (runtime gate covers as-cast bypass)", async () => {
+    // Cast simulates an unsafe caller (CLI/MCP layer with JSON input).
+    await expect(apply(TOKEN, JOB_ID, {} as ApplyInput)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "CONSENT_REQUIRED",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("CONSENT_REQUIRED: refuses when consentIssued is the literal `false` (as-cast bypass)", async () => {
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: false as unknown as true })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "CONSENT_REQUIRED",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it('ALREADY_APPLIED: maps wire `errors[].key === "already_applied"` to the typed code with show-hint message', async () => {
+    replyPreApplySuccess();
+    reply({ body: jobApplyAlreadyAppliedFixture() });
+
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "ALREADY_APPLIED",
+      message: expect.stringContaining("ttctl applications show"),
+    });
+    expect(mockedStock).toHaveBeenCalledTimes(4);
+  });
+
+  it("dryRun: short-circuits BEFORE any wire call (no pre-fetch either) and returns a preview envelope", async () => {
+    const outcome = await apply(
+      TOKEN,
+      JOB_ID,
+      {
+        consentIssued: true,
+        requestedHourlyRate: "100.00",
+        message: "Hi",
+        matcherAnswers: [{ questionId: "m1", answer: "5y" }],
+      },
+      { dryRun: true },
+    );
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.operationName).toBe("JobApply");
+    expect(outcome.preview.variables).toMatchObject({
+      id: JOB_ID,
+      consentIssued: true,
+      requestedHourlyRate: "100.00",
+      comment: "Hi",
+      matcherQuestionsAnswers: [{ questionId: "m1", answer: "5y" }],
+    });
+    // Critical: zero wire calls under dry-run, including no pre-fetch.
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dryRun: substitutes <resolved at apply time> placeholder when rate is unresolved", async () => {
+    const outcome = await apply(TOKEN, JOB_ID, { consentIssued: true }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.variables).toMatchObject({
+      requestedHourlyRate: "<resolved at apply time>",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dryRun: STILL refuses with CONSENT_REQUIRED when consent is omitted (no preview for a call that would have been refused)", async () => {
+    await expect(apply(TOKEN, JOB_ID, {} as ApplyInput, { dryRun: true })).rejects.toMatchObject({
+      code: "CONSENT_REQUIRED",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("WIRE_SHAPE_ERROR: rejects a matcherAnswers entry with an unknown questionId", async () => {
+    replyPreApplySuccess({ matcherIds: ["m1"] });
+    await expect(
+      apply(TOKEN, JOB_ID, {
+        consentIssued: true,
+        matcherAnswers: [{ questionId: "BOGUS", answer: "x" }],
+      }),
+    ).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "WIRE_SHAPE_ERROR",
+      message: expect.stringContaining("matcherAnswers[0]"),
+    });
+    // Pre-fetch ran (3 calls) but the mutation did NOT.
+    expect(mockedStock).toHaveBeenCalledTimes(3);
+  });
+
+  it("WIRE_SHAPE_ERROR: rejects an expertiseAnswers entry missing questionId entirely", async () => {
+    replyPreApplySuccess({ expertiseIds: ["e1"] });
+    await expect(
+      apply(TOKEN, JOB_ID, {
+        consentIssued: true,
+        expertiseAnswers: [{ answer: "no questionId" }],
+      }),
+    ).rejects.toMatchObject({
+      code: "WIRE_SHAPE_ERROR",
+      message: expect.stringContaining("expertiseAnswers[0]"),
+    });
+    expect(mockedStock).toHaveBeenCalledTimes(3);
+  });
+
+  it("WIRE_SHAPE_ERROR: rejects a non-object answer entry (defensive — answers are unknown[])", async () => {
+    replyPreApplySuccess({ matcherIds: ["m1"] });
+    await expect(
+      apply(TOKEN, JOB_ID, {
+        consentIssued: true,
+        matcherAnswers: ["string-instead-of-object"],
+      }),
+    ).rejects.toMatchObject({
+      code: "WIRE_SHAPE_ERROR",
+      message: expect.stringContaining("matcherAnswers[0]"),
+    });
+  });
+
+  it("MUTATION_ERROR: throws when rate is omitted AND PreApplyData.suggestedRate is null (no default to pick)", async () => {
+    replyPreApplySuccess({ suggestedRate: null });
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toMatchObject({
+      code: "MUTATION_ERROR",
+      message: expect.stringContaining("requestedHourlyRate"),
+    });
+    // Pre-fetch ran but mutation did not.
+    expect(mockedStock).toHaveBeenCalledTimes(3);
+  });
+
+  it("MUTATION_ERROR: maps non-`already_applied` wire failures verbatim via formatMutationErrors", async () => {
+    replyPreApplySuccess();
+    reply({
+      body: {
+        data: {
+          job: {
+            __typename: "TalentJob",
+            apply: {
+              __typename: "JobApplyPayload",
+              success: false,
+              errors: [
+                {
+                  __typename: "MutationResultError",
+                  code: "VALIDATION_ERROR",
+                  key: "requestedHourlyRate",
+                  message: "rate below platform minimum",
+                },
+              ],
+              job: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toMatchObject({
+      code: "MUTATION_ERROR",
+      message: expect.stringContaining("rate below platform minimum"),
+    });
+  });
+
+  it("UNKNOWN: throws when JobApply returns a null root payload (defensive)", async () => {
+    replyPreApplySuccess();
+    reply({ body: { data: { job: null } } });
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toMatchObject({
+      code: "UNKNOWN",
+    });
+  });
+
+  it("UNKNOWN: throws when success:true but the activityItem echo is null (wire violation)", async () => {
+    replyPreApplySuccess();
+    reply({
+      body: {
+        data: {
+          job: {
+            __typename: "TalentJob",
+            apply: {
+              __typename: "JobApplyPayload",
+              success: true,
+              errors: null,
+              job: { __typename: "TalentJob", id: JOB_ID, activityItem: null },
+            },
+          },
+        },
+      },
+    });
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toMatchObject({
+      code: "UNKNOWN",
+    });
+  });
+
+  it("threads null defaults into matcher/expertise/pitch/comment variables when caller omits them", async () => {
+    replyPreApplySuccess();
+    reply({ body: jobApplySuccessFixture() });
+    await apply(TOKEN, JOB_ID, { consentIssued: true });
+    const mutationBody = mockedStock.mock.calls[3]?.[0]?.body as { variables: Record<string, unknown> };
+    expect(mutationBody.variables["comment"]).toBeNull();
+    expect(mutationBody.variables["matcherQuestionsAnswers"]).toBeNull();
+    expect(mutationBody.variables["expertiseQuestionsAnswers"]).toBeNull();
+    expect(mutationBody.variables["talentCard"]).toBeNull();
+  });
+
+  it("propagates pre-fetch NOT_FOUND from applyData up the stack (Promise.all rejects-on-first)", async () => {
+    // First mock (applyData) returns the Relay decode error → NOT_FOUND.
+    // Subsequent mocks for applyQuestions / rateInsight never get
+    // consumed because Promise.all rejects on the first failure.
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    reply({ body: questionsFixture() });
+    reply({ body: rateInsightCompetitiveFixture() });
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("propagates AuthRevokedError from any pre-fetch call", async () => {
+    reply({ body: applyDataFixture() });
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    reply({ body: rateInsightCompetitiveFixture() });
+    await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 });
