@@ -386,6 +386,147 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
     });
   });
 
+  describe("redactToolArgs — MCP PII allowlist (issue #446 application-funnel)", () => {
+    /**
+     * Per #446 the `redactToolArgs` PII-pass covers the seven keys that
+     * carry caller-supplied free-text in `ttctl_applications_confirm` and
+     * `ttctl_jobs_apply` tool args. Each key's value must be replaced
+     * with the canonical `***REDACTED***` marker; the key itself MUST be
+     * preserved so operators can see what was sent (the FIELD-NAME pass
+     * is structural, not semantic — the same convention as
+     * `SECRET_BODY_FIELD_NAMES`).
+     *
+     * Cases enumerated as a list so a future addition (e.g., a new
+     * funnel field) becomes a one-line entry rather than a new
+     * describe-block.
+     */
+    const PII_FIELD_NAMES = [
+      "matcherAnswers",
+      "matcherQuestionsAnswers",
+      "expertiseAnswers",
+      "expertiseQuestionsAnswers",
+      "pitchData",
+      "pitchInput",
+      "talentCard",
+    ];
+    const PII_SENTINEL = "free-text-PII-payload-sentinel-value";
+
+    for (const fieldName of PII_FIELD_NAMES) {
+      it(`redacts ${fieldName} (top-level scalar value)`, () => {
+        const out = redactToolArgs({ [fieldName]: PII_SENTINEL, neighbor: "visible" });
+        // Per the AC: each new key redacts to the canonical marker in the
+        // log entry. Asserting on the marker explicitly pins the
+        // replacement (not just absence-of-leak) so a future change that
+        // accidentally drops the field would surface here.
+        const record = out as Record<string, unknown>;
+        expect(record[fieldName]).toBe("***REDACTED***");
+        expect(record["neighbor"]).toBe("visible");
+        // Defense-in-depth: the sentinel value cannot appear anywhere in
+        // the serialized record (e.g., if a future change adds a sibling
+        // path that re-emits the original under a different key).
+        const serialized = JSON.stringify(out);
+        expect(serialized).not.toContain(PII_SENTINEL);
+      });
+    }
+
+    it("redacts PII fields case-insensitively (matcherAnswers / MATCHERANSWERS / MatcherAnswers all hit)", () => {
+      const out = redactToolArgs({
+        matcherAnswers: PII_SENTINEL,
+        MATCHERANSWERS: PII_SENTINEL,
+        MatcherAnswers: PII_SENTINEL,
+      });
+      const serialized = JSON.stringify(out);
+      expect(serialized).not.toContain(PII_SENTINEL);
+    });
+
+    it("redacts PII fields when nested inside an object", () => {
+      const out = redactToolArgs({
+        outer: {
+          inner: {
+            pitchData: { body: PII_SENTINEL, title: "title-text" },
+          },
+        },
+      });
+      const serialized = JSON.stringify(out);
+      // The whole `pitchData` value is replaced — the inner `body` and
+      // `title` are no longer reachable as nested strings.
+      expect(serialized).not.toContain(PII_SENTINEL);
+      expect(serialized).not.toContain("title-text");
+      expect(serialized).toContain("pitchData");
+    });
+
+    it("redacts PII fields when nested inside an array", () => {
+      const out = redactToolArgs({
+        bundle: [{ matcherAnswers: PII_SENTINEL }, { matcherAnswers: "second-payload" }, { other: "kept" }],
+      });
+      const serialized = JSON.stringify(out);
+      expect(serialized).not.toContain(PII_SENTINEL);
+      expect(serialized).not.toContain("second-payload");
+      expect(serialized).toContain("kept");
+    });
+
+    it("PII pass runs alongside credential pass and bearer scrub (composed three-pass redaction)", () => {
+      const bearer = "user_abc123def456abc123def456_0123456789ABCDEFGHIJ";
+      const out = redactToolArgs({
+        password: "credential-secret",
+        matcherAnswers: PII_SENTINEL,
+        note: `bare-bearer ${bearer}`,
+      });
+      const serialized = JSON.stringify(out);
+      // All three classes redacted in one composed pass.
+      expect(serialized).not.toContain("credential-secret");
+      expect(serialized).not.toContain(PII_SENTINEL);
+      expect(serialized).not.toContain(bearer);
+    });
+
+    it("preserves non-PII sibling fields verbatim", () => {
+      const out = redactToolArgs({
+        matcherAnswers: PII_SENTINEL,
+        jobId: "job-abc",
+        consent: true,
+        rate: "80.00",
+      });
+      const serialized = JSON.stringify(out);
+      expect(serialized).not.toContain(PII_SENTINEL);
+      expect(serialized).toContain("job-abc");
+      expect(serialized).toContain('"consent":true');
+      expect(serialized).toContain("80.00");
+    });
+
+    it("emits PII redaction through wrapToolHandler's args_redacted (end-to-end log-entry assertion)", async () => {
+      const handler = async (): Promise<{ content: [{ type: "text"; text: string }] }> => {
+        return Promise.resolve({ content: [{ type: "text", text: "ok" }] });
+      };
+      const wrapped = wrapToolHandler("ttctl_jobs_apply", handler);
+
+      await wrapped({
+        jobId: "job-abc",
+        consentIssued: true,
+        // Inner shape mirrors the recovered SDL (#438) — matcher answers
+        // carry the question identifier at `id`, not `questionId`. The
+        // redaction pass is structural (whole-value replace at the
+        // `matcherAnswers` key) so the inner shape doesn't change the
+        // outcome, but the test data tracks the real wire shape.
+        matcherAnswers: [{ id: "q1", answer: PII_SENTINEL }],
+        pitchData: { body: PII_SENTINEL },
+        talentCard: PII_SENTINEL,
+      });
+
+      const start = captured[0] as McpToolInvokeStartRecord;
+      const serialized = JSON.stringify(start.args_redacted);
+      // The sentinel must not appear anywhere in the emitted log entry.
+      expect(serialized).not.toContain(PII_SENTINEL);
+      // The field keys themselves remain visible — operators can still see
+      // which PII-carrying fields were passed.
+      expect(serialized).toContain("matcherAnswers");
+      expect(serialized).toContain("pitchData");
+      expect(serialized).toContain("talentCard");
+      // Non-PII args (`jobId`, `consentIssued`) pass through untouched.
+      expect(serialized).toContain("job-abc");
+      expect(serialized).toContain('"consentIssued":true');
+    });
+  });
+
   describe("default logger — TTCTL_DEBUG_MCP env-gate (round-trip)", () => {
     /**
      * The default logger reads `TTCTL_DEBUG_MCP` at module load. To

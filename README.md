@@ -207,6 +207,112 @@ Heterogeneity is the deliberate Sage move: a uniform `--cursor <token>` layer wo
 
 The 5-row grammar is locked in [ADR-007 — Pagination flag grammar](hq/engineering/adr/ADR-007-pagination-flag-grammar.md).
 
+## Applying to jobs
+
+TTCtl can apply to a job opportunity directly via `ttctl jobs apply <job-id>`. This is a **destructive** wire operation — it creates a `JobApplication` record on Toptal's side and there is no `withdraw` operation in TTCtl (see [ADR-008](hq/engineering/adr/ADR-008-application-funnel-write-side.md) § What We're NOT Solving). Prefer `--dry-run` to preview the wire payload first.
+
+### Consent gate
+
+`--consent` is **required** — it represents your explicit acceptance of Toptal's apply terms (a legal-compliance attestation). The flag has no default; auto-filling on your behalf is forbidden per ADR-008 § Decision Part 4. Absence raises `CONSENT_REQUIRED` with no wire call issued.
+
+```sh
+ttctl jobs apply <job-id> --consent
+```
+
+### Preview the question inventory
+
+Most jobs require answering matcher / expertise questions before the apply mutation accepts the request. `--show-questions` fetches the inventory WITHOUT issuing the apply mutation (read-only path; does not require `--consent`):
+
+```sh
+ttctl jobs apply <job-id> --show-questions
+```
+
+The output lists each question's identifier, prompt text, and the pre-apply context (`canApply`, `suggestedRate`, `rateValidation`). Per the recovered SDL (#438), the identifier maps differently across the two answer arrays: matcher answers use it as `id`; expertise answers use it as `questionId` (see the JSON shape below). `ttctl jobs show <job-id> --with-questions` is a related read that inlines the same question inventory into the job's full detail view.
+
+### Supplying answers via `--answers-file`
+
+Pass a JSON file containing per-question answers. The file shape follows the ADR-008 § Decision Part 2 grammar (the same shape `applications confirm` uses for Interest Requests). Matcher answers and expertise answers use **different key shapes** per the recovered SDL (#438): matcher answers carry the question identifier at `id`; expertise answers carry it at `questionId` and also accept `other` / `subjectId` (both nullable):
+
+```json
+{
+  "matcherAnswers": [
+    { "id": "<matcher-question-id>", "answer": "<your-answer>" },
+    { "id": "<matcher-question-id>", "answer": "<your-answer>" }
+  ],
+  "expertiseAnswers": [
+    { "questionId": "<expertise-question-id>", "other": null, "subjectId": null },
+    { "questionId": "<expertise-question-id>", "other": "free-text-context", "subjectId": "<subject-id>" }
+  ]
+}
+```
+
+Then:
+
+```sh
+ttctl jobs apply <job-id> --consent --answers-file ./apply.json
+```
+
+Pass `-` instead of a path to read the JSON from stdin. The wrapper shape AND inner items are validated against the recovered Zod schemas (per #438) BEFORE any wire call — malformed JSON or an unknown key refuses with a `VALIDATION_ERROR` envelope and no mutation is issued.
+
+`--pitch-file <path>` (or `-` for stdin) attaches a `PitchInput` payload alongside the answers; only one flag may claim stdin per invocation.
+
+### Dry-run preview
+
+`--dry-run` emits the full apply preview envelope (operation name, surface, transport, GraphQL variables) without issuing the wire mutation. Use it to verify the payload shape before committing to the destructive call:
+
+```sh
+ttctl jobs apply <job-id> --consent --dry-run
+```
+
+The `--consent` gate still applies under `--dry-run` — the legal-compliance attestation is required even for previews (the gate is a CLI-level refusal, not a wire-level one).
+
+## Interest Requests
+
+When a recruiter expresses interest in your profile via Toptal's Availability Request (AR) flow, you respond via `applications confirm` / `applications reject`. Confirming an AR is **destructive** — it transitions the AR to `AVAILABILITY_REQUEST_CONFIRMED` and creates a `JobApplication`. There is no withdraw operation; prefer `--dry-run` to preview the wire payload first.
+
+### Discovering the AR id
+
+The `<id>` argument is the **AvailabilityRequest id**, NOT the activity-item id. Discover it by inspecting the activity row:
+
+```sh
+ttctl applications show <activityId>
+```
+
+…and look for the `Availability request: <id>` line in the output.
+
+### Confirming an Interest Request
+
+```sh
+ttctl applications confirm <ar-id>
+```
+
+When both `--rate` and `--kind` are omitted, the service pre-fetches the AR metadata and auto-fills:
+
+- `kind` from `metadata.__typename`
+- `rate` from `metadata.offeredHourlyRate` (Fixed-kind only)
+
+Flexible-kind ARs have no recruiter-pinned rate; callers MUST pass `--rate <decimal>` for `FLEXIBLE` / `MARKETPLACE_FLEXIBLE` ARs.
+
+### Optional `--answers-file` / `--pitch-file`
+
+When the AR carries matcher / expertise questions or a pitch prompt, supply answers via the same JSON-file grammar as `jobs apply`:
+
+```sh
+ttctl applications confirm <ar-id> \
+  --answers-file ./answers.json \
+  --pitch-file ./pitch.json
+```
+
+Both flags accept `-` to read from stdin (at most one stdin claim per invocation). The answers file shape is identical to the one shown in [Applying to jobs](#applying-to-jobs) above. Pitch payloads are validated against the recovered `PitchInput` Zod schema (per #438); extra unknown keys reject with a field-path error.
+
+### Rejecting an Interest Request
+
+```sh
+ttctl applications reject <ar-id> --reason <key>
+```
+
+The `<key>` comes from the server-localised inventory at `ttctl applications reject-reasons`. Some keys require an accompanying `--comment <text>` — the reject-reasons inventory marks which.
+
 ## MCP Integration
 
 TTCtl implements the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) so AI assistants can interact with your Toptal Talent profile through natural language. Run `ttctl mcp` to start an MCP server on stdio.
