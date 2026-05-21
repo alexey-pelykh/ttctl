@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`applications confirm`: expose matcher / expertise question
+  answers and pitch payloads via `--answers-file` / `--pitch-file`
+  flags (#428).** Closes the half of the IR-confirm gap that #423
+  shipped service-side. The core's `applications.confirm()` already
+  accepted opaque `matcherQuestionsAnswers`, `expertiseQuestionsAnswers`,
+  `pitchInput` pass-throughs (verified by the #423 wire-forwarding
+  tests); the CLI now reaches them.
+  - **CLI surface**: `ttctl applications confirm` gains two new
+    optional flags per ADR-008 § Decision Part 2 (locked JSON-only
+    grammar): - `--answers-file <path>` — JSON file containing
+    `{ matcherAnswers: [...], expertiseAnswers: [...] }`. Question
+    identifiers come from `applications show <activityId>` output. - `--pitch-file <path>` — JSON file containing a `PitchInput`
+    payload (single JSON object). - Both flags accept `-` to read JSON from stdin per commander
+    convention (`cat answers.json | ttctl applications confirm
+... --answers-file -`). Only one flag may claim stdin per
+    invocation; the second `-` claim surfaces a typed
+    `STDIN_DOUBLE_CLAIM` validation error.
+  - **Pre-wire validation**: malformed JSON, missing files, wrong
+    top-level shapes (e.g. a JSON array where an object is required),
+    and `matcherAnswers` / `expertiseAnswers` keys that are not
+    arrays all refuse with the `VALIDATION_ERROR` envelope BEFORE
+    any wire call is made. The recovery hint cites the parse failure
+    line/column; file-not-found errors carry the absolute path so
+    shell aliases and `cd` mistakes are obvious.
+  - **Backward compat**: existing `--message`, `--rate`, `--kind`
+    flags work unchanged when the new flags are absent (#411
+    regression guard pinned by new unit tests).
+  - **Shared loader**: `packages/cli/src/lib/json-input.ts` factors
+    the JSON-file read + parse logic so #430 (`jobs apply`) can
+    reuse it without churn. Sibling to `lib/freetext.ts` (same
+    diagnostic posture; different grammar: bare path here, `@path`
+    prefix there).
+  - **Schema/contract rule**: TRIGGERED — extends the active wire
+    call. Live E2E coverage is built by #445; this PR ships the
+    CLI wiring and unit tests against `applications.confirm` mock
+    only.
+
 ## [v0.1.0-rc.7] - 2026-05-20
 
 ### Fixed

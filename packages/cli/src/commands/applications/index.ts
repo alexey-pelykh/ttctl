@@ -132,6 +132,20 @@ export function buildApplicationsCommand(): Command {
   // the AvailabilityRequest id (NOT the activity-item id) — discover
   // it via `applications show <activityId>` (look for the "Availability
   // request: <id>" line).
+  // #428 — answers-file / pitch-file help text. ADR-008 § Decision
+  // Part 2 locks the JSON-file grammar; per the issue's AC the help
+  // must document the JSON shape (5-line example), the question-id
+  // discovery hint, and the stdin escape.
+  const ANSWERS_FILE_HELP =
+    "JSON file (or `-` for stdin) containing matcher/expertise answers. Shape:\n" +
+    "  {\n" +
+    '    "matcherAnswers": [{"questionId": "<id>", "answer": "<value>"}],\n' +
+    '    "expertiseAnswers": [{"questionId": "<id>", "answer": "<value>"}]\n' +
+    "  }\n" +
+    "Question identifiers come from `applications show <activityId>` output. Stdin escape: `--answers-file -`.";
+  const PITCH_FILE_HELP =
+    "JSON file (or `-` for stdin) containing the PitchInput payload (single JSON object). Stdin escape: `--pitch-file -`.";
+
   cmd
     .command("confirm")
     .description("Confirm an Interest Request (DESTRUCTIVE — creates a JobApplication; no undo)")
@@ -146,6 +160,8 @@ export function buildApplicationsCommand(): Command {
         ...applications.AVAILABILITY_REQUEST_KINDS,
       ]),
     )
+    .option("--answers-file <path>", ANSWERS_FILE_HELP)
+    .option("--pitch-file <path>", PITCH_FILE_HELP)
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -158,6 +174,8 @@ export function buildApplicationsCommand(): Command {
           message?: string;
           rate?: string;
           kind?: applications.AvailabilityRequestKind;
+          answersFile?: string;
+          pitchFile?: string;
           output: OutputFormat;
         },
       ) => {
@@ -165,6 +183,8 @@ export function buildApplicationsCommand(): Command {
         if (options.message !== undefined) runOpts.message = options.message;
         if (options.rate !== undefined) runOpts.rate = options.rate;
         if (options.kind !== undefined) runOpts.kind = options.kind;
+        if (options.answersFile !== undefined) runOpts.answersFile = options.answersFile;
+        if (options.pitchFile !== undefined) runOpts.pitchFile = options.pitchFile;
         await runApplicationsConfirm(id, runOpts);
       },
     );
