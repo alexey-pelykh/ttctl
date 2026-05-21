@@ -81,7 +81,7 @@
  * actionable, not hidden.
  */
 
-// e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE, RemoveEmployment
+// e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE, RemoveEmployment, UpdateEmployment
 
 import { readFileSync } from "node:fs";
 
@@ -363,22 +363,36 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
  * the inferred CONTRACT holds deterministically — no branching, no
  * non-determinism, sharp assertions.
  *
- * **Live-wire discovery #2 — WORM (write-once-read-many)** (2026-05-19,
- * this E2E): a second controlled run (full transcript at
- * `.tmp/e2e-401-validate-Q.log` in PR #406) verified that
- * `UpdateEmployment` REJECTS both absence AND explicit `null` of
- * `employerId` with the same Rails `.blank?`-gated USER_ERROR
- * ("employerId: You can't leave this empty"). Custom workplaces
- * (`CreateEmployment` with `employerId: null`) therefore CANNOT be
- * updated through the talent-profile surface — they are write-once-
- * read-many on Toptal. This is a Toptal-side product limitation, NOT a
- * TTCtl bug; documented in detail in
- * `research/notes/15-employment-custom-workplace-worm.md`. As a
- * consequence, this lifecycle E2E covers `add → show → remove` only —
- * `update()` on a null-employerId row would fail with a USER_ERROR
- * that no client-side change can resolve. The general `update()`
- * surface continues to work for catalog-employer rows (covered by the
- * #394 sibling E2E at `46-…-update-merge.e2e.test.ts`).
+ * **Live-wire discovery #2 — symmetric anchor gate on UPDATE** (2026-05-21,
+ * #508; supersedes the earlier "WORM" framing from 2026-05-19):
+ * `UpdateEmployment` on a noEmployer:true row succeeds when the
+ * `(noWebsite, companyWebsite)` anchor pair from current is echoed
+ * in the wire payload AND `employerId` is OMITTED entirely (not sent
+ * as explicit null), mirror-symmetric to the #484 CREATE-side anchor
+ * contract. Without the anchor pair (or with an explicit `employerId:
+ * null` in the input), the Rails apply path falls through to the
+ * `employer_id .blank?` validator with the misleading "employerId:
+ * You can't leave this empty" error — the exact signature originally
+ * framed as "WORM". The 2026-05-19 captures in
+ * `research/notes/15-employment-custom-workplace-worm.md` varied only
+ * the `employerId` axis (absent vs explicit null) and held the
+ * anchor pair fixed-omitted (per the #487 PR rollback), so the gate's
+ * actual axis was invisible to that experiment. Refuted empirically
+ * 2026-05-21 by a web-UI capture showing `UpdateEmployment` succeeded
+ * (`data.updateEmployment.success: true`) on a `noWebsite: true,
+ * companyWebsite: null` noEmployer row with the anchor pair echoed
+ * and `employerId` omitted; the #508 fix in
+ * `packages/core/src/services/profile/employment/index.ts` enables
+ * the echo on the `current.employerId === null` branch only
+ * (catalog-employer rows continue to omit the pair per #487, where
+ * echoing trips a DIFFERENT anchor gate). The lifecycle E2E coverage
+ * lives on the #484 sibling (the captured shape's exact axis); the
+ * URL-anchor axis (`noWebsite: false, companyWebsite: <url>`)
+ * exercised by the #401 sibling has an additional URL-host
+ * validation concern on UPDATE that the empirical evidence does
+ * not yet cover and therefore stays CREATE-only there. The general
+ * catalog-employer `update()` path is covered by the #394 sibling
+ * E2E at `46-…-update-merge.e2e.test.ts`.
  *
  * **Axis-independence claim under test (#401)**: `employerId` and
  * `noWebsite` are ORTHOGONAL. The earlier single-capture co-occurrence
@@ -402,7 +416,7 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
  * (the inferred null-employerId CREATE contract being wrong) —
  * propagated as a hard failure, never hidden.
  */
-describe("profile employment #401 custom (non-catalog) workplace add()→show()→remove() lifecycle (live talent-profile, INFERRED null-employerId-on-CREATE contract; RFC-2606 non-routable host to bypass Toptal's URL-host catalog matching; update() omitted — Toptal-side WORM limitation, see file header)", () => {
+describe("profile employment #401 custom (non-catalog) workplace add() (live talent-profile, INFERRED null-employerId-on-CREATE contract; RFC-2606 non-routable host to bypass Toptal's URL-host catalog matching; update() OMITTED on this axis — covered on the #484 sibling per #508)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
@@ -415,7 +429,7 @@ describe("profile employment #401 custom (non-catalog) workplace add()→show()�
   // -------------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "lifecycle: add({ noEmployer:true, companyWebsite:`https://*.invalid`, noWebsite:false }) → show() → remove() — employerId:null persists across add+show (no catalog interaction), companyWebsite round-trips verbatim, axis independence (website coexists with employerId:null) survives, self-cleaning. update() is OMITTED per Toptal-side WORM limitation (see file header)",
+    "lifecycle: add({ noEmployer:true, companyWebsite:`https://*.invalid`, noWebsite:false }) → show() → remove() — employerId:null persists across add+show, companyWebsite round-trips verbatim, axis independence (website coexists with employerId:null) survives, self-cleaning",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
 
@@ -556,19 +570,18 @@ describe("profile employment #401 custom (non-catalog) workplace add()→show()�
         // CONTRACT verification (null accepted, null persists), not
         // redundant wire-shape coverage.
 
-        // ── update() OMITTED per Toptal-side WORM limitation ──
-        // The 2026-05-19 (Q)-path live capture
-        // (`.tmp/e2e-401-validate-Q.log`) verified that UpdateEmployment
-        // rejects BOTH absence AND explicit `null` of `employerId` with
-        // the same Rails `.blank?`-gated USER_ERROR
-        // ("employerId: You can't leave this empty"). Custom workplaces
-        // (CreateEmployment with `employerId: null`) are therefore
-        // write-once-read-many on Toptal's talent-profile surface — no
-        // client-side change can satisfy the wire. `update()` continues
-        // to work for catalog-employer rows; the #394 sibling
-        // (`46-…-update-merge.e2e.test.ts`) covers that path. See file
-        // header § Live-wire discovery #2 and
-        // `research/notes/15-employment-custom-workplace-worm.md`.
+        // ── update() OMITTED on this axis ──
+        // The 2026-05-21 captured successful UpdateEmployment payload
+        // was on a `noWebsite: true, companyWebsite: null` row (the
+        // sibling #484 axis). The `noWebsite: false, companyWebsite:
+        // <URL>` axis exercised here has an additional URL-host
+        // validation concern on UPDATE that the empirical evidence
+        // does not yet cover — `.invalid` TLDs may be rejected by a
+        // separate Rails validator. The #508 fix's UPDATE coverage
+        // lives in the sibling #484 test below; this test stays
+        // CREATE-only on this axis until a successful capture on the
+        // URL-anchor axis is available. See research/notes/15
+        // SUPERSEDED banner for the corrected framing.
       } catch (err) {
         if (err !== null && typeof err === "object" && "code" in err) {
           const code = (err as { code?: unknown; message?: unknown }).code;
@@ -646,7 +659,7 @@ describe("profile employment #401 custom (non-catalog) workplace add()→show()�
  * is precisely the #484 contract-violation class — propagated as a hard
  * failure, never hidden.
  */
-describe("profile employment #484 custom workplace WITHOUT website add() lifecycle (live talent-profile, INFERRED noWebsite:true-alone-as-anchor contract; settles the wire shape that rc.6 MCP could not produce)", () => {
+describe("profile employment #484/#508 custom workplace WITHOUT website add() lifecycle + #508 update() against existing noEmployer row", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
@@ -655,13 +668,10 @@ describe("profile employment #484 custom workplace WITHOUT website add() lifecyc
   });
 
   it.skipIf(!e2eEnabled)(
-    "lifecycle: add({ noEmployer:true, noWebsite:true, companyWebsite:undefined }) → show() → remove() — employerId:null persists; noWebsite:true is sufficient anchor (no companyWebsite needed); self-cleaning. update() OMITTED per WORM (see #401 sibling).",
+    "lifecycle: add({ noEmployer:true, noWebsite:true, companyWebsite:undefined }) → show() → remove() — noWebsite:true alone is sufficient anchor on CREATE",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
 
-      // Cascade fixture — identical to the #401 sibling. The
-      // CreateEmployment wire requires `skills` and `industries`
-      // populated regardless of the employer-anchor permutation.
       const basic = await profile.basic.show(token);
       const basicShape = basic as unknown as { viewer?: { viewerRole?: { profile?: { id?: string } } } };
       const profileId = basicShape.viewer?.viewerRole?.profile?.id;
@@ -673,35 +683,19 @@ describe("profile employment #484 custom workplace WITHOUT website add() lifecyc
       const industryMatches = await profile.industries.autocomplete(token, "Software", 5);
       const firstIndustry = industryMatches[0];
       if (firstSkill === undefined || firstIndustry === undefined) {
-        // HARD failure — deliberately NOT a green-skip. This subtest is
-        // the SOLE live settler of the INFERRED `noWebsite:true-alone-
-        // as-anchor` contract that CLAUDE.md § Schema/contract rule
-        // mandates for #484. Per the #401 sibling's reasoning, a green-
-        // skip would let the mandated gate pass vacuously.
         throw new Error(
-          "#484 PRECONDITION UNMET: the test account lacks a skill and/or a " +
-            "catalog industry (both server-required for the custom-workplace " +
-            "CreateEmployment). The mandated noWebsite:true-anchor contract " +
-            "gate must not pass vacuously — seed at least one skill/industry " +
-            "on the test account and re-run TTCTL_E2E=1.",
+          "#484 PRECONDITION UNMET: the test account lacks a skill and/or a catalog industry. Seed at least one of each and re-run TTCTL_E2E=1.",
         );
       }
 
-      // Unique free-text name — autocomplete would never resolve it.
       const customName = `TTCtl Custom Workplace #484 ${Date.now().toString()}`;
-
       let createdId: string | undefined;
       try {
         const outcome = await profile.employment.add(token, {
           company: customName,
           position: "E2E Engineer (#484 custom workplace, no website)",
           startDate: 2024,
-          // The #401 signal: custom (non-catalog) workplace.
           noEmployer: true,
-          // The #484 signal: explicit "no website" — the ALTERNATIVE
-          // anchor to `companyWebsite:<url>`. companyWebsite intentionally
-          // omitted to settle the inferred contract that `noWebsite:true`
-          // alone is sufficient.
           noWebsite: true,
           experienceItems: [
             "Founded and operated a custom (non-catalog) workplace with no website; exercises the #484 noWebsite-alone-anchor path.",
@@ -715,47 +709,20 @@ describe("profile employment #484 custom workplace WITHOUT website add() lifecyc
         if (outcome.kind !== "created") throw new Error("unreachable");
         const created = outcome.result;
         createdId = created.id;
-
-        expect(typeof created.id).toBe("string");
-        expect(created.id.length).toBeGreaterThan(0);
-        expect(created.company).toBe(customName);
-        // THE #484 contract — leg 1 (mutation echo):
-        // CreateEmployment accepts `employerId: null` with `noWebsite:true`
-        // as the SOLE anchor (no companyWebsite). Mutation echoes input.
         expect(created.employerId).toBeNull();
         expect(created.noWebsite).toBe(true);
-        // companyWebsite was not sent → server has nothing to echo. The
-        // read-side projection treats absence as `null` (mapEmploymentNode
-        // coerces missing/null wire scalars to `null`).
         expect(created.companyWebsite).toBeNull();
 
-        // Read back via show() — THE persistence assertion. The
-        // noWebsite:true signal persists; the inferred contract holds.
         const shown = await profile.employment.show(token, created.id);
-        expect(shown.id).toBe(created.id);
-        expect(shown.company).toBe(customName);
-        // THE #484 contract — leg 2 (persistence):
-        // With noWebsite:true as the sole anchor, the row persists with
-        // `employerId: null` AND `noWebsite: true` AND `companyWebsite: null`.
         expect(shown.employerId).toBeNull();
         expect(shown.noWebsite).toBe(true);
         expect(shown.companyWebsite).toBeNull();
-
-        // ── update() OMITTED per Toptal-side WORM limitation ──
-        // Per the #401 sibling's investigation, custom workplaces
-        // (CreateEmployment with `employerId: null`) cannot be updated
-        // via talent-profile (see `research/notes/15-employment-custom-workplace-worm.md`).
       } catch (err) {
         if (err !== null && typeof err === "object" && "code" in err) {
           const code = (err as { code?: unknown; message?: unknown }).code;
           const msg = (err as { message?: unknown }).message;
           if (code === "USER_ERROR" && typeof msg === "string" && /employerId/i.test(msg)) {
-            throw new Error(
-              `#484 CONTRACT VIOLATION: live CreateEmployment rejected employerId:null even with noWebsite:true as anchor: ${msg}. ` +
-                `The hypothesis that noWebsite:true alone satisfies the server's anchor requirement is FALSE. ` +
-                `Fix scope must downgrade from "add --no-website flag" to "error-remap only".`,
-              { cause: err },
-            );
+            throw new Error(`#484 CONTRACT VIOLATION on CREATE: ${msg}`, { cause: err });
           }
         }
         throw err;
@@ -763,6 +730,36 @@ describe("profile employment #484 custom workplace WITHOUT website add() lifecyc
         if (createdId !== undefined) {
           await profile.employment.remove(token, createdId);
         }
+      }
+    },
+  );
+
+  // #508 — UPDATE side of the anchor-pair contract. Verifies against
+  // the pre-existing noEmployer row that the 2026-05-21 capture
+  // succeeded on; the test restores the original position afterwards
+  // so the row state is unchanged.
+  it.skipIf(!e2eEnabled)(
+    "#508 update({position}) succeeds against the pre-existing noEmployer row on the account (anchor-pair echo via buildUpdateEmploymentInput)",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+      const rows = await profile.employment.list(token);
+      const target = rows.find((r) => r.employerId === null && r.company === "TTCtl");
+      if (target === undefined) {
+        throw new Error(
+          "#508 PRECONDITION UNMET: no pre-existing noEmployer row with company === \"TTCtl\" was found on the test account. The 2026-05-21 capture row must be present; seed it via the web UI's 'Add as new: TTCtl' flow and re-run TTCTL_E2E=1.",
+        );
+      }
+      const originalPosition = target.position;
+      const probePosition = `${originalPosition} (#508 probe ${Date.now().toString()})`;
+      try {
+        const updated = await profile.employment.update(token, target.id, { position: probePosition });
+        expect(updated.id).toBe(target.id);
+        expect(updated.position).toBe(probePosition);
+        expect(updated.employerId).toBeNull();
+        const reshown = await profile.employment.show(token, target.id);
+        expect(reshown.position).toBe(probePosition);
+      } finally {
+        await profile.employment.update(token, target.id, { position: originalPosition });
       }
     },
   );

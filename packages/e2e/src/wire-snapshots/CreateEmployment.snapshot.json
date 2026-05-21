@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-19T18:36:23.544Z",
+  "capturedAt": "2026-05-21T16:43:07.482Z",
   "operationName": "CreateEmployment",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -45,6 +45,9 @@
           }
         }
       },
+      "managementExperience": {
+        "kind": "null"
+      },
       "noWebsite": {
         "kind": "boolean"
       },
@@ -58,10 +61,7 @@
         "kind": "boolean"
       },
       "reportingTo": {
-        "kind": "array",
-        "item": {
-          "kind": "unknown"
-        }
+        "kind": "null"
       },
       "showViaToptal": {
         "kind": "boolean"
