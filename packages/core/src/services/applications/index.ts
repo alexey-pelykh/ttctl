@@ -95,6 +95,24 @@ export type ApplicationsErrorCode =
   | "MUTATION_ERROR"
   | "NETWORK_ERROR"
   | "WIRE_SHAPE_ERROR"
+  /**
+   * Direct-apply consent gate (#426). The wire's `consentIssued: Boolean!`
+   * is a legal-compliance attestation; the service refuses to issue the
+   * mutation unless the caller explicitly passes `consentIssued: true`
+   * on {@link ApplyInput}. Same posture #411 took on the DESTRUCTIVE
+   * IR mutations, with the legal dimension added. Fired before any wire
+   * call.
+   */
+  | "CONSENT_REQUIRED"
+  /**
+   * Direct-apply double-application gate (#426). The wire returns
+   * `success: false` with `errors[].key === "already_applied"` when the
+   * talent has previously applied to the same job. Mapped to a typed
+   * code so callers (CLI / MCP / agents) can surface a "you already
+   * applied" hint pointing at `ttctl applications show <activity-id>`
+   * instead of the generic `MUTATION_ERROR` envelope.
+   */
+  | "ALREADY_APPLIED"
   | "UNKNOWN";
 
 export class ApplicationsError extends Error {
@@ -2250,4 +2268,438 @@ export async function rejectReasons(token: string): Promise<AvailabilityRequestR
     fixed: reasons.fixed ?? [],
     flexible: reasons.flexible ?? [],
   };
+}
+
+// ---------------------------------------------------------------------
+// Direct-apply write-side op (#426) — `apply`. Wraps `JobApply` per
+// ADR-008 § Decision Part 5: the new apply verb lives on the
+// `applications` domain (symmetric with `applications.confirm` /
+// `applications.reject` from #411) — NOT on `jobs.*`. The user-facing
+// CLI verb is `ttctl jobs apply <job-id>` (#430) and the MCP tool is
+// `ttctl_jobs_apply` (#436); both delegate into this fn.
+//
+// HAND-AUTHORED inline mutation string per the convention pinned by
+// the rest of this module. `JobApply` is listed in `codegen.config.ts`'s
+// `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` (the captured op selects
+// fragments touching `Unknown`-typed positions on `JobOperationsApply`
+// and the `NotificationContext` union; codegen refuses to emit types).
+// The trimmed selection here picks ONLY the fields the
+// {@link JobApplicationRecord} projection surfaces.
+//
+// CLAUDE.md schema/contract validation rule TRIGGERED — live E2E
+// coverage deferred to #445 (`52-jobs-apply.e2e.test.ts`). Track 1
+// disposition (snapshots) per the hybrid wire-validation model; the
+// `<OpName>.snapshot.json` is committed in #445.
+//
+// Wire-quirk Q3 (consent field name): the variable is named
+// `$consentIssued: Boolean!` but the input field on
+// `JobApplyInput` is `understand` — confirmed against the captured
+// `JobApply.graphql` operation document. The mutation string below
+// maps `understand: $consentIssued` verbatim. If #445 live E2E reveals
+// the field has been renamed (e.g. `consent_issued`, `acceptedTerms`),
+// the inline mutation is the single place to fix.
+//
+// Wire-quirk Q1 (pitch variable name): the variable is named
+// `$talentCard: PitchInput` (captured op) but the input field is
+// `pitchData`. The {@link ApplyInput} surface uses ADR-008's
+// MCP-side key name (`pitchData`) and the wire variable is mapped
+// internally — the variable-name preservation matches the captured
+// op verbatim, which keeps APQ pinning compatible if Toptal ever
+// enables it server-side.
+// ---------------------------------------------------------------------
+
+/**
+ * Input for {@link apply}. Field names mirror ADR-008's locked grammar
+ * (`matcherAnswers` / `expertiseAnswers` / `pitchData` / `message`)
+ * which is the MCP-side schema key set, NOT the wire-side variable
+ * names (`matcherQuestionsAnswers`, `expertiseQuestionsAnswers`,
+ * `talentCard`, `comment`). The service maps the public field names
+ * onto the wire variables internally.
+ *
+ * **Consent gate**: `consentIssued` is the literal `true` — the
+ * tightest type-system constraint TS supports, matching ADR-008
+ * § Decision Part 4. The runtime check covers `as`-cast bypasses
+ * and JSON-sourced inputs from the CLI/MCP layers where the type
+ * system can't reach. Auto-filling consent on the caller's behalf is
+ * FORBIDDEN by the same ADR; the service throws
+ * `CONSENT_REQUIRED` BEFORE any wire call when omitted.
+ *
+ * **Rate default**: `requestedHourlyRate` is optional at the input
+ * surface. When omitted, the service threads
+ * `PreApplyData.suggestedRate` (the talent's own configured rate
+ * `viewerRole.rates.hourly`) into the mutation per REQ-A4. If the
+ * talent has no configured rate, the service throws `MUTATION_ERROR`.
+ * The `rateInsight` payload returned by the pre-fetch suite serves as
+ * additional guidance for the caller (CLI / MCP / agent) — not as a
+ * silent default; callers surface it to the user before the apply.
+ *
+ * **Answer arrays**: `matcherAnswers` / `expertiseAnswers` are
+ * `unknown[]` (ADR-008 Stage 1) until the recovered Zod schemas
+ * (#438 W1-2) tighten them to `JobPositionAnswerInputSchema[]` /
+ * `JobExpertiseAnswerInputSchema[]` (Stage 2). The service validates
+ * each entry's `questionId` against the inventory returned by
+ * `applyQuestions(jobId)` and rejects unknown ids with
+ * `WIRE_SHAPE_ERROR` — the validation is structural; the actual
+ * answer payload shape passes through opaquely.
+ */
+export interface ApplyInput {
+  /**
+   * Consent attestation — MUST be the literal `true`. Auto-filling
+   * this field on the caller's behalf is FORBIDDEN per ADR-008
+   * § Decision Part 4 (legal compliance).
+   */
+  consentIssued: true;
+  /**
+   * Hourly rate the talent requests for this engagement. Decimal
+   * string (matches `BigDecimal!`). When omitted, the service
+   * defaults from `PreApplyData.suggestedRate` (REQ-A4).
+   */
+  requestedHourlyRate?: string;
+  /**
+   * Optional talent-side free-text accompanying message. Mapped to
+   * the wire's `$comment` variable / `JobApplyInput.comment` field.
+   */
+  message?: string;
+  /**
+   * Matcher-question answers (`JobPositionAnswerInput[]`). Each
+   * entry MUST carry a `questionId` matching one returned from
+   * `applyQuestions(jobId).matcherQuestions[].identifier` — the
+   * service rejects unknown ids with `WIRE_SHAPE_ERROR`. Stage 1
+   * opaque pass-through; Stage 2 tightens to typed Zod after #438.
+   */
+  matcherAnswers?: unknown[];
+  /**
+   * Expertise-question answers (`JobExpertiseAnswerInput[]`). Same
+   * validation + Stage-1/Stage-2 transition as `matcherAnswers`.
+   */
+  expertiseAnswers?: unknown[];
+  /**
+   * Pitch input (`PitchInput`). Mapped to the wire's `$talentCard`
+   * variable / `JobApplyInput.pitchData` field. Opaque
+   * pass-through; Stage 2 tightens to `PitchInputSchema()` (with
+   * `mentorship` remaining opaque per ADR-008 spike outcome).
+   */
+  pitchData?: Record<string, unknown>;
+}
+
+/**
+ * Projected `JobApplication` record returned by {@link apply} on the
+ * apply-success path. Reads the post-mutation `JobApplication` echo
+ * routed through the new activity-item's nested `jobApplication`
+ * field on `TalentJob.activityItem`.
+ *
+ * Shape is the conservative initial projection per #426 AC; #445 live
+ * E2E is the wire authority and may widen the projection if real
+ * responses surface fields the CLI / MCP need to render.
+ */
+export interface JobApplicationRecord {
+  /** `JobApplication.id` — the new application's identifier. */
+  id: string;
+  /** Application status (specific value + verbose label, projected from `TalentJobActivityItem.statusV2`). */
+  statusV2: ApplicationStatus;
+  /**
+   * The rate the wire echoes back on the new `JobApplication`. The
+   * captured op selects `requestedHourlyRate { decimal }` only — no
+   * `verbose` — and the projection mirrors that selection until #445
+   * confirms `verbose` is selectable on this position.
+   */
+  requestedHourlyRate: { decimal: string } | null;
+  /**
+   * The `TalentJobActivityItem.id` that wraps the new application —
+   * the id callers pass to `applications show` to view the new row.
+   */
+  jobActivityItemId: string;
+}
+
+/**
+ * Apply-path outcome for {@link apply}. Carries the post-mutation
+ * {@link JobApplicationRecord} projection.
+ */
+export interface JobApplyAppliedOutcome {
+  kind: "applied";
+  result: JobApplicationRecord;
+}
+
+/**
+ * Dry-run outcome for {@link apply}. Mirrors the
+ * `AvailabilityRequestDryRunPreviewOutcome` pattern from #411 —
+ * named separately for surface symmetry on the apply path.
+ */
+export interface JobApplyDryRunPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link apply}.
+ */
+export type ApplyOutcome = JobApplyAppliedOutcome | JobApplyDryRunPreviewOutcome;
+
+const JOB_APPLY_MUTATION = `mutation JobApply($id: ID!, $comment: String, $matcherQuestionsAnswers: [JobPositionAnswerInput!], $expertiseQuestionsAnswers: [JobExpertiseAnswerInput!], $consentIssued: Boolean!, $requestedHourlyRate: BigDecimal!, $talentCard: PitchInput) {
+  job(id: $id) {
+    __typename
+    apply(input: {
+      comment: $comment
+      matcherQuestionsAnswers: $matcherQuestionsAnswers
+      expertiseQuestionsAnswers: $expertiseQuestionsAnswers
+      understand: $consentIssued
+      requestedHourlyRate: $requestedHourlyRate
+      pitchData: $talentCard
+    }) {
+      __typename
+      success
+      errors { __typename code key message }
+      job {
+        __typename
+        id
+        activityItem {
+          __typename
+          id
+          statusV2 { __typename value verbose }
+          jobApplication {
+            __typename
+            id
+            requestedHourlyRate { __typename decimal }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface JobApplyJobApplicationWire {
+  id: string;
+  requestedHourlyRate: { decimal: string } | null;
+}
+
+interface JobApplyActivityItemWire {
+  id: string;
+  statusV2: ApplicationStatus;
+  jobApplication: JobApplyJobApplicationWire | null;
+}
+
+interface JobApplyPayloadWire {
+  success: boolean;
+  errors: MutationResultErrors[] | null;
+  job: {
+    id: string;
+    activityItem: JobApplyActivityItemWire | null;
+  } | null;
+}
+
+interface JobApplyResponse {
+  job: {
+    apply: JobApplyPayloadWire | null;
+  } | null;
+}
+
+function projectJobApplicationRecord(activityItem: JobApplyActivityItemWire): JobApplicationRecord {
+  if (activityItem.jobApplication === null) {
+    throw new ApplicationsError("UNKNOWN", "JobApply returned success but activityItem.jobApplication was null.");
+  }
+  return {
+    id: activityItem.jobApplication.id,
+    statusV2: activityItem.statusV2,
+    requestedHourlyRate: activityItem.jobApplication.requestedHourlyRate,
+    jobActivityItemId: activityItem.id,
+  };
+}
+
+/**
+ * Structural validation: every entry in `answers[]` must carry a
+ * string `questionId` matching one of `validIds`. Rejects unknown
+ * ids with `WIRE_SHAPE_ERROR` carrying the offending array path
+ * (e.g. `matcherAnswers[2]`) so callers can fix the input.
+ */
+function validateAnswerIds(answers: unknown[] | undefined, validIds: Set<string>, path: string): void {
+  if (answers === undefined) return;
+  for (let i = 0; i < answers.length; i++) {
+    const entry = answers[i];
+    if (typeof entry !== "object" || entry === null) {
+      throw new ApplicationsError(
+        "WIRE_SHAPE_ERROR",
+        `${path}[${i}]: not an object — expected { questionId, answer, ... }.`,
+      );
+    }
+    const qid = (entry as Record<string, unknown>)["questionId"];
+    if (typeof qid !== "string") {
+      throw new ApplicationsError("WIRE_SHAPE_ERROR", `${path}[${i}]: missing or non-string "questionId" property.`);
+    }
+    if (!validIds.has(qid)) {
+      throw new ApplicationsError(
+        "WIRE_SHAPE_ERROR",
+        `${path}[${i}]: questionId "${qid}" does not match any question returned from applyQuestions().`,
+      );
+    }
+  }
+}
+
+/**
+ * Direct-apply to a Toptal job — wire `JobApply` (#426, ADR-008
+ * § Decision Part 5).
+ *
+ * Flow:
+ *
+ *   1. **Consent gate**: refuses the call (`CONSENT_REQUIRED`) BEFORE
+ *      any wire call when `input.consentIssued !== true`. Type-system
+ *      gate at `ApplyInput.consentIssued: true` covers compile-time;
+ *      the runtime check covers `as`-cast bypasses and JSON-sourced
+ *      inputs.
+ *   2. **Dry-run short-circuit**: when `options.dryRun === true`,
+ *      emits a {@link DryRunPreview} with the prepared variables
+ *      (including `<resolved at apply time>` placeholders for fields
+ *      that would have been resolved by the pre-fetch) and returns
+ *      `{ kind: "preview", preview }`. Zero wire calls under dry-run —
+ *      including the 3 pre-fetch calls.
+ *   3. **Pre-fetch via Promise.all**: runs `applyData` +
+ *      `applyQuestions` + `rateInsight` concurrently. Promise.all
+ *      rejects-on-first; any pre-fetch failure (NOT_FOUND,
+ *      GRAPHQL_ERROR, AuthRevokedError) blocks the apply.
+ *   4. **Answer validation**: every `matcherAnswers[]` /
+ *      `expertiseAnswers[]` entry's `questionId` must resolve against
+ *      the inventory; unknown ids throw `WIRE_SHAPE_ERROR` with the
+ *      offending array path.
+ *   5. **Rate default**: when `input.requestedHourlyRate` is omitted,
+ *      threads `PreApplyData.suggestedRate` (the talent's own
+ *      configured rate). Throws `MUTATION_ERROR` if neither source
+ *      yields a rate.
+ *   6. **Wire call**: issues `JobApply` against the mobile gateway.
+ *   7. **Error mapping**: a `MutationResult.errors[]` entry with
+ *      `key === "already_applied"` is mapped to `ALREADY_APPLIED`
+ *      with a hint pointing at `ttctl applications show
+ *      <activity-id>`. Other `success: false` responses surface as
+ *      `MUTATION_ERROR` with the formatted error detail.
+ *
+ * **Bad-id behavior**: mutations crash 500 on bad ids per
+ * `project-toptal-wire-quirks` auto-memory. The service does NOT
+ * pre-validate the job id; the pre-fetch suite (`applyData` etc.)
+ * already surfaces NOT_FOUND via the shared widened
+ * {@link NOT_FOUND_MESSAGE_PATTERN} when the bad id is detected
+ * read-side.
+ */
+export async function apply(
+  token: string,
+  jobId: string,
+  input: ApplyInput,
+  options: DryRunOptions = {},
+): Promise<ApplyOutcome> {
+  // Consent gate — runtime check covers `as`-cast bypasses and
+  // JSON-sourced inputs from CLI/MCP. Fires BEFORE any wire call (no
+  // pre-fetch under refusal either — the dry-run path below still
+  // honors the consent gate so a probe with `consentIssued: false`
+  // does not emit a preview for a call that would have been refused).
+  //
+  // The widening cast (`as { consentIssued: unknown }`) is load-bearing:
+  // the static type `consentIssued: true` (literal) narrows the value
+  // to compile-time-true, which makes `!== true` look like dead code to
+  // the linter. The runtime check exists for the bypass paths the type
+  // system can't reach (CLI / MCP / agents passing JSON), where the
+  // value may genuinely be `undefined` or `false`.
+  if ((input as { consentIssued: unknown }).consentIssued !== true) {
+    throw new ApplicationsError(
+      "CONSENT_REQUIRED",
+      "Apply requires explicit consent: `consentIssued: true` is mandatory before any wire call.",
+    );
+  }
+
+  if (options.dryRun === true) {
+    // Skip the pre-fetch entirely (zero transport calls under dry-run)
+    // and emit a preview with placeholders for fields that would have
+    // been resolved live. Matches the
+    // `applications.confirm()` skipped-prefetch pattern.
+    const previewVariables: Record<string, unknown> = {
+      id: jobId,
+      comment: input.message ?? null,
+      matcherQuestionsAnswers: input.matcherAnswers ?? null,
+      expertiseQuestionsAnswers: input.expertiseAnswers ?? null,
+      consentIssued: true,
+      requestedHourlyRate: input.requestedHourlyRate ?? "<resolved at apply time>",
+      talentCard: input.pitchData ?? null,
+    };
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "JobApply",
+          query: JOB_APPLY_MUTATION,
+          variables: previewVariables,
+        },
+      }),
+    };
+  }
+
+  // Pre-fetch via Promise.all — applyData + applyQuestions + rateInsight
+  // run concurrently. Promise.all rejects-on-first; intentional —
+  // any failure (NOT_FOUND, AuthRevokedError, GRAPHQL_ERROR) should
+  // block the mutation.
+  //
+  // The third return (rateInsight) is currently UNUSED by the apply
+  // path itself — the rate default comes from `preApply.suggestedRate`
+  // per REQ-A4, not from the insight's `recommendedRate`. The
+  // pre-fetch is still issued per the #426 AC ("Pre-fetch via
+  // Promise.all: applyData + applyQuestions + rateInsight") so the
+  // wire-traffic shape matches what the portal's apply screen issues
+  // (the insight is what the portal shows alongside the rate input).
+  // Future widening: surface the insight in the apply outcome so
+  // callers can render it post-apply.
+  const [preApply, questions] = await Promise.all([
+    applyData(token, jobId),
+    applyQuestions(token, jobId),
+    rateInsight(token, jobId),
+  ]);
+
+  // Structural validation: every answer's questionId must resolve
+  // against the inventory.
+  const matcherIds = new Set(questions.matcherQuestions.map((q) => q.identifier));
+  const expertiseIds = new Set(questions.expertiseQuestions.map((q) => q.identifier));
+  validateAnswerIds(input.matcherAnswers, matcherIds, "matcherAnswers");
+  validateAnswerIds(input.expertiseAnswers, expertiseIds, "expertiseAnswers");
+
+  // Rate default per REQ-A4 — caller-supplied overrides
+  // `PreApplyData.suggestedRate`. Throw `MUTATION_ERROR` if neither
+  // source produces a rate; the wire `$requestedHourlyRate` is
+  // `BigDecimal!` (non-null).
+  const requestedHourlyRate = input.requestedHourlyRate ?? preApply.suggestedRate;
+  if (requestedHourlyRate === null) {
+    throw new ApplicationsError(
+      "MUTATION_ERROR",
+      "requestedHourlyRate is required and could not be defaulted from PreApplyData.suggestedRate — pass an explicit rate.",
+    );
+  }
+
+  const variables: Record<string, unknown> = {
+    id: jobId,
+    comment: input.message ?? null,
+    matcherQuestionsAnswers: input.matcherAnswers ?? null,
+    expertiseQuestionsAnswers: input.expertiseAnswers ?? null,
+    consentIssued: true,
+    requestedHourlyRate,
+    talentCard: input.pitchData ?? null,
+  };
+
+  const data = await callGatewayNoViewer<JobApplyResponse>(token, "JobApply", JOB_APPLY_MUTATION, variables);
+  if (data.job === null || data.job.apply === null) {
+    throw new ApplicationsError("UNKNOWN", "JobApply returned a null payload.");
+  }
+  const payload = data.job.apply;
+  if (!payload.success) {
+    // Map the wire's `already_applied` key to the typed
+    // `ALREADY_APPLIED` code so callers can render a targeted "you
+    // already applied" hint. Other `success: false` envelopes flow
+    // through the generic `MUTATION_ERROR` taxonomy.
+    const errors = payload.errors ?? [];
+    if (errors.some((e) => e.key === "already_applied")) {
+      throw new ApplicationsError(
+        "ALREADY_APPLIED",
+        `You have already applied to job "${jobId}". Run \`ttctl applications show <activity-id>\` to find your existing application.`,
+      );
+    }
+    throw new ApplicationsError("MUTATION_ERROR", formatMutationErrors("JobApply failed", errors));
+  }
+  if (payload.job === null || payload.job.activityItem === null) {
+    throw new ApplicationsError("UNKNOWN", "JobApply returned success but the job / activityItem echo was null.");
+  }
+  return { kind: "applied", result: projectJobApplicationRecord(payload.job.activityItem) };
 }
