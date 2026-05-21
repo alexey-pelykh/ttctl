@@ -139,12 +139,13 @@ export function buildApplicationsCommand(): Command {
   const ANSWERS_FILE_HELP =
     "JSON file (or `-` for stdin) containing matcher/expertise answers. Shape:\n" +
     "  {\n" +
-    '    "matcherAnswers": [{"questionId": "<id>", "answer": "<value>"}],\n' +
-    '    "expertiseAnswers": [{"questionId": "<id>", "answer": "<value>"}]\n' +
+    '    "matcherAnswers": [{"id": "<questionIdentifier>", "answer": "<value>"}],\n' +
+    '    "expertiseAnswers": [{"questionId": "<questionIdentifier>", "other": null, "subjectId": null}]\n' +
     "  }\n" +
+    "Per the recovered SDL (#438): matcher answers carry the id at `id`; expertise answers carry it at `questionId`. " +
     "Question identifiers come from `applications show <activityId>` output. Stdin escape: `--answers-file -`.";
   const PITCH_FILE_HELP =
-    "JSON file (or `-` for stdin) containing the PitchInput payload (single JSON object). Stdin escape: `--pitch-file -`.";
+    "JSON file (or `-` for stdin) containing the PitchInput payload (single JSON object matching the recovered SDL shape). Stdin escape: `--pitch-file -`.";
 
   cmd
     .command("confirm")

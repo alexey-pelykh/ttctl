@@ -105,6 +105,27 @@ const APPLY_RECORD_FIXTURE: applications.JobApplicationRecord = {
   jobActivityItemId: "act_001",
 };
 
+/**
+ * Canonical `PitchInput` fixture for #438 Stage-2 tests. The recovered
+ * `PitchInputSchema` requires every nullable slot present (codegen emits
+ * `.nullable()` for nullable fields, per `codegen.config.ts`'s
+ * `nullishBehavior: "nullable"` — required-present, null tolerated).
+ * Tests use this fixture rather than ad-hoc `{ message: "..." }` stubs
+ * (the latter rejects under strict-mode Zod).
+ */
+function pitchInputFixture(): applications.PitchInput {
+  return {
+    certificationPitchItems: null,
+    educationPitchItems: null,
+    employmentPitchItems: null,
+    industryPitchItems: null,
+    mentorship: null,
+    portfolioPitchItems: null,
+    publicationPitchItems: null,
+    skillPitchItems: null,
+  };
+}
+
 // ---------------------------------------------------------------------
 // Registration smoke
 // ---------------------------------------------------------------------
@@ -408,9 +429,12 @@ describe("ttctl_jobs_apply — handler", () => {
   it("apply path: composes message + matcherAnswers + expertiseAnswers + pitchData on the ApplyInput", async () => {
     applySpy.mockResolvedValue(applied(APPLY_RECORD_FIXTURE));
     const handler = getRegisteredHandler(server, "ttctl_jobs_apply");
-    const matcherAnswers = [{ questionId: "MQ-1", answer: "yes" }];
-    const expertiseAnswers = [{ questionId: "EQ-1", answer: "5y" }];
-    const pitchData = { message: "Pitch text" };
+    // #438 Stage-2: matcher uses `id` (not `questionId`); expertise uses
+    // `{ questionId, other, subjectId }`; pitch must include every
+    // nullable slot. Fixtures mirror the recovered SDL exactly.
+    const matcherAnswers = [{ id: "MQ-1", answer: "yes" }];
+    const expertiseAnswers = [{ questionId: "EQ-1", other: "5y", subjectId: null }];
+    const pitchData = pitchInputFixture();
 
     await handler({
       id: "job_001",
@@ -449,36 +473,40 @@ describe("ttctl_jobs_apply — handler", () => {
     );
   });
 
-  it("accepts opaque (Stage-1) shapes for matcherAnswers / expertiseAnswers / pitchData — no schema introspection at MCP layer", async () => {
+  it("forwards arbitrary tightened-shape payloads without further introspection at the handler layer (#438 Stage-2)", async () => {
     applySpy.mockResolvedValue(applied(APPLY_RECORD_FIXTURE));
     const handler = getRegisteredHandler(server, "ttctl_jobs_apply");
-    // The Stage-1 opaque grammar (ADR-008 § Decision Part 3) does NOT
-    // introspect or validate inner shapes — `z.unknown()` accepts any
-    // JSON. The MCP layer forwards whatever was supplied,
-    // character-for-character, to the core service.
-    const oddballMatcher = [
-      "string answer (not the typical { questionId, answer } object)",
-      42,
-      null,
-      { questionId: "MQ-future", answer: { nested: { deeply: ["yes"] } } },
+    // #438 Stage-2: payload shapes are constrained to the recovered
+    // Zod schemas at the framework layer (`JobPositionAnswerInputSchema()`
+    // / `JobExpertiseAnswerInputSchema()` / `PitchInputSchema()`, all
+    // `.strict()`). At the handler level, no FURTHER introspection
+    // occurs — the handler is a pure pass-through. This test pins the
+    // pass-through contract: any payload that passes the schema is
+    // forwarded character-for-character to the core service.
+    const tightenedMatcher = [
+      { id: "MQ-1", answer: "first" },
+      { id: "MQ-2", answer: "second" },
+      { id: "MQ-3", answer: "third" },
     ];
-    const oddballExpertise = [{ totallyDifferentShape: true }];
-    const oddballPitch = { not_a_message: "yes", extraField: [1, 2, 3] };
-
+    const tightenedExpertise = [
+      { questionId: "EQ-1", other: null, subjectId: "Skill:1" },
+      { questionId: "EQ-2", other: "free text", subjectId: null },
+    ];
+    const tightenedPitch = pitchInputFixture();
     await handler({
       id: "job_001",
       consentIssued: true,
       requestedHourlyRate: "95.00",
-      matcherAnswers: oddballMatcher,
-      expertiseAnswers: oddballExpertise,
-      pitchData: oddballPitch,
+      matcherAnswers: tightenedMatcher,
+      expertiseAnswers: tightenedExpertise,
+      pitchData: tightenedPitch,
     });
     expect(applySpy.mock.calls[0]?.[2]).toEqual({
       consentIssued: true,
       requestedHourlyRate: "95.00",
-      matcherAnswers: oddballMatcher,
-      expertiseAnswers: oddballExpertise,
-      pitchData: oddballPitch,
+      matcherAnswers: tightenedMatcher,
+      expertiseAnswers: tightenedExpertise,
+      pitchData: tightenedPitch,
     });
   });
 
@@ -591,7 +619,7 @@ describe("ttctl_jobs_apply — handler", () => {
     applySpy.mockRejectedValue(
       new applications.ApplicationsError(
         "WIRE_SHAPE_ERROR",
-        'matcherAnswers[0]: questionId "MQ-stale" does not match any question returned from applyQuestions().',
+        'matcherAnswers[0]: id "MQ-stale" does not match any question returned from applyQuestions().',
       ),
     );
     const handler = getRegisteredHandler(server, "ttctl_jobs_apply");
@@ -599,7 +627,7 @@ describe("ttctl_jobs_apply — handler", () => {
       id: "job_001",
       consentIssued: true,
       requestedHourlyRate: "95.00",
-      matcherAnswers: [{ questionId: "MQ-stale", answer: "x" }],
+      matcherAnswers: [{ id: "MQ-stale", answer: "x" }],
     });
     expect(result.isError).toBe(true);
     const text = result.content[0]?.text ?? "";

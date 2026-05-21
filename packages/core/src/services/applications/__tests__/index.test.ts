@@ -696,14 +696,17 @@ describe("applications.confirm (#411)", () => {
   // tests pin the Stage-1 opaque pass-through contract (ADR-008 § Decision
   // Part 3): confirm() forwards the three payloads verbatim and `?? null`-
   // coalesces each when omitted, never introspecting the wire shape.
-  it("forwards matcher/expertise/pitch payloads verbatim into the mutation variables (#423)", async () => {
+  it("forwards matcher/expertise/pitch payloads verbatim into the mutation variables (#423 / #438)", async () => {
     reply({ body: confirmSuccessFixture() });
+    // #438: matcher answers carry `id` (NOT `questionId`) per the
+    // recovered `JobPositionAnswerInput` shape; expertise answers
+    // carry `questionId` per `JobExpertiseAnswerInput`.
     const matcherQuestionsAnswers = [
-      { questionId: "MQ-1", answer: "matcher answer one" },
-      { questionId: "MQ-2", answer: "matcher answer two" },
+      { id: "MQ-1", answer: "matcher answer one" },
+      { id: "MQ-2", answer: "matcher answer two" },
     ];
-    const expertiseQuestionsAnswers = [{ questionId: "EQ-1", answer: "expertise answer" }];
-    const pitchInput = { message: "Pitch text" };
+    const expertiseQuestionsAnswers = [{ questionId: "EQ-1", other: null, subjectId: null }];
+    const pitchInput = {};
     await confirm(TOKEN, AR_ID, {
       kind: "FIXED",
       requestedHourlyRate: "80.00",
@@ -1579,13 +1582,22 @@ describe("applications.apply (#426)", () => {
 
     const outcome = await apply(TOKEN, JOB_ID, {
       consentIssued: true,
+      // #438: matcher answers carry the question identifier at `id`
+      // (NOT `questionId`) per the recovered `JobPositionAnswerInput`
+      // shape; expertise answers carry it at `questionId` per the
+      // recovered `JobExpertiseAnswerInput` shape (asymmetric).
       matcherAnswers: [
-        { questionId: "m1", answer: "5 years" },
-        { questionId: "m2", answer: "yes" },
+        { id: "m1", answer: "5 years" },
+        { id: "m2", answer: "yes" },
       ],
-      expertiseAnswers: [{ questionId: "e1", answer: "TypeScript" }],
+      expertiseAnswers: [{ questionId: "e1", other: null, subjectId: null }],
       message: "I'm a great fit for this job.",
-      pitchData: { headline: "Senior Engineer" },
+      // The service forwards `pitchData` to the wire opaquely (validateAnswerIds
+      // covers structural validation of answers only). The Zod-strictness gate
+      // lives at the CLI / MCP boundary (#438) — core accepts any
+      // `PitchInput`-shaped object; the empty-but-valid shape is enough for the
+      // happy-path round trip here.
+      pitchData: {},
     });
 
     expect(outcome.kind).toBe("applied");
@@ -1607,13 +1619,15 @@ describe("applications.apply (#426)", () => {
       consentIssued: true,
       requestedHourlyRate: "95.00",
       comment: "I'm a great fit for this job.",
-      talentCard: { headline: "Senior Engineer" },
+      talentCard: {},
     });
     expect(mutationBody.variables["matcherQuestionsAnswers"]).toEqual([
-      { questionId: "m1", answer: "5 years" },
-      { questionId: "m2", answer: "yes" },
+      { id: "m1", answer: "5 years" },
+      { id: "m2", answer: "yes" },
     ]);
-    expect(mutationBody.variables["expertiseQuestionsAnswers"]).toEqual([{ questionId: "e1", answer: "TypeScript" }]);
+    expect(mutationBody.variables["expertiseQuestionsAnswers"]).toEqual([
+      { questionId: "e1", other: null, subjectId: null },
+    ]);
   });
 
   it("uses caller-supplied requestedHourlyRate when provided (overrides PreApplyData.suggestedRate)", async () => {
@@ -1662,7 +1676,7 @@ describe("applications.apply (#426)", () => {
         consentIssued: true,
         requestedHourlyRate: "100.00",
         message: "Hi",
-        matcherAnswers: [{ questionId: "m1", answer: "5y" }],
+        matcherAnswers: [{ id: "m1", answer: "5y" }],
       },
       { dryRun: true },
     );
@@ -1676,7 +1690,7 @@ describe("applications.apply (#426)", () => {
       consentIssued: true,
       requestedHourlyRate: "100.00",
       comment: "Hi",
-      matcherQuestionsAnswers: [{ questionId: "m1", answer: "5y" }],
+      matcherQuestionsAnswers: [{ id: "m1", answer: "5y" }],
     });
     // Critical: zero wire calls under dry-run, including no pre-fetch.
     expect(mockedStock).not.toHaveBeenCalled();
@@ -1699,12 +1713,12 @@ describe("applications.apply (#426)", () => {
     expect(mockedStock).not.toHaveBeenCalled();
   });
 
-  it("WIRE_SHAPE_ERROR: rejects a matcherAnswers entry with an unknown questionId", async () => {
+  it("WIRE_SHAPE_ERROR: rejects a matcherAnswers entry with an unknown id (the recovered field name for matcher answers, NOT questionId)", async () => {
     replyPreApplySuccess({ matcherIds: ["m1"] });
     await expect(
       apply(TOKEN, JOB_ID, {
         consentIssued: true,
-        matcherAnswers: [{ questionId: "BOGUS", answer: "x" }],
+        matcherAnswers: [{ id: "BOGUS", answer: "x" }],
       }),
     ).rejects.toMatchObject({
       name: "ApplicationsError",
@@ -1715,12 +1729,16 @@ describe("applications.apply (#426)", () => {
     expect(mockedStock).toHaveBeenCalledTimes(3);
   });
 
-  it("WIRE_SHAPE_ERROR: rejects an expertiseAnswers entry missing questionId entirely", async () => {
+  it("WIRE_SHAPE_ERROR: rejects an expertiseAnswers entry missing questionId entirely (expertise still uses `questionId` per the asymmetric recovered SDL)", async () => {
     replyPreApplySuccess({ expertiseIds: ["e1"] });
     await expect(
       apply(TOKEN, JOB_ID, {
         consentIssued: true,
-        expertiseAnswers: [{ answer: "no questionId" }],
+        // `as never` widens the structurally-incomplete object past
+        // the now-tightened `JobExpertiseAnswerInput` type. The runtime
+        // validateAnswerIds check is the path under test — at the type
+        // level a missing `questionId` would already be a static error.
+        expertiseAnswers: [{ other: null, subjectId: null } as never],
       }),
     ).rejects.toMatchObject({
       code: "WIRE_SHAPE_ERROR",
@@ -1729,12 +1747,29 @@ describe("applications.apply (#426)", () => {
     expect(mockedStock).toHaveBeenCalledTimes(3);
   });
 
-  it("WIRE_SHAPE_ERROR: rejects a non-object answer entry (defensive — answers are unknown[])", async () => {
+  it("WIRE_SHAPE_ERROR: rejects a matcherAnswers entry missing `id` entirely (NOT `questionId` — that's the expertise side)", async () => {
     replyPreApplySuccess({ matcherIds: ["m1"] });
     await expect(
       apply(TOKEN, JOB_ID, {
         consentIssued: true,
-        matcherAnswers: ["string-instead-of-object"],
+        // Missing `id` — the structurally-incomplete shape past the
+        // tightened `JobPositionAnswerInput` type. Test the runtime
+        // validateAnswerIds branch covering "missing id" specifically.
+        matcherAnswers: [{ answer: "no id field" } as never],
+      }),
+    ).rejects.toMatchObject({
+      code: "WIRE_SHAPE_ERROR",
+      message: expect.stringContaining(`matcherAnswers[0]: missing or non-string "id" property.`),
+    });
+    expect(mockedStock).toHaveBeenCalledTimes(3);
+  });
+
+  it("WIRE_SHAPE_ERROR: rejects a non-object answer entry (defensive — runtime check past the type system)", async () => {
+    replyPreApplySuccess({ matcherIds: ["m1"] });
+    await expect(
+      apply(TOKEN, JOB_ID, {
+        consentIssued: true,
+        matcherAnswers: ["string-instead-of-object" as never],
       }),
     ).rejects.toMatchObject({
       code: "WIRE_SHAPE_ERROR",

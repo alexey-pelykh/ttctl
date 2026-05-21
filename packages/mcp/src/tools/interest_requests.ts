@@ -286,21 +286,21 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
         "    (no recruiter-pinned rate to default to).",
         "  - `kind` (optional): AR kind (FIXED / FLEXIBLE / MARKETPLACE_FLEXIBLE).",
         "    Auto-detected from the AR's metadata `__typename` when omitted.",
-        "  - `matcherAnswers` (optional): array of matcher-question answers. Each",
-        "    item is an opaque object of shape `{ questionId: string, answer: ... }`;",
-        "    discover question identifiers via `ttctl_applications_show <activityId>`.",
-        "    Forwarded as the wire's `matcherQuestionsAnswers` variable; the",
-        "    inner shape is `JobPositionAnswerInput` — Stage-1 opaque per",
-        "    ADR-008 § Decision Part 3 (schema-recovery spike #425 / #438",
-        "    will tighten this to a typed Zod schema in Stage-2).",
-        "  - `expertiseAnswers` (optional): array of expertise-question answers,",
-        "    same opaque `{ questionId, answer }` shape as `matcherAnswers`.",
-        "    Question identifiers also discovered via `ttctl_applications_show`.",
-        "    Forwarded as the wire's `expertiseQuestionsAnswers` variable",
-        "    (`JobExpertiseAnswerInput[]`).",
-        "  - `pitchData` (optional): a `PitchInput` object — typically",
-        '    `{ message: "..." }` carrying the talent\'s free-text pitch. Stage-1',
-        "    opaque per ADR-008; full schema recovery deferred to #438.",
+        "  - `matcherAnswers` (optional): array of matcher-question answers.",
+        "    Each item is `{ id: string, answer: string }` per the recovered",
+        "    `JobPositionAnswerInput` shape (#438 Stage-2). `id` references a",
+        "    `matcherQuestions[].identifier` from `ttctl_applications_show <activityId>`.",
+        "    Validated against `z.array(JobPositionAnswerInputSchema().strict())` —",
+        "    extra unknown keys reject with a field-path error.",
+        "  - `expertiseAnswers` (optional): array of expertise-question answers.",
+        "    Each item is `{ questionId: string, other: string|null, subjectId: string|null }`",
+        "    per the recovered `JobExpertiseAnswerInput` shape. Note the asymmetric",
+        "    id-field name vs matcher: `questionId` here, `id` for matcher.",
+        "    `questionId` references an `expertiseQuestions[].identifier` from",
+        "    `ttctl_applications_show <activityId>`.",
+        "  - `pitchData` (optional): a `PitchInput` object — see the recovered",
+        "    `PitchInputSchema` for the field surface (arrays of typed `PitchItem*Input`",
+        "    plus the opaque `mentorship` position).",
         "",
         "Example user prompts:",
         '  - "Accept Interest Request <id>." (uses recruiter-pinned rate by default)',
@@ -312,13 +312,13 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
         "  {",
         '    "id": "<availabilityRequestId>",',
         '    "matcherAnswers": [',
-        '      { "questionId": "MQ-1", "answer": "..." },',
-        '      { "questionId": "MQ-2", "answer": "..." }',
+        '      { "id": "MQ-1", "answer": "..." },',
+        '      { "id": "MQ-2", "answer": "..." }',
         "    ],",
         '    "expertiseAnswers": [',
-        '      { "questionId": "EQ-1", "answer": "..." }',
+        '      { "questionId": "EQ-1", "other": null, "subjectId": "Skill:1" }',
         "    ],",
-        '    "pitchData": { "message": "Pitch text" }',
+        '    "pitchData": { "skillPitchItems": [{ "skillId": "S1" }] }',
         "  }",
         "  ```",
       ].join("\n"),
@@ -336,22 +336,23 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
           .optional()
           .describe("AR kind (auto-detected from metadata when omitted)"),
         matcherAnswers: z
-          .array(z.unknown())
+          .array(applications.JobPositionAnswerInputSchema().strict())
           .optional()
           .describe(
-            "Optional matcher-questions answers. Array of opaque `{ questionId, answer }` objects (`JobPositionAnswerInput[]`). Discover `questionId` values via `ttctl_applications_show <activityId>`. Forwarded as the wire's `matcherQuestionsAnswers` variable. Stage-1 opaque per ADR-008 § Decision Part 3.",
+            "Optional matcher-questions answers. Array of `{ id: string, answer: string }` objects (`JobPositionAnswerInput[]`); `id` references `matcherQuestions[].identifier` from `ttctl_applications_show <activityId>`. Forwarded as the wire's `matcherQuestionsAnswers` variable. Validated against the recovered Zod shape per #438 — extra keys reject.",
           ),
         expertiseAnswers: z
-          .array(z.unknown())
+          .array(applications.JobExpertiseAnswerInputSchema().strict())
           .optional()
           .describe(
-            "Optional expertise-questions answers. Same opaque `{ questionId, answer }` shape as `matcherAnswers` (`JobExpertiseAnswerInput[]`); identifiers discovered via `ttctl_applications_show`. Forwarded as the wire's `expertiseQuestionsAnswers` variable. Stage-1 opaque per ADR-008.",
+            "Optional expertise-questions answers. Array of `{ questionId: string, other: string|null, subjectId: string|null }` objects (`JobExpertiseAnswerInput[]`); `questionId` references `expertiseQuestions[].identifier` from `ttctl_applications_show <activityId>`. Forwarded as the wire's `expertiseQuestionsAnswers` variable. Validated against the recovered Zod shape per #438.",
           ),
-        pitchData: z
-          .unknown()
+        pitchData: applications
+          .PitchInputSchema()
+          .strict()
           .optional()
           .describe(
-            "Optional `PitchInput` object (typically `{ message: '...' }`) carrying the talent's free-text pitch. Forwarded as the wire's `pitchInput` variable. Stage-1 opaque per ADR-008; #438 will tighten to a typed Zod schema.",
+            "Optional `PitchInput` object — see the recovered `PitchInputSchema` for the field surface. Forwarded as the wire's `pitchInput` variable. Validated against the recovered Zod shape per #438; extra keys reject.",
           ),
         dryRun: DRY_RUN_FIELD,
       },
@@ -366,12 +367,7 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
       if (args.kind !== undefined) input.kind = args.kind;
       if (args.matcherAnswers !== undefined) input.matcherQuestionsAnswers = args.matcherAnswers;
       if (args.expertiseAnswers !== undefined) input.expertiseQuestionsAnswers = args.expertiseAnswers;
-      // `args.pitchData` is `unknown` at the schema layer (ADR-008 Stage-1
-      // opaque pass-through). The core service treats `pitchInput` as a
-      // typed `Record<string, unknown>` — the cast here is the boundary
-      // where the opaque MCP wire shape meets the core's documented
-      // service-layer shape. The wire sends the raw JSON regardless.
-      if (args.pitchData !== undefined) input.pitchInput = args.pitchData as Record<string, unknown>;
+      if (args.pitchData !== undefined) input.pitchInput = args.pitchData;
 
       try {
         const outcome = await applications.confirm(auth.token, args.id, input, {
