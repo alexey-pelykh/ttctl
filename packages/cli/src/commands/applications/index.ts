@@ -149,7 +149,9 @@ export function buildApplicationsCommand(): Command {
 
   cmd
     .command("confirm")
-    .description("Confirm an Interest Request (DESTRUCTIVE — creates a JobApplication; no undo)")
+    .description(
+      "Confirm an Interest Request (DESTRUCTIVE — creates a JobApplication; no undo). See `Interest Requests` in the README for the full workflow.",
+    )
     .argument("<id>", "AvailabilityRequest id (NOT the activity-item id)", parseIdArg)
     .option("-m, --message <text>", "optional talent free-text accompanying the confirmation")
     .option(

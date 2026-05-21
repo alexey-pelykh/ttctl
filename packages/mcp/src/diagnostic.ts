@@ -343,25 +343,104 @@ export function emitMcpAuthResolve(
 }
 
 /**
- * Helper: redact tool args for {@link McpToolInvokeStartRecord}. Two-pass
- * defense:
+ * MCP-side PII field-name allowlist for the application-funnel
+ * write-side surface (#446). These keys flow into MCP tool args for
+ * `ttctl_applications_confirm` / `ttctl_jobs_apply` (and their data /
+ * questions / rate-insight siblings); they carry caller-supplied
+ * free-text material that should NOT appear in operator-facing
+ * diagnostic logs even when `TTCTL_DEBUG_MCP=1` is set on a debugging
+ * machine.
+ *
+ * Sibling to the credential-class `SECRET_BODY_FIELD_NAMES` in
+ * `@ttctl/core/lib/redact.ts` but kept MCP-local on purpose: the core
+ * set covers "fields whose values are secrets" (credentials, tokens);
+ * this set covers "fields whose values are user-supplied free-text".
+ * Mixing the two would conflate the credential-leak policy with the
+ * PII policy in the single core consumer that downstream tooling
+ * (e.g., `scripts/check-secret-leakage.ts`) keys off. The two passes
+ * compose at {@link redactToolArgs} so `args_redacted` is filtered
+ * through both before any record is emitted.
+ *
+ * Lowercased for case-insensitive matching (mirrors the
+ * `SECRET_BODY_FIELD_NAMES` convention).
+ *
+ *   - `matcheranswers` / `matcherquestionsanswers` — `JobApply` /
+ *     `ConfirmAvailabilityRequest` matcher-question Q&A arrays. The
+ *     un-suffixed name is the user-facing CLI / MCP key shape per
+ *     [ADR-008] § Decision Part 2; the `-questionsanswers` suffix is
+ *     the wire variable name on the gateway mutations.
+ *   - `expertiseanswers` / `expertisequestionsanswers` — expertise
+ *     deep-dive Q&A arrays (same shape pair as matcher above).
+ *   - `pitchdata` / `pitchinput` — caller-facing keys for the pitch
+ *     payload. `pitchData` is the `ApplyInput` field name; `pitchInput`
+ *     is the `ConfirmInput` field name and the `applications confirm`
+ *     CLI flag's parsed payload.
+ *   - `talentcard` — wire variable name for the same pitch payload on
+ *     the `JobApply` mutation's `$talentCard` argument.
+ */
+const MCP_PII_FIELD_NAMES: ReadonlySet<string> = new Set([
+  "matcheranswers",
+  "matcherquestionsanswers",
+  "expertiseanswers",
+  "expertisequestionsanswers",
+  "pitchdata",
+  "pitchinput",
+  "talentcard",
+]);
+
+/**
+ * Walk an arbitrary structure (object / array / scalar) and replace
+ * values of fields named in {@link MCP_PII_FIELD_NAMES} with
+ * {@link REDACTED}. Pure — does not mutate the input. Designed to
+ * compose AFTER `redactBody` from `@ttctl/core`: the credential-class
+ * pass runs first; any field already replaced with `***REDACTED***` is
+ * a non-matching scalar at this layer and passes through unchanged.
+ *
+ * The traversal mirrors `redactBody` (same shape — objects + arrays +
+ * scalar passthrough + case-insensitive key match) so the two passes
+ * compose with predictable semantics on nested structures.
+ */
+function redactMcpPiiFields(input: unknown): unknown {
+  if (input === null || input === undefined) return input;
+  if (Array.isArray(input)) return input.map((item: unknown) => redactMcpPiiFields(item));
+  if (typeof input !== "object") return input;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (MCP_PII_FIELD_NAMES.has(key.toLowerCase())) {
+      out[key] = REDACTED;
+    } else {
+      out[key] = redactMcpPiiFields(value);
+    }
+  }
+  return out;
+}
+
+/**
+ * Helper: redact tool args for {@link McpToolInvokeStartRecord}.
+ * Three-pass defense:
  *
  *   1. `redactBody` from `@ttctl/core` replaces FIELD values whose key
  *      matches `SECRET_BODY_FIELD_NAMES` (`password`, `token`, etc.).
- *   2. {@link scrubBearerPatternInStrings} walks the result and replaces
+ *   2. {@link redactMcpPiiFields} replaces FIELD values whose key
+ *      matches {@link MCP_PII_FIELD_NAMES} — the MCP-local PII
+ *      allowlist scoped to the application-funnel write-side surface
+ *      (#446). Sibling to the credential pass; runs second so credential
+ *      values are already redacted before the PII pass touches them.
+ *   3. {@link scrubBearerPatternInStrings} walks the result and replaces
  *      any STRING value that matches the canonical bearer pattern
  *      (`user_<24hex>_<20alnum>`). This catches the case where an LLM
  *      client pastes a bearer-shaped value into a free-text arg like
- *      `{ note: "user_abc..." }` that the field-name pass would miss.
+ *      `{ note: "user_abc..." }` that neither field-name pass would
+ *      catch.
  *
  * The MCP tool surface accepts arbitrary client-supplied JSON, so the
- * second pass is the load-bearing defense for bearer-absence in
+ * third pass is the load-bearing bearer-absence defense for
  * `args_redacted`. The transport-side `redactBody` doesn't need it
  * because GraphQL variables are typed and the bearer never appears in
  * any documented variable slot — MCP args have no such guarantee.
  */
 export function redactToolArgs(args: unknown): unknown {
-  return scrubBearerPatternInStrings(redactBody(args));
+  return scrubBearerPatternInStrings(redactMcpPiiFields(redactBody(args)));
 }
 
 /**

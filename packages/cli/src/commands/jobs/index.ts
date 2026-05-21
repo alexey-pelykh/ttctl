@@ -159,7 +159,7 @@ export function buildJobsCommand(): Command {
     .argument("<id>", "job id (from `jobs list`)", parseIdArg)
     .option(
       "--with-questions",
-      "additionally fetch and inline the job's matcher + expertise application questions (issue #437)",
+      "additionally fetch and inline the job's matcher + expertise application questions (issue #437). See `Applying to jobs` in the README for the apply workflow.",
     )
     .addOption(
       new Option("-o, --output <format>", "output format")
@@ -180,13 +180,17 @@ export function buildJobsCommand(): Command {
   //
   // Help text for the JSON-file flags mirrors `applications confirm`
   // (#428) since the ADR-008-locked grammar is identical across the
-  // funnel's write surface.
+  // funnel's write surface. Per the recovered SDL (#438), matcher
+  // answers carry the question id at `id` and expertise answers carry
+  // it at `questionId` (with nullable `other` / `subjectId`) — both
+  // shapes verbatim across confirm + apply.
   const APPLY_ANSWERS_FILE_HELP =
     "JSON file (or `-` for stdin) containing matcher/expertise answers. Shape:\n" +
     "  {\n" +
-    '    "matcherAnswers": [{"questionId": "<id>", "answer": "<value>"}],\n' +
-    '    "expertiseAnswers": [{"questionId": "<id>", "answer": "<value>"}]\n' +
+    '    "matcherAnswers": [{"id": "<questionIdentifier>", "answer": "<value>"}],\n' +
+    '    "expertiseAnswers": [{"questionId": "<questionIdentifier>", "other": null, "subjectId": null}]\n' +
     "  }\n" +
+    "Per the recovered SDL (#438): matcher answers carry the id at `id`; expertise answers carry it at `questionId`. " +
     "Question identifiers come from `jobs show <id> --with-questions` (or `jobs apply <id> --show-questions`). Stdin escape: `--answers-file -`.";
   const APPLY_PITCH_FILE_HELP =
     "JSON file (or `-` for stdin) containing the PitchInput payload (single JSON object). Stdin escape: `--pitch-file -`.";
@@ -195,7 +199,7 @@ export function buildJobsCommand(): Command {
     cmd
       .command("apply")
       .description(
-        "Apply to a job (DESTRUCTIVE — creates a JobApplication; no undo via TTCtl). `--consent` is REQUIRED and represents your acceptance of Toptal's apply terms (a legal-compliance attestation; auto-filling is forbidden).",
+        "Apply to a job (DESTRUCTIVE — creates a JobApplication; no undo via TTCtl). `--consent` is REQUIRED and represents your acceptance of Toptal's apply terms (a legal-compliance attestation; auto-filling is forbidden). See `Applying to jobs` in the README for the full workflow.",
       )
       .argument("<id>", "job id (from `jobs list` / `jobs show`)", parseIdArg)
       .option(
