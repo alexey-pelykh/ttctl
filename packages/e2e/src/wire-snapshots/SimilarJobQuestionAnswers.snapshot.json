@@ -1,0 +1,35 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-21T12:40:00.000Z",
+  "operationName": "SimilarJobQuestionAnswers",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "questionId": {
+          "kind": "string"
+        },
+        "suggestions": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "answer": {
+                "kind": "string"
+              },
+              "createdAt": {
+                "kind": "string"
+              },
+              "id": {
+                "kind": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

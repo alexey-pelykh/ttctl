@@ -158,6 +158,7 @@ const EXPECTED_TOOLS = [
   "ttctl_jobs_apply_data",
   "ttctl_jobs_apply_questions",
   "ttctl_jobs_apply_rate_insight",
+  "ttctl_jobs_apply_similar_answers",
   // timesheet (#13) — 3 tools (list/show/submit) plus #374 pending_list.
   // Submit is destructive (one-way at the wire level); LLM clients must
   // confirm with the user. #374 pending_list exposes surface-honest
@@ -211,7 +212,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (111 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 17 #148/#436 jobs [13 + 4 #436 apply-funnel] + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (112 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

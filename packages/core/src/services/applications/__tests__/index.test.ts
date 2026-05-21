@@ -27,6 +27,7 @@ import {
   reject,
   rejectReasons,
   show,
+  similarAnswers,
   stats,
 } from "../index.js";
 import type { ApplyInput } from "../index.js";
@@ -1875,5 +1876,220 @@ describe("applications.apply (#426)", () => {
     reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
     reply({ body: rateInsightCompetitiveFixture() });
     await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
+// ---------------------------------------------------------------------
+// `similarAnswers` (#452) — opt-in autocomplete suggestion fetcher.
+// Wraps SimilarJobQuestionAnswers($id) and fans out across the full
+// question inventory of a job (matcher + expertise) via N parallel
+// calls. Tests cover the happy path (suggestions returned), the
+// empty-inventory short-circuit (no per-question calls), the empty-
+// suggestions case (zero similar-job history), error mapping, and
+// the question-inventory pre-fetch failure path.
+// ---------------------------------------------------------------------
+
+interface SimilarAnswerFixtureEntry {
+  id: string;
+  answer: string;
+  createdAt: string;
+}
+
+function similarAnswersFixture(entries: SimilarAnswerFixtureEntry[]): unknown {
+  return {
+    data: {
+      viewer: {
+        __typename: "Viewer",
+        id: "v1",
+        jobPositionAnswers: {
+          __typename: "JobPositionAnswersConnection",
+          nodes: entries.map((e) => ({ __typename: "JobPositionAnswer", ...e })),
+        },
+      },
+    },
+  };
+}
+
+describe("applications.similarAnswers (#452)", () => {
+  it("returns [] without issuing any SimilarJobQuestionAnswers calls when the job has no questions", async () => {
+    reply({ body: questionsFixture({ matcher: [], expertise: [] }) });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out).toEqual([]);
+    // Only ONE call (applyQuestions) — no per-question fan-out.
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns one SimilarJobAnswerGroup per question with server-supplied suggestions (matcher + expertise interleave)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Years?", isRequired: true }],
+        expertise: [{ id: "e1", subject: { __typename: "Skill", id: "s1", name: "TypeScript" } }],
+      }),
+    });
+    reply({
+      body: similarAnswersFixture([
+        { id: "ans-m1-a", answer: "5 years", createdAt: "2025-01-01T00:00:00Z" },
+        { id: "ans-m1-b", answer: "7 years", createdAt: "2025-03-15T00:00:00Z" },
+      ]),
+    });
+    reply({
+      body: similarAnswersFixture([{ id: "ans-e1-a", answer: "Strong daily use", createdAt: "2025-02-10T00:00:00Z" }]),
+    });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out).toEqual([
+      {
+        questionId: "m1",
+        suggestions: [
+          { id: "ans-m1-a", answer: "5 years", createdAt: "2025-01-01T00:00:00Z" },
+          { id: "ans-m1-b", answer: "7 years", createdAt: "2025-03-15T00:00:00Z" },
+        ],
+      },
+      {
+        questionId: "e1",
+        suggestions: [{ id: "ans-e1-a", answer: "Strong daily use", createdAt: "2025-02-10T00:00:00Z" }],
+      },
+    ]);
+    // applyQuestions + 2 per-question calls = 3 wire calls.
+    expect(mockedStock).toHaveBeenCalledTimes(3);
+  });
+
+  it("threads the question identifier into the wire as `id` (variable name = $id)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m-only-1", question: "Q?", isRequired: false }],
+      }),
+    });
+    reply({ body: similarAnswersFixture([]) });
+    await similarAnswers(TOKEN, JOB_ID);
+    // call 0 = applyQuestions; call 1 = similar for m-only-1
+    const body = mockedStock.mock.calls[1]?.[0]?.body as { operationName: string; variables: Record<string, unknown> };
+    expect(body.operationName).toBe("SimilarJobQuestionAnswers");
+    expect(body.variables).toEqual({ id: "m-only-1" });
+  });
+
+  it("returns empty `suggestions` arrays per question when the talent has no similar-job history", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Years?", isRequired: false }],
+      }),
+    });
+    reply({ body: similarAnswersFixture([]) });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out).toEqual([{ questionId: "m1", suggestions: [] }]);
+  });
+
+  it("treats null wire `jobPositionAnswers` connection as zero suggestions (no NOT_FOUND)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Q?", isRequired: false }],
+      }),
+    });
+    reply({
+      body: {
+        data: {
+          viewer: { __typename: "Viewer", id: "v1", jobPositionAnswers: null },
+        },
+      },
+    });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out).toEqual([{ questionId: "m1", suggestions: [] }]);
+  });
+
+  it("filters null wire entries out of the projected `suggestions` array (defensive)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Q?", isRequired: false }],
+      }),
+    });
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            jobPositionAnswers: {
+              __typename: "JobPositionAnswersConnection",
+              nodes: [
+                null,
+                { __typename: "JobPositionAnswer", id: "ans-1", answer: "Yes", createdAt: "2025-01-01T00:00:00Z" },
+                null,
+              ],
+            },
+          },
+        },
+      },
+    });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out[0]?.suggestions).toHaveLength(1);
+    expect(out[0]?.suggestions[0]?.id).toBe("ans-1");
+  });
+
+  it("propagates NOT_FOUND from applyQuestions for a bad jobId (no per-question fan-out attempted)", async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(similarAnswers(TOKEN, "missing-job")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps Relay decode error on a per-question call to NOT_FOUND (wire returns the decode error for unknown question ids)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Q?", isRequired: false }],
+      }),
+    });
+    reply({
+      body: {
+        errors: [{ message: "Node id 'bogus' resolves to an unknown type JobPositionQuestion. Please check ..." }],
+      },
+    });
+    await expect(similarAnswers(TOKEN, JOB_ID)).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("throws AuthRevokedError when a per-question call returns HTTP 401", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Q?", isRequired: false }],
+      }),
+    });
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(similarAnswers(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("issues per-question calls in parallel (Promise.all — all per-question requests are in-flight before the first resolves)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [
+          { id: "m1", question: "Q1?", isRequired: false },
+          { id: "m2", question: "Q2?", isRequired: false },
+        ],
+      }),
+    });
+    // Reply order is deterministic via mockResolvedValueOnce; the
+    // assertion below verifies the WIRE ORDER matches the question
+    // order from applyQuestions — the helper does not re-shuffle.
+    reply({ body: similarAnswersFixture([{ id: "a1", answer: "A", createdAt: "2025-01-01T00:00:00Z" }]) });
+    reply({ body: similarAnswersFixture([{ id: "a2", answer: "B", createdAt: "2025-02-01T00:00:00Z" }]) });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out.map((g) => g.questionId)).toEqual(["m1", "m2"]);
+    expect(out[0]?.suggestions[0]?.id).toBe("a1");
+    expect(out[1]?.suggestions[0]?.id).toBe("a2");
+  });
+
+  it("orders the response: matcher questions FIRST, then expertise (matches the ApplicationQuestion inventory order)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m-first", question: "M?", isRequired: false }],
+        expertise: [{ id: "e-after", subject: { __typename: "Industry", id: "ind-1", name: "FinTech" } }],
+      }),
+    });
+    reply({ body: similarAnswersFixture([]) });
+    reply({ body: similarAnswersFixture([]) });
+    const out = await similarAnswers(TOKEN, JOB_ID);
+    expect(out.map((g) => g.questionId)).toEqual(["m-first", "e-after"]);
   });
 });

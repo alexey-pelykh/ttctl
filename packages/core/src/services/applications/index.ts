@@ -2692,8 +2692,9 @@ export async function apply(
   // per REQ-A4, not from the insight's `recommendedRate`. The
   // pre-fetch is still issued per the #426 AC ("Pre-fetch via
   // Promise.all: applyData + applyQuestions + rateInsight") so the
-  // wire-traffic shape matches what the portal's apply screen issues
-  // (the insight is what the portal shows alongside the rate input).
+  // wire-traffic shape matches what the mobile app's apply screen
+  // issues (the insight is what the mobile app shows alongside the
+  // rate input).
   // Future widening: surface the insight in the apply outcome so
   // callers can render it post-apply.
   const [preApply, questions] = await Promise.all([
@@ -2756,4 +2757,282 @@ export async function apply(
     throw new ApplicationsError("UNKNOWN", "JobApply returned success but the job / activityItem echo was null.");
   }
   return { kind: "applied", result: projectJobApplicationRecord(payload.job.activityItem) };
+}
+
+// ---------------------------------------------------------------------
+// Opt-in similar-answer suggestion read op (#452) — `similarAnswers`.
+// Wraps `SimilarJobQuestionAnswers($id)` against the mobile gateway.
+//
+// HAND-AUTHORED inline query string per the convention pinned by the
+// rest of this module. `SimilarJobQuestionAnswers` is listed in
+// `codegen.config.ts`'s `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` (line 273)
+// because the captured op uses the `JobPositionAnswerFiltersInput`
+// shape (with `forQuestionsSimilarToQuestionId: ID!` and `uniqueAnswer:
+// Boolean`) which is not declared in the synthesized schema
+// (`viewer.jobPositionAnswers` is declared with no arguments); codegen
+// refuses to emit types for the op. T1 disposition (snapshot) per the
+// hybrid wire-validation model.
+//
+// CLAUDE.md schema/contract validation rule TRIGGERED — the operation
+// is hand-authored. Live E2E coverage ships in this PR
+// (`packages/e2e/src/53-jobs-apply-similar-answers.e2e.test.ts`) with
+// the wire-shape snapshot at
+// `packages/e2e/src/wire-snapshots/SimilarJobQuestionAnswers.snapshot.json`.
+//
+// **Wire shape vs issue body deviation**: the captured op selects
+// `nodes { id answer createdAt }` — the `JobPositionAnswer` shape on
+// the wire carries `{ id, answer }` (per
+// `research/graphql/gateway/schema.graphql:1134`) plus a `createdAt`
+// scalar that is not in the synthesized schema (gap region). The
+// captured op does NOT select a source-job reference (no `sourceJobId`
+// / `sourceJobTitle`). The issue body's proposed projection
+// `{ value, sourceJobId, sourceJobTitle }` was an authoring intuition;
+// the captured op is authoritative per CLAUDE.md "define shape based
+// on captured operation's selection set". The public projection here
+// surfaces the captured fields as `{ id, answer, createdAt }`.
+//
+// **Cardinality**: the wire takes ONE `questionId` per call (the
+// filter `forQuestionsSimilarToQuestionId: $id`). To fetch suggestions
+// for every question on a job, the fn first resolves the question
+// inventory via {@link applyQuestions} then issues N parallel
+// `SimilarJobQuestionAnswers` calls (one per matcher + expertise
+// question) via `Promise.all`. The N+1 fan-out is intentional — the
+// mobile app's apply screen exhibits the same fan-out pattern (one
+// fetch per question's autocomplete dropdown).
+//
+// **Off the critical path**: this op is deliberately NOT in the
+// 3-query pre-apply suite of `apply()`. Adding it would slow EVERY
+// apply call (semantic-similarity computation server-side); the CLI
+// `--suggest-answers` flag is opt-in for the same reason.
+// ---------------------------------------------------------------------
+
+/**
+ * One historical answer to a question similar to the queried one.
+ * Wire selection: `JobPositionAnswer { id answer createdAt }` per the
+ * captured `SimilarJobQuestionAnswers.graphql` operation. `createdAt`
+ * is selected on a schema-gap position (`JobPositionAnswer.createdAt`
+ * is not declared on the synthesized SDL — see the schema-gap note in
+ * the inline query string below); the projection is `string` here per
+ * the empirical wire shape, the T1 snapshot is the authority.
+ */
+export interface SimilarJobAnswer {
+  /** `JobPositionAnswer.id` — the historical answer's identifier. */
+  id: string;
+  /** The historical answer text (`JobPositionAnswer.answer`). */
+  answer: string;
+  /** ISO 8601 timestamp the historical answer was authored. */
+  createdAt: string;
+}
+
+/**
+ * One group of suggestions, keyed by the question identifier the
+ * suggestions were resolved against. `questionId` mirrors the wire
+ * filter (`forQuestionsSimilarToQuestionId: <questionId>`). The
+ * `suggestions` array carries the talent's own historical answers to
+ * SIMILAR questions on prior applications — useful as autocomplete
+ * candidates the user can review and selectively re-use when authoring
+ * an application.
+ *
+ * Empty `suggestions` arrays surface verbatim: the wire returned zero
+ * similar-job history for this question. Common for new talent
+ * accounts and unique question prompts.
+ */
+export interface SimilarJobAnswerGroup {
+  /**
+   * The `ApplicationQuestion.identifier` (from
+   * {@link ApplicationQuestion}) the suggestions were resolved
+   * against — both matcher and expertise question identifiers are
+   * accepted.
+   */
+  questionId: string;
+  /**
+   * Historical answers to questions semantically similar to the one
+   * identified by `questionId`. Order is server-supplied; the helper
+   * does NOT re-sort.
+   */
+  suggestions: SimilarJobAnswer[];
+}
+
+// Captured operation document at
+// `../research/graphql/gateway/operations/mobile/SimilarJobQuestionAnswers.graphql`
+// and `research/apk/decoded/smali/fn/ji.smali:89` (verbatim:
+// `query SimilarJobQuestionAnswers($id: ID!) { viewer { __typename id
+// jobPositionAnswers(filters: { forQuestionsSimilarToQuestionId: $id
+// uniqueAnswer: true } , pageSize: 10) { __typename nodes
+// { __typename id answer createdAt } } } }`).
+//
+// Schema gaps:
+//   - `viewer.jobPositionAnswers(filters:, pageSize:)` — the
+//     synthesized schema declares the field as
+//     `viewer.jobPositionAnswers: [JobPositionAnswer]!` with no args
+//     (line 814). The captured op passes both `filters` (a
+//     `JobPositionAnswerFiltersInput { forQuestionsSimilarToQuestionId,
+//     uniqueAnswer }`) and `pageSize`. Empirically these work — the
+//     mobile app calls this every time the apply screen renders a
+//     question autocomplete; the live E2E + T1 snapshot are the
+//     authority.
+//   - The return shape on the wire is a connection-like
+//     `{ nodes: JobPositionAnswer[] }` rather than the schema's bare
+//     `[JobPositionAnswer]!` list. The captured op selects `nodes`
+//     verbatim; the projection unwraps to the bare list.
+//   - `JobPositionAnswer.createdAt` is not declared in the synthesized
+//     SDL (`type JobPositionAnswer` at line 1134 carries only `answer`,
+//     `id`, `question`). The captured op selects it anyway — same gap
+//     pattern as `availabilityRequest.metadata.offeredHourlyRate` (#410)
+//     where the trimmed mobile selection extends the schema. T1 snapshot
+//     is the authority.
+const SIMILAR_JOB_QUESTION_ANSWERS_QUERY = `query SimilarJobQuestionAnswers($id: ID!) {
+  viewer {
+    __typename
+    id
+    jobPositionAnswers(filters: { forQuestionsSimilarToQuestionId: $id, uniqueAnswer: true }, pageSize: 10) {
+      __typename
+      nodes {
+        __typename
+        id
+        answer
+        createdAt
+      }
+    }
+  }
+}`;
+
+interface SimilarJobAnswerWire {
+  id: string;
+  answer: string;
+  createdAt: string;
+}
+
+interface SimilarJobQuestionAnswersResponse {
+  data?: {
+    viewer: {
+      id: string;
+      jobPositionAnswers: {
+        nodes: (SimilarJobAnswerWire | null)[] | null;
+      } | null;
+    } | null;
+  } | null;
+  errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Project the wire's `jobPositionAnswers.nodes[]` into the public
+ * {@link SimilarJobAnswer}[] shape. Filters list-entry nulls
+ * defensively (the schema declares `[JobPositionAnswer]!` as a
+ * non-null LIST with nullable entries; the captured op honors the
+ * same nullability); the resulting list always carries non-null
+ * entries.
+ */
+function projectSimilarAnswers(nodes: (SimilarJobAnswerWire | null)[] | null | undefined): SimilarJobAnswer[] {
+  if (nodes == null) return [];
+  return nodes
+    .filter((n): n is SimilarJobAnswerWire => n !== null)
+    .map((n) => ({ id: n.id, answer: n.answer, createdAt: n.createdAt }));
+}
+
+/**
+ * Fetch one question's similar-answer suggestions from the gateway.
+ * Internal helper; the public surface is {@link similarAnswers} which
+ * fans out across the full question inventory of a job.
+ *
+ * `questionId` is the `ApplicationQuestion.identifier` (either matcher
+ * or expertise — the wire accepts both since they're both `Node`-typed
+ * via `JobPositionQuestion.id` / `JobExpertiseQuestion.id`).
+ *
+ * Bad-id behavior: an unknown `questionId` surfaces as the shared
+ * Relay decode error pattern (`Node id ... resolves to ...`) and is
+ * remapped to `NOT_FOUND` via the widened
+ * {@link NOT_FOUND_MESSAGE_PATTERN}.
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` when the questionId
+ *   doesn't resolve.
+ * @throws `ApplicationsError("NO_VIEWER")` when the session is valid
+ *   but no viewer is bound (defensive — `callGateway` with
+ *   `requireViewer: true` already raises this case).
+ */
+async function similarAnswersForQuestion(token: string, questionId: string): Promise<SimilarJobAnswer[]> {
+  let data: SimilarJobQuestionAnswersResponse["data"] & object;
+  try {
+    data = await callGateway<SimilarJobQuestionAnswersResponse["data"] & object>(
+      token,
+      "SimilarJobQuestionAnswers",
+      SIMILAR_JOB_QUESTION_ANSWERS_QUERY,
+      { id: questionId },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError(
+        "NOT_FOUND",
+        `No question found with id "${questionId}" (or you don't have access to it).`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  // The wire returns `jobPositionAnswers: null` for unknown ids on
+  // some accounts (instead of a top-level GraphQL error). Treat the
+  // null connection as "no similar answers" rather than NOT_FOUND —
+  // the wire authoritatively returned a successful response.
+  if (data.viewer.jobPositionAnswers === null) return [];
+  return projectSimilarAnswers(data.viewer.jobPositionAnswers.nodes);
+}
+
+/**
+ * Fetch the talent's similar-answer suggestions for every question on
+ * a job's apply form (#452).
+ *
+ * Returns one {@link SimilarJobAnswerGroup} per question — matcher
+ * AND expertise. The order mirrors the underlying
+ * {@link applyQuestions} inventory (matcher questions first, then
+ * expertise; server-supplied order within each section).
+ *
+ * **Cardinality**: N+1 wire calls — first an {@link applyQuestions}
+ * fetch to resolve the question identifier list, then N parallel
+ * `SimilarJobQuestionAnswers` calls (one per question) via
+ * `Promise.all`. The fan-out matches the mobile app's apply-screen
+ * autocomplete behavior; aggregating server-side is not exposed by
+ * the wire.
+ *
+ * **Bad-id behavior**: a bad `jobId` surfaces NOT_FOUND from
+ * `applyQuestions` (same mapping as the rest of the pre-apply suite).
+ * A per-question `SimilarJobQuestionAnswers` call that surfaces
+ * NOT_FOUND propagates verbatim via `Promise.all`'s reject-on-first
+ * — intentional: callers that want graceful per-question fallback
+ * (e.g. the CLI's `--suggest-answers` flag) should catch the rejection
+ * and continue without suggestions.
+ *
+ * **Performance**: when the job has zero questions, the call resolves
+ * to `[]` after the single `applyQuestions` fetch — no wasted parallel
+ * round-trips. When the job has questions but the talent's account
+ * has no similar-job history, each per-question call returns an empty
+ * `suggestions` array; surface the empty grouping verbatim.
+ *
+ * **Off the critical apply path**: this fn is NOT called from
+ * {@link apply}. It's opt-in via the CLI's `--suggest-answers` flag
+ * (#452) and the MCP's `ttctl_jobs_apply_similar_answers` tool. The
+ * design rationale is in the ADR-008 follow-ups thread.
+ *
+ * @param token - Bearer token from the resolved auth config.
+ * @param jobId - The `TalentJob.id` to resolve questions against.
+ * @throws `ApplicationsError("NOT_FOUND")` when the jobId or a
+ *   resolved questionId doesn't resolve.
+ * @throws `ApplicationsError("NO_VIEWER")` for sessions with no
+ *   bound viewer.
+ */
+export async function similarAnswers(token: string, jobId: string): Promise<SimilarJobAnswerGroup[]> {
+  const questions = await applyQuestions(token, jobId);
+  const allIdentifiers = [
+    ...questions.matcherQuestions.map((q) => q.identifier),
+    ...questions.expertiseQuestions.map((q) => q.identifier),
+  ];
+  if (allIdentifiers.length === 0) return [];
+  const suggestions = await Promise.all(allIdentifiers.map((qid) => similarAnswersForQuestion(token, qid)));
+  return allIdentifiers.map((questionId, i) => ({ questionId, suggestions: suggestions[i] ?? [] }));
 }

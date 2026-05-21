@@ -68,6 +68,27 @@ export interface JobsApplyOptions {
    * path; never reaches the apply mutation).
    */
   showQuestions?: boolean;
+  /**
+   * Opt-in autocomplete suggestion fetch (REQ-Q4 / #452). When set,
+   * issues an additional `SimilarJobQuestionAnswers` fan-out in
+   * addition to the standard 3-query pre-apply suite and renders the
+   * historical similar answers in the output. NEVER auto-fills the
+   * `--answers-file` payload — suggestions are advisory only.
+   *
+   * The suggestion fetch fans out N parallel calls (one per matcher
+   * + expertise question). Per scenario "Suggestion query fails —
+   * apply continues without suggestions", failures of the suggestion
+   * branch surface as a stderr warning and the apply path continues
+   * unchanged.
+   *
+   * Works in `--dry-run` mode: the suggestion query is suppressed
+   * (zero wire calls under dry-run, matching the standard apply
+   * dry-run posture). Set this with `--show-questions` to also
+   * suppress the apply mutation (suggestion fetch runs against the
+   * applyQuestions inventory and is reported alongside the question
+   * preview).
+   */
+  suggestAnswers?: boolean;
   output: OutputFormat;
 }
 
@@ -126,6 +147,31 @@ interface ShowQuestionsProjection {
   rateValidation: { minRate: string; rateStep: number } | null;
   matcherQuestions: applications.ApplicationQuestion[];
   expertiseQuestions: applications.ApplicationQuestion[];
+  /**
+   * Optional autocomplete suggestions (#452). Populated when
+   * `--suggest-answers` is set; absent otherwise. One group per
+   * question (matcher + expertise, interleaved in the same order as
+   * the inventory). Each group's `suggestions` array carries the
+   * talent's own historical answers to semantically-similar questions.
+   * Empty arrays surface verbatim when the talent has no similar-job
+   * history for that question.
+   */
+  suggestions?: applications.SimilarJobAnswerGroup[];
+}
+
+/**
+ * Apply-success envelope extension (#452). When `--suggest-answers`
+ * is passed alongside an actual apply (NOT `--show-questions`), the
+ * apply outcome surfaces the post-apply `JobApplicationRecord` AND
+ * the historical suggestions that would have been useful to author
+ * the answers-file (rendered as a sibling section in the pretty
+ * output). The shape is distinct from the bare
+ * {@link applications.JobApplicationRecord} so the JSON envelope
+ * carries both payloads under one parent.
+ */
+interface ApplyWithSuggestionsProjection {
+  application: applications.JobApplicationRecord;
+  suggestions: applications.SimilarJobAnswerGroup[];
 }
 
 /**
@@ -186,6 +232,18 @@ export async function runJobsApply(id: string, opts: JobsApplyOptions): Promise<
       matcherQuestions: questions.matcherQuestions,
       expertiseQuestions: questions.expertiseQuestions,
     };
+    // --suggest-answers + --show-questions: fetch the suggestions
+    // alongside the question inventory. Falls into the same graceful
+    // degradation pattern as the apply-path branch — failures of the
+    // suggestion fetch emit a stderr warning and the preview output
+    // omits the `suggestions` section. The standard `applyQuestions`
+    // failure path (above) already short-circuited via
+    // handleApplicationsError, so reaching here means the inventory
+    // resolved.
+    if (opts.suggestAnswers === true) {
+      const suggestions = await fetchSuggestionsOrWarn(token, id);
+      if (suggestions !== null) projection.suggestions = suggestions;
+    }
     emitResult(projection, opts.output, {
       pretty: (data) => formatShowQuestions(data),
     });
@@ -253,6 +311,10 @@ export async function runJobsApply(id: string, opts: JobsApplyOptions): Promise<
   }
 
   if (outcome.kind === "preview") {
+    // --suggest-answers + --dry-run: suppress the suggestion fetch
+    // (the apply mutation also issued no wire call under dry-run;
+    // matching that posture). The preview envelope is unchanged
+    // from #430.
     emitDryRunSuccess({
       operation: "jobs.apply",
       format: opts.output,
@@ -261,9 +323,31 @@ export async function runJobsApply(id: string, opts: JobsApplyOptions): Promise<
     return;
   }
 
+  // --suggest-answers (apply path): issue the suggestion fetch
+  // alongside the JobApply mutation result. The fetch runs AFTER
+  // the apply succeeded so a suggestion-fetch failure cannot block
+  // the apply (matches AC scenario "Suggestion query fails — apply
+  // continues without suggestions"). Failures emit a stderr warning
+  // and surface no `suggestions` section in the output.
   const result = outcome.result;
   const summaryParts: string[] = [`status=${result.statusV2.value}`];
   if (result.requestedHourlyRate !== null) summaryParts.push(`rate=${result.requestedHourlyRate.decimal}`);
+
+  if (opts.suggestAnswers === true) {
+    const suggestions = await fetchSuggestionsOrWarn(token, id);
+    const projection: ApplyWithSuggestionsProjection = {
+      application: result,
+      suggestions: suggestions ?? [],
+    };
+    emitUpdateSuccess({
+      operation: "jobs.apply",
+      format: opts.output,
+      updated: projection,
+      prettySummary: `Applied to job ${id}: application ${result.id} (${summaryParts.join(", ")})`,
+      prettyEntity: (data) => formatApplyWithSuggestions(data),
+    });
+    return;
+  }
 
   emitUpdateSuccess({
     operation: "jobs.apply",
@@ -272,6 +356,31 @@ export async function runJobsApply(id: string, opts: JobsApplyOptions): Promise<
     prettySummary: `Applied to job ${id}: application ${result.id} (${summaryParts.join(", ")})`,
     prettyEntity: (data) => formatJobApplicationRecord(data),
   });
+}
+
+/**
+ * Issue `applications.similarAnswers(token, jobId)` and surface a
+ * stderr warning instead of crashing on failure (#452 scenario
+ * "Suggestion query fails — apply continues without suggestions").
+ * Returns `null` on failure so callers can omit the suggestions
+ * section from the output payload.
+ *
+ * NOT an envelope-emitting handler — failures don't terminate the
+ * process; the apply path continues. Used by both the
+ * `--show-questions` branch (preview-only) and the apply branch
+ * (post-apply), so the warning text is generic.
+ */
+async function fetchSuggestionsOrWarn(
+  token: string,
+  jobId: string,
+): Promise<applications.SimilarJobAnswerGroup[] | null> {
+  try {
+    return await applications.similarAnswers(token, jobId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`warning: --suggest-answers fetch failed (${msg}); continuing without suggestions.\n`);
+    return null;
+  }
 }
 
 /**
@@ -502,6 +611,70 @@ export function formatShowQuestions(projection: ShowQuestionsProjection): string
   lines.push(`Expertise Questions (${projection.expertiseQuestions.length.toString()})`);
   for (const q of projection.expertiseQuestions) {
     lines.push(formatQuestionEntry(q));
+  }
+  // Suggestion section (#452) — only rendered when --suggest-answers
+  // was passed AND the fetch succeeded. Per AC scenario "Opt-in with
+  // past similar answers — suggestions displayed".
+  if (projection.suggestions !== undefined) {
+    lines.push("");
+    lines.push(`Suggestions (${projection.suggestions.length.toString()} question(s))`);
+    if (projection.suggestions.length === 0) {
+      lines.push("  (no suggestions — neither matcher nor expertise questions had similar-job history)");
+    } else {
+      for (const group of projection.suggestions) {
+        lines.push(formatSuggestionGroup(group));
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Render the apply-success envelope's pretty body when
+ * `--suggest-answers` was passed alongside the actual apply (#452).
+ * Combines the post-apply `JobApplicationRecord` section with the
+ * advisory suggestion inventory beneath it; the suggestions are
+ * displayed AFTER the apply confirmation so the user reads "apply
+ * succeeded" first and then sees what they could have used.
+ *
+ * Pure — directly unit-testable.
+ */
+export function formatApplyWithSuggestions(projection: ApplyWithSuggestionsProjection): string {
+  const lines: string[] = [];
+  lines.push(formatJobApplicationRecord(projection.application));
+  lines.push("");
+  lines.push(`Suggestions (${projection.suggestions.length.toString()} question(s))`);
+  if (projection.suggestions.length === 0) {
+    lines.push("  (no suggestions returned — your account may have no similar-job history)");
+  } else {
+    for (const group of projection.suggestions) {
+      lines.push(formatSuggestionGroup(group));
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Render one {@link applications.SimilarJobAnswerGroup} as an indented
+ * sub-block: the question identifier header followed by each
+ * historical answer as `    - "<answer>" (<createdAt>)`. Empty
+ * `suggestions` arrays surface the per-question header + an explicit
+ * `(none)` indicator so the user sees "this question was checked, no
+ * matches" rather than "the question vanished from the inventory".
+ *
+ * Long answer strings are NOT truncated — the talent wrote them, and
+ * truncating obscures the value. JSON output carries the full payload
+ * regardless.
+ */
+function formatSuggestionGroup(group: applications.SimilarJobAnswerGroup): string {
+  const lines: string[] = [];
+  lines.push(`  • ${group.questionId} (${group.suggestions.length.toString()} suggestion(s))`);
+  if (group.suggestions.length === 0) {
+    lines.push("    (none)");
+  } else {
+    for (const s of group.suggestions) {
+      lines.push(`    - "${s.answer}" (${s.createdAt})`);
+    }
   }
   return lines.join("\n");
 }
