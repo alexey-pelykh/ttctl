@@ -35,7 +35,7 @@ TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.
 - **Applications** — review your activity items (applications, availability requests, interviews, engagement signals); per-status-group counts via `applications stats`; confirm / reject open Interest Requests via `applications confirm` / `applications reject`
 - **Engagements** — view current and past engagements; manage engagement breaks; per-status counts via `engagements stats`
 - **Jobs** — browse opportunities; manage saved / viewed / not-interested signals; configure search subscription; direct-apply via `jobs apply <id> --consent` (legal-compliance gate is mandatory). Add `--suggest-answers` to fetch your own historical answers to similar prior questions as advisory autocomplete suggestions (opt-in, off the critical apply path; failures degrade gracefully). The MCP tool `ttctl_jobs_apply_similar_answers` exposes the same surface to agents.
-- **Timesheets** — list, view, and submit timesheet billing cycles
+- **Timesheets** — list, view, submit, and update timesheet billing cycles
 - **Availability** — view and update working hours and allocated weekly hours
 - **Contracts** — view talent-level contracts (Toptal Direct, MSA, etc.)
 - **Payments** — view payout history and payment methods; submit rate-change requests
