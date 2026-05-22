@@ -180,11 +180,28 @@ import { execSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-/** Path prefixes that contribute service-module scans. */
+/**
+ * Path prefixes that contribute service-module scans.
+ *
+ * The `availability/` entry (#461) is in scope for forward-compat
+ * monitoring; with the current service shape (scalar `hours: number`
+ * input on `allocatedHours.set`, inline-object echos on `workingHours.show`
+ * and `allocatedHours.show`, type-alias return types
+ * `AllocatedHoursSetOutcome` / `WorkingHoursSetOutcome`) the script
+ * produces zero pairings — neither write fn matches the named-interface
+ * input + named-interface echo precondition. The wire-level symmetry
+ * for `allocatedHours` echoing on `GetAvailability` is asserted instead
+ * via the E2E round-trip and the wire-shape snapshots in
+ * `packages/e2e/src/wire-snapshots/{GetAvailability,UpdateAllocatedHours}.snapshot.json`.
+ * The entry stays so a future refactor that introduces a named input
+ * interface (e.g., `AllocatedHoursInput`) is automatically monitored
+ * by this gate.
+ */
 const SCAN_PREFIXES: readonly string[] = [
   "packages/core/src/services/profile/",
   "packages/core/src/services/engagements/",
   "packages/core/src/services/payments/",
+  "packages/core/src/services/availability/",
 ];
 
 /** Write-fn names. */

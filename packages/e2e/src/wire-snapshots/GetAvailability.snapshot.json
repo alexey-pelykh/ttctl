@@ -1,0 +1,56 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-22T10:22:49.166Z",
+  "operationName": "GetAvailability",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "allocatedHours": {
+        "kind": "number"
+      },
+      "availableShiftRangeFrom": {
+        "kind": "string"
+      },
+      "availableShiftRangeTo": {
+        "kind": "string"
+      },
+      "profileId": {
+        "kind": "string"
+      },
+      "timeZone": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "location": {
+            "kind": "string"
+          },
+          "name": {
+            "kind": "string"
+          },
+          "stdOffset": {
+            "kind": "number"
+          },
+          "utcOffset": {
+            "kind": "number"
+          },
+          "value": {
+            "kind": "string"
+          }
+        }
+      },
+      "viewerId": {
+        "kind": "string"
+      },
+      "workingTimeFrom": {
+        "kind": "string"
+      },
+      "workingTimeTo": {
+        "kind": "string"
+      }
+    }
+  }
+}
