@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { applications } from "@ttctl/core";
 
 import { formatRespondPayload } from "../confirm.js";
+import { formatInterviewDetail } from "../interview.js";
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
 import { formatRejectReasons } from "../reject-reasons.js";
 import { formatFixedRate } from "../shared.js";
@@ -337,5 +338,162 @@ describe("formatStatsPretty", () => {
     // Counts present
     expect(out).toContain("116");
     expect(out).toContain("2");
+  });
+});
+
+// ---------------------------------------------------------------------
+// `formatInterviewDetail` (#439)
+// ---------------------------------------------------------------------
+
+describe("formatInterviewDetail (#439)", () => {
+  function makeDetail(overrides: Partial<applications.InterviewDetail> = {}): applications.InterviewDetail {
+    return {
+      id: "int-1",
+      status: "SCHEDULED",
+      kind: "EXTERNAL",
+      interviewType: "Technical",
+      interviewTime: "60 minutes",
+      information: "Brief paragraph one.\n\nBrief paragraph two.",
+      initiator: "Recruiter Recruiterson",
+      scheduledAtTimes: ["2026-06-01T10:00:00Z", "2026-06-02T15:30:00Z"],
+      schedulingComment: "Pick whichever slot works.",
+      method: { typeV2: "ZOOM", conferenceUrl: "https://zoom.us/j/12345", resource: null },
+      contacts: [
+        {
+          id: "ctc-1",
+          fullName: "Recruiter Recruiterson",
+          email: "recruiter@example.com",
+          phoneNumber: null,
+          position: "Recruiter",
+          main: true,
+          timeZone: { value: "America/New_York", location: "New York, NY" },
+        },
+      ],
+      guideId: "gui-1",
+      talentNotes: [{ id: "note-1", section: "GAPS", note: "Ask about scaling." }],
+      job: { id: "job-1", activityItemId: "act-1" },
+      updatedAt: "2026-05-15T08:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("renders the canonical sectioned layout for a fully-populated interview", () => {
+    const out = formatInterviewDetail(makeDetail());
+    expect(out).toContain("Interview int-1");
+    expect(out).toContain("Status: SCHEDULED");
+    expect(out).toContain("Kind:   EXTERNAL");
+    expect(out).toContain("Type:   Technical");
+    expect(out).toContain("Time:   60 minutes");
+    expect(out).toContain("Updated: 2026-05-15T08:00:00Z");
+
+    expect(out).toContain("Scheduling");
+    expect(out).toContain("Initiator: Recruiter Recruiterson");
+    expect(out).toContain("Proposed slots:");
+    expect(out).toContain("    - 2026-06-01T10:00:00Z");
+    expect(out).toContain("    - 2026-06-02T15:30:00Z");
+    expect(out).toContain("Comment: Pick whichever slot works.");
+
+    expect(out).toContain("Method");
+    expect(out).toContain("Type:       ZOOM");
+    expect(out).toContain("Conference: https://zoom.us/j/12345");
+
+    expect(out).toContain("Information");
+    expect(out).toContain("  Brief paragraph one.");
+    expect(out).toContain("  Brief paragraph two.");
+
+    expect(out).toContain("Contacts");
+    expect(out).toContain("(main) Recruiter Recruiterson — Recruiter");
+    expect(out).toContain("Email:    recruiter@example.com");
+    expect(out).toContain("TimeZone: New York, NY (America/New_York)");
+
+    expect(out).toContain("Notes");
+    expect(out).toContain("[GAPS] Ask about scaling.");
+
+    expect(out).toContain("Job");
+    expect(out).toContain("Job id:      job-1");
+    expect(out).toContain("Activity id: act-1");
+
+    expect(out).toContain("Prep guide");
+    expect(out).toContain("  ID: gui-1");
+  });
+
+  it("omits per-field lines when their value is null (header + nullable subsections)", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        status: null,
+        kind: null,
+        interviewType: null,
+        interviewTime: null,
+        information: null,
+        method: null,
+        contacts: [],
+        talentNotes: [],
+        guideId: null,
+      }),
+    );
+    expect(out).toContain("Interview int-1");
+    expect(out).not.toContain("Status:");
+    expect(out).not.toContain("Kind:");
+    expect(out).not.toContain("Type:");
+    expect(out).not.toContain("Method");
+    expect(out).not.toContain("Information");
+    expect(out).not.toContain("Contacts");
+    expect(out).not.toContain("Notes");
+    expect(out).not.toContain("Prep guide");
+    // Scheduling block still shows (initiator + slots populated)
+    expect(out).toContain("Scheduling");
+  });
+
+  it("omits the entire Scheduling block when all three fields are empty", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        initiator: null,
+        scheduledAtTimes: [],
+        schedulingComment: null,
+      }),
+    );
+    expect(out).not.toContain("Scheduling");
+  });
+
+  it("falls back to contact id when fullName and main are absent", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        contacts: [
+          {
+            id: "ctc-anon",
+            fullName: null,
+            email: null,
+            phoneNumber: null,
+            position: null,
+            main: null,
+            timeZone: null,
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("Contacts");
+    expect(out).toContain("  ctc-anon");
+  });
+
+  it("handles a PHONE method (resource populated, conferenceUrl absent)", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        method: { typeV2: "PHONE", conferenceUrl: null, resource: "+1-555-0100" },
+      }),
+    );
+    expect(out).toContain("Type:       PHONE");
+    expect(out).toContain("Resource:   +1-555-0100");
+    expect(out).not.toContain("Conference:");
+  });
+
+  it("omits the Job activityItemId line when only job.id is present", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        job: { id: "job-2", activityItemId: null },
+      }),
+    );
+    expect(out).toContain("Job");
+    expect(out).toContain("Job id:      job-2");
+    expect(out).not.toContain("Activity id:");
   });
 });

@@ -3036,3 +3036,417 @@ export async function similarAnswers(token: string, jobId: string): Promise<Simi
   const suggestions = await Promise.all(allIdentifiers.map((qid) => similarAnswersForQuestion(token, qid)));
   return allIdentifiers.map((questionId, i) => ({ questionId, suggestions: suggestions[i] ?? [] }));
 }
+
+// ---------------------------------------------------------------------
+// Interview detail (#439)
+//
+// `applications.interviews.show(id)` — read-only fetch of one
+// `TalentInterview` via the mobile-gateway `Interview` query. The id is
+// the `TalentInterview.id` surfaced on `applications.show(<activityId>)`
+// as the `Interview: <id>` line. Where `applications.show` is the
+// activity-row detail with an interview-presence indicator, this leaf
+// is the rich interview detail — interviewer contacts, scheduled slot,
+// agenda link, prep-guide ref, and the talent's own notes.
+//
+// **Operation document**: the captured
+// `research/graphql/gateway/operations/mobile/Interview.graphql` is a
+// large cascade (~25 types via `interviewWithJobActivityFields →
+// jobActivityItemData`). Same posture as `JobActivityItem` (line 651):
+// inline a trimmed selection that touches only the fields the CLI / MCP
+// renders. Authoritative wire shape is the captured doc; selection is
+// the projection contract.
+//
+// **T1 disposition (#439)**: `Interview` is in
+// `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` (`codegen.config.ts`), so no
+// `InterviewQuery` type is generated. Wire shape is pinned by the
+// committed `Interview.snapshot.json` and asserted on every
+// `TTCTL_E2E=1` run via `assertWireShapeStable`.
+// ---------------------------------------------------------------------
+
+/**
+ * `InterviewStatusEnum` values from the synthesized schema
+ * (`../research/graphql/gateway/schema.graphql`). Closed set.
+ */
+export type InterviewStatus =
+  | "ACCEPTED"
+  | "MISSED"
+  | "PENDING"
+  | "REJECTED"
+  | "SCHEDULED"
+  | "TIME_ACCEPTED"
+  | "TIME_REJECTED";
+
+export const INTERVIEW_STATUSES: readonly InterviewStatus[] = [
+  "ACCEPTED",
+  "MISSED",
+  "PENDING",
+  "REJECTED",
+  "SCHEDULED",
+  "TIME_ACCEPTED",
+  "TIME_REJECTED",
+] as const;
+
+/**
+ * `InterviewKindEnum` values from the synthesized schema. `INTERNAL`
+ * = interview between talent and Toptal (vetting); `EXTERNAL` =
+ * interview between talent and client (post-match).
+ */
+export type InterviewKind = "EXTERNAL" | "INTERNAL";
+
+/**
+ * `TalentInterviewMethodTypeEnum` values from the synthesized schema.
+ * Typed as a string for forward compatibility with un-enumerated future
+ * members (the wire is untrusted; new method types may appear without
+ * codegen warning).
+ */
+export type InterviewMethodType = string;
+
+/**
+ * Time-zone descriptor. `value` is the IANA-ish zone name; `location`
+ * is a human-readable label. Either may be `null` when the wire omits
+ * the field.
+ */
+export interface InterviewTimeZone {
+  value: string | null;
+  location: string | null;
+}
+
+/**
+ * One interviewer-side contact (recruiter, client representative, etc.).
+ * `main: true` flags the primary contact on the interview.
+ */
+export interface InterviewContact {
+  id: string;
+  fullName: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  position: string | null;
+  main: boolean | null;
+  timeZone: InterviewTimeZone | null;
+}
+
+/**
+ * Method by which the interview will be conducted (Zoom, phone, etc.).
+ *
+ * - `typeV2` — one of the `TalentInterviewMethodTypeEnum` members
+ *   (`ZOOM`, `PHONE`, `BLUEJEANS`, `CUSTOM_WEB_CONFERENCE`,
+ *   `GOOGLE_HANGOUTS`, `SKYPE`). Stringly-typed because the wire is
+ *   untrusted; the codegen-exclusion may add new members.
+ * - `conferenceUrl` — meeting link for `ZOOM` / `BLUEJEANS` /
+ *   `GOOGLE_HANGOUTS` / `CUSTOM_WEB_CONFERENCE` methods.
+ * - `resource` — free-text channel string (phone number for `PHONE`,
+ *   handle for `SKYPE`).
+ */
+export interface InterviewMethod {
+  typeV2: InterviewMethodType | null;
+  conferenceUrl: string | null;
+  resource: string | null;
+}
+
+/**
+ * One free-form note the talent has attached to the interview. `section`
+ * is one of the `InterviewGuideSectionIdentifierEnum` members
+ * (`ASK_YOUR_CLIENT`, `GAPS`, `JOB_HIGHLIGHTS`, `POTENTIAL_QUESTIONS`,
+ * `PRO_TIPS`, `STRENGTHS`) or `null` when the note isn't section-pinned.
+ */
+export interface InterviewTalentNote {
+  id: string;
+  section: string | null;
+  note: string | null;
+}
+
+/**
+ * Back-pointer to the parent job + activity item. Presence indicators
+ * only — the CLI surfaces them as discovery hints (`applications show
+ * <activityId>` to drill into the full activity row).
+ */
+export interface InterviewJobRef {
+  /** `TalentJob.id`. */
+  id: string;
+  /** `TalentJobActivityItem.id` for the activity row containing this interview. */
+  activityItemId: string | null;
+}
+
+/**
+ * Projected interview detail returned by `interviews.show()`. The shape
+ * the CLI's pretty renderer and the MCP tool's JSON payload depend on.
+ */
+export interface InterviewDetail {
+  id: string;
+  /** `InterviewStatusEnum` member (see {@link INTERVIEW_STATUSES}) or null. */
+  status: InterviewStatus | null;
+  /** `InterviewKindEnum` member or null. */
+  kind: InterviewKind | null;
+  /** Free-text interview-type label (legacy; modern wire prefers {@link kind}). */
+  interviewType: string | null;
+  /** Duration / display string (e.g. `"30 minutes"`). */
+  interviewTime: string | null;
+  /** Recruiter brief, markdown-formatted. */
+  information: string | null;
+  /** Who scheduled the interview (display string). */
+  initiator: string | null;
+  /** Proposed slot timestamps (ISO 8601). */
+  scheduledAtTimes: string[];
+  /** Free-text scheduling comment from the initiator. */
+  schedulingComment: string | null;
+  /** Conference method (Zoom, phone, …) — `null` until the slot is locked. */
+  method: InterviewMethod | null;
+  /** Interviewer contacts. Server-supplied order preserved. */
+  contacts: InterviewContact[];
+  /** Prep-guide id (presence indicator). Full guide is the `InterviewGuide` op, out of scope here. */
+  guideId: string | null;
+  /** Talent's own notes attached to the interview. Server order preserved. */
+  talentNotes: InterviewTalentNote[];
+  /** Back-pointer to the parent job + activity item. */
+  job: InterviewJobRef | null;
+  /** Server-supplied last-mutation timestamp (ISO 8601). */
+  updatedAt: string | null;
+}
+
+// ---------------------------------------------------------------------
+// Wire shape (private to the interviews namespace)
+// ---------------------------------------------------------------------
+
+interface WireInterviewTimeZone {
+  value?: string | null;
+  location?: string | null;
+}
+
+interface WireInterviewContact {
+  id: string;
+  fullName?: string | null;
+  email?: string | null;
+  phoneNumber?: string | null;
+  position?: string | null;
+  main?: boolean | null;
+  timeZone?: WireInterviewTimeZone | null;
+}
+
+interface WireInterviewMethod {
+  typeV2?: string | null;
+  conferenceUrl?: string | null;
+  resource?: string | null;
+}
+
+interface WireInterviewTalentNote {
+  id: string;
+  section?: string | null;
+  note?: string | null;
+}
+
+interface WireInterviewGuide {
+  id: string;
+}
+
+interface WireInterviewJobRef {
+  id: string;
+  activityItem?: { id: string } | null;
+}
+
+interface WireInterviewStatusV2 {
+  value?: string | null;
+}
+
+interface WireInterview {
+  id: string;
+  /**
+   * Aliased on the wire as `interviewStatus: statusV2`. The captured
+   * `interviewFields` fragment uses this alias to avoid collision with
+   * other `statusV2` shapes in the response.
+   */
+  interviewStatus?: WireInterviewStatusV2 | null;
+  kind?: string | null;
+  interviewType?: string | null;
+  interviewTime?: string | null;
+  information?: string | null;
+  initiator?: string | null;
+  scheduledAtTimes?: (string | null)[] | null;
+  schedulingComment?: string | null;
+  interviewMethod?: WireInterviewMethod | null;
+  interviewContacts?: (WireInterviewContact | null)[] | null;
+  guide?: WireInterviewGuide | null;
+  talentNotes?: (WireInterviewTalentNote | null)[] | null;
+  job?: WireInterviewJobRef | null;
+  updatedAt?: string | null;
+}
+
+interface InterviewResponse {
+  viewer: {
+    id: string;
+    interview: WireInterview | null;
+  } | null;
+}
+
+// Trimmed strict subset of the captured Interview op in
+// `research/graphql/gateway/operations/mobile/Interview.graphql`. The
+// captured doc selects via the `interviewWithJobActivityFields →
+// jobActivityItemData` cascade; this trim drops the activity-item
+// cascade (the caller already has the activity row from
+// `applications.show`) and keeps only the interview-specific selection.
+// `statuses: ALL` keeps parity with the captured op so any interview
+// state is fetchable.
+const INTERVIEW_QUERY = `query Interview($id: ID!) {
+  viewer {
+    __typename
+    id
+    interview(id: $id, statuses: ALL) {
+      __typename
+      id
+      interviewStatus: statusV2 { __typename value }
+      kind
+      interviewType
+      interviewTime
+      information
+      initiator
+      scheduledAtTimes
+      schedulingComment
+      interviewMethod {
+        __typename
+        typeV2
+        conferenceUrl
+        resource
+      }
+      interviewContacts {
+        __typename
+        id
+        fullName
+        email
+        phoneNumber
+        main
+        position
+        timeZone { __typename value location }
+      }
+      guide { __typename id }
+      talentNotes {
+        __typename
+        id
+        section
+        note
+      }
+      job {
+        __typename
+        id
+        activityItem { __typename id }
+      }
+      updatedAt
+    }
+  }
+}`;
+
+function projectInterviewContact(c: WireInterviewContact): InterviewContact {
+  return {
+    id: c.id,
+    fullName: c.fullName ?? null,
+    email: c.email ?? null,
+    phoneNumber: c.phoneNumber ?? null,
+    position: c.position ?? null,
+    main: c.main ?? null,
+    timeZone:
+      c.timeZone == null
+        ? null
+        : {
+            value: c.timeZone.value ?? null,
+            location: c.timeZone.location ?? null,
+          },
+  };
+}
+
+function projectInterviewDetail(w: WireInterview): InterviewDetail {
+  return {
+    id: w.id,
+    status: (w.interviewStatus?.value ?? null) as InterviewStatus | null,
+    kind: (w.kind ?? null) as InterviewKind | null,
+    interviewType: w.interviewType ?? null,
+    interviewTime: w.interviewTime ?? null,
+    information: w.information ?? null,
+    initiator: w.initiator ?? null,
+    scheduledAtTimes: (w.scheduledAtTimes ?? []).filter((s): s is string => typeof s === "string"),
+    schedulingComment: w.schedulingComment ?? null,
+    method:
+      w.interviewMethod == null
+        ? null
+        : {
+            typeV2: w.interviewMethod.typeV2 ?? null,
+            conferenceUrl: w.interviewMethod.conferenceUrl ?? null,
+            resource: w.interviewMethod.resource ?? null,
+          },
+    contacts: (w.interviewContacts ?? [])
+      .filter((c): c is WireInterviewContact => c != null)
+      .map(projectInterviewContact),
+    guideId: w.guide?.id ?? null,
+    talentNotes: (w.talentNotes ?? [])
+      .filter((n): n is WireInterviewTalentNote => n != null)
+      .map((n) => ({
+        id: n.id,
+        section: n.section ?? null,
+        note: n.note ?? null,
+      })),
+    job:
+      w.job == null
+        ? null
+        : {
+            id: w.job.id,
+            activityItemId: w.job.activityItem?.id ?? null,
+          },
+    updatedAt: w.updatedAt ?? null,
+  };
+}
+
+/**
+ * Read one `TalentInterview` by id via the mobile-gateway `Interview`
+ * query (#439). Sibling sub-namespace to the top-level activity-row
+ * leaves (`list` / `show` / `stats`) — fetches the rich interview
+ * detail once the user knows the id from `applications show
+ * <activityId>` (the `Interview: <id>` line).
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` when the id doesn't resolve
+ *   to an interview the signed-in user can see, OR when the wire
+ *   surfaces a `NOT_FOUND_MESSAGE_PATTERN`-matched GraphQL error
+ *   (`Record not found` / `Invalid ID` / Relay `Node id ... resolves to`).
+ * @throws `ApplicationsError("NO_VIEWER")` when the session is valid
+ *   but no viewer is bound.
+ */
+async function interviewsShow(token: string, id: string): Promise<InterviewDetail> {
+  let data: InterviewResponse & { viewer: { id: string } | null };
+  try {
+    data = await callGateway<InterviewResponse & { viewer: { id: string } | null }>(
+      token,
+      "Interview",
+      INTERVIEW_QUERY,
+      { id },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError("NOT_FOUND", `No interview found with id "${id}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    // Defensive — `callGateway` with `requireViewer: true` already
+    // raises `NO_VIEWER` for this case; keep the check for type
+    // narrowing parity with sibling `show()` / `stats()`.
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.interview === null) {
+    throw new ApplicationsError("NOT_FOUND", `No interview found with id "${id}" (or you don't have access to it).`);
+  }
+  return projectInterviewDetail(data.viewer.interview);
+}
+
+/**
+ * `applications.interviews.*` sub-namespace. Read-only leaves for
+ * interview-detail access — sibling to the top-level activity-row
+ * leaves on this module. Sub-namespace grouping pattern follows
+ * `payments.rate.*` (#447) and `payments.payouts.*` / `payments.methods.*`
+ * (#149); the plural form here matches `payouts` / `methods` for
+ * collection-style namespaces.
+ */
+export const interviews = {
+  show: interviewsShow,
+};
