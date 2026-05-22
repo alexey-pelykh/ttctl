@@ -7,89 +7,358 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **`profile employment update` on `noEmployer:true` rows (#508).**
-  The Rails apply path has a symmetric anchor gate on
-  `UpdateEmployment`, mirror of the #484 CREATE-side contract:
-  noEmployer rows require the `(noWebsite, companyWebsite)` anchor
-  pair echoed PLUS `managementExperience` and `toptalRelated` on the
-  wire input — otherwise the path falls through to the
-  `employer_id .blank?` validator and produces the misleading
-  `employerId: You can't leave this empty` error. The fix in
-  `buildUpdateEmploymentInput`: (a) echoes the anchor pair from
-  current on the null-employerId branch; (b) force-echoes
-  `managementExperience` and `toptalRelated` on every UPDATE; (c)
-  extends `EMPLOYMENT_FRAGMENT` to read `managementExperience` so
-  the echo has source data; (d) fixes `mapEmploymentNode` to coerce
-  non-string `reportingTo` to `null` (was incorrectly typed as
-  `unknown[]` on rows where the wire returned an empty array).
-  Catalog-employer rows continue to omit the anchor pair per the
-  #487 rollback (where echoing trips a DIFFERENT anchor gate,
-  "either employer or company website"). Supersedes the WORM framing
-  in `research/notes/15-employment-custom-workplace-worm.md` and
-  refutes the catalog-Employer hypothesis in #505 (closed as not
-  planned). Verified on the live talent-profile wire via
-  `45-profile-employment-add.e2e.test.ts` (now exercises a full
-  `update → restore` on a real noEmployer row). Wire-shape snapshots
-  refreshed for `CreateEmployment`, `UpdateEmployment`, and
-  `GET_WORK_EXPERIENCE` to reflect the extended fragment.
-
-### Changed
-
-- **Stage-2 surface tightening (#438) — `ConfirmInput` / `ApplyInput`
-  / MCP IR-accept + jobs-apply Zod schemas now validate against the
-  recovered SDL shapes from #425.** Replaces the opaque
-  `z.array(z.unknown())` / `z.unknown()` pass-throughs shipped in
-  Wave 0 with typed Zod schemas
-  (`JobPositionAnswerInputSchema().strict()`,
-  `JobExpertiseAnswerInputSchema().strict()`,
-  `PitchInputSchema().strict()`) per ADR-008 § Decision Part 3.
-  Surfaces affected: Core `ConfirmInput.matcherQuestionsAnswers` /
-  `.expertiseQuestionsAnswers` / `.pitchInput`; Core
-  `ApplyInput.matcherAnswers` / `.expertiseAnswers` / `.pitchData`;
-  CLI `applications confirm` AND CLI `jobs apply` (both validate via
-  the new `parseAsRecovered<T>(value, schema, flagName)` helper in
-  `packages/cli/src/lib/json-input.ts`); MCP
-  `ttctl_interest_requests_accept` AND MCP `ttctl_jobs_apply` tool
-  inputSchemas (replaces `z.array(z.unknown())` / `z.unknown()` with
-  `z.array(...InputSchema().strict())` / `...InputSchema().strict()`).
-  - **Pre-1.0 minor breaking change**: agents / scripts passing
-    malformed shapes now fail at client-side schema validation
-    (typed `VALIDATION_ERROR` envelope at the CLI; typed Zod
-    rejection at the MCP framework) rather than at the wire. The
-    behavioral change is fail-fast — the previously-opaque
-    pass-through would have flowed through to the wire and either
-    been silently accepted (if the wire was permissive) or
-    rejected with a generic `GRAPHQL_ERROR`.
-  - **Field-name fix (matcher answers)**: the previous opaque
-    Wave-0 documentation said matcher answers used `questionId`;
-    per the recovered SDL, `JobPositionAnswerInput` uses `id` —
-    **NOT** `questionId`. The runtime `validateAnswerIds` check
-    in `applications.apply()` is updated to validate
-    `matcherAnswers[*].id` against the inventory (expertise
-    answers continue to use `questionId` per
-    `JobExpertiseAnswerInput`; the field-name asymmetry is per the
-    recovered SDL). Callers passing matcher answers with
-    `questionId` will now be rejected at the CLI/MCP boundary
-    BEFORE the wire call. Recovery: rename `questionId` → `id`
-    in matcher answer entries.
-  - **Example-shape migration**: the example payloads in
-    `applications confirm` / `jobs apply` `--help` output and the
-    `ttctl_interest_requests_accept` / `ttctl_jobs_apply` tool
-    descriptions are updated to reflect the recovered shapes
-    (matcher uses `{ id, answer }`; expertise uses
-    `{ questionId, other, subjectId }`; pitch uses the typed
-    `PitchInput` schema — every nullable slot must be present,
-    `null` for the empty case, per `codegen.config.ts`'s
-    `nullishBehavior: "nullable"`).
-  - **Schema/contract rule**: NOT TRIGGERED (no new wire ops); the
-    behavior change is in client-side validation routing. The
-    existing E2E coverage for `confirm` (and #445's apply
-    coverage once it lands) must continue passing — the
-    wire-format itself is unchanged.
+## [v0.1.0-rc.8] - 2026-05-22
 
 ### Added
+
+- **`applications interview guide show <interviewId>` — `InterviewGuide`
+  content read (#470).** Read-only wrapper around the captured
+  mobile-gateway `InterviewGuide` query. Returns structured
+  `InterviewGuideProjection`
+  (`{ interviewId, guideId, sections[].{ identifier, title, subtitle,
+tips[].{ identifier, title, content, hardcodedContent } } }`) — the
+  guide/tips skeleton that drives the talent's prep view, with
+  `tip.content` (job/talent-personalized markdown) and
+  `tip.hardcodedContent` (generic template) as the actual prose.
+  Resolves two issue-body wire ambiguities at capture time: input is
+  the **interview id** (the op takes `$interviewId: ID!`), not an
+  `interviewType` enum; and the return shape is **structured
+  sections/tips**, not a single Markdown/HTML blob. Sub-sub-namespace
+  pattern follows #440's `.notes.show()` sibling under the
+  `applications.interviews.*` namespace from #439.
+  - **Service surface**: `applications.interviews.guide.show(token,
+interviewId) → InterviewGuideProjection` in
+    `packages/core/src/services/applications/index.ts`. Inline
+    hand-authored query (selection trimmed from the captured doc —
+    drops the heavy `interviewContacts` + `job → jobData` cascade,
+    `client`, and `mobileFeedbackForm`). Preserves the captured op's
+    `statuses: ALL` so any interview state's guide is fetchable.
+  - **CLI surface**: `ttctl applications interview guide show
+<interviewId>` with `-o pretty | json | yaml`. Pretty mode emits a
+    Sections / Tips outline; JSON/YAML emit the verbatim projection.
+  - **MCP surface**: `ttctl_applications_interview_guide_show` —
+    read-only tool. Bumps the MCP tool count delta tracked across
+    `registration.test.ts` / `tools.test.ts` / `dryrun-smoke.test.ts`.
+  - **Schema/contract rule**: TRIGGERED — new hand-authored
+    GraphQL op. E2E at
+    `packages/e2e/src/65-applications-interview-guide.e2e.test.ts`.
+    NOT_FOUND probe live-passes against the new `InterviewGuide` op;
+    projection + snapshot tests skip-return until the test account
+    surfaces an interview in `JobActivityItems` (same `HTTP 400`
+    account-scoped limitation as #439 / #440, tracked in #520).
+  - **Track 1 vs Track 2**: T1 — `InterviewGuide` is in
+    `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`; structurally forced. Routing
+    manifest row added (`docs/wire-validation-routing.md`). Snapshot
+    file `packages/e2e/src/wire-snapshots/InterviewGuide.snapshot.json`
+    will land once a real interview id is reachable on the maintainer
+    account.
+
+- **`applications availability-request show <id>` —
+  `AvailabilityRequest` query wrapper (#442).** Read-only wrapper
+  around the captured mobile-gateway `AvailabilityRequest` op. Returns
+  `AvailabilityRequestDetail` — the same canonical AR id the #411
+  `applications confirm` / `reject` write-side leaves accept (NOT the
+  activity-item id). Discover the id via `applications show
+<activityId>` (`Availability request: <id>` line). Mirrors the #439
+  / #440 sub-namespace precedent at
+  `applications.availabilityRequests.*`.
+  - **Service surface**: `applications.availabilityRequests.show(
+token, id) → AvailabilityRequestDetail`. Selection is a trimmed
+    subset of the captured `AvailabilityRequest.graphql` — trims
+    `job` to the `ApplicationJobRef` shape (drops the heavy `jobData`
+    cascade) and omits the `Unknown`-typed `jobExpertiseAnswers` /
+    `rejectReason` fields.
+  - **CLI surface**: `ttctl applications availability-request show
+<id>` with the standard `pretty | json | yaml` output triplet.
+  - **MCP surface**: `ttctl_applications_availability_request_show` —
+    `ttctl_applications_*` tool count bumps 116 → 117.
+  - **Schema/contract rule**: TRIGGERED — new hand-authored op against
+    the mobile-gateway. E2E at
+    `packages/e2e/src/64-applications-availability-request-show.e2e.test.ts`,
+    **3/3 live-passed in 10.50s**. The NOT_FOUND probe (the
+    load-bearing live test for op callability) exercised the op
+    against a syntactically-plausible-but-never-issued id and got
+    back a structurally-valid `code: "NOT_FOUND"` envelope — proving
+    op name, query shape, and error-mapping all work against the live
+    API. The detail + snapshot tests skip-returned gracefully (same
+    `JobActivityItems` HTTP 400 account limitation as #439 / #440 /
+    #470).
+  - **Track 1 vs Track 2**: T1 — `AvailabilityRequest` is in
+    `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`; structurally forced. Routing
+    manifest row added. Snapshot deferred until an AR is reachable on
+    the maintainer account (independent of #520, which scopes
+    `Interview` + `GetInterviewNotes` only).
+
+- **`applications interview notes show <jobId>` — `GetInterviewNotes`
+  query wrapper (#440).** Read-only wrapper around the portal-side
+  `GetInterviewNotes` query — returns `InterviewNotesProjection`
+  (`jobId` echo, `interview.{ id, kind, talentNotes }`) so the talent
+  can read their interview prep notes via CLI / MCP. Sub-sub-namespace
+  `applications.interviews.notes.show()` extends the #439
+  `applications.interviews.*` line. Resolves the issue-body's
+  `Input: id — interview id` mis-statement against wire reality: the
+  op takes `$jobId: ID!` (a `TalentJob.id`) and traverses
+  `viewer.job(id).activityItem.interview.{ id, kind, talentNotes }`.
+  Discover the job id via `applications interview show <interviewId>`
+  (the `Job → Job id` line from the #439 projection) or
+  `applications show <activityId>`.
+  - **Service surface**: `applications.interviews.notes.show(token,
+jobId) → InterviewNotesProjection`. Hand-authored query string —
+    trimmed strict subset of the captured portal document (drops the
+    heavy job-detail cascade; keeps only the `talentNotes` selection).
+  - **CLI surface**: `ttctl applications interview notes show <jobId>`
+    with standard output triplet.
+  - **MCP surface**: `ttctl_applications_interview_notes_show`.
+  - **Schema/contract rule**: TRIGGERED — `GetInterviewNotes` is a
+    new GraphQL op for TTCtl, in `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`.
+    E2E at
+    `packages/e2e/src/63-applications-interview-notes-show.e2e.test.ts`;
+    NOT_FOUND probe live-passes. Detail + snapshot tests
+    skip-returned (same `JobActivityItems` HTTP 400 account limitation
+    as #439).
+  - **Track 1 vs Track 2**: T1 — structurally forced (op in
+    portal-untrusted list). Routing manifest row added. Snapshot
+    deferred per #520.
+
+- **`applications interview show <interviewId>` — `Interview` query
+  wrapper (#439).** Read-only wrapper around the captured
+  mobile-gateway `Interview` query. Returns `InterviewDetail`
+  (interviewer contacts, scheduled slots, agenda / prep-guide ref,
+  talent's own notes) — the drill-down for the `Interview: <id>` line
+  surfaced on `applications show <activityId>`. Establishes the
+  `applications.interviews.*` sub-namespace consumed by #440 / #470.
+  - **Service surface**: `applications.interviews.show(token, id) →
+InterviewDetail`. Selection is a trimmed subset of the captured
+    `Interview.graphql` — drops the `jobActivityItemData` fragment
+    cascade (caller already has the activity row).
+  - **CLI surface**: `ttctl applications interview show <interviewId>`
+    with standard output triplet.
+  - **MCP surface**: `ttctl_applications_interview_show`.
+  - **Schema/contract rule**: TRIGGERED — new hand-authored op. E2E at
+    `packages/e2e/src/62-applications-interview-show.e2e.test.ts`;
+    NOT_FOUND probe live-passes. Detail + snapshot tests
+    skip-returned (account-scoped `JobActivityItems` HTTP 400 — same
+    posture as #440 / #470, tracked in #520).
+  - **Track 1 vs Track 2**: T1 — structurally forced
+    (`GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`). Routing manifest row added.
+
+- **`payments summary` — `GetTalentPaymentSummary` six-total aggregate
+  (#448).** Lightweight at-a-glance financial overview complementing
+  the heavier paginated `payouts.list`. Wraps the gateway-portal
+  `GetTalentPaymentSummary` query — returns the six-field
+  `PayoutsSummary` aggregate (`totalPaid` / `totalDue` /
+  `totalOutstanding` / `totalOverdue` / `totalOnHold` / `totalDisputed`,
+  each a decimal string) spanning the talent's entire payment history.
+  Issue-body resolution: the proposed `monthlySummary[]`, "projected
+  payout", and `--year` / `--month` filters do not exist in the
+  verbatim `GetTalentPaymentSummary.graphql` operation document — the
+  op selects only the six flat totals. Per `CLAUDE.md § Schema/contract
+validation rule`, the operation document is the wire-contract
+  authority; the query document retains the verbatim variable
+  declarations (`$status`, `$createdOn`, `$clientIds` — all optional),
+  so a future filtered leaf needs no query rewrite.
+  - **Service surface**: `payments.summary(token) → PayoutsSummary` in
+    `packages/core/src/services/payments/index.ts`.
+  - **CLI surface**: `ttctl payments summary` with standard output
+    triplet.
+  - **MCP surface**: `ttctl_payments_summary` — MCP tool count moves to
+    114 across the four bookkeeping sites.
+  - **Schema/contract rule**: TRIGGERED — new hand-authored op against
+    the gateway-portal surface. E2E at
+    `packages/e2e/src/61-payments-summary.e2e.test.ts`, **3/3
+    live-passed in 11.33s** against the live mobile-gateway. Wire
+    snapshot captured on first `TTCTL_E2E=1
+TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run (2026-05-22 14:32) and
+    re-asserted stable on the immediately-following run without the
+    update flag (14:33).
+  - **Track 1 vs Track 2**: T1 — `GetTalentPaymentSummary` is in
+    `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`; structurally forced.
+    Snapshot committed at
+    [`GetTalentPaymentSummary.snapshot.json`](packages/e2e/src/wire-snapshots/GetTalentPaymentSummary.snapshot.json).
+    Routing manifest row added.
+
+- **`payments rate current` — `GetTalentRate` lightweight hourly rate
+  read; second T2-wired op on `mobile-gateway` (#447).** New
+  `payments.rate.current()` service wraps the trusted-catalog
+  `GetTalentRate` portal query — returns `viewerRole.hourlyRate.verbose`
+  - `roleId` as a single-line hourly rate read, complementing the
+    heavier unified `payments rate show` projection from #149 (preserved
+    intact — the issue-body's proposed `rate show` name would have
+    collapsed market insight + validation + last/ongoing rate-change
+    request, so the new leaf is named `current` to avoid regression).
+  * **Service surface**: `payments.rate.current(token) →
+TalentRateProjection` with inline-composed
+    `GET_TALENT_RATE_RESPONSE_SCHEMA` Zod schema passed as the 5th
+    positional argument to `callGateway` (the Z-4 / #288 beachhead
+    pattern, mirroring `RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA`).
+    Wire-shape failures surface a typed `PaymentsError(code:
+"WIRE_SHAPE_ERROR")` envelope per
+    `docs/wire-validation-error-format.md` (#281).
+  * **CLI surface**: `ttctl payments rate current` with standard
+    output triplet (pretty mode emits the verbose single-line rate).
+  * **MCP surface**: `ttctl_payments_rate_current` read-only tool.
+  * **Schema/contract rule**: TRIGGERED — new call site for a
+    GraphQL operation not previously invoked from
+    `packages/core/src/**`. E2E at
+    `packages/e2e/src/60-payments-rate-current.e2e.test.ts` (gated by
+    `TTCTL_E2E=1`; see PR transcript). Two unit tests prove the T2
+    wire-up fires: `hourlyRate.verbose` as number rejects via
+    `WIRE_SHAPE_ERROR`; `viewerRole.roleId` as string rejects via
+    `WIRE_SHAPE_ERROR`.
+  * **Track 1 vs Track 2**: **T2 (wired)** — `GetTalentRateQuery`
+    exists in the trusted-catalog `packages/core/src/__generated__/gateway.ts`.
+    The inline-composed `GET_TALENT_RATE_RESPONSE_SCHEMA` is the
+    second T2-wired op on `mobile-gateway` after `RateChangeFormDetails`.
+    Routing manifest row added; mobile-gateway summary delta: `1→2
+T2 wired`; total `1→2 T2 wired`.
+
+- **`ttctl jobs apply <job-id>` — direct-apply CLI verb with `--consent`
+  gate + `--show-questions` preview + `--suggest-answers` + `--dry-run`
+  (#430 / #426 / #437 / #428 / #452).** Application-funnel write-side
+  arrives. The user-facing direct-apply verb composes the apply funnel
+  end-to-end per
+  [ADR-008](hq/engineering/adr/ADR-008-application-funnel-write-side.md):
+  pre-apply read suite (#424) → consent-gated mutation (#426) → opt-in
+  similar-answers suggestion (#452). The verb lives on `jobs` (reads
+  naturally: "apply to a job") while the underlying service module is
+  `applications.apply()` from #426.
+  - **Service surface (core, #426)**: `applications.apply(token,
+jobId, input, options) → ApplyOutcome`. Symmetric with
+    `applications.confirm` / `applications.reject`; lives on the
+    `applications.*` module per ADR-008 § Decision Part 5 (funnel-
+    crossing implementation, not a `jobs.*` surface). The flow is:
+    (1) consent gate refuses (`CONSENT_REQUIRED`) BEFORE any wire
+    call when `input.consentIssued !== true` (type-system literal +
+    runtime check covering `as`-cast / JSON-sourced inputs); (2)
+    dry-run short-circuit (zero wire calls including no pre-fetch;
+    `<resolved at apply time>` placeholder when rate is unresolved);
+    (3) pre-fetch via `Promise.all` — `applyData` + `applyQuestions` + `rateInsight` concurrently; reject-on-first; (4) structural
+    validation of `matcherAnswers[]` (uses `id`, per recovered SDL)
+    and `expertiseAnswers[]` (uses `questionId`) against the question
+    inventory; (5) rate default per REQ-A4 — caller `requestedHourlyRate`
+    overrides `PreApplyData.suggestedRate`; (6) `JobApply` mutation
+    with wire-quirk-aware variable mapping: `understand: $consentIssued`
+    (Q3 — wire field is `understand`) and `pitchData: $talentCard`
+    (Q1 — variable is `talentCard`, input field is `pitchData`); (7)
+    error mapping — wire-`already_applied` remaps to a typed
+    `ALREADY_APPLIED` envelope with an `applications show <activity-id>`
+    recovery hint.
+  - **Pre-apply read suite (core, #424)**:
+    `applications.applyData(token, jobId)` (aggregate pre-apply
+    context — job + `viewerRole.rates` + `platformConfiguration.rateValidationRules`),
+    `applications.applyQuestions(token, jobId)` (matcher + expertise
+    question inventory, 4-field `{ identifier, prompt, type, isMandatory }`),
+    `applications.rateInsight(token, jobId)` (`RateInsight | null`
+    discriminated union — `competitive` / `uncompetitive`, with
+    `BigDecimal` scalars NOT `Money`; verified against captured doc
+    - schema). The `NOT_FOUND_MESSAGE_PATTERN` regex widens from
+      `/Record not found/i` to
+      `/Record not found|Invalid ID|Node id .*? resolves to/i` —
+      load-bearing for the new pre-apply reads that surface Relay
+      decode errors on bad ids (per the project's Toptal wire-quirks
+      auto-memory).
+  - **CLI surface (#430)**: `ttctl jobs apply <job-id>` with
+    `--consent` (REQUIRED, no default — legal-compliance attestation
+    per ADR-008 § Decision Part 4; absence raises `CONSENT_REQUIRED`
+    with no wire call), `--rate <decimal>` (optional; defaults from
+    `PreApplyData.suggestedRate` when omitted — REQ-A4),
+    `-m, --message <text>`, `--answers-file <path>` / `--pitch-file
+<path>` (locked JSON grammar per ADR-008 § Decision Part 2;
+    supports `-` for stdin; shares `readJsonInput` lib from #428),
+    `--show-questions` (preview-only, REQ-Q3 — routed BEFORE the
+    consent gate; fetches `applyData + applyQuestions` and emits a
+    structured preview WITHOUT issuing the mutation),
+    `--dry-run` (threaded to `applications.apply(.., { dryRun })`),
+    and the standard `-o pretty | json | yaml`. DESTRUCTIVE-warning
+    text matches the `applications confirm` (#411) posture.
+  - **CLI sibling (#437)**: `ttctl jobs show <id> --with-questions`
+    (opt-in flag) parallel-runs `applications.applyQuestions(token,
+id)` alongside the existing `jobs.show()` fetch. Pretty output
+    gains `Matcher Questions (N)` and `Expertise Questions (N)`
+    sections; JSON envelope carries `{ ...JobDetail, questions: {
+matcher, expertise } }`. Flag-omitted behavior is byte-identical
+    to the pre-#437 baseline.
+  - **CLI extension (#428)**: `ttctl applications confirm` gains
+    `--answers-file <path>` (`{ matcherAnswers: [...], expertiseAnswers:
+[...] }` JSON) and `--pitch-file <path>` (`PitchInput` JSON
+    object). Both accept `-` for stdin; the second `-` claim
+    surfaces a typed `STDIN_DOUBLE_CLAIM` validation error.
+    Malformed JSON, missing files, and wrong top-level shapes refuse
+    with `VALIDATION_ERROR` envelopes BEFORE any wire call.
+    `applications.confirm()` core gets the matching wire-payload
+    forwarding test coverage in #423.
+  - **MCP surface (#436)**: 4 new tools — `ttctl_jobs_apply` (the
+    DESTRUCTIVE mutation tool, consent-gated via `consentIssued:
+z.literal(true)`) + `ttctl_jobs_apply_data` +
+    `ttctl_jobs_apply_questions` + `ttctl_jobs_apply_rate_insight`
+    (read-only pre-apply tools). MCP tool count moves 107 → 111;
+    the three `// surface-exempt:` markers from #424 are removed
+    (the fns are now genuinely surfaced).
+  - **MCP IR-accept extension (#429)**: `ttctl_interest_requests_accept`
+    gains `matcherAnswers` / `expertiseAnswers` / `pitchData` as
+    optional opaque `z.unknown()` fields. Forwarded as the wire's
+    `matcherQuestionsAnswers` / `expertiseQuestionsAnswers` /
+    `pitchInput` variables. Backward compat preserved when fields
+    are absent (#411 regression guard).
+  - **`applications.similarAnswers` (#452)**: New core fn wraps the
+    captured `SimilarJobQuestionAnswers($id)` op. Fans out N parallel
+    calls (one per matcher + expertise question via an internal
+    `applyQuestions(jobId)` pre-fetch) and returns
+    `SimilarJobAnswerGroup[]` grouped per question — matches the
+    mobile app's apply-screen autocomplete behavior. CLI exposes
+    `--suggest-answers` as an opt-in flag (NOT in the default 3-query
+    pre-apply suite). Failures degrade gracefully: stderr warning,
+    apply continues, output omits the suggestions section. No
+    auto-fill of the answers payload — suggestions are advisory only.
+    MCP exposes the standalone `ttctl_jobs_apply_similar_answers`
+    tool (MCP tool count moves 111 → 112).
+  - **Codegen recovery (#425)**: `pnpm codegen` regenerated with
+    research-side recovery of `JobPositionAnswerInput` /
+    `JobExpertiseAnswerInput` / `PitchInput` input shapes. Consumed
+    immediately by #438's Stage-2 schema tightening (already in this
+    cut's `### Changed`).
+  - **Live E2E (#445)**: Schema/contract gate satisfied for #423 /
+    #424 / #426 / #428 / #429 / #430 / #436 in one PR. Three new
+    e2e files at numbers `56-` / `57-` / `58-` (the proposed `50-` /
+    `51-` / `52-` and the fallback `53-` / `54-` / `55-` all
+    collided with existing files — preserves the file-ordering
+    test's strictly-increasing invariant). Wire-shape snapshots
+    materialise on the operator's first `TTCTL_E2E=1
+TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run. ADR-008 design open
+    questions Q1 / Q2 / Q3 / Q4 are env-gated for live resolution.
+  - **Cross-cutting docs + redaction (#446)**: README adds
+    `## Applying to jobs` + `## Interest Requests` sections;
+    `docs/wire-validation-routing.md` gains the four T1 rows for
+    `JobApply` / `JobApplyData` / `JobApplicationQuestions` /
+    `JobApplicationRateInsight` plus a new "Application-funnel
+    write-side T2 promotion" sub-section. MCP diagnostic redaction
+    extended with the `MCP_PII_FIELD_NAMES` allowlist (7 keys —
+    `matcheranswers`, `matcherquestionsanswers`, `expertiseanswers`,
+    `expertisequestionsanswers`, `pitchdata`, `pitchinput`,
+    `talentcard`) plus the `redactMcpPiiFields` traversal. CLI help
+    drive-by fix: `jobs apply` `APPLY_ANSWERS_FILE_HELP` corrects
+    matcher answer shape from `{questionId, answer}` to `{id,
+answer}` (pre-#446 help would have caused Zod strict-mode
+    rejection at runtime).
+  - **Schema/contract rule**: TRIGGERED — new hand-authored ops
+    `JobApply`, `JobApplyData`, `JobApplicationQuestions`,
+    `JobApplicationRateInsight`, `SimilarJobQuestionAnswers`. Live
+    coverage at `packages/e2e/src/56-jobs-apply.e2e.test.ts`,
+    `57-jobs-apply-data.e2e.test.ts`,
+    `58-applications-confirm-with-questions.e2e.test.ts`, and
+    `59-jobs-apply-similar-answers.e2e.test.ts` (committed
+    `SimilarJobQuestionAnswers.snapshot.json`). The
+    `ConfirmAvailabilityRequest` wire is unchanged in shape — only
+    the variables payload populates (#423 / #428 / #429 tests pin
+    the forwarding contract).
+  - **Track 1 vs Track 2**: T1 for all five ops — every op remains
+    in `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`. T2 promotion is
+    forward-compatible per the routing manifest's
+    "Application-funnel write-side T2 promotion" sub-section, gated
+    on the broader codegen-exclusion shrink. `SimilarJobQuestionAnswers`
+    snapshot is committed; the other four snapshots materialise from
+    the operator's first env-gated E2E run per the protocol in
+    `packages/e2e/src/wire-snapshots/README.md`.
 
 - **Per-domain consent gate for INFERRED-destructive mutations
   (#258, [ADR-009](hq/engineering/adr/ADR-009-per-domain-consent-vocabulary.md)).**
@@ -214,6 +483,170 @@ Boolean!` on `JobApply` (ADR-008's apply-funnel compliance
     `ConfirmAvailabilityRequest` wire call (covered by #445 E2E).
   - **Diagnostic redaction**: the three new field names are owned by
     cross-cutting issue #446 (extends `redactBody` allowlist).
+
+### Changed
+
+- **Stage-2 surface tightening (#438) — `ConfirmInput` / `ApplyInput`
+  / MCP IR-accept + jobs-apply Zod schemas now validate against the
+  recovered SDL shapes from #425.** Replaces the opaque
+  `z.array(z.unknown())` / `z.unknown()` pass-throughs shipped in
+  Wave 0 with typed Zod schemas
+  (`JobPositionAnswerInputSchema().strict()`,
+  `JobExpertiseAnswerInputSchema().strict()`,
+  `PitchInputSchema().strict()`) per ADR-008 § Decision Part 3.
+  Surfaces affected: Core `ConfirmInput.matcherQuestionsAnswers` /
+  `.expertiseQuestionsAnswers` / `.pitchInput`; Core
+  `ApplyInput.matcherAnswers` / `.expertiseAnswers` / `.pitchData`;
+  CLI `applications confirm` AND CLI `jobs apply` (both validate via
+  the new `parseAsRecovered<T>(value, schema, flagName)` helper in
+  `packages/cli/src/lib/json-input.ts`); MCP
+  `ttctl_interest_requests_accept` AND MCP `ttctl_jobs_apply` tool
+  inputSchemas (replaces `z.array(z.unknown())` / `z.unknown()` with
+  `z.array(...InputSchema().strict())` / `...InputSchema().strict()`).
+  - **Pre-1.0 minor breaking change**: agents / scripts passing
+    malformed shapes now fail at client-side schema validation
+    (typed `VALIDATION_ERROR` envelope at the CLI; typed Zod
+    rejection at the MCP framework) rather than at the wire. The
+    behavioral change is fail-fast — the previously-opaque
+    pass-through would have flowed through to the wire and either
+    been silently accepted (if the wire was permissive) or
+    rejected with a generic `GRAPHQL_ERROR`.
+  - **Field-name fix (matcher answers)**: the previous opaque
+    Wave-0 documentation said matcher answers used `questionId`;
+    per the recovered SDL, `JobPositionAnswerInput` uses `id` —
+    **NOT** `questionId`. The runtime `validateAnswerIds` check
+    in `applications.apply()` is updated to validate
+    `matcherAnswers[*].id` against the inventory (expertise
+    answers continue to use `questionId` per
+    `JobExpertiseAnswerInput`; the field-name asymmetry is per the
+    recovered SDL). Callers passing matcher answers with
+    `questionId` will now be rejected at the CLI/MCP boundary
+    BEFORE the wire call. Recovery: rename `questionId` → `id`
+    in matcher answer entries.
+  - **Example-shape migration**: the example payloads in
+    `applications confirm` / `jobs apply` `--help` output and the
+    `ttctl_interest_requests_accept` / `ttctl_jobs_apply` tool
+    descriptions are updated to reflect the recovered shapes
+    (matcher uses `{ id, answer }`; expertise uses
+    `{ questionId, other, subjectId }`; pitch uses the typed
+    `PitchInput` schema — every nullable slot must be present,
+    `null` for the empty case, per `codegen.config.ts`'s
+    `nullishBehavior: "nullable"`).
+  - **Schema/contract rule**: NOT TRIGGERED (no new wire ops); the
+    behavior change is in client-side validation routing. The
+    existing E2E coverage for `confirm` (and #445's apply
+    coverage once it lands) must continue passing — the
+    wire-format itself is unchanged.
+
+- **README: enumerate by-design out-of-scope surfaces (#427).**
+  Adds an `### Out of scope` subsection under `## What It Does`
+  enumerating the Toptal Talent surfaces TTCtl deliberately does not
+  implement. Each bullet carries a kebab-case category label
+  (`abuse-prevention`, `third-party-SDK`, `client-onboarding`,
+  `one-time-action`, `mobile-only-UI`, `staff-side`, `sourcing-side`)
+  plus a short rationale. Calls out `scheduler.toptal.com` (interview
+  scheduling) separately as currently absent rather than out-by-design
+  — deferred until reverse-engineering research closes.
+
+- **README: append `update` verb to Timesheets bullet (#431).**
+  One-line edit anticipating #458 (UpdateTimesheet) which is unblocked
+  since #258 (consent gate) merged. The parallel timesheet enumeration
+  in `packages/mcp/README.md` will need the same update when #458
+  registers the `ttctl_timesheet_update` MCP tool; tracked separately
+  as #513.
+
+- **availability allocated-hours: lock semantics with Gherkin +
+  wire-shape snapshots (#461).** Specification-by-example coverage
+  for `availability.allocatedHours.{show,set}` plus Track 1 wire-shape
+  snapshots for `GetAvailability` and `UpdateAllocatedHours` on the
+  mobile-gateway surface. Lock-only chore — no code change in
+  `packages/core/src/services/availability/`. Six Gherkin scenarios
+  in `features/availability-allocated-hours.feature.md` lock read,
+  round-trip update, client-side validation (non-integer + negative
+  rejected), dry-run preview, and the write-read symmetry property
+  (`allocatedHours` echoes on `GetAvailability` because both ops
+  select from the same `viewer.viewerRole.allocatedHours` wire
+  source). Documents that the op is viewer-scoped — no engagement-
+  level allocation surface exists on the API, correcting the issue
+  body's initial premise. `scripts/check-write-read-symmetry.ts`
+  `SCAN_PREFIXES` extended to include `services/availability/` for
+  forward-compat monitoring (current API shape produces zero
+  automatic pairings — rationale documented in the SCAN_PREFIXES
+  JSDoc). Committed snapshots at
+  [`GetAvailability.snapshot.json`](packages/e2e/src/wire-snapshots/GetAvailability.snapshot.json)
+  and
+  [`UpdateAllocatedHours.snapshot.json`](packages/e2e/src/wire-snapshots/UpdateAllocatedHours.snapshot.json).
+  - **Schema/contract rule**: NOT TRIGGERED — no new GraphQL
+    operations or wire-input changes. All ops are pre-existing and
+    already verified by `23-availability-write.e2e.test.ts`.
+  - **Track 1 vs Track 2**: T1 (unchanged) — wire-shape snapshots
+    for the existing ops, consistent with their mobile-gateway
+    surface and the absence of generated Zod schemas for them.
+
+### Fixed
+
+- **`profile employment update` on `noEmployer:true` rows (#508).**
+  The Rails apply path has a symmetric anchor gate on
+  `UpdateEmployment`, mirror of the #484 CREATE-side contract:
+  noEmployer rows require the `(noWebsite, companyWebsite)` anchor
+  pair echoed PLUS `managementExperience` and `toptalRelated` on the
+  wire input — otherwise the path falls through to the
+  `employer_id .blank?` validator and produces the misleading
+  `employerId: You can't leave this empty` error. The fix in
+  `buildUpdateEmploymentInput`: (a) echoes the anchor pair from
+  current on the null-employerId branch; (b) force-echoes
+  `managementExperience` and `toptalRelated` on every UPDATE; (c)
+  extends `EMPLOYMENT_FRAGMENT` to read `managementExperience` so
+  the echo has source data; (d) fixes `mapEmploymentNode` to coerce
+  non-string `reportingTo` to `null` (was incorrectly typed as
+  `unknown[]` on rows where the wire returned an empty array).
+  Catalog-employer rows continue to omit the anchor pair per the
+  #487 rollback (where echoing trips a DIFFERENT anchor gate,
+  "either employer or company website"). Supersedes the WORM framing
+  in `research/notes/15-employment-custom-workplace-worm.md` and
+  refutes the catalog-Employer hypothesis in #505 (closed as not
+  planned). Verified on the live talent-profile wire via
+  `45-profile-employment-add.e2e.test.ts` (now exercises a full
+  `update → restore` on a real noEmployer row). Wire-shape snapshots
+  refreshed for `CreateEmployment`, `UpdateEmployment`, and
+  `GET_WORK_EXPERIENCE` to reflect the extended fragment.
+
+- **`profile employment update`: preserve `current.endDate` through
+  merge on partial updates (#487).** Wire-breakage where
+  `employment_update` silently null-set `endDate` on partial updates
+  that did not supply `to`, converting closed roles ("Year – Year")
+  to ongoing ("Year – Present") on the public Toptal profile. Root
+  cause: `buildUpdateEmploymentInput` in
+  `packages/core/src/services/profile/employment/index.ts` omitted
+  `endDate` from the `merged` object; the talent_profile/graphql
+  server treats absence of a nullable field as null-set, not
+  "preserve current" — asymmetric with `startDate` which was already
+  force-echoed. Fix force-echoes `endDate` through the merge with a
+  three-state semantic: caller `endDate === undefined` → preserve
+  `current.endDate`; caller `endDate === null` → clear (mark closed
+  role as current); caller `endDate === number` → set to year.
+  Identity check (not `??`) because `null` is a meaningful intentional
+  value. A broader "echo every read-side-surfaced field" generalisation
+  was attempted mid-PR and rolled back: echoing `(companyWebsite,
+noWebsite)` on catalog-employer rows trips the Rails anchor gate
+  `(employerId): You should specify either employer or company
+website` — same class as the #484 CREATE-side anchor contract.
+  `(highlight, toptalRelated)` were rolled back at the same time
+  pending per-field live verification. The endDate-only scope is the
+  empirically-safe class on this surface. Live-passed at
+  `packages/e2e/src/53-profile-employment-update-end-date-preservation.e2e.test.ts`
+  (sentinel uses `position: "..."` not `publicationPermit: false`,
+  because Rails `.blank?(false)` returns `true` and the wire rejects
+  the latter BEFORE the apply path runs).
+  - **Schema/contract rule**: TRIGGERED — file-path trigger of the
+    code-review checklist (touches
+    `packages/core/src/services/profile/employment/index.ts`).
+  - **Track 1 vs Track 2**: T1 (unchanged) — `UpdateEmployment` has
+    no generated operation type; the open-role baseline snapshot at
+    `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json`
+    remains the continuing structural reference (the closed-role
+    sentinel here intentionally does NOT call `assertWireShapeStable`
+    to avoid baseline divergence).
 
 ## [v0.1.0-rc.7] - 2026-05-20
 
