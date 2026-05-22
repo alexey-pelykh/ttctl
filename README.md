@@ -43,6 +43,25 @@ TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.
 
 Surfaces are gated to read-heavy / personal use. Operations that would enable mass automation against the platform are deliberately not exposed.
 
+### Out of scope
+
+The following Toptal Talent surfaces are out of scope **by design** — they enable abuse (mass-automation or spam vectors), require third-party SDKs TTCtl doesn't depend on, target client-onboarding rather than the talent-side workflow, belong to staff- or sourcing-side workflows, or are one-time / mobile-only UI affordances with no recurring CLI value:
+
+- **Notification preferences** — `UpdateJobAlertSettings`, `UpdateSmsNotificationsSettings`, `UpdateTimesheetReminderSettings`, `UpdateNotificationSetting` (abuse-prevention — silencing alerts is a precursor to other abuse)
+- **Community / Slack interaction** — events, channels, messages, RSVP (third-party-SDK — community participation is human-side, not CLI-side)
+- **Referral flow** — send referral, claim reward, track referrer (abuse-prevention — programmatic referral generation is a spam vector)
+- **Become-client / consultations / coaching / gigs** — buyer-side workflows (client-onboarding — not talent-side profile management)
+- **Hire-me-page publishing** — public marketing page (one-time-action — not recurring profile state)
+- **Video pitches / TopChat (Twilio) / Zendesk integration** — Twilio- and Zendesk-backed surfaces (third-party-SDK — not part of the GraphQL surface TTCtl targets)
+- **Mobile-only widgets** — Story, MobileTopTip, MarketCondition (mobile-only-UI — no CLI equivalent value)
+- **Surveys / quizzes / questionnaires** — onboarding-terminal forms (one-time-action — not recurring profile state)
+- **Staff-side workflows** — `SEND_CONTRACTS`, testimonial publishing, snapshot history (staff-side — Toptal-staff surfaces, not talent-side)
+- **Talent-signal sourcing** — `CreateTalentSignal`, `GetTalentSignalSetup` (sourcing-side — recruiter / staff identifying talent, not talent-side)
+
+> **Note**: The `scheduler.toptal.com` surface (interview scheduling) is currently absent rather than out by design — deferred until reverse-engineering research closes.
+
+See [What It Does](#what-it-does) above for the positive scope.
+
 ## Prerequisites
 
 - **Node.js** >= 22.19.0
