@@ -3439,6 +3439,185 @@ async function interviewsShow(token: string, id: string): Promise<InterviewDetai
   return projectInterviewDetail(data.viewer.interview);
 }
 
+// ---------------------------------------------------------------------
+// Interview notes (#440)
+//
+// `applications.interviews.notes.show(jobId)` — read-only fetch of the
+// talent's prep notes for the interview attached to a given job, via
+// the portal-side `GetInterviewNotes` query (dispatched against the
+// same `mobile-gateway` endpoint — the portal and mobile gateways
+// share one backend; the operation document is classified as
+// portal-side per its research-repo location, sibling pattern to
+// #447 / #448).
+//
+// **Wire input mismatch with the issue body**: the issue body
+// (`Input: id — interview id`) does NOT match the wire op, which
+// takes `$jobId: ID!` (TalentJob.id) and traverses
+// `viewer.job(id).activityItem.interview.{id, kind, talentNotes{…}}`.
+// We follow the wire reality — input is the JOB id, not the interview
+// id. The talent can discover the job id via
+// `ttctl applications interview show <interviewId>` (the `Job → Job id`
+// line surfaced by the #439 sub-namespace) or
+// `ttctl applications show <activityId>`. Precedent: PR #518
+// (#439 interview show) similarly resolved an issue-body ambiguity
+// in the PR body's "Issue-body resolution" section.
+//
+// **T1 disposition**: `GetInterviewNotes` is in
+// `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` (`codegen.config.ts`), so no
+// generated operation type exists — the disposition is structurally
+// forced to T1 per ADR-006. Wire shape is pinned by the committed
+// `GetInterviewNotes.snapshot.json` (when discovery succeeds during
+// the gated E2E run) and asserted on every `TTCTL_E2E=1` run via
+// `assertWireShapeStable`.
+//
+// **Relationship to #439's `Interview` op**: the mobile `Interview`
+// op (#439) also surfaces `talentNotes` as part of the full
+// interview-detail projection. This leaf is a portal-side,
+// notes-focused projection — same data, different surface entry
+// point, smaller projection. Adding the portal-side wrapper:
+//   1. Provides wire-spec coverage for the portal `GetInterviewNotes`
+//      operation (extends our portal-side surface inventory),
+//   2. Is a lightweight projection (talent doesn't have to fetch the
+//      full interview detail just to read notes), and
+//   3. Matches the natural CLI verb hierarchy:
+//      `applications interview notes show`.
+// ---------------------------------------------------------------------
+
+/**
+ * Projected response returned by `interviews.notes.show()`. Shape the
+ * CLI's pretty renderer and the MCP tool's JSON payload depend on.
+ *
+ * `jobId` is the input echo (always populated). `interviewId` /
+ * `interviewKind` are populated when the job has an attached interview;
+ * `null` when the job's `activityItem.interview` is null on the wire
+ * (e.g. the job exists but no interview was scheduled). `notes`
+ * preserves server order; empty array when the interview has no
+ * recorded prep notes.
+ */
+export interface InterviewNotesProjection {
+  jobId: string;
+  interviewId: string | null;
+  interviewKind: InterviewKind | null;
+  notes: InterviewTalentNote[];
+}
+
+// ---------------------------------------------------------------------
+// Wire shape (private to the interviews.notes namespace)
+// ---------------------------------------------------------------------
+
+interface WireInterviewNotesInterview {
+  id: string;
+  kind?: string | null;
+  talentNotes?: (WireInterviewTalentNote | null)[] | null;
+}
+
+interface WireInterviewNotesActivityItem {
+  interview?: WireInterviewNotesInterview | null;
+}
+
+interface WireInterviewNotesJob {
+  activityItem?: WireInterviewNotesActivityItem | null;
+}
+
+interface InterviewNotesResponse {
+  viewer: {
+    id: string;
+    job: WireInterviewNotesJob | null;
+  } | null;
+}
+
+// Trimmed strict subset of the captured `GetInterviewNotes` op in
+// `research/graphql/gateway/operations/portal/GetInterviewNotes.graphql`.
+// The captured doc selects a heavy cascade (~25 types via `JobClient`,
+// `JobOperationsFragment`, `JobMatcherData`, `JobSkillV2Data`,
+// `JobIndustriesData`, etc.); this trim drops everything except the
+// notes-specific selection on
+// `viewer.job(id).activityItem.interview.{id, kind, talentNotes{…}}`.
+// Authoritative wire shape is the captured doc; selection is the
+// projection contract.
+const GET_INTERVIEW_NOTES_QUERY = `query GetInterviewNotes($jobId: ID!) {
+  viewer {
+    __typename
+    id
+    job(id: $jobId) {
+      __typename
+      activityItem {
+        __typename
+        interview {
+          __typename
+          id
+          kind
+          talentNotes { __typename id note section }
+        }
+      }
+    }
+  }
+}`;
+
+/**
+ * Read the talent's prep notes for the interview attached to a given
+ * job via the portal-side `GetInterviewNotes` query (#440). Sub-sub-
+ * namespace leaf of `applications.interviews.*` — wraps the same
+ * read-only path the portal matcher UI uses to load interview notes.
+ *
+ * @param token   Captured bearer.
+ * @param jobId   `TalentJob.id` (NOT the interview id). Discover via
+ *                `applications interview show <interviewId>` (the
+ *                `Job → Job id` line, populated by the #439 projection)
+ *                or `applications show <activityId>`.
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` when the job id doesn't
+ *   resolve to a job the signed-in user can see, OR when the wire
+ *   surfaces a `NOT_FOUND_MESSAGE_PATTERN`-matched GraphQL error
+ *   (`Record not found` / `Invalid ID` / Relay `Node id ... resolves to`).
+ * @throws `ApplicationsError("NO_VIEWER")` when the session is valid
+ *   but no viewer is bound.
+ */
+async function interviewsNotesShow(token: string, jobId: string): Promise<InterviewNotesProjection> {
+  let data: InterviewNotesResponse & { viewer: { id: string } | null };
+  try {
+    data = await callGateway<InterviewNotesResponse & { viewer: { id: string } | null }>(
+      token,
+      "GetInterviewNotes",
+      GET_INTERVIEW_NOTES_QUERY,
+      { jobId },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    // Defensive — `callGateway` with `requireViewer: true` already
+    // raises `NO_VIEWER` for this case; keep the check for type
+    // narrowing parity with sibling leaves.
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.job === null) {
+    throw new ApplicationsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+  }
+  const interview = data.viewer.job.activityItem?.interview ?? null;
+  return {
+    jobId,
+    interviewId: interview?.id ?? null,
+    interviewKind: (interview?.kind ?? null) as InterviewKind | null,
+    notes: (interview?.talentNotes ?? [])
+      .filter((n): n is WireInterviewTalentNote => n != null)
+      .map((n) => ({
+        id: n.id,
+        section: n.section ?? null,
+        note: n.note ?? null,
+      })),
+  };
+}
+
 /**
  * `applications.interviews.*` sub-namespace. Read-only leaves for
  * interview-detail access — sibling to the top-level activity-row
@@ -3446,7 +3625,15 @@ async function interviewsShow(token: string, id: string): Promise<InterviewDetai
  * `payments.rate.*` (#447) and `payments.payouts.*` / `payments.methods.*`
  * (#149); the plural form here matches `payouts` / `methods` for
  * collection-style namespaces.
+ *
+ * Sub-sub-namespace `interviews.notes.*` (#440) groups the portal-side
+ * notes-focused projection — `notes.show(jobId)` is the lightweight
+ * read of the talent's prep notes for one job's interview, paired with
+ * the heavier `interviews.show(interviewId)` from #439.
  */
 export const interviews = {
   show: interviewsShow,
+  notes: {
+    show: interviewsNotesShow,
+  },
 };

@@ -13,7 +13,7 @@ import { registerAllTools } from "../tools/index.js";
  * produces a structurally-valid preview envelope. This is the
  * cross-cutting safety net").
  *
- * For each of the 115 registered tools:
+ * For each of the 116 registered tools:
  *   1. Invoke the handler with `dryRun: true` (plus minimal fixture
  *      input satisfying the zod schema).
  *   2. Assert the response is the uniform dry-run envelope —
@@ -108,11 +108,12 @@ function buildSmokeCtx(token = "smoke_test_token"): ToolRegistrationContext {
  * Order: alphabetical by tool name to keep diffs reviewable.
  */
 const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
-  // applications (3)
+  // applications (3 base + 1 interview_show #439 + 1 interview_notes_show #440)
   ttctl_applications_list: {},
   ttctl_applications_show: { id: "act_123" },
   ttctl_applications_stats: {},
   ttctl_applications_interview_show: { id: "int_123" },
+  ttctl_applications_interview_notes_show: { id: "job_123" },
   // availability (5)
   ttctl_availability_allocated_hours_set: { hours: 40 },
   ttctl_availability_allocated_hours_show: {},
@@ -293,15 +294,16 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 115 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 116 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
     // new opt-in suggestion tool (#452): apply_similar_answers + 1
     // new lightweight rate read (#447): rate_current + 1 new
     // aggregate payment read (#448): summary + 1 new interview-detail
-    // tool (#439): applications_interview_show.
-    expect(Object.keys(tools)).toHaveLength(115);
+    // tool (#439): applications_interview_show + 1 new interview-notes
+    // tool (#440): applications_interview_notes_show.
+    expect(Object.keys(tools)).toHaveLength(116);
   });
 
   it("every registered tool has a fixture", () => {

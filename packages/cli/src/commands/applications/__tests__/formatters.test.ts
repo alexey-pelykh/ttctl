@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { applications } from "@ttctl/core";
 
 import { formatRespondPayload } from "../confirm.js";
-import { formatInterviewDetail } from "../interview.js";
+import { formatInterviewDetail, formatInterviewNotes } from "../interview.js";
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
 import { formatRejectReasons } from "../reject-reasons.js";
 import { formatFixedRate } from "../shared.js";
@@ -495,5 +495,82 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).toContain("Job");
     expect(out).toContain("Job id:      job-2");
     expect(out).not.toContain("Activity id:");
+  });
+});
+
+// ---------------------------------------------------------------------
+// `formatInterviewNotes` (#440)
+// ---------------------------------------------------------------------
+
+describe("formatInterviewNotes (#440)", () => {
+  function makeNotes(
+    overrides: Partial<applications.InterviewNotesProjection> = {},
+  ): applications.InterviewNotesProjection {
+    return {
+      jobId: "job-1",
+      interviewId: "int-1",
+      interviewKind: "EXTERNAL",
+      notes: [
+        { id: "note-1", section: "GAPS", note: "Ask about scaling." },
+        { id: "note-2", section: "STRENGTHS", note: "Highlight prior client wins." },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("renders the full canonical layout (header + notes block)", () => {
+    const out = formatInterviewNotes(makeNotes());
+    expect(out).toContain("Interview notes for job job-1");
+    expect(out).toContain("Interview id:   int-1");
+    expect(out).toContain("Interview kind: EXTERNAL");
+    expect(out).toContain("Notes");
+    expect(out).toContain("[GAPS] Ask about scaling.");
+    expect(out).toContain("[STRENGTHS] Highlight prior client wins.");
+  });
+
+  it("renders the no-interview-attached message when interviewId is null", () => {
+    const out = formatInterviewNotes(makeNotes({ interviewId: null, interviewKind: null, notes: [] }));
+    expect(out).toBe("Interview notes for job job-1\n  (no interview attached to this job)");
+  });
+
+  it("renders the no-prep-notes message when notes is empty but the interview exists", () => {
+    const out = formatInterviewNotes(makeNotes({ notes: [] }));
+    expect(out).toContain("Interview id:   int-1");
+    expect(out).toContain("Interview kind: EXTERNAL");
+    expect(out).toContain("(no prep notes)");
+    expect(out).not.toContain("[GAPS]");
+  });
+
+  it("omits the kind line when interviewKind is null but interview exists", () => {
+    const out = formatInterviewNotes(makeNotes({ interviewKind: null }));
+    expect(out).toContain("Interview id:   int-1");
+    expect(out).not.toContain("Interview kind:");
+    expect(out).toContain("[GAPS] Ask about scaling.");
+  });
+
+  it("renders unsectioned notes without the [section] prefix", () => {
+    const out = formatInterviewNotes(
+      makeNotes({
+        notes: [
+          { id: "note-1", section: null, note: "Loose thought, no section." },
+          { id: "note-2", section: "", note: "Empty-string section also unsectioned." },
+        ],
+      }),
+    );
+    // Line is just the body — no [null] or [] prefix.
+    expect(out).toContain("  Loose thought, no section.");
+    expect(out).toContain("  Empty-string section also unsectioned.");
+    expect(out).not.toContain("[null]");
+    expect(out).not.toContain("[]");
+  });
+
+  it("renders empty-string note bodies as blank-line placeholders rather than crashing", () => {
+    const out = formatInterviewNotes(
+      makeNotes({
+        notes: [{ id: "note-1", section: "PRO_TIPS", note: null }],
+      }),
+    );
+    // Section prefix preserved; note body resolves to "".
+    expect(out).toContain("[PRO_TIPS] ");
   });
 });

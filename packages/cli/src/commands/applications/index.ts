@@ -9,7 +9,7 @@ import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runApplicationsConfirm } from "./confirm.js";
-import { runApplicationsInterviewShow } from "./interview.js";
+import { runApplicationsInterviewNotesShow, runApplicationsInterviewShow } from "./interview.js";
 import { runApplicationsList } from "./list.js";
 import { runApplicationsReject } from "./reject.js";
 import { runApplicationsRejectReasons } from "./reject-reasons.js";
@@ -246,6 +246,38 @@ export function buildApplicationsCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runApplicationsInterviewShow(id, options.output);
+    });
+
+  // #440 — Interview notes (portal-side `GetInterviewNotes`). Sub-sub-
+  // namespace `interview notes show <jobId>` for the talent's prep
+  // notes attached to an interview. Read-only.
+  //
+  // **Input is the JOB id, not the interview id** — the wire op takes
+  // `$jobId: ID!` and traverses
+  // `viewer.job(id).activityItem.interview.{id, kind, talentNotes}`.
+  // Discover the job id via `applications interview show <interviewId>`
+  // (the `Job → Job id` line) or `applications show <activityId>`.
+  const notesCmd = interviewCmd
+    .command("notes")
+    .description("Interview prep notes (read-only). Sub-sub-namespace of `interview`.");
+
+  notesCmd
+    .command("show")
+    .description(
+      "Read the talent's prep notes for the interview attached to a job (input is the JOB id, NOT the interview id)",
+    )
+    .argument(
+      "<jobId>",
+      "TalentJob id (discover via `applications interview show <interviewId>` → `Job → Job id`)",
+      parseIdArg,
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (jobId: string, options: { output: OutputFormat }) => {
+      await runApplicationsInterviewNotesShow(jobId, options.output);
     });
 
   return cmd;

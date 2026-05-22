@@ -181,3 +181,96 @@ export function formatInterviewDetail(item: applications.InterviewDetail): strin
 
   return lines.join("\n");
 }
+
+/**
+ * Action handler for `ttctl applications interview notes show <jobId>` (#440).
+ * Read-only fetch of the talent's prep notes for the interview attached
+ * to a given job, via the portal-side `GetInterviewNotes` query.
+ *
+ * **Input is the JOB id, not the interview id** — the wire op takes
+ * `$jobId: ID!` and traverses `viewer.job(id).activityItem.interview`.
+ * Discover the job id via `ttctl applications interview show
+ * <interviewId>` (the `Job → Job id` line surfaced by the #439
+ * projection) or `ttctl applications show <activityId>`.
+ *
+ * Pretty rendering groups the notes by section header (the
+ * `InterviewGuideSectionIdentifierEnum` member) and falls back to
+ * unsectioned bullets for null-section notes. Empty-notes results
+ * render a single-line `(no prep notes)` message rather than blank
+ * output.
+ *
+ * `json` / `yaml` always emit the full
+ * {@link applications.InterviewNotesProjection} — machine consumers
+ * project as needed.
+ */
+export async function runApplicationsInterviewNotesShow(jobId: string, output: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("applications interview notes show", output);
+
+  let item: applications.InterviewNotesProjection;
+  try {
+    item = await applications.interviews.notes.show(token, jobId);
+  } catch (err) {
+    handleApplicationsError("applications interview notes show", err, output);
+  }
+
+  emitResult(item, output, {
+    pretty: (data) => formatInterviewNotes(data),
+  });
+}
+
+/**
+ * Render an {@link applications.InterviewNotesProjection} as a sectioned
+ * multi-line block. Pure — directly unit-testable.
+ *
+ * Layout:
+ *
+ *     Interview notes for job <jobId>
+ *       Interview id:   <interviewId>             // omitted if null
+ *       Interview kind: <interviewKind>           // omitted if null
+ *
+ *     Notes
+ *       [<section>] <note>                        // grouped by section
+ *
+ * When the job has no attached interview, prints:
+ *
+ *     Interview notes for job <jobId>
+ *       (no interview attached to this job)
+ *
+ * When the interview has no prep notes, prints:
+ *
+ *     Interview notes for job <jobId>
+ *       Interview id:   <interviewId>
+ *       ...
+ *       (no prep notes)
+ */
+export function formatInterviewNotes(item: applications.InterviewNotesProjection): string {
+  const lines: string[] = [];
+
+  lines.push(`Interview notes for job ${item.jobId}`);
+
+  if (item.interviewId === null) {
+    lines.push("  (no interview attached to this job)");
+    return lines.join("\n");
+  }
+
+  lines.push(`  Interview id:   ${item.interviewId}`);
+  if (item.interviewKind !== null) {
+    lines.push(`  Interview kind: ${item.interviewKind}`);
+  }
+
+  if (item.notes.length === 0) {
+    lines.push("");
+    lines.push("  (no prep notes)");
+    return lines.join("\n");
+  }
+
+  lines.push("");
+  lines.push("Notes");
+  for (const n of item.notes) {
+    const section = n.section !== null && n.section !== "" ? `[${n.section}] ` : "";
+    const note = n.note ?? "";
+    lines.push(`  ${section}${note}`);
+  }
+
+  return lines.join("\n");
+}
