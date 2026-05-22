@@ -42,6 +42,16 @@ export type {
 export { AuthRevokedError, TtctlError } from "./auth/errors.js";
 
 export {
+  ACCOUNT_ECHO_MIN_LENGTH,
+  CONSENT_ENV_VAR,
+  CONSENT_FIELD,
+  ConsentRequiredError,
+  IDEMPOTENCY_KEY_MIN_LENGTH,
+  ensureDestructiveConsent,
+} from "./consent.js";
+export type { ConsentDomain, ConsentGateOptions, PaymentRoutingCreateContext } from "./consent.js";
+
+export {
   Cf403Error,
   Cf403PersistentError,
   DRY_RUN_REDACTED_AUTHORIZATION,

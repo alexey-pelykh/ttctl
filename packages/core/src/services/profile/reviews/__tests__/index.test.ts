@@ -355,6 +355,8 @@ describe("approveSection", () => {
 // ---------------------------------------------------------------------------
 
 describe("submitForReview", () => {
+  const CONSENT_OK = { profileCapabilityConsentIssued: true } as const;
+
   it("issues the mutation with { profileId } and returns the notice", async () => {
     mockProfileIdResolver();
     replyImpersonated({
@@ -369,7 +371,7 @@ describe("submitForReview", () => {
       },
     });
 
-    const result = await submitForReview(TOKEN);
+    const result = await submitForReview(TOKEN, CONSENT_OK);
 
     expect(mockedImpersonated.mock.calls[0]?.[0]).toMatchObject({
       body: {
@@ -394,7 +396,7 @@ describe("submitForReview", () => {
       },
     });
 
-    await expect(submitForReview(TOKEN)).rejects.toMatchObject({
+    await expect(submitForReview(TOKEN, CONSENT_OK)).rejects.toMatchObject({
       name: "ProfileError",
       code: "USER_ERROR",
       message: expect.stringContaining("submitAvailable"),
@@ -405,9 +407,36 @@ describe("submitForReview", () => {
     mockProfileIdResolver();
     mockedImpersonated.mockRejectedValueOnce(new Error("ECONNRESET"));
 
-    await expect(submitForReview(TOKEN)).rejects.toMatchObject({
+    await expect(submitForReview(TOKEN, CONSENT_OK)).rejects.toMatchObject({
       name: "ProfileError",
       code: "NETWORK_ERROR",
+    });
+  });
+
+  // ADR-009 (ttctl) — consent gate
+  it("refuses CONSENT_REQUIRED before any wire call when consent is absent", async () => {
+    // Bypass static type to simulate JSON-sourced inputs from CLI / MCP /
+    // agents — the runtime gate must catch this.
+    const noConsent = {} as unknown as { profileCapabilityConsentIssued: true };
+    await expect(submitForReview(TOKEN, noConsent)).rejects.toMatchObject({
+      name: "ConsentRequiredError",
+      code: "CONSENT_REQUIRED",
+      domain: "profile-capability",
+      opName: "submitForReview",
+    });
+    // No wire calls — neither the profile-id resolver nor the impersonated
+    // transport should have been hit.
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("refuses CONSENT_REQUIRED when consent is false (vs absent)", async () => {
+    const wrongConsent = { profileCapabilityConsentIssued: false } as unknown as {
+      profileCapabilityConsentIssued: true;
+    };
+    await expect(submitForReview(TOKEN, wrongConsent)).rejects.toMatchObject({
+      name: "ConsentRequiredError",
+      code: "CONSENT_REQUIRED",
     });
   });
 });

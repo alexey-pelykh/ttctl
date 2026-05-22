@@ -21,13 +21,30 @@ const COMMAND_LABEL = "profile reviews submit-for-review";
  *
  * The underlying mutation's input shape is INFERRED — UNVERIFIED (see
  * the service module top-comment).
+ *
+ * **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the
+ * caller MUST pass `--consent-profile-capability` (or set
+ * `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1` in the environment for
+ * non-interactive contexts). Absence raises
+ * `ConsentRequiredError("CONSENT_REQUIRED")` (a `TtctlError`) which the
+ * shared handler emits as exit-code 1 with the recovery hint.
  */
-export async function runProfileReviewsSubmitForReview(options: { output: OutputFormat }): Promise<void> {
+export async function runProfileReviewsSubmitForReview(options: {
+  consentProfileCapability: boolean;
+  output: OutputFormat;
+}): Promise<void> {
   const token = await loadAuthTokenOrExit(COMMAND_LABEL, options.output);
 
   let result: profile.reviews.SubmitForReviewResult;
   try {
-    result = await profile.reviews.submitForReview(token);
+    // Static type only allows `true` literal; the runtime gate at the
+    // service entry covers the `false` case (operator omits the flag).
+    // The cast widens the static type so the literal `false` path is
+    // visible to the type checker.
+    const consent = {
+      profileCapabilityConsentIssued: options.consentProfileCapability,
+    } as unknown as { profileCapabilityConsentIssued: true };
+    result = await profile.reviews.submitForReview(token, consent);
   } catch (err) {
     handleError(err, options.output);
     return;

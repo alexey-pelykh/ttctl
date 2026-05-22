@@ -234,7 +234,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_reviews_approve_item: { reviewId: "rv_1", itemId: "it_1", kind: "EDUCATION" },
   ttctl_profile_reviews_approve_section: { reviewId: "rv_1", section: "EDUCATION" },
   ttctl_profile_reviews_list: {},
-  ttctl_profile_reviews_submit_for_review: {},
+  ttctl_profile_reviews_submit_for_review: { profileCapabilityConsentIssued: true },
   // profile.skills (7)
   ttctl_profile_skills_add: { name: "TypeScript" },
   ttctl_profile_skills_autocomplete: { query: "Type" },

@@ -47,6 +47,7 @@
  */
 
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
+import { ensureDestructiveConsent } from "../../../consent.js";
 import { impersonatedTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 import { ProfileError } from "../basic/index.js";
@@ -605,6 +606,27 @@ interface SubmitForReviewPayload {
 }
 
 /**
+ * Per-domain consent ceremony for {@link submitForReview}. Per
+ * ADR-009 (ttctl) § Decision Part 1, this mutation is in the
+ * `profile-capability` domain (it commits the talent's profile to the
+ * platform review queue — a recruiter-visible capability change).
+ *
+ * The field is statically typed to `true` (literal) — TypeScript
+ * compile-time gate. The runtime gate at
+ * {@link ensureDestructiveConsent} covers `as`-cast bypasses and
+ * JSON-sourced inputs (CLI / MCP / agents passing untyped objects).
+ */
+export interface SubmitForReviewConsent {
+  /**
+   * MUST be `true` — acknowledges that this enters the maintainer's
+   * profile into the Toptal review queue (no safe round-trip). See
+   * ADR-009 (ttctl) § Decision Part 1 for the per-domain consent
+   * vocabulary.
+   */
+  profileCapabilityConsentIssued: true;
+}
+
+/**
  * Re-submit the talent's profile for platform-side re-review. Used after
  * profile edits that require the platform reviewer to re-verify the
  * content (skills, employments, etc.).
@@ -614,13 +636,35 @@ interface SubmitForReviewPayload {
  * capture exists for this mutation. Deviations would surface as
  * `USER_ERROR` at runtime.
  *
+ * **Consent gate** (ADR-009 (ttctl) § Decision Part 1 — `profile-capability`
+ * domain): refuses the call with `ConsentRequiredError("CONSENT_REQUIRED")`
+ * BEFORE any wire call when `consent.profileCapabilityConsentIssued !== true`.
+ * The compile-time literal narrows the static type; the runtime check
+ * covers `as`-cast bypasses and JSON-sourced inputs from CLI / MCP /
+ * agents. The `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1` env-var bypasses the
+ * literal check for non-interactive CI / test contexts.
+ *
  * Errors:
+ *   - `ConsentRequiredError("CONSENT_REQUIRED")` when consent is not
+ *     supplied (and the env-var bypass is not set)
  *   - `ProfileError("USER_ERROR")` when the server rejects the submission
  *     (e.g. profile not yet ready per `getProfileReadiness`)
  *   - `AuthRevokedError`, `Cf403Error`, other `TtctlError` subclasses
  *     propagate verbatim
  */
-export async function submitForReview(token: string): Promise<SubmitForReviewResult> {
+export async function submitForReview(token: string, consent: SubmitForReviewConsent): Promise<SubmitForReviewResult> {
+  // Runtime consent gate — covers `as`-cast bypasses and JSON-sourced
+  // inputs from CLI / MCP / agents. The static type
+  // `profileCapabilityConsentIssued: true` narrows to compile-time-true,
+  // which would otherwise make this check look like dead code; the
+  // widening cast (`as unknown as { readonly [key: string]: unknown }`)
+  // is load-bearing. See ADR-009 (ttctl) and packages/core/src/consent.ts.
+  ensureDestructiveConsent(
+    "submitForReview",
+    "profile-capability",
+    consent as unknown as { readonly [key: string]: unknown },
+  );
+
   const profileId = await extractProfileId(token);
 
   // Triggers an actual platform-side re-review against the maintainer's
