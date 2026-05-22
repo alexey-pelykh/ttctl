@@ -3618,6 +3618,319 @@ async function interviewsNotesShow(token: string, jobId: string): Promise<Interv
   };
 }
 
+// ---------------------------------------------------------------------
+// Interview guide (#470)
+//
+// `applications.interviews.guide.show(interviewId)` — read-only fetch of
+// the interview-prep guide content (sections + tips) for one interview,
+// via the mobile-gateway `InterviewGuide` query.
+//
+// **Input is the INTERVIEW id**, not the guide id. The wire op
+// (`research/graphql/gateway/operations/mobile/InterviewGuide.graphql`)
+// takes `$interviewId: ID!` and traverses
+// `viewer.interview(id).guide.{id, sections[...]}` — the guide is
+// materialized as a 1:1 child of the interview. The talent discovers the
+// interview id via `applications interview show <interviewId>` or
+// `applications show <activityId>` (the `Interview: <id>` line).
+//
+// **Issue-body resolution**: issue #470 said `Input: interviewType
+// (enum or context-id — verify wire)` and `Returns: guide content
+// (Markdown or HTML — verify)`. Wire reality verified: the input is
+// the interview id (not a free-text interviewType enum), and the wire
+// returns a structured `sections[].tips[]` shape (not a single Markdown
+// or HTML blob — `tip.content` / `tip.hardcodedContent` are individual
+// markdown strings). Precedent: PR #519 (#440) similarly resolved an
+// issue-body ambiguity (interview id vs job id) in the PR body's
+// "Issue-body resolution" section.
+//
+// **T1 disposition**: `InterviewGuide` is in
+// `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` (`codegen.config.ts`), so no
+// generated operation type exists — the disposition is structurally
+// forced to T1 per ADR-006. Wire shape is pinned by
+// `InterviewGuide.snapshot.json` (when discovery succeeds during the
+// gated E2E run) and asserted on every `TTCTL_E2E=1` run via
+// `assertWireShapeStable`.
+//
+// **Relationship to #439's `Interview` op**: the mobile `Interview` op
+// (#439) selects `guide { __typename id }` (presence indicator only).
+// This leaf returns the full guide content (sections + tips). They
+// share the back-pointer: `InterviewDetail.guideId` is the same id as
+// `InterviewGuideProjection.guideId`. Two-step UX: discover via
+// `applications interview show`, then fetch content via `applications
+// interview guide show`.
+//
+// **Selection trim**: the captured op selects a heavy cascade
+// (~25 types via `interviewContacts` + `job → jobData` + `client` +
+// `mobileFeedbackForm`). This trim drops everything that's not
+// guide-specific — the caller already has the interviewer/job context
+// from `interview show`, and the feedback-form widget is out of scope
+// for a content-read leaf. The trim keeps only `viewer.interview(id).
+// guide.{id, sections[].{identifier, title, subtitle, tips[].{
+// identifier, title, content, hardcodedContent}}}`. Authoritative wire
+// shape is the captured doc; selection is the projection contract.
+// `statuses: ALL` keeps parity with the captured op so any interview
+// state's guide is fetchable.
+// ---------------------------------------------------------------------
+
+/**
+ * `InterviewGuideSectionIdentifierEnum` values from the synthesized
+ * schema (`../research/graphql/gateway/schema.graphql`). Closed set —
+ * statically extractable from the schema. The mobile portal uses these
+ * as the prep-guide section spine: `STRENGTHS` (talent's job-match
+ * strengths), `GAPS` (likely follow-up topics), `JOB_HIGHLIGHTS` (key
+ * job characteristics), `POTENTIAL_QUESTIONS` (questions to expect),
+ * `PRO_TIPS` (Toptal interview tips), `ASK_YOUR_CLIENT` (questions to
+ * ask the interviewer).
+ */
+export type InterviewGuideSectionIdentifier =
+  | "ASK_YOUR_CLIENT"
+  | "GAPS"
+  | "JOB_HIGHLIGHTS"
+  | "POTENTIAL_QUESTIONS"
+  | "PRO_TIPS"
+  | "STRENGTHS";
+
+export const INTERVIEW_GUIDE_SECTION_IDENTIFIERS: readonly InterviewGuideSectionIdentifier[] = [
+  "ASK_YOUR_CLIENT",
+  "GAPS",
+  "JOB_HIGHLIGHTS",
+  "POTENTIAL_QUESTIONS",
+  "PRO_TIPS",
+  "STRENGTHS",
+] as const;
+
+/**
+ * `InterviewGuideTipIdentifierEnum` values from the synthesized schema
+ * (`../research/graphql/gateway/schema.graphql`). Closed set —
+ * statically extractable from the schema. Each tip identifier is a
+ * named template slot the Toptal guide-rendering pipeline fills with
+ * job/talent-specific content.
+ */
+export type InterviewGuideTipIdentifier =
+  | "BE_PRESENTABLE"
+  | "CAMERA_ON"
+  | "DONT_DISCUSS_RATE"
+  | "GAP_ANALYSIS"
+  | "HIRING_FACTORS"
+  | "JOB_SUMMARY"
+  | "PROFILE_REFERENCES"
+  | "QUESTIONS_TO_ASK"
+  | "QUESTIONS_TO_PREPARE_FOR"
+  | "SMALL_TALK"
+  | "STANDARD_QUESTIONS"
+  | "STRENGTHS_OVERLAP";
+
+export const INTERVIEW_GUIDE_TIP_IDENTIFIERS: readonly InterviewGuideTipIdentifier[] = [
+  "BE_PRESENTABLE",
+  "CAMERA_ON",
+  "DONT_DISCUSS_RATE",
+  "GAP_ANALYSIS",
+  "HIRING_FACTORS",
+  "JOB_SUMMARY",
+  "PROFILE_REFERENCES",
+  "QUESTIONS_TO_ASK",
+  "QUESTIONS_TO_PREPARE_FOR",
+  "SMALL_TALK",
+  "STANDARD_QUESTIONS",
+  "STRENGTHS_OVERLAP",
+] as const;
+
+/**
+ * One tip within an {@link InterviewGuideSection}. `content` is the
+ * job/talent-personalized body (the Toptal guide-rendering pipeline
+ * splices in job-specific examples); `hardcodedContent` is the generic
+ * template body that ships with every guide regardless of job context.
+ * Either or both may be populated; the renderer is responsible for
+ * choosing precedence.
+ */
+export interface InterviewGuideTip {
+  /** `InterviewGuideTipIdentifierEnum` member (see {@link INTERVIEW_GUIDE_TIP_IDENTIFIERS}) or null. */
+  identifier: InterviewGuideTipIdentifier | null;
+  title: string | null;
+  /** Personalized tip body (markdown). May be null when no personalization applies. */
+  content: string | null;
+  /** Generic template body (markdown) shipped with every guide. May be null. */
+  hardcodedContent: string | null;
+}
+
+/**
+ * One section of the interview-prep guide.
+ */
+export interface InterviewGuideSection {
+  /** `InterviewGuideSectionIdentifierEnum` member (see {@link INTERVIEW_GUIDE_SECTION_IDENTIFIERS}) or null. */
+  identifier: InterviewGuideSectionIdentifier | null;
+  title: string | null;
+  subtitle: string | null;
+  /** Server-supplied order preserved. */
+  tips: InterviewGuideTip[];
+}
+
+/**
+ * Projected guide payload returned by `interviews.guide.show()`. Shape
+ * the CLI's pretty renderer and the MCP tool's JSON payload depend on.
+ *
+ * `interviewId` is the input echo (always populated). `guideId` /
+ * `sections` are populated when the interview has an attached guide;
+ * `guideId` is `null` and `sections` is `[]` when no guide is attached
+ * to the interview (some interview types may not have a prep guide).
+ */
+export interface InterviewGuideProjection {
+  /** Input echo. */
+  interviewId: string;
+  /** `TalentInterviewGuide.id` — matches `InterviewDetail.guideId` from #439. `null` when no guide is attached. */
+  guideId: string | null;
+  /** Guide sections in server-supplied order. Empty array when no guide is attached. */
+  sections: InterviewGuideSection[];
+}
+
+// ---------------------------------------------------------------------
+// Wire shape (private to the interviews.guide namespace)
+// ---------------------------------------------------------------------
+
+interface WireInterviewGuideTipPayload {
+  identifier?: string | null;
+  title?: string | null;
+  content?: string | null;
+  hardcodedContent?: string | null;
+}
+
+interface WireInterviewGuideSectionPayload {
+  identifier?: string | null;
+  title?: string | null;
+  subtitle?: string | null;
+  tips?: (WireInterviewGuideTipPayload | null)[] | null;
+}
+
+interface WireInterviewGuideContent {
+  id: string;
+  sections?: (WireInterviewGuideSectionPayload | null)[] | null;
+}
+
+interface WireInterviewWithGuide {
+  id: string;
+  guide?: WireInterviewGuideContent | null;
+}
+
+interface InterviewGuideResponse {
+  viewer: {
+    id: string;
+    interview: WireInterviewWithGuide | null;
+  } | null;
+}
+
+// Trimmed strict subset of the captured `InterviewGuide` op in
+// `research/graphql/gateway/operations/mobile/InterviewGuide.graphql`.
+// The captured doc selects a heavy cascade
+// (`interviewContacts` + `job → jobData` + `client` + `mobileFeedbackForm`);
+// this trim drops everything except the guide-specific selection on
+// `viewer.interview(id).guide.{id, sections[].{identifier, title,
+// subtitle, tips[].{identifier, title, content, hardcodedContent}}}`.
+// Authoritative wire shape is the captured doc; selection is the
+// projection contract. `statuses: ALL` keeps parity with the captured
+// op so any interview state's guide is fetchable.
+const INTERVIEW_GUIDE_QUERY = `query InterviewGuide($id: ID!) {
+  viewer {
+    __typename
+    id
+    interview(id: $id, statuses: ALL) {
+      __typename
+      id
+      guide {
+        __typename
+        id
+        sections {
+          __typename
+          identifier
+          title
+          subtitle
+          tips {
+            __typename
+            identifier
+            title
+            content
+            hardcodedContent
+          }
+        }
+      }
+    }
+  }
+}`;
+
+/**
+ * Read the interview-prep guide content (sections + tips) for one
+ * interview via the mobile-gateway `InterviewGuide` query (#470).
+ * Sub-sub-namespace leaf of `applications.interviews.*` — wraps the
+ * mobile-portal interview-prep view that talents use to prepare.
+ *
+ * @param token        Captured bearer.
+ * @param interviewId  `TalentInterview.id` (NOT the guide id). Discover
+ *                     via `applications interview show <interviewId>`
+ *                     or `applications show <activityId>`.
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` when the id doesn't resolve
+ *   to an interview the signed-in user can see, OR when the wire
+ *   surfaces a `NOT_FOUND_MESSAGE_PATTERN`-matched GraphQL error
+ *   (`Record not found` / `Invalid ID` / Relay `Node id ... resolves to`).
+ * @throws `ApplicationsError("NO_VIEWER")` when the session is valid
+ *   but no viewer is bound.
+ */
+async function interviewsGuideShow(token: string, interviewId: string): Promise<InterviewGuideProjection> {
+  let data: InterviewGuideResponse & { viewer: { id: string } | null };
+  try {
+    data = await callGateway<InterviewGuideResponse & { viewer: { id: string } | null }>(
+      token,
+      "InterviewGuide",
+      INTERVIEW_GUIDE_QUERY,
+      { id: interviewId },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError(
+        "NOT_FOUND",
+        `No interview found with id "${interviewId}" (or you don't have access to it).`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    // Defensive — `callGateway` with `requireViewer: true` already
+    // raises `NO_VIEWER` for this case; keep the check for type
+    // narrowing parity with sibling leaves.
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.interview === null) {
+    throw new ApplicationsError(
+      "NOT_FOUND",
+      `No interview found with id "${interviewId}" (or you don't have access to it).`,
+    );
+  }
+  const wire = data.viewer.interview;
+  return {
+    interviewId,
+    guideId: wire.guide?.id ?? null,
+    sections: (wire.guide?.sections ?? [])
+      .filter((s): s is WireInterviewGuideSectionPayload => s != null)
+      .map((s) => ({
+        identifier: (s.identifier ?? null) as InterviewGuideSectionIdentifier | null,
+        title: s.title ?? null,
+        subtitle: s.subtitle ?? null,
+        tips: (s.tips ?? [])
+          .filter((t): t is WireInterviewGuideTipPayload => t != null)
+          .map((t) => ({
+            identifier: (t.identifier ?? null) as InterviewGuideTipIdentifier | null,
+            title: t.title ?? null,
+            content: t.content ?? null,
+            hardcodedContent: t.hardcodedContent ?? null,
+          })),
+      })),
+  };
+}
+
 /**
  * `applications.interviews.*` sub-namespace. Read-only leaves for
  * interview-detail access — sibling to the top-level activity-row
@@ -3626,15 +3939,24 @@ async function interviewsNotesShow(token: string, jobId: string): Promise<Interv
  * (#149); the plural form here matches `payouts` / `methods` for
  * collection-style namespaces.
  *
- * Sub-sub-namespace `interviews.notes.*` (#440) groups the portal-side
- * notes-focused projection — `notes.show(jobId)` is the lightweight
- * read of the talent's prep notes for one job's interview, paired with
- * the heavier `interviews.show(interviewId)` from #439.
+ * Sub-sub-namespaces:
+ *   - `interviews.notes.*` (#440) — portal-side notes-focused projection.
+ *     `notes.show(jobId)` is the lightweight read of the talent's prep
+ *     notes for one job's interview, paired with the heavier
+ *     `interviews.show(interviewId)` from #439.
+ *   - `interviews.guide.*` (#470) — mobile-gateway guide-content
+ *     projection. `guide.show(interviewId)` is the read of the
+ *     interview-prep guide (sections + tips). Paired with #439 —
+ *     `interviews.show` surfaces the guide-id presence indicator;
+ *     `interviews.guide.show` fetches the full content.
  */
 export const interviews = {
   show: interviewsShow,
   notes: {
     show: interviewsNotesShow,
+  },
+  guide: {
+    show: interviewsGuideShow,
   },
 };
 

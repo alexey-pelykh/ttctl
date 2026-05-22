@@ -10,7 +10,11 @@ import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runApplicationsAvailabilityRequestShow } from "./availability-request.js";
 import { runApplicationsConfirm } from "./confirm.js";
-import { runApplicationsInterviewNotesShow, runApplicationsInterviewShow } from "./interview.js";
+import {
+  runApplicationsInterviewGuideShow,
+  runApplicationsInterviewNotesShow,
+  runApplicationsInterviewShow,
+} from "./interview.js";
 import { runApplicationsList } from "./list.js";
 import { runApplicationsReject } from "./reject.js";
 import { runApplicationsRejectReasons } from "./reject-reasons.js";
@@ -279,6 +283,37 @@ export function buildApplicationsCommand(): Command {
     )
     .action(async (jobId: string, options: { output: OutputFormat }) => {
       await runApplicationsInterviewNotesShow(jobId, options.output);
+    });
+
+  // #470 — Interview prep guide (mobile-gateway `InterviewGuide`).
+  // Sub-sub-namespace `interview guide show <interviewId>` for the
+  // interview-prep guide content (sections + tips) attached to one
+  // interview. Read-only.
+  //
+  // Sibling of `notes` — both deepen the `interview` namespace. Input
+  // is the INTERVIEW id (the wire op takes `$interviewId: ID!`).
+  // The `Prep guide → ID: <guideId>` line surfaced by
+  // `applications interview show` is the back-pointer; the guide
+  // CONTENT lives behind this leaf.
+  const guideCmd = interviewCmd
+    .command("guide")
+    .description("Interview prep guide (sections + tips). Sub-sub-namespace of `interview`.");
+
+  guideCmd
+    .command("show")
+    .description("Read the interview-prep guide content (sections + tips) for one interview")
+    .argument(
+      "<interviewId>",
+      "Interview id (discover via `applications interview show <interviewId>` or `applications show <activityId>`)",
+      parseIdArg,
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (interviewId: string, options: { output: OutputFormat }) => {
+      await runApplicationsInterviewGuideShow(interviewId, options.output);
     });
 
   // #442 — Availability-request detail. Sibling read-only sub-namespace
