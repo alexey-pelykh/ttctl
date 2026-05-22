@@ -17,6 +17,8 @@ vi.mock("../../../transport.js", async () => {
 import {
   AVAILABILITY_REQUEST_KINDS,
   AVAILABILITY_REQUEST_STATUSES,
+  INTERVIEW_GUIDE_SECTION_IDENTIFIERS,
+  INTERVIEW_GUIDE_TIP_IDENTIFIERS,
   INTERVIEW_STATUSES,
   STATUS_GROUPS,
   ApplicationsError,
@@ -2454,6 +2456,275 @@ describe("applications.interviews.notes.show (#440)", () => {
       body: { errors: [{ message: "auth revoked", extensions: { code: "UNAUTHENTICATED" } }] },
     });
     await expect(interviews.notes.show(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
+// ---------------------------------------------------------------------
+// `applications.interviews.guide.show` (#470)
+// ---------------------------------------------------------------------
+
+describe("applications.interviews.guide.show (#470)", () => {
+  const INTERVIEW_ID = "int-guide-1";
+  const GUIDE_ID = "gui-1";
+
+  function guideFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      __typename: "TalentInterview",
+      id: INTERVIEW_ID,
+      guide: {
+        __typename: "TalentInterviewGuide",
+        id: GUIDE_ID,
+        sections: [
+          {
+            __typename: "TalentInterviewGuideSection",
+            identifier: "STRENGTHS",
+            title: "Your strengths",
+            subtitle: "Match between your profile and the role",
+            tips: [
+              {
+                __typename: "TalentInterviewGuideTip",
+                identifier: "STRENGTHS_OVERLAP",
+                title: "Profile overlap",
+                content: "You have 5 years in TypeScript matching the requirement.",
+                hardcodedContent: "Highlight overlapping experience.",
+              },
+            ],
+          },
+          {
+            __typename: "TalentInterviewGuideSection",
+            identifier: "PRO_TIPS",
+            title: "Toptal interview tips",
+            subtitle: null,
+            tips: [
+              {
+                __typename: "TalentInterviewGuideTip",
+                identifier: "BE_PRESENTABLE",
+                title: "Dress professionally",
+                content: null,
+                hardcodedContent: "Wear business-casual attire.",
+              },
+              {
+                __typename: "TalentInterviewGuideTip",
+                identifier: "CAMERA_ON",
+                title: "Camera on",
+                content: null,
+                hardcodedContent: "Keep your camera on for the entire interview.",
+              },
+            ],
+          },
+        ],
+      },
+      ...overrides,
+    };
+  }
+
+  it("projects the guide content and dispatches InterviewGuide with the id variable", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", interview: guideFixture() } } },
+    });
+    const item = await interviews.guide.show(TOKEN, INTERVIEW_ID);
+    expect(item.interviewId).toBe(INTERVIEW_ID);
+    expect(item.guideId).toBe(GUIDE_ID);
+    expect(item.sections).toHaveLength(2);
+
+    expect(item.sections[0]).toEqual({
+      identifier: "STRENGTHS",
+      title: "Your strengths",
+      subtitle: "Match between your profile and the role",
+      tips: [
+        {
+          identifier: "STRENGTHS_OVERLAP",
+          title: "Profile overlap",
+          content: "You have 5 years in TypeScript matching the requirement.",
+          hardcodedContent: "Highlight overlapping experience.",
+        },
+      ],
+    });
+
+    expect(item.sections[1]?.identifier).toBe("PRO_TIPS");
+    expect(item.sections[1]?.tips).toHaveLength(2);
+    expect(item.sections[1]?.tips[0]?.identifier).toBe("BE_PRESENTABLE");
+    expect(item.sections[1]?.tips[1]?.identifier).toBe("CAMERA_ON");
+
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "InterviewGuide",
+      variables: { id: INTERVIEW_ID },
+    });
+  });
+
+  it("returns guideId: null and sections: [] when no guide is attached to the interview", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            interview: { __typename: "TalentInterview", id: INTERVIEW_ID, guide: null },
+          },
+        },
+      },
+    });
+    const item = await interviews.guide.show(TOKEN, INTERVIEW_ID);
+    expect(item).toEqual({
+      interviewId: INTERVIEW_ID,
+      guideId: null,
+      sections: [],
+    });
+  });
+
+  it("returns guideId set + sections: [] when the guide exists but has no sections", async () => {
+    // Defensive coverage for the sparse-guide wire shape (guide row
+    // exists but the server returned no sections — e.g. an interview
+    // type whose guide template hasn't been provisioned yet).
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            interview: {
+              __typename: "TalentInterview",
+              id: INTERVIEW_ID,
+              guide: { __typename: "TalentInterviewGuide", id: GUIDE_ID, sections: null },
+            },
+          },
+        },
+      },
+    });
+    const item = await interviews.guide.show(TOKEN, INTERVIEW_ID);
+    expect(item).toEqual({
+      interviewId: INTERVIEW_ID,
+      guideId: GUIDE_ID,
+      sections: [],
+    });
+  });
+
+  it("projects sparse sections (all-null fields coerce to null) without dropping them", async () => {
+    const sparseSection = {
+      __typename: "TalentInterviewGuideSection",
+      // identifier omitted
+      // title omitted
+      // subtitle omitted
+      tips: null,
+    };
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            interview: {
+              __typename: "TalentInterview",
+              id: INTERVIEW_ID,
+              guide: { __typename: "TalentInterviewGuide", id: GUIDE_ID, sections: [sparseSection] },
+            },
+          },
+        },
+      },
+    });
+    const item = await interviews.guide.show(TOKEN, INTERVIEW_ID);
+    expect(item.sections).toHaveLength(1);
+    expect(item.sections[0]).toEqual({
+      identifier: null,
+      title: null,
+      subtitle: null,
+      tips: [],
+    });
+  });
+
+  it("drops null entries from sections and tips arrays (defensive against wire sparseness)", async () => {
+    const fixtureWithNulls = guideFixture({
+      guide: {
+        __typename: "TalentInterviewGuide",
+        id: GUIDE_ID,
+        sections: [
+          null,
+          {
+            __typename: "TalentInterviewGuideSection",
+            identifier: "GAPS",
+            title: "Gaps",
+            subtitle: null,
+            tips: [
+              null,
+              {
+                __typename: "TalentInterviewGuideTip",
+                identifier: "GAP_ANALYSIS",
+                title: "Likely follow-ups",
+                content: null,
+                hardcodedContent: "Be ready to address gaps.",
+              },
+              null,
+            ],
+          },
+          null,
+        ],
+      },
+    });
+    reply({
+      body: { data: { viewer: { id: "v1", interview: fixtureWithNulls } } },
+    });
+    const item = await interviews.guide.show(TOKEN, INTERVIEW_ID);
+    expect(item.sections).toHaveLength(1);
+    expect(item.sections[0]?.identifier).toBe("GAPS");
+    expect(item.sections[0]?.tips).toHaveLength(1);
+    expect(item.sections[0]?.tips[0]?.identifier).toBe("GAP_ANALYSIS");
+  });
+
+  it("throws ApplicationsError(NOT_FOUND) when viewer.interview is null on the wire", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", interview: null } } },
+    });
+    await expect(interviews.guide.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
+    // Same shared NOT_FOUND_MESSAGE_PATTERN as siblings — covers
+    // `Record not found` / `Invalid ID` / Relay `Node id ... resolves to`
+    // per the per-op-specific behavior memory `project_toptal_wire_quirks`.
+    reply({
+      body: { errors: [{ message: "Record not found" }] },
+    });
+    await expect(interviews.guide.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("propagates AuthRevokedError for sessions whose bearer was revoked", async () => {
+    reply({
+      status: 401,
+      body: { errors: [{ message: "auth revoked", extensions: { code: "UNAUTHENTICATED" } }] },
+    });
+    await expect(interviews.guide.show(TOKEN, INTERVIEW_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("exports the InterviewGuideSectionIdentifierEnum vocabulary (sanity for callers)", () => {
+    expect(INTERVIEW_GUIDE_SECTION_IDENTIFIERS).toEqual([
+      "ASK_YOUR_CLIENT",
+      "GAPS",
+      "JOB_HIGHLIGHTS",
+      "POTENTIAL_QUESTIONS",
+      "PRO_TIPS",
+      "STRENGTHS",
+    ]);
+  });
+
+  it("exports the InterviewGuideTipIdentifierEnum vocabulary (sanity for callers)", () => {
+    expect(INTERVIEW_GUIDE_TIP_IDENTIFIERS).toEqual([
+      "BE_PRESENTABLE",
+      "CAMERA_ON",
+      "DONT_DISCUSS_RATE",
+      "GAP_ANALYSIS",
+      "HIRING_FACTORS",
+      "JOB_SUMMARY",
+      "PROFILE_REFERENCES",
+      "QUESTIONS_TO_ASK",
+      "QUESTIONS_TO_PREPARE_FOR",
+      "SMALL_TALK",
+      "STANDARD_QUESTIONS",
+      "STRENGTHS_OVERLAP",
+    ]);
   });
 });
 

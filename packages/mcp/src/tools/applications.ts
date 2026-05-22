@@ -79,7 +79,7 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
 }
 
 /**
- * Register the six `ttctl_applications_*` MCP tools per #15 / #439 / #440 / #442.
+ * Register the seven `ttctl_applications_*` MCP tools per #15 / #439 / #440 / #442 / #470.
  * Tool names use the `ttctl_` prefix and the canonical CLI path joined
  * with `_` per project naming policy:
  *
@@ -88,6 +88,7 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
  *   - `ttctl_applications_stats`
  *   - `ttctl_applications_interview_show` (#439, sub-namespace leaf)
  *   - `ttctl_applications_interview_notes_show` (#440, sub-sub-namespace leaf)
+ *   - `ttctl_applications_interview_guide_show` (#470, sub-sub-namespace leaf)
  *   - `ttctl_applications_availability_request_show` (#442, sub-namespace leaf)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
@@ -311,6 +312,61 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       }
       try {
         const item = await applications.interviews.notes.show(auth.token, args.id);
+        return successResponse(item);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+
+  // #470 — Interview prep guide (sub-sub-namespace
+  // `applications.interviews.guide.show`). Read-only; mirrors the CLI
+  // `ttctl applications interview guide show <interviewId>`. Input is
+  // the INTERVIEW id — the wire op (`InterviewGuide`) takes
+  // `$interviewId: ID!` and traverses `viewer.interview(id).guide.{
+  // id, sections[...]}`. Dry-run path emits a single-op `InterviewGuide`
+  // preview against the mobile-gateway surface.
+  server.registerTool(
+    "ttctl_applications_interview_guide_show",
+    {
+      title: "Read the interview-prep guide content for one interview",
+      description: [
+        "Fetch the interview-prep guide content (sections + tips) for one interview.",
+        "",
+        "Input is the INTERVIEW id (the TalentInterview id), NOT the guide id. Discover",
+        "it via `ttctl_applications_interview_show` (the `guideId` field on the interview",
+        "detail is the back-pointer; the guide CONTENT lives behind this tool).",
+        "",
+        "Returns the projected guide: the interview id (echo), the guide id (when one is",
+        "attached), and the list of sections. Each section carries an identifier",
+        "(`InterviewGuideSectionIdentifierEnum`: STRENGTHS, GAPS, JOB_HIGHLIGHTS,",
+        "POTENTIAL_QUESTIONS, PRO_TIPS, ASK_YOUR_CLIENT), title, optional subtitle, and",
+        "a list of tips. Each tip carries an identifier",
+        "(`InterviewGuideTipIdentifierEnum`: 12 members including STANDARD_QUESTIONS,",
+        "CAMERA_ON, BE_PRESENTABLE, GAP_ANALYSIS, …), title, and TWO content fields:",
+        "`content` (job/talent-personalized markdown body) and `hardcodedContent`",
+        "(generic template body shipped with every guide).",
+        "",
+        "Example user prompts:",
+        '  - "Show me the prep guide for interview int_abc123."',
+        '  - "What should I prepare for the upcoming interview?" (use the interview id from `ttctl_applications_interview_show`)',
+        '  - "Are there any pro-tips for this interview?"',
+      ].join("\n"),
+      inputSchema: {
+        id: z
+          .string()
+          .describe("TalentInterview id (NOT the guide id — discover via ttctl_applications_interview_show)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("InterviewGuide", "mobile-gateway", { id: args.id }, auth.token));
+      }
+      try {
+        const item = await applications.interviews.guide.show(auth.token, args.id);
         return successResponse(item);
       } catch (err) {
         return mapApplicationsError(err);

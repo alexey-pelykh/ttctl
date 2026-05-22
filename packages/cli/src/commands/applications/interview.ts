@@ -274,3 +274,144 @@ export function formatInterviewNotes(item: applications.InterviewNotesProjection
 
   return lines.join("\n");
 }
+
+/**
+ * Action handler for `ttctl applications interview guide show <interviewId>` (#470).
+ * Read-only fetch of the interview-prep guide content (sections + tips)
+ * for one interview, via the mobile-gateway `InterviewGuide` query.
+ *
+ * **Input is the INTERVIEW id**, not the guide id. The wire op takes
+ * `$interviewId: ID!` and traverses `viewer.interview(id).guide`.
+ * Discover via `ttctl applications interview show <interviewId>` or
+ * `ttctl applications show <activityId>` (the `Interview: <id>` line).
+ *
+ * Pretty rendering groups tips under their section headers
+ * (identifier + title + subtitle). Each tip renders as a labeled
+ * sub-block with `Tip:` / `Content:` / `Template:` lines; the
+ * `hardcodedContent` label is "Template" to disambiguate from
+ * `content` (which is the talent/job-personalized body the guide
+ * pipeline splices in). Empty-guide results render a single-line
+ * `(no guide attached to this interview)` message rather than blank
+ * output.
+ *
+ * `json` / `yaml` always emit the full
+ * {@link applications.InterviewGuideProjection} — machine consumers
+ * project as needed.
+ */
+export async function runApplicationsInterviewGuideShow(interviewId: string, output: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("applications interview guide show", output);
+
+  let item: applications.InterviewGuideProjection;
+  try {
+    item = await applications.interviews.guide.show(token, interviewId);
+  } catch (err) {
+    handleApplicationsError("applications interview guide show", err, output);
+  }
+
+  emitResult(item, output, {
+    pretty: (data) => formatInterviewGuide(data),
+  });
+}
+
+/**
+ * Render an {@link applications.InterviewGuideProjection} as a sectioned
+ * multi-line block. Pure — directly unit-testable.
+ *
+ * Layout:
+ *
+ *     Interview guide for interview <interviewId>
+ *       Guide id: <guideId>                         // omitted if null
+ *
+ *     [<identifier>] <title>                        // section header; falls back to identifier-only
+ *       <subtitle>                                  // omitted if null/empty
+ *
+ *       • <tipIdentifier> — <tipTitle>             // tip header; falls back to identifier-only
+ *           Content:
+ *             <multi-line content, indented>
+ *           Template:
+ *             <multi-line hardcodedContent, indented>
+ *
+ * When no guide is attached, prints:
+ *
+ *     Interview guide for interview <interviewId>
+ *       (no guide attached to this interview)
+ */
+export function formatInterviewGuide(item: applications.InterviewGuideProjection): string {
+  const lines: string[] = [];
+
+  lines.push(`Interview guide for interview ${item.interviewId}`);
+
+  if (item.guideId === null) {
+    lines.push("  (no guide attached to this interview)");
+    return lines.join("\n");
+  }
+
+  lines.push(`  Guide id: ${item.guideId}`);
+
+  if (item.sections.length === 0) {
+    lines.push("");
+    lines.push("  (guide has no sections)");
+    return lines.join("\n");
+  }
+
+  for (const section of item.sections) {
+    lines.push("");
+    // Section header — falls back to identifier-only when title is null,
+    // and to a literal "(unnamed section)" when both are null.
+    const sectionHeader = sectionHeaderLine(section);
+    lines.push(sectionHeader);
+    if (section.subtitle !== null && section.subtitle !== "") {
+      lines.push(`  ${section.subtitle}`);
+    }
+
+    if (section.tips.length === 0) {
+      lines.push("  (no tips)");
+      continue;
+    }
+
+    for (const tip of section.tips) {
+      lines.push("");
+      lines.push(`  ${tipHeaderLine(tip)}`);
+      if (tip.content !== null && tip.content !== "") {
+        lines.push(`      Content:`);
+        for (const para of tip.content.split(/\n/)) {
+          lines.push(`        ${para}`);
+        }
+      }
+      if (tip.hardcodedContent !== null && tip.hardcodedContent !== "") {
+        lines.push(`      Template:`);
+        for (const para of tip.hardcodedContent.split(/\n/)) {
+          lines.push(`        ${para}`);
+        }
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function sectionHeaderLine(section: applications.InterviewGuideSection): string {
+  if (section.identifier !== null && section.title !== null && section.title !== "") {
+    return `[${section.identifier}] ${section.title}`;
+  }
+  if (section.identifier !== null) {
+    return `[${section.identifier}]`;
+  }
+  if (section.title !== null && section.title !== "") {
+    return section.title;
+  }
+  return "(unnamed section)";
+}
+
+function tipHeaderLine(tip: applications.InterviewGuideTip): string {
+  if (tip.identifier !== null && tip.title !== null && tip.title !== "") {
+    return `• ${tip.identifier} — ${tip.title}`;
+  }
+  if (tip.identifier !== null) {
+    return `• ${tip.identifier}`;
+  }
+  if (tip.title !== null && tip.title !== "") {
+    return `• ${tip.title}`;
+  }
+  return "• (unnamed tip)";
+}

@@ -7,7 +7,7 @@ import type { applications } from "@ttctl/core";
 
 import { formatAvailabilityRequestDetail } from "../availability-request.js";
 import { formatRespondPayload } from "../confirm.js";
-import { formatInterviewDetail, formatInterviewNotes } from "../interview.js";
+import { formatInterviewDetail, formatInterviewGuide, formatInterviewNotes } from "../interview.js";
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
 import { formatRejectReasons } from "../reject-reasons.js";
 import { formatFixedRate } from "../shared.js";
@@ -686,5 +686,228 @@ describe("formatAvailabilityRequestDetail (#442)", () => {
     );
     expect(out).toContain("Title:  Senior Engineer");
     expect(out).not.toContain("Client:");
+  });
+});
+
+// ---------------------------------------------------------------------
+// `formatInterviewGuide` (#470)
+// ---------------------------------------------------------------------
+
+describe("formatInterviewGuide (#470)", () => {
+  function makeGuide(
+    overrides: Partial<applications.InterviewGuideProjection> = {},
+  ): applications.InterviewGuideProjection {
+    return {
+      interviewId: "int-1",
+      guideId: "gui-1",
+      sections: [
+        {
+          identifier: "STRENGTHS",
+          title: "Your strengths",
+          subtitle: "Match between profile and role",
+          tips: [
+            {
+              identifier: "STRENGTHS_OVERLAP",
+              title: "Profile overlap",
+              content: "5 years TypeScript matches the requirement.",
+              hardcodedContent: "Highlight overlapping experience.",
+            },
+          ],
+        },
+        {
+          identifier: "PRO_TIPS",
+          title: "Toptal interview tips",
+          subtitle: null,
+          tips: [
+            {
+              identifier: "BE_PRESENTABLE",
+              title: "Dress professionally",
+              content: null,
+              hardcodedContent: "Wear business-casual attire.",
+            },
+          ],
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("renders the canonical sectioned layout for a fully-populated guide", () => {
+    const out = formatInterviewGuide(makeGuide());
+    expect(out).toContain("Interview guide for interview int-1");
+    expect(out).toContain("Guide id: gui-1");
+    expect(out).toContain("[STRENGTHS] Your strengths");
+    expect(out).toContain("Match between profile and role");
+    expect(out).toContain("• STRENGTHS_OVERLAP — Profile overlap");
+    expect(out).toContain("Content:");
+    expect(out).toContain("5 years TypeScript matches the requirement.");
+    expect(out).toContain("Template:");
+    expect(out).toContain("Highlight overlapping experience.");
+    expect(out).toContain("[PRO_TIPS] Toptal interview tips");
+    expect(out).toContain("• BE_PRESENTABLE — Dress professionally");
+    expect(out).toContain("Wear business-casual attire.");
+  });
+
+  it("renders the no-guide-attached message when guideId is null", () => {
+    const out = formatInterviewGuide(makeGuide({ guideId: null, sections: [] }));
+    expect(out).toBe("Interview guide for interview int-1\n  (no guide attached to this interview)");
+  });
+
+  it("renders the no-sections message when guide exists but sections is empty", () => {
+    const out = formatInterviewGuide(makeGuide({ sections: [] }));
+    expect(out).toContain("Guide id: gui-1");
+    expect(out).toContain("(guide has no sections)");
+  });
+
+  it("renders the no-tips message for a section with no tips", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [{ identifier: "GAPS", title: "Gaps", subtitle: null, tips: [] }],
+      }),
+    );
+    expect(out).toContain("[GAPS] Gaps");
+    expect(out).toContain("(no tips)");
+  });
+
+  it("omits the Template block when hardcodedContent is null", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: "GAPS",
+            title: "Gaps",
+            subtitle: null,
+            tips: [
+              {
+                identifier: "GAP_ANALYSIS",
+                title: "Likely follow-ups",
+                content: "Be ready to address gaps.",
+                hardcodedContent: null,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("Content:");
+    expect(out).toContain("Be ready to address gaps.");
+    expect(out).not.toContain("Template:");
+  });
+
+  it("omits the Content block when content is null but renders Template", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: "PRO_TIPS",
+            title: "Tips",
+            subtitle: null,
+            tips: [
+              {
+                identifier: "CAMERA_ON",
+                title: "Camera on",
+                content: null,
+                hardcodedContent: "Keep your camera on.",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(out).not.toContain("Content:");
+    expect(out).toContain("Template:");
+    expect(out).toContain("Keep your camera on.");
+  });
+
+  it("falls back to identifier-only header when section title is null", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: "PRO_TIPS",
+            title: null,
+            subtitle: null,
+            tips: [],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("[PRO_TIPS]");
+    expect(out).not.toContain("[PRO_TIPS] ");
+  });
+
+  it("falls back to title-only header when identifier is null", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: null,
+            title: "Custom section",
+            subtitle: null,
+            tips: [],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("Custom section");
+    expect(out).not.toContain("[");
+  });
+
+  it("falls back to '(unnamed section)' when both identifier and title are null", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: null,
+            title: null,
+            subtitle: null,
+            tips: [],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("(unnamed section)");
+  });
+
+  it("falls back to identifier-only tip header when tip title is null", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: "PRO_TIPS",
+            title: "Tips",
+            subtitle: null,
+            tips: [{ identifier: "CAMERA_ON", title: null, content: null, hardcodedContent: "Keep camera on." }],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("• CAMERA_ON");
+    expect(out).not.toContain("• CAMERA_ON —");
+  });
+
+  it("preserves multi-line content (each newline becomes its own indented line)", () => {
+    const out = formatInterviewGuide(
+      makeGuide({
+        sections: [
+          {
+            identifier: "PRO_TIPS",
+            title: "Tips",
+            subtitle: null,
+            tips: [
+              {
+                identifier: "CAMERA_ON",
+                title: "Camera",
+                content: "Line one.\nLine two.\nLine three.",
+                hardcodedContent: null,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("Line one.");
+    expect(out).toContain("Line two.");
+    expect(out).toContain("Line three.");
   });
 });
