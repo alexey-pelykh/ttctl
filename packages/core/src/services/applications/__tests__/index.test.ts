@@ -2313,3 +2313,144 @@ describe("applications.interviews.show (#439)", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------
+// `applications.interviews.notes.show` (#440)
+// ---------------------------------------------------------------------
+
+describe("applications.interviews.notes.show (#440)", () => {
+  const JOB_ID = "job-1";
+
+  function notesFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      __typename: "TalentJob",
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        interview: {
+          __typename: "TalentInterview",
+          id: "int-1",
+          kind: "EXTERNAL",
+          talentNotes: [
+            { __typename: "TalentInterviewNote", id: "note-1", section: "GAPS", note: "Ask about scaling." },
+            {
+              __typename: "TalentInterviewNote",
+              id: "note-2",
+              section: "STRENGTHS",
+              note: "Highlight prior client wins.",
+            },
+          ],
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  it("projects the talent notes and dispatches GetInterviewNotes with the jobId variable", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", job: notesFixture() } } },
+    });
+    const item = await interviews.notes.show(TOKEN, JOB_ID);
+    expect(item.jobId).toBe(JOB_ID);
+    expect(item.interviewId).toBe("int-1");
+    expect(item.interviewKind).toBe("EXTERNAL");
+    expect(item.notes).toEqual([
+      { id: "note-1", section: "GAPS", note: "Ask about scaling." },
+      { id: "note-2", section: "STRENGTHS", note: "Highlight prior client wins." },
+    ]);
+
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "GetInterviewNotes",
+      variables: { jobId: JOB_ID },
+    });
+  });
+
+  it("returns empty notes + null interviewId/interviewKind when the job has no attached interview", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            job: { __typename: "TalentJob", activityItem: { __typename: "TalentJobActivityItem", interview: null } },
+          },
+        },
+      },
+    });
+    const item = await interviews.notes.show(TOKEN, JOB_ID);
+    expect(item).toEqual({ jobId: JOB_ID, interviewId: null, interviewKind: null, notes: [] });
+  });
+
+  it("returns empty notes + null fields when the activityItem itself is null", async () => {
+    // Defensive sparse-wire path: some jobs may have no activityItem
+    // (e.g. eligible-but-not-yet-acted-on jobs). The projection must
+    // not crash — sub-namespace is read-only and forgiving.
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            job: { __typename: "TalentJob", activityItem: null },
+          },
+        },
+      },
+    });
+    const item = await interviews.notes.show(TOKEN, JOB_ID);
+    expect(item).toEqual({ jobId: JOB_ID, interviewId: null, interviewKind: null, notes: [] });
+  });
+
+  it("drops null entries from the talentNotes array (defensive against wire sparseness)", async () => {
+    const fixtureWithNulls = notesFixture({
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        interview: {
+          __typename: "TalentInterview",
+          id: "int-1",
+          kind: null,
+          talentNotes: [
+            null,
+            { __typename: "TalentInterviewNote", id: "note-keep", section: null, note: "Kept note" },
+            null,
+          ],
+        },
+      },
+    });
+    reply({
+      body: { data: { viewer: { id: "v1", job: fixtureWithNulls } } },
+    });
+    const item = await interviews.notes.show(TOKEN, JOB_ID);
+    expect(item.interviewKind).toBeNull();
+    expect(item.notes).toHaveLength(1);
+    expect(item.notes[0]).toEqual({ id: "note-keep", section: null, note: "Kept note" });
+  });
+
+  it("throws ApplicationsError(NOT_FOUND) when viewer.job is null on the wire", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", job: null } } },
+    });
+    await expect(interviews.notes.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
+    // Same shared NOT_FOUND_MESSAGE_PATTERN as applications.show — covers
+    // `Record not found` / `Invalid ID` / Relay `Node id ... resolves to`
+    // per the per-op-specific behavior memory `project_toptal_wire_quirks`.
+    reply({
+      body: { errors: [{ message: "Record not found" }] },
+    });
+    await expect(interviews.notes.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("propagates AuthRevokedError for sessions whose bearer was revoked", async () => {
+    reply({
+      status: 401,
+      body: { errors: [{ message: "auth revoked", extensions: { code: "UNAUTHENTICATED" } }] },
+    });
+    await expect(interviews.notes.show(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});

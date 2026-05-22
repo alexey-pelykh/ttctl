@@ -79,7 +79,7 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
 }
 
 /**
- * Register the four `ttctl_applications_*` MCP tools per #15 / #439.
+ * Register the five `ttctl_applications_*` MCP tools per #15 / #439 / #440.
  * Tool names use the `ttctl_` prefix and the canonical CLI path joined
  * with `_` per project naming policy:
  *
@@ -87,6 +87,7 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
  *   - `ttctl_applications_show`
  *   - `ttctl_applications_stats`
  *   - `ttctl_applications_interview_show` (#439, sub-namespace leaf)
+ *   - `ttctl_applications_interview_notes_show` (#440, sub-sub-namespace leaf)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The list tool's `keywords` and `statusGroups` mirror the
@@ -256,6 +257,59 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       }
       try {
         const item = await applications.interviews.show(auth.token, args.id);
+        return successResponse(item);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+
+  // #440 — Interview prep notes (sub-sub-namespace
+  // `applications.interviews.notes.show`). Read-only; mirrors the CLI
+  // `ttctl applications interview notes show <jobId>`. **Input is the
+  // JOB id, NOT the interview id** — the portal-side
+  // `GetInterviewNotes` op takes `$jobId: ID!` and traverses
+  // `viewer.job(id).activityItem.interview.{id, kind, talentNotes}`.
+  // Dry-run path emits a single-op `GetInterviewNotes` preview against
+  // the mobile-gateway surface (portal + mobile share the same backend
+  // — same dispatch as #447 / #448).
+  server.registerTool(
+    "ttctl_applications_interview_notes_show",
+    {
+      title: "Read the talent's prep notes for an interview",
+      description: [
+        "Fetch the talent's prep notes for the interview attached to a given job.",
+        "",
+        "Input is the JOB id (the TalentJob id), NOT the interview id. Discover the",
+        "job id via `ttctl_applications_interview_show` (the `job.id` field on the",
+        "interview detail) or `ttctl_applications_show` (the `job.id` field on the",
+        "activity row).",
+        "",
+        "Returns the projected notes payload: the job id (echo), the interview id",
+        "and kind (EXTERNAL/INTERNAL) when one is attached, and the list of",
+        "talent-authored prep notes grouped by InterviewGuideSection identifier.",
+        "",
+        "Example user prompts:",
+        '  - "Show me my prep notes for the interview on job job_xyz789."',
+        '  - "What did I write down for the upcoming interview?" (after fetching the job id from `ttctl_applications_interview_show`)',
+      ].join("\n"),
+      inputSchema: {
+        id: z
+          .string()
+          .describe("TalentJob id (NOT the interview id — discover via ttctl_applications_interview_show → job.id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("GetInterviewNotes", "mobile-gateway", { jobId: args.id }, auth.token),
+        );
+      }
+      try {
+        const item = await applications.interviews.notes.show(auth.token, args.id);
         return successResponse(item);
       } catch (err) {
         return mapApplicationsError(err);
