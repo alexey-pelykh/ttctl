@@ -54,9 +54,10 @@ function buildPayoutsPageInfo(result: payments.PayoutsListResult): PayoutsPageIn
 }
 
 /**
- * Register the `ttctl_payments_*` MCP tools (#149, #447). 8 tools
- * across 3 sub-namespaces:
+ * Register the `ttctl_payments_*` MCP tools (#149, #447, #448). 9
+ * tools — `summary` at the top level plus 8 across 3 sub-namespaces:
  *
+ *   - `ttctl_payments_summary`        (#448, aggregate `GetTalentPaymentSummary`)
  *   - `ttctl_payments_payouts_list`
  *   - `ttctl_payments_payouts_show`
  *   - `ttctl_payments_methods_list`
@@ -185,6 +186,46 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
       try {
         const item = await payments.payouts.show(auth.token, args.id);
         return successResponse(item);
+      } catch (err) {
+        return mapPaymentsError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_payments_summary",
+    {
+      title: "Show aggregate payment totals",
+      description: [
+        "Show the talent's aggregate Toptal payment totals — six",
+        "server-computed sums spanning the entire payment history:",
+        "`totalPaid`, `totalDue`, `totalOutstanding`, `totalOverdue`,",
+        "`totalOnHold`, `totalDisputed` (each a decimal string).",
+        "",
+        "Lightweight at-a-glance financial overview via the single",
+        "`GetTalentPaymentSummary` query. Sibling to",
+        "`ttctl_payments_payouts_list`, which returns the individual payout",
+        "rows (paginated) plus the same aggregate for the queried window —",
+        "reach for `summary` when the answer is just the totals.",
+        "",
+        "Read-only — no side effects.",
+        "",
+        "Example user prompts:",
+        '  - "What are my total Toptal earnings?"',
+        '  - "How much is Toptal due to pay me right now?"',
+        '  - "Give me a summary of my Toptal payments."',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("GetTalentPaymentSummary", "mobile-gateway", {}, auth.token));
+      }
+      try {
+        const result = await payments.summary(auth.token);
+        return successResponse(result);
       } catch (err) {
         return mapPaymentsError(err);
       }

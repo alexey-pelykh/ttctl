@@ -576,6 +576,19 @@ const PAYMENT_OPTIONS_QUERY = `query PaymentOptions { viewer { __typename id pay
 // inline-composed Zod schemas at trusted-op call sites.
 const GET_TALENT_RATE_QUERY = `query GetTalentRate { viewer { id viewerRole { roleId hourlyRate { verbose } } } }`;
 
+// Verbatim from `../research/graphql/gateway/operations/portal/GetTalentPaymentSummary.graphql`
+// (#448). Untrusted catalog: `GetTalentPaymentSummary` is listed in
+// `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` (`codegen.config.ts`), so no
+// `GetTalentPaymentSummaryQuery` type is generated — the op takes the T1
+// (wire-snapshot) disposition rather than #447's T2 (codegen-Zod) one.
+// Dispatched via `callGateway` against the mobile-gateway surface with
+// EMPTY variables `{}`: all three filter variables (`$status` /
+// `$createdOn` / `$clientIds`) are optional, so an unset call yields the
+// all-time aggregate — the `ttctl payments summary` scope. Date / client
+// filtering is a deliberate v1 non-goal; the variable declarations are
+// retained verbatim so a future filtered leaf needs no query rewrite.
+const GET_TALENT_PAYMENT_SUMMARY_QUERY = `query GetTalentPaymentSummary($status: PaymentStatusFilter, $createdOn: DateFilter, $clientIds: [ID!]) { viewer { id payments(filters: {status: $status, createdOn: $createdOn, clientIds: $clientIds}) { summary { totalDisputed totalDue totalOnHold totalOutstanding totalOverdue totalPaid } } } }`;
+
 // Verbatim from `../research/graphql/gateway/operations/mobile/LastRateChangeRequest.graphql`.
 const LAST_RATE_CHANGE_REQUEST_QUERY = `query LastRateChangeRequest { viewer { __typename id ...lastRateChangeRequestData } }  fragment rateInsightForCommitmentData on TalentRateInsightForCommitment { __typename currentRateCompetitive recentApplicationRate recommendedRate }  fragment profileRatesData on ViewerRole { __typename rates { __typename hourly } rateInsight { __typename hourly { __typename ...rateInsightForCommitmentData } } }  fragment lastRateChangeRequestData on Viewer { __typename id lastRateChangeRequest { __typename id createdAt desiredRate engagement { __typename id job { __typename id title client { __typename id fullName } } currentAgreement { __typename commitment { __typename slug } } } outcomeRate requestType status talentComment } viewerRole { __typename ...profileRatesData } }`;
 
@@ -676,6 +689,20 @@ interface PaymentsListResponse {
 
 interface PaymentShowResponse {
   node: WirePayment | null;
+}
+
+/**
+ * Wire response for `GetTalentPaymentSummary` (#448). The op selects the
+ * `summary` aggregate block on `viewer.payments` — the SAME six-total
+ * shape {@link WirePaymentsConnection.summary} carries on the heavier
+ * `Payments` list op. `viewer` / `payments` / `summary` are each
+ * independently nullable (mirrors {@link PaymentsListResponse}).
+ */
+interface PaymentSummaryResponse {
+  viewer: {
+    id: string;
+    payments: { summary: PayoutsSummary | null } | null;
+  } | null;
 }
 
 interface WirePaymentOption {
@@ -1422,3 +1449,48 @@ export const rate = {
     return { kind: "applied", result: projectRateChangeRequest(wire), notice: result.notice };
   },
 };
+
+// ---------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------
+
+/**
+ * Read the talent's aggregate payment summary via a single lightweight
+ * `GetTalentPaymentSummary` query (#448) — six server-computed totals
+ * (paid / due / outstanding / overdue / on-hold / disputed) spanning the
+ * talent's entire payment history.
+ *
+ * Sibling to {@link payouts.list}: where `payouts.list` returns the
+ * individual {@link Payout} rows (paginated) PLUS the same
+ * {@link PayoutsSummary} aggregate for the queried window, `summary()`
+ * answers "what are my totals" in one round trip with no row payload.
+ * Use it for an at-a-glance financial overview; reach for `payouts.list`
+ * when the individual payment events matter.
+ *
+ * Called with empty variables — the op's three filter variables
+ * (`$status` / `$createdOn` / `$clientIds`) are all optional, so an
+ * unset call returns the all-time aggregate. Date / client filtering is
+ * a deliberate v1 non-goal.
+ *
+ * T1 wire-validation (#448): `GetTalentPaymentSummary` is in
+ * `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` (no generated type), so there is
+ * no `schema:` argument — the wire shape is pinned by the committed
+ * `GetTalentPaymentSummary.snapshot.json` and asserted on every
+ * `TTCTL_E2E=1` run via `assertWireShapeStable`.
+ *
+ * Returns the server's {@link PayoutsSummary}; falls back to the
+ * all-zero summary when `viewer.payments` (or its `summary` block) is
+ * `null`, mirroring {@link payouts.list}.
+ */
+export async function summary(token: string): Promise<PayoutsSummary> {
+  const data = await callGateway<PaymentSummaryResponse>(
+    token,
+    "GetTalentPaymentSummary",
+    GET_TALENT_PAYMENT_SUMMARY_QUERY,
+    {},
+  );
+  if (data.viewer === null) {
+    throw new PaymentsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  return data.viewer.payments?.summary ?? emptyPayoutsSummary();
+}

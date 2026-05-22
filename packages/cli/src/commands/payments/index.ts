@@ -17,6 +17,7 @@ import {
   runPaymentsRateQuestions,
   runPaymentsRateShow,
 } from "./rate.js";
+import { runPaymentsSummary } from "./summary.js";
 
 /**
  * Page-number option factory (#373, mirroring jobs/index.ts #183).
@@ -37,11 +38,13 @@ function perPageOption(): Option {
 }
 
 /**
- * Build the `ttctl payments` command tree (#149, #447). Eight leaves
- * across three sub-namespaces:
+ * Build the `ttctl payments` command tree (#149, #447, #448). Nine
+ * leaves — `summary` at the top level plus eight across three
+ * sub-namespaces:
  *
  * | Leaf                                                       | Description                       |
  * |------------------------------------------------------------|-----------------------------------|
+ * | `summary`                                                  | Aggregate payment totals (#448)    |
  * | `payouts list [--from <d>] [--to <d>]`                     | List historical payouts            |
  * | `payouts show <id>`                                        | Single payout detail               |
  * | `methods list`                                             | List configured payment methods    |
@@ -70,8 +73,21 @@ function perPageOption(): Option {
  */
 export function buildPaymentsCommand(): Command {
   const cmd = new Command("payments").description(
-    "View payouts, configured payment methods, and rate-change history; submit a rate-change request",
+    "View payouts and aggregate totals, configured payment methods, and rate-change history; submit a rate-change request",
   );
+
+  // ----- summary (top-level aggregate) ---------------------------------
+  cmd
+    .command("summary")
+    .description("Show aggregate payment totals (paid / due / outstanding / overdue / on-hold / disputed)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runPaymentsSummary(options.output);
+    });
 
   // ----- payouts sub-group ---------------------------------------------
   const payouts = cmd.command("payouts").description("Historical payouts (read-only)");

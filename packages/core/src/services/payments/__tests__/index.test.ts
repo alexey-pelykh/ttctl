@@ -12,7 +12,7 @@ vi.mock("../../../transport.js", async () => {
   };
 });
 
-import { DEFAULT_PAGE, DEFAULT_PER_PAGE, PaymentsError, methods, payouts, rate } from "../index.js";
+import { DEFAULT_PAGE, DEFAULT_PER_PAGE, PaymentsError, methods, payouts, rate, summary } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
@@ -848,6 +848,62 @@ describe("rate.change", () => {
       code: "MUTATION_ERROR",
       message: expect.stringContaining("Rate must be at least 30"),
     });
+  });
+});
+
+describe("summary (#448 / T1 GetTalentPaymentSummary)", () => {
+  it("returns the projected PayoutsSummary on the happy path", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { id: "v1", payments: { summary: SUMMARY_FIXTURE } },
+        },
+      },
+    });
+    const result = await summary(TOKEN);
+    expect(result.totalPaid).toBe("5000.00");
+    expect(result.totalDue).toBe("1234.56");
+    expect(result.totalOutstanding).toBe("1234.56");
+    expect(result.totalOverdue).toBe("0");
+    expect(result.totalOnHold).toBe("0");
+    expect(result.totalDisputed).toBe("0");
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches GetTalentPaymentSummary with empty variables", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", payments: { summary: SUMMARY_FIXTURE } } } },
+    });
+    await summary(TOKEN);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body.operationName).toBe("GetTalentPaymentSummary");
+    // No filter args: the op's three filter variables are all optional,
+    // so an unset call sends `{}` and the server returns the all-time
+    // aggregate (the `payments summary` scope — no date/client filter).
+    expect(call?.body.variables ?? {}).toEqual({});
+  });
+
+  it("returns the all-zero summary when viewer.payments is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", payments: null } } } });
+    const result = await summary(TOKEN);
+    expect(result.totalPaid).toBe("0");
+    expect(result.totalDisputed).toBe("0");
+  });
+
+  it("returns the all-zero summary when payments.summary is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", payments: { summary: null } } } } });
+    const result = await summary(TOKEN);
+    expect(result.totalPaid).toBe("0");
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(summary(TOKEN)).rejects.toMatchObject({ code: "NO_VIEWER" });
+  });
+
+  it("throws AuthRevokedError on 401", async () => {
+    reply({ status: 401, body: { data: null } });
+    await expect(summary(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
   });
 });
 
