@@ -13,7 +13,7 @@ import { registerAllTools } from "../tools/index.js";
  * produces a structurally-valid preview envelope. This is the
  * cross-cutting safety net").
  *
- * For each of the 111 registered tools:
+ * For each of the 114 registered tools:
  *   1. Invoke the handler with `dryRun: true` (plus minimal fixture
  *      input satisfying the zod schema).
  *   2. Assert the response is the uniform dry-run envelope —
@@ -253,7 +253,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_timesheet_pending_list: {},
   ttctl_timesheet_show: { id: "bc_123" },
   ttctl_timesheet_submit: { id: "bc_123" },
-  // payments (8 — #149 + #447 rate_current)
+  // payments (9 — #149 + #447 rate_current + #448 summary)
   ttctl_payments_methods_list: {},
   ttctl_payments_methods_show: { id: "pm_123" },
   ttctl_payments_payouts_list: {},
@@ -266,6 +266,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_payments_rate_current: {},
   ttctl_payments_rate_questions: {},
   ttctl_payments_rate_show: {},
+  ttctl_payments_summary: {},
 };
 
 /**
@@ -291,13 +292,14 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 113 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 114 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
     // new opt-in suggestion tool (#452): apply_similar_answers + 1
-    // new lightweight rate read (#447): rate_current.
-    expect(Object.keys(tools)).toHaveLength(113);
+    // new lightweight rate read (#447): rate_current + 1 new
+    // aggregate payment read (#448): summary.
+    expect(Object.keys(tools)).toHaveLength(114);
   });
 
   it("every registered tool has a fixture", () => {

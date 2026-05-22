@@ -38,7 +38,7 @@ TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.
 - **Timesheets** — list, view, submit, and update timesheet billing cycles
 - **Availability** — view and update working hours and allocated weekly hours
 - **Contracts** — view talent-level contracts (Toptal Direct, MSA, etc.)
-- **Payments** — view payout history and payment methods; show current hourly rate via `payments rate current` (lightweight) or the unified `payments rate show` projection; submit rate-change requests
+- **Payments** — view payout history, aggregate payment totals (`payments summary`), and payment methods; show current hourly rate via `payments rate current` (lightweight) or the unified `payments rate show` projection; submit rate-change requests
 - **Auth** — bootstrap config, sign in, check status, sign out
 
 Surfaces are gated to read-heavy / personal use. Operations that would enable mass automation against the platform are deliberately not exposed.

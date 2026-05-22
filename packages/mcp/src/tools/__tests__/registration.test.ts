@@ -169,11 +169,13 @@ const EXPECTED_TOOLS = [
   "ttctl_timesheet_pending_list",
   "ttctl_timesheet_show",
   "ttctl_timesheet_submit",
-  // payments (#149, #447) — 8 tools (payouts list/show + methods list/show +
-  // rate current/show/questions/change). rate_change is destructive
-  // (compliance flow); LLM clients must confirm with the user.
-  // rate_current (#447) is a lightweight read of the talent's hourly rate
-  // via the trusted-catalog `GetTalentRate` op (T2 wire-validation).
+  // payments (#149, #447, #448) — 9 tools (summary + payouts list/show +
+  // methods list/show + rate current/show/questions/change). rate_change
+  // is destructive (compliance flow); LLM clients must confirm with the
+  // user. rate_current (#447) is a lightweight read of the talent's
+  // hourly rate via the trusted-catalog `GetTalentRate` op (T2
+  // wire-validation). summary (#448) is the aggregate
+  // `GetTalentPaymentSummary` read.
   "ttctl_payments_payouts_list",
   "ttctl_payments_payouts_show",
   "ttctl_payments_methods_list",
@@ -182,6 +184,7 @@ const EXPECTED_TOOLS = [
   "ttctl_payments_rate_show",
   "ttctl_payments_rate_questions",
   "ttctl_payments_rate_change",
+  "ttctl_payments_summary",
 ];
 
 /**
@@ -215,7 +218,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (113 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 8 #149/#447 payments [7 #149 + 1 #447 rate_current])", () => {
+  it("registers exactly the EXPECTED_TOOLS set (114 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);
