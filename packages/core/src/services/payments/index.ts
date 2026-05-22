@@ -391,6 +391,27 @@ export interface RateValidation {
 }
 
 /**
+ * Lightweight projection for `rate.current()` — the talent's current
+ * hourly rate plus the active talent role id, read in a single fast
+ * `GetTalentRate` query (#447). Sibling to the heavy {@link RateProjection}
+ * returned by {@link rate.show}: where `show()` composes two parallel
+ * queries to surface market insight + validation + change history,
+ * `current()` answers "what's my rate right now" in one round trip.
+ *
+ * - `verbose` — the talent's hourly rate formatted as a display string
+ *   (e.g. `"USD 95.00 hourly"`). Server-formatted; the literal grammar
+ *   varies by locale / currency and is wire-side authority. Consumers
+ *   parse at their own risk.
+ * - `roleId` — the active `ViewerRole.roleId` (numeric). Useful for
+ *   downstream invocations that key off the role; same id the portal's
+ *   `viewerRole` selection set surfaces.
+ */
+export interface RateCurrent {
+  verbose: string;
+  roleId: number;
+}
+
+/**
  * Unified projection for `rate.show()`. Composes the current rate, the
  * latest known rate-change request (last completed OR ongoing), the
  * market insight at the talent's vertical, and the rate-validation
@@ -542,6 +563,18 @@ const PAYMENT_QUERY = `query Payment($id: ID!) { node(id: $id) { __typename ... 
 // it (the assumption is yes since portal + mobile share the same
 // backend per `08-portal-api.md`).
 const PAYMENT_OPTIONS_QUERY = `query PaymentOptions { viewer { __typename id paymentOptions { __typename id paymentMethod preferredOption fullName payoneerId comment toptalPaymentsPending } } }`;
+
+// Verbatim from `../research/graphql/gateway/operations/portal/GetTalentRate.graphql`
+// (#447). Trusted catalog: `GetTalentRateQuery` lives in
+// `__generated__/gateway.ts` because the operation is NOT in
+// `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`. Wired via `callGateway` against
+// the mobile-gateway surface (portal and mobile share the same gateway
+// backend; the operation document classifies as portal-side per its
+// research-repo location). The T2 wire-validation schema below
+// (`GET_TALENT_RATE_RESPONSE_SCHEMA`) mirrors the trivial 5-field
+// selection set and follows the Z-4 (#288) beachhead pattern for
+// inline-composed Zod schemas at trusted-op call sites.
+const GET_TALENT_RATE_QUERY = `query GetTalentRate { viewer { id viewerRole { roleId hourlyRate { verbose } } } }`;
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/LastRateChangeRequest.graphql`.
 const LAST_RATE_CHANGE_REQUEST_QUERY = `query LastRateChangeRequest { viewer { __typename id ...lastRateChangeRequestData } }  fragment rateInsightForCommitmentData on TalentRateInsightForCommitment { __typename currentRateCompetitive recentApplicationRate recommendedRate }  fragment profileRatesData on ViewerRole { __typename rates { __typename hourly } rateInsight { __typename hourly { __typename ...rateInsightForCommitmentData } } }  fragment lastRateChangeRequestData on Viewer { __typename id lastRateChangeRequest { __typename id createdAt desiredRate engagement { __typename id job { __typename id title client { __typename id fullName } } currentAgreement { __typename commitment { __typename slug } } } outcomeRate requestType status talentComment } viewerRole { __typename ...profileRatesData } }`;
@@ -843,6 +876,40 @@ const RATE_CHANGE_FORM_DETAILS_RESPONSE_SCHEMA = z.object({
             .nullable(),
         })
         .nullable(),
+    })
+    .nullable(),
+});
+
+/**
+ * T2 wire-validation schema for `GetTalentRate` (#447). Follows the
+ * Z-4 (#288) beachhead pattern: hand-composed Zod schema mirroring the
+ * verbatim operation's selection set; passed as the optional `schema`
+ * argument to `callGateway` so a `ZodError` at the wire boundary
+ * surfaces as `PaymentsError("WIRE_SHAPE_ERROR")` rather than slipping
+ * past as an `as`-cast.
+ *
+ * The schema is inline rather than generated because:
+ *   - The operation has a trivial 5-field selection (no fragments, no
+ *     polymorphism). The full SDL types (`Viewer`, `ViewerRole`,
+ *     `TalentHourlyRate`) declare many more fields than this selection
+ *     reads; importing the generated `ViewerSchema` etc. would fail
+ *     `.strict()` validation against the actual partial response.
+ *   - No reusable sub-schemas in `__generated__/zod-schemas.ts` happen
+ *     to match this exact selection's nested shape.
+ *
+ * Generated TS type (`GetTalentRateQuery` in `__generated__/gateway.ts`)
+ * is the structural reference; this schema is its runtime mirror.
+ */
+const GET_TALENT_RATE_RESPONSE_SCHEMA = z.object({
+  viewer: z
+    .object({
+      id: z.string(),
+      viewerRole: z.object({
+        roleId: z.number(),
+        hourlyRate: z.object({
+          verbose: z.string(),
+        }),
+      }),
     })
     .nullable(),
 });
@@ -1174,6 +1241,33 @@ function classifyOngoing(req: WireRateChangeRequest | null): RateChangeRequest |
  * rate-change request.
  */
 export const rate = {
+  /**
+   * Read the talent's current hourly rate via a single lightweight
+   * `GetTalentRate` query (#447). Returns the server-formatted verbose
+   * string plus the active `viewerRole.roleId`.
+   *
+   * Strictly faster than {@link rate.show}: one query, three nested
+   * fields, no parallel composition. Use this for "what's my rate"
+   * answers; use {@link rate.show} when you also need market insight,
+   * validation rules, or change history.
+   *
+   * T2 wire-validation: passes the inline-composed
+   * `GET_TALENT_RATE_RESPONSE_SCHEMA` (mirrors the operation's
+   * verbatim selection) as the `schema:` argument to `callGateway`. A
+   * wire-shape drift surfaces as `PaymentsError("WIRE_SHAPE_ERROR")`
+   * per `docs/wire-validation-error-format.md`.
+   */
+  async current(token: string): Promise<RateCurrent> {
+    const data = await callGateway(token, "GetTalentRate", GET_TALENT_RATE_QUERY, {}, GET_TALENT_RATE_RESPONSE_SCHEMA);
+    if (data.viewer === null) {
+      throw new PaymentsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+    }
+    return {
+      verbose: data.viewer.viewerRole.hourlyRate.verbose,
+      roleId: data.viewer.viewerRole.roleId,
+    };
+  },
+
   /**
    * Show the talent's current rate + most-recent rate-change request
    * + market insight + validation rules. Issues TWO parallel queries:

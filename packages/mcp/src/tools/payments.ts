@@ -54,13 +54,14 @@ function buildPayoutsPageInfo(result: payments.PayoutsListResult): PayoutsPageIn
 }
 
 /**
- * Register the `ttctl_payments_*` MCP tools (#149). 7 tools across 3
- * sub-namespaces:
+ * Register the `ttctl_payments_*` MCP tools (#149, #447). 8 tools
+ * across 3 sub-namespaces:
  *
  *   - `ttctl_payments_payouts_list`
  *   - `ttctl_payments_payouts_show`
  *   - `ttctl_payments_methods_list`
  *   - `ttctl_payments_methods_show`
+ *   - `ttctl_payments_rate_current`  (#447, lightweight `GetTalentRate`)
  *   - `ttctl_payments_rate_show`
  *   - `ttctl_payments_rate_questions`
  *   - `ttctl_payments_rate_change`
@@ -248,6 +249,42 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
       try {
         const item = await payments.methods.show(auth.token, args.id);
         return successResponse(item);
+      } catch (err) {
+        return mapPaymentsError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_payments_rate_current",
+    {
+      title: "Show current hourly rate (lightweight)",
+      description: [
+        "Show the talent's current default hourly rate via the single",
+        "lightweight `GetTalentRate` query (#447). Returns the",
+        'server-formatted verbose display string (e.g. "USD 95.00 hourly")',
+        "plus the active `viewerRole.roleId`.",
+        "",
+        "Sibling to `ttctl_payments_rate_show` (unified projection with",
+        "market insight + validation + change history): one query, three",
+        "nested fields, no composition. Use this when the answer is just",
+        '"what\'s my rate".',
+        "",
+        "Example user prompts:",
+        '  - "What is my current Toptal hourly rate?"',
+        '  - "How much do I make per hour?"',
+      ].join("\n"),
+      inputSchema: { dryRun: DRY_RUN_FIELD },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("GetTalentRate", "mobile-gateway", {}, auth.token));
+      }
+      try {
+        const rateCurrent = await payments.rate.current(auth.token);
+        return successResponse(rateCurrent);
       } catch (err) {
         return mapPaymentsError(err);
       }

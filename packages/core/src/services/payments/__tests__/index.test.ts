@@ -616,6 +616,107 @@ describe("rate.show schema validation (Z-4 / #288)", () => {
   });
 });
 
+describe("rate.current (#447 / T2 GetTalentRate)", () => {
+  it("returns projected RateCurrent on happy path", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            viewerRole: {
+              roleId: 42,
+              hourlyRate: { verbose: "USD 95.00 hourly" },
+            },
+          },
+        },
+      },
+    });
+    const r = await rate.current(TOKEN);
+    expect(r.verbose).toBe("USD 95.00 hourly");
+    expect(r.roleId).toBe(42);
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("hits mobile-gateway with operationName=GetTalentRate", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { id: "v1", viewerRole: { roleId: 1, hourlyRate: { verbose: "x" } } },
+        },
+      },
+    });
+    await rate.current(TOKEN);
+    const call = mockedStock.mock.calls[0];
+    expect(call).toBeDefined();
+    // Transport receives a Request-shaped argument with a body containing
+    // the operationName; assert that GetTalentRate is the dispatched op.
+    const [arg] = call ?? [];
+    const argRecord = arg as { body?: { operationName?: string } };
+    expect(argRecord.body?.operationName).toBe("GetTalentRate");
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(rate.current(TOKEN)).rejects.toMatchObject({
+      code: "NO_VIEWER",
+    });
+  });
+
+  it("throws WIRE_SHAPE_ERROR when verbose is a number instead of string (T2 schema enforcement)", async () => {
+    // Drifted wire: `hourlyRate.verbose` returned as a number. Pre-T2
+    // this would silently pass through the `as`-cast and surface as a
+    // downstream TypeError; the T2 Zod schema catches it at the wire
+    // boundary with a named diff.
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            viewerRole: { roleId: 42, hourlyRate: { verbose: 95 } },
+          },
+        },
+      },
+    });
+    let thrown: unknown;
+    try {
+      await rate.current(TOKEN);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PaymentsError);
+    const err = thrown as PaymentsError & { cause?: unknown };
+    expect(err.code).toBe("WIRE_SHAPE_ERROR");
+    expect(err.message).toMatch(/GetTalentRate/);
+    expect(err.cause).toBeDefined();
+  });
+
+  it("throws WIRE_SHAPE_ERROR when roleId is a string instead of number (T2 schema enforcement)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            viewerRole: { roleId: "42", hourlyRate: { verbose: "USD 95.00 hourly" } },
+          },
+        },
+      },
+    });
+    await expect(rate.current(TOKEN)).rejects.toMatchObject({
+      code: "WIRE_SHAPE_ERROR",
+    });
+  });
+
+  it("propagates AuthRevokedError from the shared transport without wrapping", async () => {
+    reply({
+      status: 401,
+      body: {
+        errors: [{ message: "Token is no longer valid", extensions: { code: "AUTH_REVOKED" } }],
+      },
+    });
+    await expect(rate.current(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
 describe("rate.questions", () => {
   it("returns the projected question form", async () => {
     reply({

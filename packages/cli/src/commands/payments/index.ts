@@ -11,7 +11,12 @@ import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runPaymentsMethodsList, runPaymentsMethodsShow } from "./methods.js";
 import { runPaymentsPayoutsList, runPaymentsPayoutsShow } from "./payouts.js";
-import { runPaymentsRateChange, runPaymentsRateQuestions, runPaymentsRateShow } from "./rate.js";
+import {
+  runPaymentsRateChange,
+  runPaymentsRateCurrent,
+  runPaymentsRateQuestions,
+  runPaymentsRateShow,
+} from "./rate.js";
 
 /**
  * Page-number option factory (#373, mirroring jobs/index.ts #183).
@@ -32,8 +37,8 @@ function perPageOption(): Option {
 }
 
 /**
- * Build the `ttctl payments` command tree (#149). Seven leaves across
- * three sub-namespaces:
+ * Build the `ttctl payments` command tree (#149, #447). Eight leaves
+ * across three sub-namespaces:
  *
  * | Leaf                                                       | Description                       |
  * |------------------------------------------------------------|-----------------------------------|
@@ -41,6 +46,7 @@ function perPageOption(): Option {
  * | `payouts show <id>`                                        | Single payout detail               |
  * | `methods list`                                             | List configured payment methods    |
  * | `methods show <id>`                                        | Single payment method detail       |
+ * | `rate current`                                             | Current hourly rate (lightweight, one query) (#447) |
  * | `rate show`                                                | Current rate + change-request status |
  * | `rate questions`                                           | Discovery: form questions for `rate change` |
  * | `rate change --kind=... --rate=... [...] --confirm`        | Submit rate-change request         |
@@ -136,6 +142,18 @@ export function buildPaymentsCommand(): Command {
 
   // ----- rate sub-group ------------------------------------------------
   const rate = cmd.command("rate").description("Current rate + rate-change requests");
+
+  rate
+    .command("current")
+    .description("Show the talent's current hourly rate (lightweight; one query) (#447)")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { output: OutputFormat }) => {
+      await runPaymentsRateCurrent(options.output);
+    });
 
   rate
     .command("show")

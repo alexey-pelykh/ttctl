@@ -18,6 +18,29 @@ const NO_CONFIRM_NOTE =
   "`rate change` requires `--confirm` (state-changing). Pass `--confirm` explicitly to acknowledge.";
 
 /**
+ * Action handler for `ttctl payments rate current` (#447). Lightweight
+ * read of the talent's current hourly rate via the trusted-catalog
+ * `GetTalentRate` query — wraps `payments.rate.current()`. Sibling to
+ * the heavier {@link runPaymentsRateShow} which composes two parallel
+ * queries to surface market insight + validation + change history;
+ * use this when the answer is just "what's my rate".
+ */
+export async function runPaymentsRateCurrent(output: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("payments rate current", output);
+
+  let rateCurrent: payments.RateCurrent;
+  try {
+    rateCurrent = await payments.rate.current(token);
+  } catch (err) {
+    handlePaymentsError("payments rate current", err, output);
+  }
+
+  emitResult(rateCurrent, output, {
+    pretty: (data) => formatRateCurrent(data),
+  });
+}
+
+/**
  * Action handler for `ttctl payments rate show`. Shows the current rate
  * + most-recent / ongoing rate-change request + market insight +
  * validation rules as a unified projection.
@@ -177,6 +200,16 @@ function parseAnswerFlags(answerFlat: string[], commentFlat: string[]): payments
     answers.push(entry);
   }
   return answers;
+}
+
+/**
+ * Render `rate current` as a single line: the server-formatted verbose
+ * string (e.g. "USD 95.00 hourly"). `roleId` is omitted from the
+ * pretty output because it's an internal identifier; JSON / YAML
+ * surface the full projection.
+ */
+export function formatRateCurrent(p: payments.RateCurrent): string {
+  return p.verbose;
 }
 
 /**
