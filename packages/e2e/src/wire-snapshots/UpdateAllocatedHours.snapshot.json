@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-22T10:22:49.537Z",
+  "operationName": "UpdateAllocatedHours",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "kind": {
+        "kind": "string"
+      },
+      "result": {
+        "kind": "object",
+        "fields": {
+          "allocatedHours": {
+            "kind": "number"
+          },
+          "hiredHours": {
+            "kind": "number"
+          },
+          "notice": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}

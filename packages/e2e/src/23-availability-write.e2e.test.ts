@@ -36,12 +36,55 @@
  *     range both null) — the round-trip would send an empty input and
  *     the pre-flight gate would reject. The user should set at least
  *     one working-hours value manually before running this E2E.
+ *
+ * # Wire-shape snapshot coverage (#461)
+ *
+ * Per the Track 1 disposition for mobile-gateway availability ops, this
+ * file also asserts structural stability of the post-projection
+ * responses for `GetAvailability` and `UpdateAllocatedHours` via
+ * `assertWireShapeStable`. The snapshots live at
+ * `packages/e2e/src/wire-snapshots/{GetAvailability,UpdateAllocatedHours}.snapshot.json`
+ * and lock the public API surface of `availability.show()` and
+ * `availability.allocatedHours.set()`. Drift surfaces as a structured
+ * diff (`+` / `-` / `~`); updates require `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`.
+ * See `packages/e2e/src/wire-snapshots/README.md`.
+ *
+ * The Gherkin spec-by-example for these scenarios lives at
+ * `features/availability-allocated-hours.feature.md` (issue #461).
  */
 
+// e2e-covers: GetAvailability, UpdateAllocatedHours, UpdateWorkingHours
+//
+// `// e2e-covers:` directive is informational for the `check-e2e-coverage`
+// gate. Currently the gate enforces only the `talent-profile` and
+// `scheduler` surfaces (`mobile-gateway` ops are out of scope by
+// design — see `scripts/check-e2e-coverage.ts` IN_SCOPE_SURFACES). The
+// directive is added for forward-compatibility and audit visibility.
+
+import { readFileSync } from "node:fs";
+
+import { ConfigLoadSchema, availability } from "@ttctl/core";
+import { parse as parseYaml } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
+
+/**
+ * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
+ * Mirrors the pattern from sibling E2Es (`25-timesheet-list`, `30-payments-payouts`,
+ * etc.) — `ConfigLoadSchema` validates the Form-D shape (`auth.token` present).
+ */
+function loadSandboxBearer(sandboxConfigPath: string): string {
+  const raw = readFileSync(sandboxConfigPath, "utf8");
+  const parsed: unknown = parseYaml(raw);
+  const validated = ConfigLoadSchema.parse(parsed);
+  if (validated.auth.token === undefined || validated.auth.token === "") {
+    throw new Error(`No auth.token in sandbox config at ${sandboxConfigPath}`);
+  }
+  return validated.auth.token;
+}
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
@@ -57,10 +100,12 @@ interface SnapshotShape {
 
 describe("availability write paths (live mobile-gateway)", () => {
   let cli: CliClient;
+  let sandboxConfigPath: string;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxConfigPath } = getSharedSession();
+    const session = getSharedSession();
+    sandboxConfigPath = session.sandboxConfigPath;
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
@@ -293,4 +338,53 @@ describe("availability write paths (live mobile-gateway)", () => {
       expect(after.workingTimeFrom).toBe(baselineFrom);
     },
   );
+
+  // ---------------------------------------------------------------------
+  // Wire-shape snapshot assertions (#461 — Track 1 disposition for
+  // mobile-gateway availability ops).
+  //
+  // The snapshots capture the post-projection shape returned by the core
+  // service (`availability.show()` and `availability.allocatedHours.set()`).
+  // The `show()` projection is a 1:1 field-name pass-through over the
+  // `GetAvailability` query, so its snapshot tracks wire-level drift
+  // structurally. `allocatedHours.set()` projects the mutation's
+  // discriminated-union result onto a public-API shape; its snapshot
+  // tracks our exposed contract, which depends on the wire shape one
+  // level removed.
+  //
+  // Gherkin spec at `features/availability-allocated-hours.feature.md`.
+  // ---------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("GetAvailability wire shape matches snapshot", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await availability.show(token);
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetAvailability",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  it.skipIf(!e2eEnabled)("UpdateAllocatedHours post-projection result shape matches snapshot", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    // Re-apply the current value (round-trip, no semantic change) — same
+    // safety property as the apply test above. The structural snapshot is
+    // captured over the applied-outcome shape.
+    const snap = await availability.show(token);
+    expect(typeof snap.allocatedHours).toBe("number");
+    if (typeof snap.allocatedHours !== "number") return;
+    const outcome = await availability.allocatedHours.set(token, snap.allocatedHours);
+    expect(outcome.kind).toBe("applied");
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "UpdateAllocatedHours",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response: outcome,
+      }),
+    ).not.toThrow();
+  });
 });
