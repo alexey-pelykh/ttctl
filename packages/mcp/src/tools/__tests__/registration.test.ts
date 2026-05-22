@@ -104,9 +104,11 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_reviews_approve_item",
   "ttctl_profile_reviews_approve_section",
   "ttctl_profile_reviews_submit_for_review",
-  // applications (#15, +#439, +#440) — 5 read-only tools at top-level
+  // applications (#15, +#439, +#440, +#442) — 6 read-only tools at top-level
   // (#439 adds the interview-detail sub-namespace leaf; #440 adds the
-  // interview-notes sub-sub-namespace leaf).
+  // interview-notes sub-sub-namespace leaf; #442 adds the
+  // availability-request-detail sub-namespace leaf).
+  "ttctl_applications_availability_request_show",
   "ttctl_applications_interview_notes_show",
   "ttctl_applications_interview_show",
   "ttctl_applications_list",
@@ -222,7 +224,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (116 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 5 #15/#439/#440 applications [3 base + 1 interview_show + 1 interview_notes_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the EXPECTED_TOOLS set (117 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 6 #15/#439/#440/#442 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

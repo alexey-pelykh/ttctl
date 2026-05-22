@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { applications } from "@ttctl/core";
 
+import { formatAvailabilityRequestDetail } from "../availability-request.js";
 import { formatRespondPayload } from "../confirm.js";
 import { formatInterviewDetail, formatInterviewNotes } from "../interview.js";
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
@@ -572,5 +573,118 @@ describe("formatInterviewNotes (#440)", () => {
     );
     // Section prefix preserved; note body resolves to "".
     expect(out).toContain("[PRO_TIPS] ");
+  });
+});
+
+// ---------------------------------------------------------------------
+// `formatAvailabilityRequestDetail` (#442)
+// ---------------------------------------------------------------------
+
+describe("formatAvailabilityRequestDetail (#442)", () => {
+  function makeDetail(
+    overrides: Partial<applications.AvailabilityRequestDetail> = {},
+  ): applications.AvailabilityRequestDetail {
+    return {
+      id: "ar-1",
+      status: "CONFIRMED",
+      kind: "FIXED",
+      fixedRate: { decimal: "95.00", verbose: "$95.00/hr" },
+      comment: "Recruiter note one.\n\nRecruiter note two.",
+      createdAt: "2026-05-01T09:00:00Z",
+      updatedAt: "2026-05-15T08:00:00Z",
+      answeredAt: "2026-05-16T10:00:00Z",
+      job: {
+        id: "job-1",
+        title: "Senior Engineer",
+        url: "https://www.toptal.com/jobs/job-1",
+        client: { id: "cli-1", fullName: "Acme Inc." },
+      },
+      ...overrides,
+    };
+  }
+
+  it("renders the canonical sectioned layout for a fully-populated availability request", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail());
+    expect(out).toContain("Availability request ar-1");
+    expect(out).toContain("Status:     CONFIRMED");
+    expect(out).toContain("Kind:       FIXED");
+    expect(out).toContain("Fixed rate: $95.00/hr");
+    expect(out).toContain("Created:    2026-05-01T09:00:00Z");
+    expect(out).toContain("Updated:    2026-05-15T08:00:00Z");
+    expect(out).toContain("Answered:   2026-05-16T10:00:00Z");
+
+    expect(out).toContain("Comment");
+    expect(out).toContain("  Recruiter note one.");
+    expect(out).toContain("  Recruiter note two.");
+
+    expect(out).toContain("Job");
+    expect(out).toContain("Job id: job-1");
+    expect(out).toContain("Title:  Senior Engineer");
+    expect(out).toContain("URL:    https://www.toptal.com/jobs/job-1");
+    expect(out).toContain("Client: Acme Inc.");
+  });
+
+  it("omits per-field header lines when their value is null", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        status: null,
+        kind: null,
+        fixedRate: null,
+        createdAt: null,
+        updatedAt: null,
+        answeredAt: null,
+      }),
+    );
+    expect(out).toContain("Availability request ar-1");
+    expect(out).not.toContain("Status:");
+    expect(out).not.toContain("Kind:");
+    expect(out).not.toContain("Fixed rate:");
+    expect(out).not.toContain("Created:");
+    expect(out).not.toContain("Updated:");
+    expect(out).not.toContain("Answered:");
+    // Comment + Job sections still render — their data is populated.
+    expect(out).toContain("Comment");
+    expect(out).toContain("Job");
+  });
+
+  it("omits the Comment section when comment is null", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail({ comment: null }));
+    expect(out).not.toContain("Comment");
+  });
+
+  it("omits the Comment section when comment is an empty string", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail({ comment: "" }));
+    expect(out).not.toContain("Comment");
+  });
+
+  it("omits the Job section entirely when job is null", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail({ job: null }));
+    expect(out).not.toContain("Job");
+  });
+
+  it("falls back to $<decimal>/h for fixedRate when verbose is empty", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail({ fixedRate: { decimal: "109.00", verbose: "" } }));
+    expect(out).toContain("Fixed rate: $109.00/h");
+  });
+
+  it("omits Title/URL/Client job lines when those fields are null but keeps Job id", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({ job: { id: "job-bare", title: null, url: null, client: null } }),
+    );
+    expect(out).toContain("Job");
+    expect(out).toContain("Job id: job-bare");
+    expect(out).not.toContain("Title:");
+    expect(out).not.toContain("URL:");
+    expect(out).not.toContain("Client:");
+  });
+
+  it("omits the Client line when client is present but fullName is null", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        job: { id: "job-1", title: "Senior Engineer", url: null, client: { id: "cli-1", fullName: null } },
+      }),
+    );
+    expect(out).toContain("Title:  Senior Engineer");
+    expect(out).not.toContain("Client:");
   });
 });

@@ -8,6 +8,7 @@ import { applications } from "@ttctl/core";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
+import { runApplicationsAvailabilityRequestShow } from "./availability-request.js";
 import { runApplicationsConfirm } from "./confirm.js";
 import { runApplicationsInterviewNotesShow, runApplicationsInterviewShow } from "./interview.js";
 import { runApplicationsList } from "./list.js";
@@ -278,6 +279,31 @@ export function buildApplicationsCommand(): Command {
     )
     .action(async (jobId: string, options: { output: OutputFormat }) => {
       await runApplicationsInterviewNotesShow(jobId, options.output);
+    });
+
+  // #442 — Availability-request detail. Sibling read-only sub-namespace
+  // `availability-request show <id>` for the rich `AvailabilityRequest`
+  // projection (status, kind, recruiter-pinned Fixed rate, recruiter
+  // comment, lifecycle timestamps, job). The `<id>` is the
+  // `AvailabilityRequest.id` from `applications show <activityId>`
+  // output (the `Availability request: <id>` line) — the SAME id the
+  // `confirm` / `reject` write-side leaves accept, NOT the activity-item
+  // id. Read-only — the confirm / reject verbs are the write surface.
+  const availabilityRequestCmd = cmd
+    .command("availability-request")
+    .description("Availability-request detail (read-only). See `applications show <activityId>` for the id.");
+
+  availabilityRequestCmd
+    .command("show")
+    .description("Show one availability request by id")
+    .argument("<id>", "AvailabilityRequest id (NOT the activity-item id)", parseIdArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runApplicationsAvailabilityRequestShow(id, options.output);
     });
 
   return cmd;

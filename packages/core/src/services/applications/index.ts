@@ -3637,3 +3637,299 @@ export const interviews = {
     show: interviewsNotesShow,
   },
 };
+
+// ---------------------------------------------------------------------
+// Availability-request detail (#442)
+//
+// `applications.availabilityRequests.show(id)` — read-only fetch of one
+// `AvailabilityRequest` via the mobile-gateway `AvailabilityRequest`
+// query. The id is the `AvailabilityRequest.id` surfaced on
+// `applications.show(<activityId>)` as the `Availability request: <id>`
+// line — the same id the #411 `confirm` / `reject` write-side ops take.
+// Where `applications.show` is the activity-row detail with an AR
+// presence indicator, this leaf is the rich availability-request detail
+// — recruiter-pinned Fixed rate, recruiter comment, lifecycle
+// timestamps, and the job the request is for.
+//
+// **Operation document**: the captured
+// `research/graphql/gateway/operations/mobile/AvailabilityRequest.graphql`
+// is a large cascade — its `availabilityRequestFields` fragment selects
+// `job { ...jobData }`, a ~25-type `TalentJob` cascade that touches
+// `Unknown`-typed positions (`jobApplyState.operations.apply.errors`).
+// Same posture as #439's `Interview`: inline a trimmed selection that
+// touches only the well-typed fields the CLI / MCP renders, and trim
+// `job` to the {@link ApplicationJobRef} shape. The captured doc is the
+// authoritative wire shape; the selection is the projection contract.
+// The `AvailabilityRequest` schema fields `jobExpertiseAnswers`
+// (`[Unknown]!`) and `rejectReason` (`Unknown`) are deliberately NOT
+// selected — `Unknown`-typed gap regions per
+// `../research/graphql/gateway/schema.graphql`.
+//
+// **Issue-body deviation**: issue #442 mentions a "requested
+// availability window" — no such field exists on the captured
+// `AvailabilityRequest` op (or its schema type). The projection
+// surfaces what the captured op actually selects; the lifecycle
+// timestamps (`createdAt` / `updatedAt` / `answeredAt`) are the
+// closest wire-real analogue. Precedent: the #440 issue-body input
+// mismatch (interview id vs job id) resolved captured-op-authoritative.
+//
+// **Distinct from `GetAvailabilityRequestKind`**: the #411 confirm path
+// uses a minimal `GetAvailabilityRequestKind($id)` op (kind + Fixed
+// rate-default only). This is the full read — a distinct op with a
+// distinct projection. `GetAvailabilityRequestKind` was originally
+// renamed precisely to reserve the `AvailabilityRequest` operation name
+// for this wrapper (see the comment on `GET_AVAILABILITY_REQUEST_KIND_QUERY`).
+//
+// **T1 disposition (#442)**: `AvailabilityRequest` is in
+// `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` (`codegen.config.ts`), so no
+// `AvailabilityRequestQuery` type is generated. Wire shape is pinned by
+// the committed `AvailabilityRequest.snapshot.json` and asserted on
+// every `TTCTL_E2E=1` run via `assertWireShapeStable`.
+// ---------------------------------------------------------------------
+
+/**
+ * `AvailabilityRequestStatusEnum` values from the synthesized schema
+ * (`../research/graphql/gateway/schema.graphql`). Closed set — unlike
+ * the INFERRED {@link AvailabilityRequestKind} enum, the status enum is
+ * statically extractable from the schema.
+ *
+ * NB: distinct from the GraphQL schema type *named* `AvailabilityRequestStatus`
+ * (the `{ value: String! }` wrapper that `statusV2` / `jirStatus`
+ * resolve to). This TS type is the closed set of `.value` spellings.
+ */
+export type AvailabilityRequestStatus = "CANCELLED" | "CONFIRMED" | "EXPIRED" | "PENDING" | "REJECTED" | "WITHDRAWN";
+
+export const AVAILABILITY_REQUEST_STATUSES: readonly AvailabilityRequestStatus[] = [
+  "CANCELLED",
+  "CONFIRMED",
+  "EXPIRED",
+  "PENDING",
+  "REJECTED",
+  "WITHDRAWN",
+] as const;
+
+/**
+ * Projected availability-request detail returned by
+ * `availabilityRequests.show()`. The shape the CLI's pretty renderer
+ * and the MCP tool's JSON payload depend on.
+ */
+export interface AvailabilityRequestDetail {
+  id: string;
+  /**
+   * `AvailabilityRequestStatusEnum` member (see
+   * {@link AVAILABILITY_REQUEST_STATUSES}) or `null`. Read off the
+   * wire's `jirStatus` (aliased `statusV2`) `{ value }` wrapper.
+   */
+  status: AvailabilityRequestStatus | null;
+  /**
+   * AR kind, auto-detected from `metadata.__typename` via
+   * {@link kindFromMetadataTypename}. `null` when metadata is absent or
+   * an unrecognised variant.
+   */
+  kind: AvailabilityRequestKind | null;
+  /**
+   * Recruiter-pinned Fixed hourly rate (the `metadata.offeredHourlyRate`
+   * Money shape). `null` for FLEXIBLE / MARKETPLACE_FLEXIBLE ARs — their
+   * metadata carries no offered rate.
+   */
+  fixedRate: FixedRate | null;
+  /** Recruiter's free-text note attached to the request. */
+  comment: string | null;
+  /** Server-supplied creation timestamp (ISO 8601). */
+  createdAt: string | null;
+  /** Server-supplied last-mutation timestamp (ISO 8601). */
+  updatedAt: string | null;
+  /**
+   * Timestamp the talent answered the request (confirmed / rejected).
+   * `null` while the request is still pending.
+   */
+  answeredAt: string | null;
+  /** The job the availability request is for. */
+  job: ApplicationJobRef | null;
+}
+
+// ---------------------------------------------------------------------
+// Wire shape (private to the availabilityRequests namespace)
+// ---------------------------------------------------------------------
+
+interface WireAvailabilityRequestStatusV2 {
+  value?: string | null;
+}
+
+interface WireAvailabilityRequestMoney {
+  decimal?: string | null;
+  verbose?: string | null;
+}
+
+interface WireAvailabilityRequestMetadata {
+  __typename?: string | null;
+  offeredHourlyRate?: WireAvailabilityRequestMoney | null;
+}
+
+interface WireAvailabilityRequestJob {
+  id: string;
+  title?: string | null;
+  url?: string | null;
+  client?: { id: string; fullName?: string | null } | null;
+}
+
+interface WireAvailabilityRequest {
+  id: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  answeredAt?: string | null;
+  comment?: string | null;
+  /**
+   * Aliased on the wire as `jirStatus: statusV2` — the captured
+   * `availabilityRequestFields` fragment uses this alias. The
+   * `{ value }` wrapper resolves to an `AvailabilityRequestStatus`
+   * GraphQL type.
+   */
+  jirStatus?: WireAvailabilityRequestStatusV2 | null;
+  metadata?: WireAvailabilityRequestMetadata | null;
+  job?: WireAvailabilityRequestJob | null;
+}
+
+interface AvailabilityRequestResponse {
+  viewer: {
+    id: string;
+    availabilityRequest: WireAvailabilityRequest | null;
+  } | null;
+}
+
+// Trimmed strict subset of the captured AvailabilityRequest op in
+// `research/graphql/gateway/operations/mobile/AvailabilityRequest.graphql`.
+// The captured doc selects `job { ...jobData }` (a ~25-type cascade
+// touching `Unknown`-typed positions) plus the `AvailabilityRequest`
+// gap fields; this trim keeps only the well-typed selection the CLI /
+// MCP renders. The `metadata` selection mirrors
+// `GET_AVAILABILITY_REQUEST_KIND_QUERY` — `__typename` per union variant
+// (drives {@link kindFromMetadataTypename}) plus `offeredHourlyRate` on
+// the Fixed variant. `job` is trimmed to the {@link ApplicationJobRef}
+// shape.
+const AVAILABILITY_REQUEST_QUERY = `query AvailabilityRequest($id: ID!) {
+  viewer {
+    __typename
+    id
+    availabilityRequest(id: $id) {
+      __typename
+      id
+      createdAt
+      updatedAt
+      answeredAt
+      comment
+      jirStatus: statusV2 { __typename value }
+      metadata {
+        __typename
+        ... on AvailabilityRequestFixedMetadata {
+          __typename
+          offeredHourlyRate { __typename decimal verbose }
+        }
+        ... on AvailabilityRequestFlexibleMetadata { __typename }
+        ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
+      }
+      job {
+        __typename
+        id
+        title
+        url
+        client { __typename id fullName }
+      }
+    }
+  }
+}`;
+
+function projectAvailabilityRequestDetail(w: WireAvailabilityRequest): AvailabilityRequestDetail {
+  const offered = w.metadata?.offeredHourlyRate;
+  const fixedRate: FixedRate | null =
+    offered != null && typeof offered.decimal === "string" && typeof offered.verbose === "string"
+      ? { decimal: offered.decimal, verbose: offered.verbose }
+      : null;
+  return {
+    id: w.id,
+    status: (w.jirStatus?.value ?? null) as AvailabilityRequestStatus | null,
+    kind: kindFromMetadataTypename(w.metadata?.__typename ?? null),
+    fixedRate,
+    comment: w.comment ?? null,
+    createdAt: w.createdAt ?? null,
+    updatedAt: w.updatedAt ?? null,
+    answeredAt: w.answeredAt ?? null,
+    job:
+      w.job == null
+        ? null
+        : {
+            id: w.job.id,
+            title: w.job.title ?? null,
+            url: w.job.url ?? null,
+            client: w.job.client == null ? null : { id: w.job.client.id, fullName: w.job.client.fullName ?? null },
+          },
+  };
+}
+
+/**
+ * Read one `AvailabilityRequest` by id via the mobile-gateway
+ * `AvailabilityRequest` query (#442). Sibling sub-namespace to the
+ * top-level activity-row leaves (`list` / `show` / `stats`) and to
+ * `interviews.show` (#439) — fetches the rich availability-request
+ * detail once the user knows the id from `applications show
+ * <activityId>` (the `Availability request: <id>` line). The id is the
+ * same `AvailabilityRequest.id` the #411 `confirm` / `reject` write-side
+ * ops accept.
+ *
+ * @throws `ApplicationsError("NOT_FOUND")` when the id doesn't resolve
+ *   to an availability request the signed-in user can see, OR when the
+ *   wire surfaces a `NOT_FOUND_MESSAGE_PATTERN`-matched GraphQL error
+ *   (`Record not found` / `Invalid ID` / Relay `Node id ... resolves to`).
+ * @throws `ApplicationsError("NO_VIEWER")` when the session is valid
+ *   but no viewer is bound.
+ */
+async function availabilityRequestsShow(token: string, id: string): Promise<AvailabilityRequestDetail> {
+  let data: AvailabilityRequestResponse & { viewer: { id: string } | null };
+  try {
+    data = await callGateway<AvailabilityRequestResponse & { viewer: { id: string } | null }>(
+      token,
+      "AvailabilityRequest",
+      AVAILABILITY_REQUEST_QUERY,
+      { id },
+    );
+  } catch (err) {
+    if (
+      err instanceof ApplicationsError &&
+      err.code === "GRAPHQL_ERROR" &&
+      NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+    ) {
+      throw new ApplicationsError(
+        "NOT_FOUND",
+        `No availability request found with id "${id}" (or you don't have access to it).`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    // Defensive — `callGateway` with `requireViewer: true` already
+    // raises `NO_VIEWER` for this case; keep the check for type
+    // narrowing parity with sibling `interviews.show()`.
+    throw new ApplicationsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.availabilityRequest === null) {
+    throw new ApplicationsError(
+      "NOT_FOUND",
+      `No availability request found with id "${id}" (or you don't have access to it).`,
+    );
+  }
+  return projectAvailabilityRequestDetail(data.viewer.availabilityRequest);
+}
+
+/**
+ * `applications.availabilityRequests.*` sub-namespace. Read-only leaf
+ * for availability-request-detail access — sibling to `interviews.*`
+ * (#439 / #440) and to the top-level activity-row leaves. The plural
+ * `availabilityRequests` form matches `interviews` / `payouts` /
+ * `methods` for collection-style namespaces; the #411 write-side ops
+ * (`confirm` / `reject` / `rejectReasons`) stay top-level flat exports
+ * (they predate the sub-namespace convention).
+ */
+export const availabilityRequests = {
+  show: availabilityRequestsShow,
+};

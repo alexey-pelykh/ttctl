@@ -16,12 +16,14 @@ vi.mock("../../../transport.js", async () => {
 
 import {
   AVAILABILITY_REQUEST_KINDS,
+  AVAILABILITY_REQUEST_STATUSES,
   INTERVIEW_STATUSES,
   STATUS_GROUPS,
   ApplicationsError,
   apply,
   applyData,
   applyQuestions,
+  availabilityRequests,
   confirm,
   interviews,
   list,
@@ -2452,5 +2454,206 @@ describe("applications.interviews.notes.show (#440)", () => {
       body: { errors: [{ message: "auth revoked", extensions: { code: "UNAUTHENTICATED" } }] },
     });
     await expect(interviews.notes.show(TOKEN, JOB_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+});
+
+// ---------------------------------------------------------------------
+// `applications.availabilityRequests.show` (#442)
+// ---------------------------------------------------------------------
+
+describe("applications.availabilityRequests.show (#442)", () => {
+  const AR_ID = "ar-1";
+
+  function arFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      __typename: "AvailabilityRequest",
+      id: AR_ID,
+      createdAt: "2026-05-01T09:00:00Z",
+      updatedAt: "2026-05-15T08:00:00Z",
+      answeredAt: "2026-05-16T10:00:00Z",
+      comment: "Recruiter is keen — strong fit.",
+      jirStatus: { __typename: "AvailabilityRequestStatus", value: "CONFIRMED" },
+      metadata: {
+        __typename: "AvailabilityRequestFixedMetadata",
+        offeredHourlyRate: { __typename: "Money", decimal: "95.00", verbose: "$95.00/hr" },
+      },
+      job: {
+        __typename: "TalentJob",
+        id: "job-1",
+        title: "Senior Engineer",
+        url: "https://www.toptal.com/jobs/job-1",
+        client: { __typename: "Client", id: "cli-1", fullName: "Acme Inc." },
+      },
+      ...overrides,
+    };
+  }
+
+  it("projects the AR detail and dispatches AvailabilityRequest op with the id variable", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", availabilityRequest: arFixture() } } },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.id).toBe(AR_ID);
+    expect(item.status).toBe("CONFIRMED");
+    expect(item.kind).toBe("FIXED");
+    expect(item.fixedRate).toEqual({ decimal: "95.00", verbose: "$95.00/hr" });
+    expect(item.comment).toBe("Recruiter is keen — strong fit.");
+    expect(item.createdAt).toBe("2026-05-01T09:00:00Z");
+    expect(item.updatedAt).toBe("2026-05-15T08:00:00Z");
+    expect(item.answeredAt).toBe("2026-05-16T10:00:00Z");
+    expect(item.job).toEqual({
+      id: "job-1",
+      title: "Senior Engineer",
+      url: "https://www.toptal.com/jobs/job-1",
+      client: { id: "cli-1", fullName: "Acme Inc." },
+    });
+
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "AvailabilityRequest",
+      variables: { id: AR_ID },
+    });
+  });
+
+  it("projects FLEXIBLE kind with null fixedRate (metadata carries no offered rate)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({ metadata: { __typename: "AvailabilityRequestFlexibleMetadata" } }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.kind).toBe("FLEXIBLE");
+    expect(item.fixedRate).toBeNull();
+  });
+
+  it("projects MARKETPLACE_FLEXIBLE kind", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({
+              metadata: { __typename: "MarketplaceAvailabilityRequestFlexibleMetadata" },
+            }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.kind).toBe("MARKETPLACE_FLEXIBLE");
+    expect(item.fixedRate).toBeNull();
+  });
+
+  it("returns sparse projection (all nullable fields null) when wire omits fields", async () => {
+    const sparseFixture = {
+      __typename: "AvailabilityRequest",
+      id: AR_ID,
+      // createdAt / updatedAt / answeredAt omitted
+      // comment omitted
+      // jirStatus omitted entirely (vs `{value: null}` — both coerce to status: null)
+      metadata: null,
+      job: null,
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", availabilityRequest: sparseFixture } } },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item).toEqual({
+      id: AR_ID,
+      status: null,
+      kind: null,
+      fixedRate: null,
+      comment: null,
+      createdAt: null,
+      updatedAt: null,
+      answeredAt: null,
+      job: null,
+    });
+  });
+
+  it("coerces fixedRate to null when offeredHourlyRate is partial (decimal present, verbose absent)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({
+              metadata: {
+                __typename: "AvailabilityRequestFixedMetadata",
+                offeredHourlyRate: { __typename: "Money", decimal: "80.00" },
+              },
+            }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    // kind still resolves from __typename; fixedRate guards on both Money fields.
+    expect(item.kind).toBe("FIXED");
+    expect(item.fixedRate).toBeNull();
+  });
+
+  it("projects job with null title/url/client (defensive against a sparse job)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({
+              job: { __typename: "TalentJob", id: "job-bare", title: null, url: null, client: null },
+            }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.job).toEqual({ id: "job-bare", title: null, url: null, client: null });
+  });
+
+  it("throws ApplicationsError(NOT_FOUND) when viewer.availabilityRequest is null on the wire", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", availabilityRequest: null } } },
+    });
+    await expect(availabilityRequests.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
+    // Same shared NOT_FOUND_MESSAGE_PATTERN as applications.show — covers
+    // `Record not found` / `Invalid ID` / Relay `Node id ... resolves to`
+    // per the per-op-specific behavior memory `project_toptal_wire_quirks`.
+    reply({
+      body: { errors: [{ message: "Record not found" }] },
+    });
+    await expect(availabilityRequests.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("propagates AuthRevokedError for sessions whose bearer was revoked", async () => {
+    reply({
+      status: 401,
+      body: { errors: [{ message: "auth revoked", extensions: { code: "UNAUTHENTICATED" } }] },
+    });
+    await expect(availabilityRequests.show(TOKEN, AR_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("exports the AvailabilityRequestStatusEnum vocabulary (sanity for callers)", () => {
+    expect(AVAILABILITY_REQUEST_STATUSES).toEqual([
+      "CANCELLED",
+      "CONFIRMED",
+      "EXPIRED",
+      "PENDING",
+      "REJECTED",
+      "WITHDRAWN",
+    ]);
   });
 });
