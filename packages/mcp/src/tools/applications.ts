@@ -79,7 +79,7 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
 }
 
 /**
- * Register the five `ttctl_applications_*` MCP tools per #15 / #439 / #440.
+ * Register the six `ttctl_applications_*` MCP tools per #15 / #439 / #440 / #442.
  * Tool names use the `ttctl_` prefix and the canonical CLI path joined
  * with `_` per project naming policy:
  *
@@ -88,6 +88,7 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
  *   - `ttctl_applications_stats`
  *   - `ttctl_applications_interview_show` (#439, sub-namespace leaf)
  *   - `ttctl_applications_interview_notes_show` (#440, sub-sub-namespace leaf)
+ *   - `ttctl_applications_availability_request_show` (#442, sub-namespace leaf)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The list tool's `keywords` and `statusGroups` mirror the
@@ -310,6 +311,56 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       }
       try {
         const item = await applications.interviews.notes.show(auth.token, args.id);
+        return successResponse(item);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+
+  // #442 — Availability-request detail (sibling sub-namespace
+  // `applications.availabilityRequests.show`). Read-only; mirrors the
+  // CLI `ttctl applications availability-request show <id>`. The id is
+  // the `AvailabilityRequest.id` — the SAME id `ttctl_applications_confirm`
+  // / `_reject` accept, NOT the activity-item id. Dry-run path emits a
+  // single-op `AvailabilityRequest` preview. Apply path calls
+  // `applications.availabilityRequests.show(token, id)` and surfaces
+  // the projected {@link applications.AvailabilityRequestDetail} as the
+  // JSON payload.
+  server.registerTool(
+    "ttctl_applications_availability_request_show",
+    {
+      title: "Show one availability-request detail",
+      description: [
+        "Fetch a single availability request (Toptal portal label: 'Interest Request') by id —",
+        "the AvailabilityRequest id, NOT the activity item id. Returns the full detail:",
+        "status, kind (FIXED / FLEXIBLE / MARKETPLACE_FLEXIBLE), the recruiter-pinned Fixed",
+        "hourly rate (when applicable), the recruiter's comment, lifecycle timestamps",
+        "(created / updated / answered), and the job.",
+        "",
+        "Discover the id via `ttctl_applications_show` — the activity-row detail includes",
+        "an `availabilityRequest.id` field when one is associated. It is the same id the",
+        "`ttctl applications confirm` / `reject` CLI commands accept (sibling write-side leaves).",
+        "",
+        "Example user prompts:",
+        '  - "Show me the details of availability request ar_abc123."',
+        '  - "What rate is the recruiter offering on this interest request?" (use the AR id from the activity row)',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("AvailabilityRequest id (NOT the activity-item id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("AvailabilityRequest", "mobile-gateway", { id: args.id }, auth.token),
+        );
+      }
+      try {
+        const item = await applications.availabilityRequests.show(auth.token, args.id);
         return successResponse(item);
       } catch (err) {
         return mapApplicationsError(err);

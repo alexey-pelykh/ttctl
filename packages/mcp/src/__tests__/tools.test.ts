@@ -64,13 +64,14 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (116 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 5 #15/#439/#440 applications [3 base + 1 interview_show + 1 interview_notes_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the cumulative tool set (117 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 6 #15/#439/#440/#442 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
 
     expect(names).toEqual([
-      // #15 + #439 + #440 — applications (5, read-only top-level group + interview detail + interview notes)
+      // #15 + #439 + #440 + #442 — applications (6, read-only top-level group + interview detail + interview notes + availability-request detail)
+      "ttctl_applications_availability_request_show",
       "ttctl_applications_interview_notes_show",
       "ttctl_applications_interview_show",
       "ttctl_applications_list",
