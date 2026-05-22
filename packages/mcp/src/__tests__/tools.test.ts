@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (112 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 7 #149 payments)", () => {
+  it("registers exactly the cumulative tool set (113 tools = 61 wave-3 profile [58 + 3 #341 list ops] + 3 #15 applications + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 8 #149/#447 payments [7 #149 + 1 #447 rate_current])", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -119,14 +119,17 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_jobs_show",
       "ttctl_jobs_unsave",
       "ttctl_jobs_viewed",
-      // #149 — payments (7, payouts list/show + methods list/show +
-      // rate show/questions/change). rate_change is destructive
+      // #149 + #447 — payments (8, payouts list/show + methods list/show +
+      // rate current/show/questions/change). rate_change is destructive
       // (compliance flow); LLM clients must confirm with the user.
+      // rate_current (#447) is a lightweight read via the trusted-catalog
+      // `GetTalentRate` op (T2 wire-validation).
       "ttctl_payments_methods_list",
       "ttctl_payments_methods_show",
       "ttctl_payments_payouts_list",
       "ttctl_payments_payouts_show",
       "ttctl_payments_rate_change",
+      "ttctl_payments_rate_current",
       "ttctl_payments_rate_questions",
       "ttctl_payments_rate_show",
       // #73 — profile.basic (4)

@@ -253,7 +253,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_timesheet_pending_list: {},
   ttctl_timesheet_show: { id: "bc_123" },
   ttctl_timesheet_submit: { id: "bc_123" },
-  // payments (7 — #149)
+  // payments (8 — #149 + #447 rate_current)
   ttctl_payments_methods_list: {},
   ttctl_payments_methods_show: { id: "pm_123" },
   ttctl_payments_payouts_list: {},
@@ -263,6 +263,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
     desiredRate: "100",
     answers: [{ questionId: "q1", value: "smoke value" }],
   },
+  ttctl_payments_rate_current: {},
   ttctl_payments_rate_questions: {},
   ttctl_payments_rate_show: {},
 };
@@ -290,12 +291,13 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 112 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 113 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
-    // new opt-in suggestion tool (#452): apply_similar_answers.
-    expect(Object.keys(tools)).toHaveLength(112);
+    // new opt-in suggestion tool (#452): apply_similar_answers + 1
+    // new lightweight rate read (#447): rate_current.
+    expect(Object.keys(tools)).toHaveLength(113);
   });
 
   it("every registered tool has a fixture", () => {
