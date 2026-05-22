@@ -78,13 +78,20 @@ export function buildProfileReviewsCommand(): Command {
   reviews
     .command("submit-for-review")
     .description("Submit the profile for platform-side re-review (used after edits)")
+    .option(
+      "--consent-profile-capability",
+      "REQUIRED. Acknowledge this is a destructive profile-capability action — submits the profile to the Toptal review queue (no safe round-trip). See ADR-009 (ttctl) for the per-domain consent vocabulary.",
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
-    .action(async (options: { output: OutputFormat }) => {
-      await runProfileReviewsSubmitForReview(options);
+    .action(async (options: { consentProfileCapability?: boolean; output: OutputFormat }) => {
+      await runProfileReviewsSubmitForReview({
+        consentProfileCapability: options.consentProfileCapability ?? false,
+        output: options.output,
+      });
     });
 
   return reviews;

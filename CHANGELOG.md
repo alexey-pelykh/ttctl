@@ -91,6 +91,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-domain consent gate for INFERRED-destructive mutations
+  (#258, [ADR-009](hq/engineering/adr/ADR-009-per-domain-consent-vocabulary.md)).**
+  Ships `ensureDestructiveConsent(opName, domain, input, options?)` in
+  `packages/core/src/consent.ts` plus a new `ConsentRequiredError`
+  (`TtctlError` subclass, `code: "CONSENT_REQUIRED"`) and a
+  `ConsentDomain` type with four values per ADR-009 § Decision Part 1:
+  `"interview-action"` / `"payment-routing"` /
+  `"profile-capability"` / `"timesheet-billing"`. The Zod-boundary
+  field names mirror the type (`interviewActionConsentIssued` /
+  `paymentRoutingConsentIssued` / `profileCapabilityConsentIssued` /
+  `timesheetBillingConsentIssued`) and surface as per-domain CLI
+  flags (`--consent-{domain}`). The first wired-up site is
+  `submitForReview` (`profile-capability` domain), the existing
+  INFERRED-destructive mutation that motivated #258. Each gate runs
+  BEFORE any wire call.
+  - **Service surface**: `profile.reviews.submitForReview(token,
+consent)` now requires `consent.profileCapabilityConsentIssued:
+true` (compile-time literal + runtime gate). Absent / `false` /
+    non-boolean values surface `ConsentRequiredError`. The static
+    type is narrowed for in-tree callers; the runtime check covers
+    the `as`-cast / JSON-sourced inputs from CLI / MCP / agents.
+  - **CLI surface**: `ttctl profile reviews submit-for-review` gains
+    a `--consent-profile-capability` flag with explanatory `--help`
+    text. The flag is required for the mutation to fire — omission
+    surfaces the `CONSENT_REQUIRED` envelope with a recovery hint
+    (exit code 1).
+  - **MCP surface**: `ttctl_profile_reviews_submit_for_review` adds
+    `profileCapabilityConsentIssued: z.literal(true)` as a required
+    input field, plus the `annotations.destructiveHint: true` MCP
+    annotation so hosts (Claude Desktop / Cursor / Windsurf) can
+    surface a confirmation prompt to the operator.
+  - **Env-var bypass**: `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1`
+    bypasses the consent-literal check for non-interactive CI / test
+    contexts. The bypass does NOT cover the supplementary
+    `idempotencyKey` + `accountIdentifierEcho` factors that
+    payment-routing CREATE\_\* mutations will require (per ADR-009
+    § Decision Part 2) — those factors protect against bugs in any
+    caller, agent or human.
+  - **Payment-routing CREATE\_\* additional factors**: the gate
+    enforces `idempotencyKey: string` (length >= 16) +
+    `accountIdentifierEcho: string` (length >= 4, must match the
+    caller-supplied `expectedAccountIdentifier`) when the
+    `paymentRoutingCreate` option is passed. The 17 dependent
+    mutations (#432-#476) consume this in their respective PRs;
+    this PR ships the gate utility with unit-test coverage of the
+    factor enforcement (echo-mismatch test included).
+  - **Orthogonality with ADR-008**: the wire-level `consentIssued:
+Boolean!` on `JobApply` (ADR-008's apply-funnel compliance
+    signal) is unchanged. The `applications.apply()` gate stays
+    inline and continues to throw `ApplicationsError("CONSENT_REQUIRED")`.
+    ADR-009's tokens are TTCtl-layer gates at the Zod input
+    boundary; they do not appear on the wire.
+  - **Schema/contract rule**: NOT TRIGGERED — no new wire ops; no
+    wire-format changes. The `submitForReview` mutation's wire
+    shape (`{ profileId: ID! }`) is unchanged; only the TTCtl-layer
+    signature gains the `consent` parameter.
+
 - **`applications confirm`: expose matcher / expertise question
   answers and pitch payloads via `--answers-file` / `--pitch-file`
   flags (#428).** Closes the half of the IR-confirm gap that #423
