@@ -79,13 +79,14 @@ function buildApplicationsPageInfo(page: applications.JobActivityListPage): Appl
 }
 
 /**
- * Register the three `ttctl_applications_*` MCP tools per the #15 spec.
+ * Register the four `ttctl_applications_*` MCP tools per #15 / #439.
  * Tool names use the `ttctl_` prefix and the canonical CLI path joined
  * with `_` per project naming policy:
  *
  *   - `ttctl_applications_list`
  *   - `ttctl_applications_show`
  *   - `ttctl_applications_stats`
+ *   - `ttctl_applications_interview_show` (#439, sub-namespace leaf)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The list tool's `keywords` and `statusGroups` mirror the
@@ -214,6 +215,47 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       }
       try {
         const item = await applications.show(auth.token, args.id);
+        return successResponse(item);
+      } catch (err) {
+        return mapApplicationsError(err);
+      }
+    },
+  );
+
+  // #439 — Interview detail (sibling sub-namespace `applications.interviews.show`).
+  // Read-only; mirrors the CLI `ttctl applications interview show <id>`.
+  // Dry-run path emits a single-op `Interview` preview. Apply path calls
+  // `applications.interviews.show(token, id)` and surfaces the projected
+  // {@link applications.InterviewDetail} as the JSON payload.
+  server.registerTool(
+    "ttctl_applications_interview_show",
+    {
+      title: "Show one interview detail",
+      description: [
+        "Fetch a single interview by id (the TalentInterview id, NOT the activity item id).",
+        "Returns the full interview detail: status, kind (EXTERNAL/INTERNAL), scheduled slots,",
+        "method (Zoom / phone / etc.), interviewer contacts, talent notes, and prep-guide id.",
+        "",
+        "Discover the id via `ttctl_applications_show` — the activity-row detail includes",
+        "an `interview.id` field when one is associated.",
+        "",
+        "Example user prompts:",
+        '  - "Show me the details of interview int_abc123."',
+        '  - "Who am I interviewing with, and when?" (use the interview id from the activity row)',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Interview id (the TalentInterview id)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("Interview", "mobile-gateway", { id: args.id }, auth.token));
+      }
+      try {
+        const item = await applications.interviews.show(auth.token, args.id);
         return successResponse(item);
       } catch (err) {
         return mapApplicationsError(err);

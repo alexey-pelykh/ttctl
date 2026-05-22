@@ -16,12 +16,14 @@ vi.mock("../../../transport.js", async () => {
 
 import {
   AVAILABILITY_REQUEST_KINDS,
+  INTERVIEW_STATUSES,
   STATUS_GROUPS,
   ApplicationsError,
   apply,
   applyData,
   applyQuestions,
   confirm,
+  interviews,
   list,
   rateInsight,
   reject,
@@ -2091,5 +2093,223 @@ describe("applications.similarAnswers (#452)", () => {
     reply({ body: similarAnswersFixture([]) });
     const out = await similarAnswers(TOKEN, JOB_ID);
     expect(out.map((g) => g.questionId)).toEqual(["m-first", "e-after"]);
+  });
+});
+
+// ---------------------------------------------------------------------
+// `applications.interviews.show` (#439)
+// ---------------------------------------------------------------------
+
+describe("applications.interviews.show (#439)", () => {
+  const INTERVIEW_ID = "int-1";
+
+  function interviewFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      __typename: "TalentInterview",
+      id: INTERVIEW_ID,
+      interviewStatus: { __typename: "TalentInterviewStatus", value: "SCHEDULED" },
+      kind: "EXTERNAL",
+      interviewType: "Technical",
+      interviewTime: "60 minutes",
+      information: "Recruiter brief markdown",
+      initiator: "Recruiter Recruiterson",
+      scheduledAtTimes: ["2026-06-01T10:00:00Z", "2026-06-02T15:30:00Z"],
+      schedulingComment: "Pick whichever slot works.",
+      interviewMethod: {
+        __typename: "TalentInterviewMethod",
+        typeV2: "ZOOM",
+        conferenceUrl: "https://zoom.us/j/12345",
+        resource: null,
+      },
+      interviewContacts: [
+        {
+          __typename: "TalentInterviewContact",
+          id: "ctc-1",
+          fullName: "Recruiter Recruiterson",
+          email: "recruiter@example.com",
+          phoneNumber: null,
+          main: true,
+          position: "Recruiter",
+          timeZone: { __typename: "TimeZone", value: "America/New_York", location: "New York, NY" },
+        },
+      ],
+      guide: { __typename: "TalentInterviewGuide", id: "gui-1" },
+      talentNotes: [
+        {
+          __typename: "TalentInterviewNote",
+          id: "note-1",
+          section: "GAPS",
+          note: "Ask about scaling.",
+        },
+      ],
+      job: {
+        __typename: "TalentJob",
+        id: "job-1",
+        activityItem: { __typename: "TalentJobActivityItem", id: "act-1" },
+      },
+      updatedAt: "2026-05-15T08:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("projects the interview detail and dispatches Interview op with the id variable", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", interview: interviewFixture() } } },
+    });
+    const item = await interviews.show(TOKEN, INTERVIEW_ID);
+    expect(item.id).toBe(INTERVIEW_ID);
+    expect(item.status).toBe("SCHEDULED");
+    expect(item.kind).toBe("EXTERNAL");
+    expect(item.interviewType).toBe("Technical");
+    expect(item.interviewTime).toBe("60 minutes");
+    expect(item.information).toBe("Recruiter brief markdown");
+    expect(item.initiator).toBe("Recruiter Recruiterson");
+    expect(item.scheduledAtTimes).toEqual(["2026-06-01T10:00:00Z", "2026-06-02T15:30:00Z"]);
+    expect(item.schedulingComment).toBe("Pick whichever slot works.");
+    expect(item.method).toEqual({ typeV2: "ZOOM", conferenceUrl: "https://zoom.us/j/12345", resource: null });
+    expect(item.contacts).toHaveLength(1);
+    expect(item.contacts[0]).toEqual({
+      id: "ctc-1",
+      fullName: "Recruiter Recruiterson",
+      email: "recruiter@example.com",
+      phoneNumber: null,
+      position: "Recruiter",
+      main: true,
+      timeZone: { value: "America/New_York", location: "New York, NY" },
+    });
+    expect(item.guideId).toBe("gui-1");
+    expect(item.talentNotes).toEqual([{ id: "note-1", section: "GAPS", note: "Ask about scaling." }]);
+    expect(item.job).toEqual({ id: "job-1", activityItemId: "act-1" });
+    expect(item.updatedAt).toBe("2026-05-15T08:00:00Z");
+
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "Interview",
+      variables: { id: INTERVIEW_ID },
+    });
+  });
+
+  it("returns sparse projection (status null, kind null, empty arrays) when wire omits fields", async () => {
+    const sparseFixture = {
+      __typename: "TalentInterview",
+      id: INTERVIEW_ID,
+      // interviewStatus omitted entirely (vs `{value: null}` — both must coerce to status: null)
+      // kind omitted
+      // interviewType omitted
+      // interviewTime omitted
+      // information omitted
+      // initiator omitted
+      scheduledAtTimes: null,
+      // schedulingComment omitted
+      interviewMethod: null,
+      interviewContacts: null,
+      guide: null,
+      talentNotes: null,
+      job: null,
+      updatedAt: null,
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", interview: sparseFixture } } },
+    });
+    const item = await interviews.show(TOKEN, INTERVIEW_ID);
+    expect(item).toEqual({
+      id: INTERVIEW_ID,
+      status: null,
+      kind: null,
+      interviewType: null,
+      interviewTime: null,
+      information: null,
+      initiator: null,
+      scheduledAtTimes: [],
+      schedulingComment: null,
+      method: null,
+      contacts: [],
+      guideId: null,
+      talentNotes: [],
+      job: null,
+      updatedAt: null,
+    });
+  });
+
+  it("drops null entries from contacts and talentNotes arrays (defensive against wire sparseness)", async () => {
+    const fixtureWithNulls = interviewFixture({
+      interviewContacts: [
+        null,
+        {
+          __typename: "TalentInterviewContact",
+          id: "ctc-keep",
+          fullName: "Real Contact",
+          email: null,
+          phoneNumber: null,
+          main: false,
+          position: null,
+          timeZone: null,
+        },
+        null,
+      ],
+      talentNotes: [null, { __typename: "TalentInterviewNote", id: "note-keep", section: null, note: "Kept note" }],
+    });
+    reply({
+      body: { data: { viewer: { id: "v1", interview: fixtureWithNulls } } },
+    });
+    const item = await interviews.show(TOKEN, INTERVIEW_ID);
+    expect(item.contacts).toHaveLength(1);
+    expect(item.contacts[0]?.id).toBe("ctc-keep");
+    expect(item.talentNotes).toHaveLength(1);
+    expect(item.talentNotes[0]).toEqual({ id: "note-keep", section: null, note: "Kept note" });
+  });
+
+  it("filters non-string entries from scheduledAtTimes (defensive)", async () => {
+    const fixtureWithNullSlot = interviewFixture({
+      scheduledAtTimes: ["2026-06-01T10:00:00Z", null, "2026-06-02T15:30:00Z"],
+    });
+    reply({
+      body: { data: { viewer: { id: "v1", interview: fixtureWithNullSlot } } },
+    });
+    const item = await interviews.show(TOKEN, INTERVIEW_ID);
+    expect(item.scheduledAtTimes).toEqual(["2026-06-01T10:00:00Z", "2026-06-02T15:30:00Z"]);
+  });
+
+  it("throws ApplicationsError(NOT_FOUND) when viewer.interview is null on the wire", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", interview: null } } },
+    });
+    await expect(interviews.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
+    // Same shared NOT_FOUND_MESSAGE_PATTERN as applications.show — covers
+    // `Record not found` / `Invalid ID` / Relay `Node id ... resolves to`
+    // per the per-op-specific behavior memory `project_toptal_wire_quirks`.
+    reply({
+      body: { errors: [{ message: "Record not found" }] },
+    });
+    await expect(interviews.show(TOKEN, "missing")).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("propagates AuthRevokedError for sessions whose bearer was revoked", async () => {
+    reply({
+      status: 401,
+      body: { errors: [{ message: "auth revoked", extensions: { code: "UNAUTHENTICATED" } }] },
+    });
+    await expect(interviews.show(TOKEN, INTERVIEW_ID)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("exports the InterviewStatusEnum vocabulary (sanity for callers)", () => {
+    expect(INTERVIEW_STATUSES).toEqual([
+      "ACCEPTED",
+      "MISSED",
+      "PENDING",
+      "REJECTED",
+      "SCHEDULED",
+      "TIME_ACCEPTED",
+      "TIME_REJECTED",
+    ]);
   });
 });

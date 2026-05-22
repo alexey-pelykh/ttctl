@@ -9,6 +9,7 @@ import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runApplicationsConfirm } from "./confirm.js";
+import { runApplicationsInterviewShow } from "./interview.js";
 import { runApplicationsList } from "./list.js";
 import { runApplicationsReject } from "./reject.js";
 import { runApplicationsRejectReasons } from "./reject-reasons.js";
@@ -222,6 +223,29 @@ export function buildApplicationsCommand(): Command {
     )
     .action(async (options: { output: OutputFormat }) => {
       await runApplicationsRejectReasons(options.output);
+    });
+
+  // #439 — Interview detail. Sibling sub-namespace `interview show <id>`
+  // for the rich `TalentInterview` projection (interviewer, scheduled
+  // slot, agenda link, prep-guide ref). The id comes from
+  // `applications show <activityId>` output (the `Interview: <id>`
+  // line). Read-only — no confirm / reject verbs (those remain
+  // out-of-scope per ADR-008 § Decision).
+  const interviewCmd = cmd
+    .command("interview")
+    .description("Interview detail (read-only). See `applications show <activityId>` for the id.");
+
+  interviewCmd
+    .command("show")
+    .description("Show one interview by id")
+    .argument("<id>", "id of the interview to show", parseIdArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runApplicationsInterviewShow(id, options.output);
     });
 
   return cmd;
