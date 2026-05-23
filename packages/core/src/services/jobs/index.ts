@@ -484,6 +484,12 @@ export interface JobDetail extends JobListItem {
     | (JobListItem["client"] & {
         city: string | null;
         countryName: string | null;
+        /**
+         * Founding year of the client company (#546). `String?` in the SDL —
+         * Toptal stores this as text (e.g. `"2005"`); typed nullable
+         * defensively per project convention.
+         */
+        foundingYear: string | null;
         industry: string | null;
         isEnterprise: boolean | null;
         website: string | null;
@@ -673,6 +679,7 @@ const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
         id
         city
         countryName
+        foundingYear
         fullName
         industry
         isEnterprise
@@ -953,6 +960,7 @@ interface JobDetailEntity extends JobListEntity {
     fullName: string | null;
     city: string | null;
     countryName: string | null;
+    foundingYear: string | null;
     industry: string | null;
     isEnterprise: boolean | null;
     website: string | null;

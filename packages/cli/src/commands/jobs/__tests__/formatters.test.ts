@@ -54,6 +54,7 @@ const DETAIL_FIXTURE: jobs.JobDetail = {
     fullName: "Acme Inc.",
     city: "San Francisco",
     countryName: "United States",
+    foundingYear: "2005",
     industry: "Software",
     isEnterprise: false,
     website: "https://acme.example",
@@ -293,10 +294,23 @@ describe("formatJobDetail", () => {
     expect(output).toContain("Acme Inc.");
     expect(output).toContain("Industry: Software");
     expect(output).toContain("Location: San Francisco, United States");
+    // Client context (#546): founding year rendered under "Founded: <year>".
+    expect(output).toContain("Founded: 2005");
     expect(output).toContain("Team size: 50-200");
     expect(output).toContain("React");
     expect(output).toContain("Languages: English");
     expect(output).toContain("We're hiring.");
+  });
+
+  it("omits the Founded: line when client.foundingYear is null (#546)", () => {
+    const noYear: jobs.JobDetail = {
+      ...DETAIL_FIXTURE,
+      client: DETAIL_FIXTURE.client === null ? null : { ...DETAIL_FIXTURE.client, foundingYear: null },
+    };
+    const output = formatJobDetail(noYear);
+    expect(output).not.toContain("Founded:");
+    // Sibling fields keep rendering.
+    expect(output).toContain("Industry: Software");
   });
 
   it("omits Client section when client is null", () => {

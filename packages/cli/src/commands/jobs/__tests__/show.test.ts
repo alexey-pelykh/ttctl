@@ -49,6 +49,7 @@ const JOB_DETAIL_FIXTURE: jobs.JobDetail = {
     fullName: "Acme Inc.",
     city: "San Francisco",
     countryName: "United States",
+    foundingYear: null,
     industry: "Software",
     isEnterprise: false,
     website: null,

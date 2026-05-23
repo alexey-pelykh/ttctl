@@ -34,6 +34,19 @@ const DETAIL_FIXTURE: engagements.EngagementDetail = {
   ...LIST_ITEM_FIXTURE,
   job: {
     ...LIST_ITEM_FIXTURE.job,
+    // Override client with the richer #546 shape (the list fixture's
+    // `client` is the identity-only `EngagementJobRef.client`; the detail
+    // path widens it via Omit + intersection on `EngagementDetail.job`).
+    client: {
+      id: "cli-1",
+      fullName: "Acme Inc.",
+      city: "San Francisco",
+      countryName: "United States",
+      foundingYear: "2005",
+      industry: "Software",
+      isEnterprise: false,
+      teamSize: { value: "50-200" },
+    },
     descriptionMd: "Engineering role.\n\nLong-term placement.",
     expectedHours: 40,
     commitment: { slug: "full_time" },
@@ -165,7 +178,12 @@ describe("formatEngagementDetail", () => {
     expect(out).toContain("Status: Active");
     expect(out).toContain("Job");
     expect(out).toContain("Senior Engineer");
-    expect(out).toContain("Client: Acme Inc.");
+    // Client context (#546) renders as its own "Client" section (mirrors
+    // jobs.show). DETAIL_FIXTURE's client carries the rich shape, so both
+    // the section header and the name appear here; the section-content
+    // edge cases are covered by the dedicated #546 tests below.
+    expect(out).toContain("Client");
+    expect(out).toContain("Acme Inc.");
     expect(out).toContain("Engagement");
     expect(out).toContain("Started: 2026-02-01");
     expect(out).toContain("Bill cycle: Monthly");
@@ -175,6 +193,69 @@ describe("formatEngagementDetail", () => {
     expect(out).toContain("Time period: Monthly");
     expect(out).toContain("Earnings");
     expect(out).toContain("Paid: 5000.00 USD");
+  });
+
+  it("renders the Client section with city, countryName, foundingYear, industry, teamSize, isEnterprise (#546)", () => {
+    const out = formatEngagementDetail({
+      ...DETAIL_FIXTURE,
+      job: {
+        ...DETAIL_FIXTURE.job,
+        client: {
+          id: "cli-2",
+          fullName: "Globex Corp.",
+          city: "Berlin",
+          countryName: "Germany",
+          foundingYear: "1989",
+          industry: "Manufacturing",
+          isEnterprise: true,
+          teamSize: { value: "1000+" },
+        },
+      },
+    });
+    expect(out).toContain("Client");
+    expect(out).toContain("Globex Corp.");
+    expect(out).toContain("Industry: Manufacturing");
+    expect(out).toContain("Location: Berlin, Germany");
+    expect(out).toContain("Founded: 1989");
+    expect(out).toContain("Team size: 1000+");
+    expect(out).toContain("Enterprise: yes");
+  });
+
+  it("renders the Client section header + name when only fullName is populated (#546)", () => {
+    const out = formatEngagementDetail({
+      ...DETAIL_FIXTURE,
+      job: {
+        ...DETAIL_FIXTURE.job,
+        client: {
+          id: "cli-3",
+          fullName: "Sparse Client Ltd.",
+          city: null,
+          countryName: null,
+          foundingYear: null,
+          industry: null,
+          isEnterprise: false,
+          teamSize: null,
+        },
+      },
+    });
+    // Mirrors jobs.show: the "Client" header always renders when client is
+    // non-null; only the populated context lines are added. A sparse client
+    // (name only) yields the header + indented name, no context sub-lines.
+    expect(out).toContain("Client");
+    expect(out).toContain("Sparse Client Ltd.");
+    expect(out).not.toContain("Industry:");
+    expect(out).not.toContain("Location:");
+    expect(out).not.toContain("Founded:");
+    expect(out).not.toContain("Team size:");
+    expect(out).not.toContain("Enterprise:");
+  });
+
+  it("omits the Client section entirely when client is null (#546)", () => {
+    const out = formatEngagementDetail({
+      ...DETAIL_FIXTURE,
+      job: { ...DETAIL_FIXTURE.job, client: null },
+    });
+    expect(out).not.toContain("Client");
   });
 
   it("omits the Breaks section when no breaks present", () => {

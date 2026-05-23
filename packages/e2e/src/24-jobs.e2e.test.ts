@@ -37,21 +37,47 @@
  *   - `search` subscription mutations — touch viewer-level state that
  *     can affect job-alert email notifications; left to manual
  *     verification per the live-API session.
+ *
+ * #546: extended to assert the new client-context projection
+ * (`foundingYear` joins the existing city/countryName/industry/
+ * isEnterprise/teamSize on `JOB_SHOW_QUERY`) AND to run the Track 1
+ * `assertWireShapeStable` snapshot diff.
  */
 
+import { readFileSync } from "node:fs";
+
+import { ConfigLoadSchema, jobs } from "@ttctl/core";
+import { parse as parseYaml } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
+/**
+ * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
+ * Mirrors the pattern from `30-payments-payouts.e2e.test.ts:43-51`.
+ */
+function loadSandboxBearer(sandboxConfigPath: string): string {
+  const raw = readFileSync(sandboxConfigPath, "utf8");
+  const parsed: unknown = parseYaml(raw);
+  const validated = ConfigLoadSchema.parse(parsed);
+  if (validated.auth.token === undefined || validated.auth.token === "") {
+    throw new Error(`No auth.token in sandbox config at ${sandboxConfigPath}`);
+  }
+  return validated.auth.token;
+}
+
 describe("jobs (live mobile-gateway)", () => {
   let cli: CliClient;
+  let sandboxConfigPath: string;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxConfigPath } = getSharedSession();
+    const session = getSharedSession();
+    sandboxConfigPath = session.sandboxConfigPath;
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
@@ -156,6 +182,89 @@ describe("jobs (live mobile-gateway)", () => {
         expect(typeof current["fullName"]).toBe("string");
       }
     }
+  });
+
+  it.skipIf(!e2eEnabled)(
+    "jobs show projects client context: foundingYear (added) + countryName / industry / city / isEnterprise / teamSize populate (#546)",
+    async () => {
+      const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+      expect(listResult.exitCode).toBe(0);
+      const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+      const probeId = listed.items[0]?.id;
+      if (probeId === undefined) {
+        process.stderr.write(
+          "warning: no eligible jobs in test account — jobs show client-context assertions skipped\n",
+        );
+        return;
+      }
+      const showResult = await cli.run(["jobs", "show", probeId, "-o", "json"]);
+      expect(showResult.exitCode).toBe(0);
+      const detail = JSON.parse(showResult.stdout) as Record<string, unknown>;
+      const client = detail["client"] as Record<string, unknown> | null | undefined;
+
+      if (client === null || client === undefined) {
+        process.stderr.write(
+          "warning: client elided on this job — client-context (#546) assertions skipped (sparse-account fixture)\n",
+        );
+        return;
+      }
+      // `foundingYear` is the field #546 adds to JOB_SHOW_QUERY's client
+      // selection (the other context fields were already shipped).
+      expect("foundingYear" in client).toBe(true);
+      // Sibling context keys MUST also be present (pre-#546 selections).
+      expect("city" in client).toBe(true);
+      expect("countryName" in client).toBe(true);
+      expect("industry" in client).toBe(true);
+      expect("isEnterprise" in client).toBe(true);
+      expect("teamSize" in client).toBe(true);
+      // `isEnterprise: Boolean!` and `teamSize: TeamSize!` are non-null in the SDL.
+      expect(typeof client["isEnterprise"]).toBe("boolean");
+      const teamSize = client["teamSize"] as Record<string, unknown> | null;
+      expect(teamSize).not.toBeNull();
+      if (teamSize !== null) {
+        expect("value" in teamSize).toBe(true);
+      }
+      // `countryName` is the canonical "populates" check from the issue
+      // body. Skip the populated-value assertion when the live wire
+      // returns `null` (sparse client).
+      if (client["countryName"] !== null) {
+        expect(typeof client["countryName"]).toBe("string");
+      }
+      if (client["industry"] !== null) {
+        expect(typeof client["industry"]).toBe("string");
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------
+  // Track 1 — wire-shape snapshot diff (#546)
+  //
+  // The `JobShow` op is classified Track 1 in
+  // `docs/wire-validation-routing.md`. `assertWireShapeStable` reads
+  // `JobShow.snapshot.json` from `packages/e2e/src/wire-snapshots/`; the
+  // first run with `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` writes
+  // the snapshot.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("JobShow wire shape matches snapshot (Track 1; #546)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const probeId = listed.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write("warning: no eligible jobs in test account — JobShow wire-shape snapshot skipped\n");
+      return;
+    }
+    const response = await jobs.show(token, probeId);
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "JobShow",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
   });
 
   it.skipIf(!e2eEnabled)("round-trips save → saved → unsave → saved against a real job", async () => {
