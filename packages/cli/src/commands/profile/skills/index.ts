@@ -483,7 +483,7 @@ export function buildProfileSkillsCommand(): Command {
     skills
       .command("add <name>")
       .description(
-        "Add a skill to your profile. Free-text `name` creates a custom skill; pair with `--skill-id` to bind to a catalog Skill (use `autocomplete` to find one). Defaults applied when omitted: rating=COMPETENT, experience=1, --private.",
+        "Add a skill to your profile. By default `name` auto-resolves against the catalog: a single exact match (case-insensitive) binds to that catalog Skill; ≥2 exact duplicates surface a `--skill-id` disambiguation error; no exact match falls back to creating a custom (non-catalog) skill. Pass `--skill-id` to override resolution. Defaults applied when omitted: rating=COMPETENT, experience=1, --private.",
       )
       .option("--rating <value>", "Proficiency level (one of: COMPETENT, STRONG, EXPERT). Defaults to COMPETENT.")
       .option(
@@ -492,7 +492,10 @@ export function buildProfileSkillsCommand(): Command {
       )
       .option("--public", "Show the skill on your public profile (defaults to private)")
       .option("--private", "Hide the skill from your public profile (default)")
-      .option("--skill-id <id>", "Catalog Skill id (e.g., V1-Skill-NNN); omit for a custom skill")
+      .option(
+        "--skill-id <id>",
+        "Catalog Skill id (e.g., V1-Skill-NNN) to bind explicitly, bypassing name-based auto-resolution",
+      )
       .addOption(
         new Option("-o, --output <format>", "output format")
           .choices(OUTPUT_FORMATS)

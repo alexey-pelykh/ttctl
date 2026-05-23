@@ -109,7 +109,9 @@ const FORMERLY_AFFECTED_FIXTURES: Record<string, Record<string, unknown>> = {
   // Working-comparison tools (issue § "Working comparison") — never had
   // an outputSchema; must keep working.
   ttctl_profile_industries_add: { name: "Healthcare" },
-  ttctl_profile_skills_add: { name: "TypeScript" },
+  // #405: dry-run without skillId fires skillsAutocomplete (the
+  // transport sentinel would reject); pass skillId to bypass.
+  ttctl_profile_skills_add: { name: "TypeScript", skillId: "V1-Skill-stub" },
 };
 
 interface DryRunEnvelope {

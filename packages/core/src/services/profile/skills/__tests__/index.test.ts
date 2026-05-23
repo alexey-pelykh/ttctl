@@ -69,6 +69,42 @@ const SKILL_SET_OK = {
 // add
 // -----------------------------------------------------------------------
 
+/**
+ * Convenience: queue the impersonated-transport responses for the
+ * autocomplete + mutation sequence in the no-skillId path. Pass an
+ * autocomplete `body` (typically `{ data: { profile: { id: PROFILE_ID,
+ * skillsAutocomplete: [...] } } }`) and a mutation `body`. Each appended
+ * to `mocked` in order — autocomplete first, mutation second — matching
+ * the runtime call order in `add()`.
+ */
+function replyAutocompleteThenMutation(autocompleteBody: unknown, mutationBody: unknown): void {
+  reply({ body: autocompleteBody }, { body: mutationBody });
+}
+
+const AUTOCOMPLETE_EMPTY = {
+  data: { profile: { id: PROFILE_ID, skillsAutocomplete: [] } },
+};
+
+const AUTOCOMPLETE_ONE_EXACT_TYPESCRIPT = {
+  data: {
+    profile: {
+      id: PROFILE_ID,
+      skillsAutocomplete: [{ id: "V1-Skill-100", name: "TypeScript" }],
+    },
+  },
+};
+
+const ADD_OK_BODY = {
+  data: {
+    addProfileSkillSet: {
+      skillSet: SKILL_SET_OK,
+      success: true,
+      notice: null,
+      errors: [],
+    },
+  },
+};
+
 describe("skills.add", () => {
   it("rejects an empty name without making any network call", async () => {
     await expect(add(TOKEN, { name: "   " })).rejects.toMatchObject({
@@ -79,45 +115,141 @@ describe("skills.add", () => {
     expect(mockedStock).not.toHaveBeenCalled();
   });
 
-  it("resolves profileId, sends the captured wire shape with defaults, and returns kind:created", async () => {
+  it("auto-binds to the catalog Skill on 1 exact autocomplete match (#405)", async () => {
     replyStock({ body: VIEWER_OK });
-    reply({
-      body: {
-        data: {
-          addProfileSkillSet: {
-            skillSet: SKILL_SET_OK,
-            success: true,
-            notice: null,
-            errors: [],
-          },
-        },
-      },
-    });
+    replyAutocompleteThenMutation(AUTOCOMPLETE_ONE_EXACT_TYPESCRIPT, ADD_OK_BODY);
 
     const outcome = await add(TOKEN, { name: "  TypeScript  " });
     expect(outcome.kind).toBe("created");
     if (outcome.kind !== "created") throw new Error("unreachable");
     expect(outcome.result.id).toBe("ss1");
-    expect(outcome.result.skill.name).toBe("TypeScript");
-    expect(outcome.result.connectionsCount).toBe(3);
 
-    const call = mocked.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.body.operationName).toBe("ADD_PROFILE_SKILL_SET");
+    // mocked.calls[0] → autocomplete; mocked.calls[1] → mutation.
+    const autocompleteCall = mocked.mock.calls[0]?.[0] as TransportRequest;
+    expect(autocompleteCall.body.operationName).toBe("GET_SKILLS_FOR_AUTOCOMPLETE");
+    expect(autocompleteCall.body.variables).toEqual({
+      profileId: PROFILE_ID,
+      search: "TypeScript",
+      limit: 10,
+      withoutIds: [],
+    });
+
+    const mutationCall = mocked.mock.calls[1]?.[0] as TransportRequest;
+    expect(mutationCall.body.operationName).toBe("ADD_PROFILE_SKILL_SET");
+    // `skillSet.id` is PRESENT — the resolved catalog id.
+    expect(mutationCall.body.variables).toEqual({
+      input: {
+        profileId: PROFILE_ID,
+        skillSet: {
+          name: "TypeScript",
+          rating: "COMPETENT",
+          experience: 1,
+          public: false,
+          id: "V1-Skill-100",
+        },
+      },
+    });
+  });
+
+  it("falls back to custom-skill creation on 0 exact matches (preserves pre-#405 behavior)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyAutocompleteThenMutation(AUTOCOMPLETE_EMPTY, ADD_OK_BODY);
+
+    const outcome = await add(TOKEN, { name: "  TypeScript  " });
+    expect(outcome.kind).toBe("created");
+
+    const mutationCall = mocked.mock.calls[1]?.[0] as TransportRequest;
     // Captured wire shape: { profileId, skillSet: { name, rating,
     // experience, public } }. Defaults applied: COMPETENT / 1 / false.
-    // `skillSet.id` is OMITTED when no skillId is supplied (the custom-
-    // skill capture variant).
-    expect(call.body.variables).toEqual({
+    // `skillSet.id` is OMITTED — the custom-skill fallback (zero exact
+    // matches).
+    expect(mutationCall.body.variables).toEqual({
       input: {
         profileId: PROFILE_ID,
         skillSet: { name: "TypeScript", rating: "COMPETENT", experience: 1, public: false },
       },
     });
-    expect(call.surface).toBe("talent-profile");
+    expect(mutationCall.surface).toBe("talent-profile");
   });
 
-  it("forwards explicit rating/experience/public and binds catalog skillId when supplied", async () => {
+  it("falls back to custom-skill on fuzzy-only matches (no exact)", async () => {
     replyStock({ body: VIEWER_OK });
+    replyAutocompleteThenMutation(
+      {
+        data: {
+          profile: {
+            id: PROFILE_ID,
+            skillsAutocomplete: [
+              { id: "V1-Skill-200", name: "TypeScript Frameworks" },
+              { id: "V1-Skill-201", name: "TypeScript Testing" },
+            ],
+          },
+        },
+      },
+      ADD_OK_BODY,
+    );
+
+    await add(TOKEN, { name: "TypeScript" });
+
+    const mutationCall = mocked.mock.calls[1]?.[0] as TransportRequest;
+    // Fuzzy-only matches do NOT trigger the disambiguation error; the
+    // resolution policy treats fuzzy-only the same as zero matches.
+    expect((mutationCall.body.variables as { input: { skillSet: { id?: string } } }).input.skillSet.id).toBeUndefined();
+  });
+
+  it("raises VALIDATION_ERROR with candidate list on ≥2 exact matches (#405 ambiguous duplicates)", async () => {
+    replyStock({ body: VIEWER_OK });
+    reply({
+      body: {
+        data: {
+          profile: {
+            id: PROFILE_ID,
+            skillsAutocomplete: [
+              { id: "V1-Skill-300", name: "Java" },
+              { id: "V1-Skill-301", name: "Java" },
+            ],
+          },
+        },
+      },
+    });
+
+    await expect(add(TOKEN, { name: "Java" })).rejects.toMatchObject({
+      name: "SkillsError",
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/Multiple catalog skills.*Java.*--skill-id/s),
+    });
+
+    // Mutation must NOT be fired when resolution rejects.
+    const ops = mocked.mock.calls.map((c) => (c[0] as TransportRequest).body.operationName);
+    expect(ops).toEqual(["GET_SKILLS_FOR_AUTOCOMPLETE"]);
+  });
+
+  it("matches case-insensitively and after trimming whitespace", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyAutocompleteThenMutation(
+      {
+        data: {
+          profile: {
+            id: PROFILE_ID,
+            skillsAutocomplete: [{ id: "V1-Skill-100", name: "TypeScript" }],
+          },
+        },
+      },
+      ADD_OK_BODY,
+    );
+
+    // Lowercase input + extra whitespace; catalog has "TypeScript".
+    await add(TOKEN, { name: "  typescript  " });
+
+    const mutationCall = mocked.mock.calls[1]?.[0] as TransportRequest;
+    expect((mutationCall.body.variables as { input: { skillSet: { id?: string } } }).input.skillSet.id).toBe(
+      "V1-Skill-100",
+    );
+  });
+
+  it("forwards explicit rating/experience/public and bypasses autocomplete when skillId is supplied", async () => {
+    replyStock({ body: VIEWER_OK });
+    // Only ONE impersonated call expected — the mutation. No autocomplete.
     reply({
       body: {
         data: {
@@ -134,7 +266,9 @@ describe("skills.add", () => {
       skillId: "V1-Skill-278891",
     });
 
+    expect(mocked).toHaveBeenCalledTimes(1);
     const call = mocked.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.body.operationName).toBe("ADD_PROFILE_SKILL_SET");
     expect(call.body.variables).toEqual({
       input: {
         profileId: PROFILE_ID,
@@ -149,20 +283,57 @@ describe("skills.add", () => {
     });
   });
 
-  it("dry-run returns kind:preview WITHOUT firing any transport (zero-network)", async () => {
-    const outcome = await add(TOKEN, { name: "Rust", rating: "STRONG" }, { dryRun: true });
+  it("dry-run + explicit skillId is zero-network (no autocomplete, no extractProfileId)", async () => {
+    const outcome = await add(TOKEN, { name: "Rust", rating: "STRONG", skillId: "V1-Skill-999" }, { dryRun: true });
     expect(outcome.kind).toBe("preview");
     if (outcome.kind !== "preview") throw new Error("unreachable");
     expect(outcome.preview.operationName).toBe("ADD_PROFILE_SKILL_SET");
-    // Placeholder profileId — extractProfileId is skipped in dry-run.
     expect(outcome.preview.variables).toEqual({
       input: {
         profileId: expect.stringContaining("resolved at send-time"),
-        skillSet: { name: "Rust", rating: "STRONG", experience: 1, public: false },
+        skillSet: { name: "Rust", rating: "STRONG", experience: 1, public: false, id: "V1-Skill-999" },
       },
     });
     expect(mocked).not.toHaveBeenCalled();
     expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dry-run without skillId fires autocomplete so preview carries the resolved id (#405)", async () => {
+    replyStock({ body: VIEWER_OK });
+    reply({ body: AUTOCOMPLETE_ONE_EXACT_TYPESCRIPT });
+
+    const outcome = await add(TOKEN, { name: "TypeScript", rating: "STRONG" }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    expect(outcome.preview.variables).toEqual({
+      input: {
+        // Preview uses the placeholder profileId regardless (#395 precedent
+        // — the placeholder makes the resolved-vs-placeholder distinction
+        // legible to MCP consumers inspecting the preview).
+        profileId: expect.stringContaining("resolved at send-time"),
+        skillSet: {
+          name: "TypeScript",
+          rating: "STRONG",
+          experience: 1,
+          public: false,
+          id: "V1-Skill-100",
+        },
+      },
+    });
+
+    // Mutation NOT fired in dry-run; autocomplete only.
+    const ops = mocked.mock.calls.map((c) => (c[0] as TransportRequest).body.operationName);
+    expect(ops).toEqual(["GET_SKILLS_FOR_AUTOCOMPLETE"]);
+  });
+
+  it("dry-run without skillId + 0 matches → preview omits skillSet.id (custom-skill fallback)", async () => {
+    replyStock({ body: VIEWER_OK });
+    reply({ body: AUTOCOMPLETE_EMPTY });
+
+    const outcome = await add(TOKEN, { name: "Esoteric-Skill-Name" }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    expect((outcome.preview.variables as { input: { skillSet: { id?: string } } }).input.skillSet.id).toBeUndefined();
   });
 
   it("propagates Cf403Error from the talent-profile transport", async () => {
@@ -171,28 +342,26 @@ describe("skills.add", () => {
     await expect(add(TOKEN, { name: "TypeScript" })).rejects.toBeInstanceOf(Cf403Error);
   });
 
-  it("throws AuthRevokedError on HTTP 401", async () => {
+  it("throws AuthRevokedError on HTTP 401 from autocomplete", async () => {
     replyStock({ body: VIEWER_OK });
     reply({ status: 401, body: { errors: [{ message: "unauthorized" }] } });
     await expect(add(TOKEN, { name: "TypeScript" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
-  it("throws AuthRevokedError when extensions.code is UNAUTHENTICATED", async () => {
+  it("throws AuthRevokedError when autocomplete returns extensions.code UNAUTHENTICATED", async () => {
     replyStock({ body: VIEWER_OK });
     reply({ body: { errors: [{ message: "x", extensions: { code: "UNAUTHENTICATED" } }] } });
     await expect(add(TOKEN, { name: "TypeScript" })).rejects.toBeInstanceOf(AuthRevokedError);
   });
 
-  it("throws SkillsError USER_ERROR when payload reports user errors", async () => {
+  it("throws SkillsError USER_ERROR when mutation reports user errors", async () => {
     replyStock({ body: VIEWER_OK });
-    reply({
-      body: {
-        data: {
-          addProfileSkillSet: {
-            skillSet: null,
-            success: false,
-            errors: [{ code: "DUPLICATE", key: "name", message: "Skill already on profile" }],
-          },
+    replyAutocompleteThenMutation(AUTOCOMPLETE_EMPTY, {
+      data: {
+        addProfileSkillSet: {
+          skillSet: null,
+          success: false,
+          errors: [{ code: "DUPLICATE", key: "name", message: "Skill already on profile" }],
         },
       },
     });
@@ -204,11 +373,9 @@ describe("skills.add", () => {
 
   it("throws SkillsError USER_ERROR when payload.success === false (no errors array)", async () => {
     replyStock({ body: VIEWER_OK });
-    reply({
-      body: {
-        data: {
-          addProfileSkillSet: { skillSet: null, success: false, notice: "rate-limited", errors: [] },
-        },
+    replyAutocompleteThenMutation(AUTOCOMPLETE_EMPTY, {
+      data: {
+        addProfileSkillSet: { skillSet: null, success: false, notice: "rate-limited", errors: [] },
       },
     });
     await expect(add(TOKEN, { name: "TypeScript" })).rejects.toMatchObject({
@@ -217,7 +384,7 @@ describe("skills.add", () => {
     });
   });
 
-  it("throws SkillsError NETWORK_ERROR on transport-level throw", async () => {
+  it("throws SkillsError NETWORK_ERROR on transport-level throw during autocomplete", async () => {
     replyStock({ body: VIEWER_OK });
     mocked.mockRejectedValueOnce(new Error("ECONNRESET"));
     await expect(add(TOKEN, { name: "TypeScript" })).rejects.toMatchObject({
