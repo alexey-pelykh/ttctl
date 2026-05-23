@@ -64,6 +64,22 @@
  * scenarios (a)/(c) propagate any error as a hard failure; scenario (b)
  * INTENTIONALLY catches `USER_ERROR` and asserts on its shape (because
  * the rejection is the assertion target).
+ *
+ * **#488 coverage gap acknowledgment**: this test exercises the INPUT-
+ * side `.blank?` gate (scenarios a/b/c all start with a sentinel at
+ * `publicationPermit: true`) but does NOT exercise the persisted-state
+ * axis where a row currently at `false` is updated with explicit
+ * `publicationPermit: true`. The #488 report empirically settled that
+ * the server SILENTLY refuses to flip a `false`-current row to `true` —
+ * the wire accepts the input, the mutation returns `ok`, and the
+ * persisted value stays at `false`. Mirrors the `toptalRelated`
+ * server-determined semantic documented in the sibling-override block
+ * below. We cannot reliably construct a `false`-current sentinel via
+ * ttctl (the create-path `.blank?` gate rejects `false`), so the
+ * persisted-state axis is left to manual / live-account verification.
+ * Field-semantic documentation lives in the MCP tool descriptions and
+ * the per-field comment in
+ * `packages/core/src/services/profile/employment/index.ts`.
  */
 
 // e2e-covers: UpdateEmployment

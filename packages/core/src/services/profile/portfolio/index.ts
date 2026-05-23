@@ -453,9 +453,13 @@ const DEFAULT_PORTFOLIO_DESCRIPTION =
  *     via `ttctl profile portfolio update`.
  *   - `publicationPermit` defaults to `true`. The server treats `false`
  *     as blank (`USER_ERROR code: blank, key: publicationPermit`) — only
- *     `true` is accepted on create. Users who want to flip the field can
- *     `update` after create (the update path may handle `false`
- *     differently — uninvestigated).
+ *     `true` is accepted on create. The update path's persisted-state
+ *     semantic on the sibling Employment surface was found server-controlled
+ *     (#488 — sending `true` does not guarantee a `false`-current row
+ *     flips to `true`); Portfolio likely shares this server-side semantic
+ *     but it remains uninvestigated here. Field does NOT gate public
+ *     resume listing (the rc.6 #402 framing of "publicly listable" was
+ *     inaccurate).
  *   - `industryIds` is **REQUIRED** — caller MUST supply at least one
  *     catalog Industry ID per portfolio item. We do NOT default from
  *     `Profile.basicInfoIndustries`, `industriesAutocomplete`, or skill
