@@ -196,6 +196,7 @@ describe("profile.basic — read snapshots", () => {
     countryId: "country_us",
     citizenshipId: "country_us",
     phoneNumber: "+1 555 0100",
+    twitter: "testuser",
     softwareSkills: [
       { id: "ss_typescript", name: "TypeScript" },
       { id: "ss_postgres", name: "PostgreSQL" },
@@ -214,6 +215,7 @@ describe("profile.basic — read snapshots", () => {
     countryId: null,
     citizenshipId: null,
     phoneNumber: null,
+    twitter: null,
     softwareSkills: [],
   };
 

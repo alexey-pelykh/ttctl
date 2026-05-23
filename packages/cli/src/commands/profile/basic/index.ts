@@ -55,18 +55,30 @@ export function buildProfileBasicCommand(): Command {
   markMutation(
     basic
       .command("update")
-      .description("Update editable fields on the signed-in user's profile (currently bio + headline)")
+      .description("Update editable fields on the signed-in user's profile (bio, headline, twitter)")
       .option("--bio <text>", 'long-form bio (inline text, "-" for stdin, or "@path" to read from file)')
       .option("--headline <text>", 'short tagline (inline text, "-" for stdin, or "@path" to read from file)')
+      .option(
+        "--twitter <handle>",
+        'twitter / X handle without leading "@" or URL prefix (e.g. "alexey_pelykh"). Pass "" to clear.',
+      )
       .option("--edit", "open $EDITOR to compose the bio interactively (cannot be combined with --bio)")
       .addOption(
         new Option("-o, --output <format>", "output format")
           .choices(OUTPUT_FORMATS)
           .default("pretty" satisfies OutputFormat),
       )
-      .action(async (options: { bio?: string; headline?: string; edit?: boolean; output: OutputFormat }) => {
-        await runProfileBasicUpdate(options);
-      }),
+      .action(
+        async (options: {
+          bio?: string;
+          headline?: string;
+          twitter?: string;
+          edit?: boolean;
+          output: OutputFormat;
+        }) => {
+          await runProfileBasicUpdate(options);
+        },
+      ),
   );
 
   const photo = new Command("photo").description("View or upload the photo on your profile");

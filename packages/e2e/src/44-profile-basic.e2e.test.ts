@@ -322,4 +322,116 @@ describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wir
     },
     30_000,
   );
+
+  // -------------------------------------------------------------------
+  // #535 — Twitter round-trip via basic.set (basic-owned write surface)
+  // -------------------------------------------------------------------
+  //
+  // Per CLAUDE.md § Schema/contract validation rule: this is a NEW write
+  // path (basic.set({twitter}) was not previously supported), the input
+  // shape is inferred from the live curl evidence in #535, and the
+  // implementing change touches `packages/core/src/services/profile/basic/
+  // index.ts` — the rule triggers. This subtest exercises the live wire
+  // contract: set → server → read-back → original-restore.
+  //
+  // Non-destructive: the test captures the user's current twitter handle,
+  // applies a sentinel, asserts persistence on both basic.show AND
+  // external.show (twitter is read-visible on both surfaces — the AC says
+  // "verify external.show continues to echo it"), and restores the
+  // original in `finally`.
+
+  it.skipIf(!e2eEnabled)(
+    "round-trips basic.set({twitter}) against live UPDATE_BASIC_INFO and the value persists on both basic.show and external.show",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+
+      // Same pre-flight as the sibling round-trip — the read-merge needs
+      // every server-required scalar set on the current profile.
+      const before = await profile.basic.getBasicInfo(token);
+      const requiredScalars: [string, string | null][] = [
+        ["fullName", before.fullName],
+        ["legalName", before.legalName],
+        ["city", before.city],
+        ["placeIdentity", before.placeIdentity],
+        ["countryId", before.countryId],
+        ["citizenshipId", before.citizenshipId],
+        ["phoneNumber", before.phoneNumber],
+      ];
+      const missing = requiredScalars.filter(([, v]) => v === null).map(([k]) => k);
+      if (missing.length > 0 || before.languages.length === 0) {
+        process.stderr.write(
+          `warning: [44-profile-basic] account is missing required server-side fields ` +
+            `(${[...missing, ...(before.languages.length === 0 ? ["languages"] : [])].join(", ")}) — ` +
+            `the read-merge twitter round-trip would fail on the server's null-required-field gate, not on ` +
+            `a wire-shape regression. Subtest skipped.\n`,
+        );
+        return;
+      }
+
+      const originalTwitter = before.twitter;
+      const ts = Date.now().toString();
+      // Sentinel handle: short, alphanumeric+underscore (matches Twitter's
+      // handle constraint), suffixed with a timestamp so concurrent E2E
+      // runs don't collide. Keep ≤15 chars to fit Twitter's max length —
+      // the server doesn't enforce that limit on its end (handles are free
+      // text on the talent_profile API), but the sentinel should be a
+      // realistic value.
+      const sentinelTwitter = `tt_${ts.slice(-10)}`;
+
+      try {
+        const outcome = await profile.basic.set(token, { twitter: sentinelTwitter });
+
+        expect(outcome.kind).toBe("applied");
+        if (outcome.kind !== "applied") return;
+
+        // The mutation response echoes the merged value verbatim.
+        expect(outcome.result.profile.twitter).toBe(sentinelTwitter);
+
+        // basic.show persistence gate — twitter must be readable here
+        // post-#535 (the field was added to GET_BASIC_INFO's selection set).
+        const afterBasic = await profile.basic.getBasicInfo(token);
+        expect(afterBasic.twitter).toBe(sentinelTwitter);
+        // Sanity check: the OTHER fields are unchanged — the merge
+        // contract preserves user-unsupplied scalars.
+        expect(afterBasic.bio).toBe(before.bio);
+        expect(afterBasic.headline).toBe(before.headline);
+
+        // AC: "verify external.show continues to echo it" — twitter is
+        // read-visible on both surfaces; the basic write must NOT break
+        // the external echo. The external.show payload exposes twitter
+        // on `ExternalProfiles.twitter`.
+        const afterExternal = await profile.external.show(token);
+        expect(afterExternal.twitter).toBe(sentinelTwitter);
+      } catch (err) {
+        if (errorCode(err) === "USER_ERROR") {
+          process.stderr.write(
+            `warning: [44-profile-basic] twitter round-trip — talent-profile rejected the sentinel write with ` +
+              `a USER_ERROR business gate (test-account-state issue, NOT a #535 wire-shape regression — a wrong ` +
+              `input shape fails earlier with GRAPHQL_ERROR). Subtest skipped.\n`,
+          );
+          return;
+        }
+        // GRAPHQL_ERROR / NETWORK_ERROR / UNKNOWN — propagate. A
+        // GRAPHQL_ERROR here would mean #535 mis-inferred the wire shape
+        // (e.g. `twitter` is not actually settable on UpdateBasicInfoInput).
+        throw err;
+      } finally {
+        // Restore the original twitter handle so the user's profile is
+        // unchanged at end of test. We can restore to null (set's
+        // `twitter: null` is the documented "clear it" intent), but only
+        // if originalTwitter was null. Otherwise restore to the original
+        // string verbatim.
+        try {
+          await profile.basic.set(token, { twitter: originalTwitter });
+        } catch (restoreErr) {
+          process.stderr.write(
+            `warning: [44-profile-basic] failed to restore original twitter handle after sentinel apply: ` +
+              `${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}\n`,
+          );
+        }
+      }
+    },
+    // Three live mutations + two live reads; give it room over the default 5s.
+    45_000,
+  );
 });

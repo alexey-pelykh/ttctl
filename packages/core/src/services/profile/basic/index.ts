@@ -463,6 +463,15 @@ export interface BasicInfo {
   citizenshipId: string | null;
   /** Phone number (free-text, server-validated). `null` when unset. */
   phoneNumber: string | null;
+  /**
+   * Twitter / X handle (`Profile.twitter`). Stored as a bare handle string
+   * (no URL prefix, no leading `@`) per the live wire shape captured for
+   * #535. `null` when unset. The `Profile` entity exposes `twitter` to
+   * BOTH this `basic` surface and the sibling `external` surface (read
+   * side); the **write** side is owned by `basic.set` only — the
+   * `UpdateExternalProfilesInput` does NOT accept `twitter` (#526).
+   */
+  twitter: string | null;
   /** User-declared software skills (free-form, distinct from the rated `Skill` catalog). Empty array when none. */
   softwareSkills: ProfileSoftwareSkill[];
 }
@@ -474,12 +483,15 @@ export interface BasicInfo {
  * we ask for the fields surfaced by {@link BasicInfo} — narrative
  * (`about`, `quote`), identity (`fullName`, `legalName`, `phoneNumber`),
  * location (`city`, `placeIdentity`, `country.id`, `citizenship.id`),
- * collections (`languages.nodes`, `softwareSkills.nodes`) — and skip
- * the `ProfileRecommendations` fragment, social URLs (owned by the
- * `external` sub-domain), `timeZone`, `skype`, and the top-level
- * `countries` / `languages` catalog payloads that the canonical
- * operation also fetches (autocomplete-tier, not needed for read or
- * merge-on-write).
+ * social (`twitter` — owned here per #535 because that's the only
+ * surface that can WRITE it; the other social URLs remain owned by the
+ * `external` sub-domain per #526), and collections (`languages.nodes`,
+ * `softwareSkills.nodes`). We skip the `ProfileRecommendations`
+ * fragment, the remaining social URLs (`linkedin / github / website /
+ * behance / dribbble` — `external` sub-domain), `timeZone`, `skype`,
+ * and the top-level `countries` / `languages` catalog payloads that the
+ * canonical operation also fetches (autocomplete-tier, not needed for
+ * read or merge-on-write).
  *
  * **Scope rationale (#393)**: this selection set covers the full set of
  * server-required non-null fields on `UpdateBasicInfoInput` (per the
@@ -503,6 +515,7 @@ const GET_BASIC_INFO_QUERY = `query GET_BASIC_INFO($profileId: ID!) {
     city
     placeIdentity
     phoneNumber
+    twitter
     country {
       id
     }
@@ -534,6 +547,7 @@ interface GetBasicInfoData {
     city?: string | null;
     placeIdentity?: string | null;
     phoneNumber?: string | null;
+    twitter?: string | null;
     country?: { id?: string | null } | null;
     citizenship?: { id?: string | null } | null;
     languages?: { nodes?: ({ id?: string | null; name?: string | null } | null)[] | null } | null;
@@ -638,6 +652,7 @@ export async function getBasicInfo(token: string): Promise<BasicInfo> {
     countryId: typeof p.country?.id === "string" && p.country.id.length > 0 ? p.country.id : null,
     citizenshipId: typeof p.citizenship?.id === "string" && p.citizenship.id.length > 0 ? p.citizenship.id : null,
     phoneNumber: typeof p.phoneNumber === "string" ? p.phoneNumber : null,
+    twitter: typeof p.twitter === "string" ? p.twitter : null,
     softwareSkills,
   };
 }
@@ -694,6 +709,7 @@ const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBas
       id
       about
       quote
+      twitter
     }
   }
 }`;
@@ -704,14 +720,28 @@ const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBas
  * the GraphQL fields `about` and `quote` respectively (the field names used
  * by the talent_profile surface — see the response selection in
  * `research/graphql/talent_profile/operations/UPDATE_BASIC_INFO.graphql`).
+ * `twitter` maps 1:1 to `Profile.twitter`.
  *
- * Both fields are optional. The caller is responsible for ensuring at least
+ * All fields are optional. The caller is responsible for ensuring at least
  * one is supplied — `set()` rejects an empty object with a
  * `VALIDATION_ERROR`.
+ *
+ * `twitter` accepts the **bare handle string** (e.g. `"alexey_pelykh"`) —
+ * NOT a URL, NOT a leading `@`. The live wire shape (curl evidence in
+ * #535) shows the field is sent as `"twitter": "alexey_pelykh"`. An empty
+ * string clears the field; `null` is also accepted and clears the field
+ * (the wire schema permits both representations of "absent").
+ *
+ * Why `twitter` lives on this `basic` write-path and NOT on
+ * `external.update`: per #526, the `UpdateExternalProfilesInput` rejects
+ * `twitter` with `"Field is not defined on ExternalProfilesInput"`.
+ * Empirically the only server-side write surface for `Profile.twitter`
+ * is `UPDATE_BASIC_INFO` — see #535 for the full evidence trail.
  */
 export interface ProfileUpdate {
   bio?: string;
   headline?: string;
+  twitter?: string | null;
 }
 
 /**
@@ -741,12 +771,19 @@ export interface ProfileUpdate {
  * `languageIds` is the documented input key (whereas read returns
  * `languages.nodes[]` — input and output use different field names).
  *
- * Social URLs (`twitter`, `linkedin`, etc.) are owned by the `external`
- * sub-domain and intentionally NOT in this type — `external.update`
- * writes them via a separate mutation. The basic-info merge does NOT
- * touch them; the server-side `UPDATE_BASIC_INFO` operation accepts
- * (but doesn't require) social fields in its input, so omitting them
- * leaves them untouched.
+ * Social URL ownership across surfaces (#526 / #535): `twitter` is
+ * **basic-owned** on the write side — the server's
+ * `UpdateBasicInfoProfileInput` accepts it as a bare handle string and
+ * persists it on `Profile.twitter` (read-visible on both `basic.show`
+ * and `external.show`). The sibling social URLs
+ * (`linkedin / github / website / behance / dribbble`) remain owned by
+ * `external.update` — they ARE writeable via `UpdateExternalProfilesInput`,
+ * and #526 explicitly chose to keep them there rather than migrating to
+ * this surface. `twitter` is the only one of the six that landed here,
+ * because it's the only one the `external` write-input rejects. The
+ * basic-info merge passes `twitter` verbatim; the field is sent on every
+ * UPDATE_BASIC_INFO call (read-merge preserves the current value when
+ * the user doesn't supply a new one).
  */
 interface UpdateBasicInfoInput {
   profileId: string;
@@ -768,6 +805,7 @@ interface UpdateBasicInfoProfileInput {
   countryId: string | null;
   citizenshipId: string | null;
   phoneNumber: string | null;
+  twitter: string | null;
   languageIds: string[];
   softwareSkills: UpdateBasicInfoSoftwareSkillRef[];
 }
@@ -786,6 +824,7 @@ interface UpdateBasicInfoPayload {
     id: string;
     about?: string | null;
     quote?: string | null;
+    twitter?: string | null;
   } | null;
 }
 
@@ -798,13 +837,16 @@ interface UpdateBasicInfoResponse {
  * Result of a successful `set()` call. Mirrors the GraphQL field
  * names so callers see `about`/`quote` rather than the CLI flag names — the
  * mapping back to user-facing `bio`/`headline` is a presentation concern
- * handled at the CLI layer.
+ * handled at the CLI layer. `twitter` is server-echoed verbatim — the
+ * write side accepts both bare-handle and empty/null shapes; the echo
+ * normalises the persisted value back to either a string or `null`.
  */
 export interface UpdateProfileResult {
   profile: {
     id: string;
     about: string | null;
     quote: string | null;
+    twitter: string | null;
   };
   notice: string | null;
 }
@@ -855,10 +897,10 @@ export const DRY_RUN_PROFILE_ID_PLACEHOLDER = "<resolved at send-time from sessi
  * remain separately recognisable.
  *
  * Applies to: `fullName`, `legalName`, `city`, `placeIdentity`,
- * `countryId`, `citizenshipId`, `phoneNumber`, `about`, `quote` —
- * any scalar field that the merge path reads from current state when
- * the user didn't supply it. (Fields the user DID supply are echoed
- * verbatim into the preview, same as the apply path.)
+ * `countryId`, `citizenshipId`, `phoneNumber`, `about`, `quote`,
+ * `twitter` — any scalar field that the merge path reads from current
+ * state when the user didn't supply it. (Fields the user DID supply
+ * are echoed verbatim into the preview, same as the apply path.)
  *
  * `languageIds` and `softwareSkills` use a dedicated empty-array
  * placeholder (`[]`) — the absence of an array is more readable than a
@@ -899,9 +941,11 @@ export interface SetOutcomePreview {
 export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
 
 /**
- * Update a subset of the signed-in user's basic-info fields (currently
- * `bio` → `about` and `headline` → `quote`) via the Cloudflare-protected
- * `talent_profile/graphql` surface.
+ * Update a subset of the signed-in user's basic-info fields (`bio` →
+ * `about`, `headline` → `quote`, `twitter` 1:1) via the Cloudflare-
+ * protected `talent_profile/graphql` surface. `twitter` is owned by this
+ * mutation rather than `external.update` per the #535 wire evidence —
+ * see {@link ProfileUpdate} for the cross-surface rationale.
  *
  * Authenticates via `Authorization: Token token=<token>` (the canonical
  * Toptal auth mechanism). Cookies are NOT load-bearing — Chrome TLS
@@ -925,6 +969,11 @@ export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
  * use case (profile updates are infrequent; the read is plain HTTPS
  * against the talent-profile surface).
  *
+ * `twitter` plays the same merge role: when the caller doesn't supply
+ * it, the current persisted value (read via `getBasicInfo`) is sent
+ * verbatim. The wire schema accepts either a bare-handle string or
+ * `null`; both shapes survive the merge.
+ *
  * Dry-run path (issue #52, extended for #393): when invoked with
  * `options.dryRun === true`, the preview is built WITHOUT firing any
  * transport (zero network I/O — preserved from the #52 AC). Fields that
@@ -938,9 +987,9 @@ export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
  * documented on {@link DryRunPreview}.
  *
  * Errors:
- * - `ProfileError` with code `VALIDATION_ERROR` when neither `bio` nor
- *   `headline` is supplied — the contract requires at least one. Fires
- *   in BOTH the apply-path and the dry-run path.
+ * - `ProfileError` with code `VALIDATION_ERROR` when none of `bio`,
+ *   `headline`, or `twitter` is supplied — the contract requires at
+ *   least one. Fires in BOTH the apply-path and the dry-run path.
  * - `Cf403Error` propagates from the talent-profile transport when
  *   Cloudflare returns 403. Apply-path only (dry-run never touches the
  *   network).
@@ -959,8 +1008,11 @@ export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
  *   Apply-path only.
  */
 export async function set(token: string, changes: ProfileUpdate, options: SetOptions = {}): Promise<SetOutcome> {
-  if (changes.bio === undefined && changes.headline === undefined) {
-    throw new ProfileError("VALIDATION_ERROR", "Profile update requires at least one of `bio` or `headline`.");
+  if (changes.bio === undefined && changes.headline === undefined && changes.twitter === undefined) {
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      "Profile update requires at least one of `bio`, `headline`, or `twitter`.",
+    );
   }
 
   // Dry-run short-circuit: build the WRITE request shape with placeholders
@@ -980,6 +1032,7 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
         countryId: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         citizenshipId: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         phoneNumber: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        twitter: changes.twitter !== undefined ? changes.twitter : DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         languageIds: [],
         softwareSkills: [],
       },
@@ -1008,7 +1061,9 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
 
   // Merge user-supplied fields over the current state. User intent wins:
   // `changes.bio === ""` is a real "clear the bio" intent, distinct from
-  // "leave it alone" (which is `changes.bio === undefined`).
+  // "leave it alone" (which is `changes.bio === undefined`). The same
+  // distinction applies to `changes.twitter` — `""` / `null` are real
+  // "clear it" intents, `undefined` preserves the current value.
   const merged: UpdateBasicInfoProfileInput = {
     about: changes.bio !== undefined ? changes.bio : current.bio,
     quote: changes.headline !== undefined ? changes.headline : current.headline,
@@ -1019,6 +1074,7 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
     countryId: current.countryId,
     citizenshipId: current.citizenshipId,
     phoneNumber: current.phoneNumber,
+    twitter: changes.twitter !== undefined ? changes.twitter : current.twitter,
     languageIds: current.languages.map((l) => l.id),
     softwareSkills: current.softwareSkills.map((s) => ({ id: s.id, name: s.name })),
   };
@@ -1091,6 +1147,7 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
         id: payload.profile.id,
         about: payload.profile.about ?? null,
         quote: payload.profile.quote ?? null,
+        twitter: payload.profile.twitter ?? null,
       },
       notice: payload.notice ?? null,
     },

@@ -415,6 +415,7 @@ const UPDATE_OK = {
         id: "p1",
         about: "new bio",
         quote: "new headline",
+        twitter: "current_handle",
       },
     },
   },
@@ -438,6 +439,7 @@ const BASIC_INFO_CURRENT = {
       city: "London",
       placeIdentity: "ChIJ-place-london",
       phoneNumber: "+44 20 0000 0000",
+      twitter: "current_handle",
       country: { id: "country_uk" },
       citizenship: { id: "country_uk" },
       languages: {
@@ -459,7 +461,7 @@ describe("set", () => {
     mockedImpersonated.mockReset();
   });
 
-  it("rejects calls with neither bio nor headline (CLI/contract guard)", async () => {
+  it("rejects calls with neither bio, headline, nor twitter (CLI/contract guard)", async () => {
     await expect(set(TOKEN, {})).rejects.toMatchObject({
       name: "ProfileError",
       code: "VALIDATION_ERROR",
@@ -531,6 +533,7 @@ describe("set", () => {
           countryId: "country_uk",
           citizenshipId: "country_uk",
           phoneNumber: "+44 20 0000 0000",
+          twitter: "current_handle",
           languageIds: ["lang_en", "lang_fr"],
           softwareSkills: [{ id: "ss_assembly", name: "Assembly" }],
         },
@@ -556,6 +559,8 @@ describe("set", () => {
     expect(variables.input.profile["countryId"]).toBe("country_uk");
     expect(variables.input.profile["citizenshipId"]).toBe("country_uk");
     expect(variables.input.profile["phoneNumber"]).toBe("+44 20 0000 0000");
+    // Twitter is part of the basic-owned merge (#535) — preserved from current state.
+    expect(variables.input.profile["twitter"]).toBe("current_handle");
     expect(variables.input.profile["languageIds"]).toEqual(["lang_en", "lang_fr"]);
     expect(variables.input.profile["softwareSkills"]).toEqual([{ id: "ss_assembly", name: "Assembly" }]);
   });
@@ -583,6 +588,9 @@ describe("set", () => {
     const sparseCurrent = structuredClone(BASIC_INFO_CURRENT);
     sparseCurrent.data.profile.phoneNumber = null as unknown as string;
     sparseCurrent.data.profile.legalName = null as unknown as string;
+    // Twitter is nullable on the server side — when current is null, the
+    // merge passes null through verbatim (no twitter override from caller).
+    sparseCurrent.data.profile.twitter = null as unknown as string;
 
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: sparseCurrent }, { body: UPDATE_OK });
@@ -593,9 +601,58 @@ describe("set", () => {
     const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
     expect(variables.input.profile["phoneNumber"]).toBeNull();
     expect(variables.input.profile["legalName"]).toBeNull();
+    expect(variables.input.profile["twitter"]).toBeNull();
   });
 
-  it("returns the updated bio/headline values from the server's confirmation payload", async () => {
+  // ---------------------------------------------------------------------
+  // Twitter merge / pass-through coverage (#535)
+  // ---------------------------------------------------------------------
+
+  it("accepts a twitter-only update (twitter is a first-class basic-owned field per #535)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
+
+    // Neither bio nor headline supplied — twitter alone is sufficient.
+    const outcome = await set(TOKEN, { twitter: "new_handle" });
+
+    expect(outcome.kind).toBe("applied");
+    expect(mockedImpersonated).toHaveBeenCalledTimes(2);
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    // User intent wins on twitter; bio/headline preserved from current state.
+    expect(variables.input.profile["twitter"]).toBe("new_handle");
+    expect(variables.input.profile["about"]).toBe("current bio");
+    expect(variables.input.profile["quote"]).toBe("current headline");
+  });
+
+  it("passes empty-string twitter as the explicit clear intent", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
+
+    await set(TOKEN, { twitter: "" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    // Empty string is a real intent (per ProfileUpdate contract), distinct
+    // from undefined ("leave alone"). Send `""` over the wire.
+    expect(variables.input.profile["twitter"]).toBe("");
+  });
+
+  it("passes null twitter as the explicit clear intent (alternative to empty string)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
+
+    await set(TOKEN, { twitter: null });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    // Per ProfileUpdate.twitter's `string | null` typing, null is also a
+    // valid "clear it" intent — the wire schema accepts both shapes.
+    expect(variables.input.profile["twitter"]).toBeNull();
+  });
+
+  it("returns the updated bio/headline/twitter values from the server's confirmation payload", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
 
@@ -608,6 +665,8 @@ describe("set", () => {
     expect(outcome.result.profile.id).toBe("p1");
     expect(outcome.result.profile.about).toBe("new bio");
     expect(outcome.result.profile.quote).toBe("new headline");
+    // Twitter is echoed from the response selection set per #535.
+    expect(outcome.result.profile.twitter).toBe("current_handle");
   });
 
   it("normalizes a missing `notice` to null (callers can branch cleanly)", async () => {
@@ -888,9 +947,24 @@ describe("set", () => {
     expect(variables.input.profile["countryId"]).toBe("<preserved from current profile state>");
     expect(variables.input.profile["citizenshipId"]).toBe("<preserved from current profile state>");
     expect(variables.input.profile["phoneNumber"]).toBe("<preserved from current profile state>");
+    // Twitter is part of the merge per #535; user did NOT supply it →
+    // placeholder, same shape as the other current-state-read scalars.
+    expect(variables.input.profile["twitter"]).toBe("<preserved from current profile state>");
     // Array fields use empty-array placeholders rather than placeholder strings.
     expect(variables.input.profile["languageIds"]).toEqual([]);
     expect(variables.input.profile["softwareSkills"]).toEqual([]);
+  });
+
+  it("dry-run preview echoes user-supplied twitter verbatim (apply-path parity)", async () => {
+    const outcome = await set(TOKEN, { twitter: "alexey_pelykh" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    const variables = outcome.preview.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile["twitter"]).toBe("alexey_pelykh");
+    // bio/headline weren't supplied → placeholder.
+    expect(variables.input.profile["about"]).toBe("<preserved from current profile state>");
+    expect(variables.input.profile["quote"]).toBe("<preserved from current profile state>");
   });
 
   it("dry-run preview substitutes the profileId placeholder (would be resolved at send-time)", async () => {
@@ -942,7 +1016,8 @@ describe("set", () => {
     expect(variables.input.profile["quote"]).toBe("only headline");
     // User did NOT supply bio → placeholder.
     expect(variables.input.profile["about"]).toBe("<preserved from current profile state>");
-    // The full shape contains all required keys.
+    // The full shape contains all required keys (including `twitter`
+    // added in #535 — basic-owned write-side field).
     expect(Object.keys(variables.input.profile).sort()).toEqual(
       [
         "about",
@@ -956,6 +1031,7 @@ describe("set", () => {
         "placeIdentity",
         "quote",
         "softwareSkills",
+        "twitter",
       ].sort(),
     );
   });
@@ -1008,6 +1084,7 @@ const BASIC_INFO_OK = {
       city: "London",
       placeIdentity: "ChIJ-place-london",
       phoneNumber: "+44 20 0000 0000",
+      twitter: "ada_lovelace",
       country: { id: "country_uk" },
       citizenship: { id: "country_uk" },
       languages: {
@@ -1095,6 +1172,8 @@ describe("getBasicInfo", () => {
     expect(result.countryId).toBe("country_uk");
     expect(result.citizenshipId).toBe("country_uk");
     expect(result.phoneNumber).toBe("+44 20 0000 0000");
+    // #535 — twitter joins the read projection (basic-owned write surface).
+    expect(result.twitter).toBe("ada_lovelace");
     expect(result.softwareSkills).toEqual([
       { id: "ss-typescript", name: "TypeScript" },
       { id: "ss-postgres", name: "PostgreSQL" },
@@ -1134,6 +1213,8 @@ describe("getBasicInfo", () => {
     expect(result.phoneNumber).toBeNull();
     expect(result.countryId).toBeNull();
     expect(result.citizenshipId).toBeNull();
+    // Twitter normalises to null when omitted/null on the wire (#535).
+    expect(result.twitter).toBeNull();
     expect(result.languages).toEqual([]);
     expect(result.softwareSkills).toEqual([]);
   });
@@ -1278,7 +1359,7 @@ describe("getBasicInfo", () => {
     expect(result.profileId).toBe("p1");
   });
 
-  it("requests the extended selection set (#393): identity + location + softwareSkills", async () => {
+  it("requests the extended selection set (#393 / #535): identity + location + softwareSkills + twitter", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: BASIC_INFO_OK });
 
@@ -1294,6 +1375,7 @@ describe("getBasicInfo", () => {
     expect(infoCall.body.query).toContain("city");
     expect(infoCall.body.query).toContain("placeIdentity");
     expect(infoCall.body.query).toContain("phoneNumber");
+    expect(infoCall.body.query).toContain("twitter");
     expect(infoCall.body.query).toContain("country");
     expect(infoCall.body.query).toContain("citizenship");
     expect(infoCall.body.query).toContain("softwareSkills");

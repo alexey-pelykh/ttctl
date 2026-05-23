@@ -15,10 +15,10 @@ import { truncate } from "./show.js";
 /**
  * Action handler for `ttctl profile basic update` (also reachable as the
  * short-form `ttctl profile update`). Validates that at least one of
- * `--bio` / `--headline` was supplied (per the issue's AC), loads the
- * persisted auth token, dispatches the mutation via `profile.basic.set()`,
- * then prints either a human-readable confirmation or the raw payload
- * depending on the `--output` format.
+ * `--bio` / `--headline` / `--twitter` was supplied (per the issue's
+ * AC), loads the persisted auth token, dispatches the mutation via
+ * `profile.basic.set()`, then prints either a human-readable
+ * confirmation or the raw payload depending on the `--output` format.
  *
  * Both `--bio` and `--headline` accept the four-mode free-text input
  * surface from `lib/freetext.ts` (#70):
@@ -26,6 +26,11 @@ import { truncate } from "./show.js";
  *   - stdin (`--bio -`)
  *   - file (`--bio @path/to/bio.md`)
  *   - editor (`--edit`, opens `$EDITOR` on the bio buffer)
+ *
+ * `--twitter` does NOT participate in the free-text surface — it's a
+ * short bare-handle string (e.g. `alexey_pelykh`), passed verbatim
+ * without leading `@` or URL prefix per the live wire shape (#535).
+ * An empty string (`--twitter ""`) is the explicit "clear it" intent.
  *
  * Free-text resolution happens BEFORE auth/token I/O — input mistakes
  * (missing file, mode conflict) surface as `profile update failed (CODE)`
@@ -45,6 +50,7 @@ import { truncate } from "./show.js";
 export async function runProfileBasicUpdate(options: {
   bio?: string;
   headline?: string;
+  twitter?: string;
   edit?: boolean;
   output: OutputFormat;
 }): Promise<void> {
@@ -68,25 +74,31 @@ export async function runProfileBasicUpdate(options: {
     throw err;
   }
 
-  if (bio === undefined && headline === undefined) {
+  // Twitter is a short bare-handle string — no stdin / @file / editor
+  // modes. Pass it verbatim (including the empty string, which is the
+  // documented "clear it" intent per ProfileUpdate's contract).
+  const twitter = options.twitter;
+
+  if (bio === undefined && headline === undefined && twitter === undefined) {
     emitErrorAndExit({
       operation: "profile.basic.update",
       format: options.output,
       errors: [
         {
           code: "VALIDATION_ERROR",
-          message: "profile update requires at least one of --bio, --headline, or --edit.",
+          message: "profile update requires at least one of --bio, --headline, --twitter, or --edit.",
           hint: 'ttctl profile update --headline "Senior backend engineer"',
         },
       ],
       prettySummary:
-        'profile update requires at least one of --bio, --headline, or --edit.\nExample: ttctl profile update --headline "Senior backend engineer"',
+        'profile update requires at least one of --bio, --headline, --twitter, or --edit.\nExample: ttctl profile update --headline "Senior backend engineer"',
     });
   }
 
   const changes: profile.basic.ProfileUpdate = {};
   if (bio !== undefined) changes.bio = bio;
   if (headline !== undefined) changes.headline = headline;
+  if (twitter !== undefined) changes.twitter = twitter;
 
   const token = await loadAuthTokenOrExit("profile update", options.output);
 
@@ -183,6 +195,9 @@ export function formatUpdatePrettyEntity(result: profile.basic.UpdateProfileResu
   }
   if (updatedProfile.quote !== null) {
     lines.push(truncate(`headline: ${updatedProfile.quote}`, 80));
+  }
+  if (updatedProfile.twitter !== null) {
+    lines.push(truncate(`twitter: ${updatedProfile.twitter}`, 80));
   }
   return lines.join("\n");
 }
