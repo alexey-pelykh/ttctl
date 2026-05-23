@@ -541,7 +541,12 @@ const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!]
             id
             metadata {
               __typename
-              offeredHourlyRate { __typename decimal verbose }
+              ... on AvailabilityRequestFixedMetadata {
+                __typename
+                offeredHourlyRate { __typename decimal verbose }
+              }
+              ... on AvailabilityRequestFlexibleMetadata { __typename }
+              ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
             }
           }
         }
@@ -616,7 +621,12 @@ const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
           id
           metadata {
             __typename
-            offeredHourlyRate { __typename decimal verbose }
+            ... on AvailabilityRequestFixedMetadata {
+              __typename
+              offeredHourlyRate { __typename decimal verbose }
+            }
+            ... on AvailabilityRequestFlexibleMetadata { __typename }
+            ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
           }
         }
       }
@@ -756,20 +766,25 @@ interface MutationResult {
  * sub-selection (#410). The schema marks `TalentJob.activityItem`
  * non-null, but the AR pointer below is nullable — eligibleJobs rows
  * the talent hasn't engaged carry `availabilityRequest: null`. The
- * metadata path (`metadata.offeredHourlyRate`) is the recruiter Fixed
- * rate; both legs of `metadata` and `offeredHourlyRate` are non-null
- * in the schema, so the nullability cascade has one branch: AR present
- * → Fixed rate guaranteed, AR null → row carries no Fixed rate.
+ * metadata path (`metadata.offeredHourlyRate`) carries the recruiter
+ * Fixed rate; per the #530 schema split, `AvailabilityRequestMetadata`
+ * is a polymorphic supertype and `offeredHourlyRate` lives only on the
+ * `AvailabilityRequestFixedMetadata` variant — Flexible / marketplace
+ * variants return `metadata` without `offeredHourlyRate`. The
+ * nullability cascade therefore has three branches: AR present + Fixed
+ * variant → Fixed rate present, AR present + non-Fixed variant → Fixed
+ * rate absent, AR null → row carries no Fixed rate.
  */
 interface ActivityItemRateWire {
   id: string;
   availabilityRequest: {
     id: string;
     metadata: {
-      offeredHourlyRate: {
+      __typename?: string | null;
+      offeredHourlyRate?: {
         decimal: string;
         verbose: string;
-      };
+      } | null;
     };
   } | null;
 }
@@ -953,12 +968,20 @@ async function callGateway<T>(
  *    detail of the wire shape.
  * 2. `activityItem.availabilityRequest` is nullable per schema (the
  *    common case for `eligibleJobs` rows the talent hasn't engaged).
- * 3. The Money shape itself is schema-non-null when an AR exists.
+ * 3. `metadata.offeredHourlyRate` is selected only on the
+ *    `AvailabilityRequestFixedMetadata` inline fragment (#530); rows
+ *    whose AR resolves to `AvailabilityRequestFlexibleMetadata` /
+ *    `MarketplaceAvailabilityRequestFlexibleMetadata` return `metadata`
+ *    without `offeredHourlyRate`.
+ * 4. The Money shape itself is schema-non-null when present, but a
+ *    defensive partial check guards against future trimmed selections.
  */
 function projectFixedRate(activityItem: ActivityItemRateWire | null | undefined): FixedRate | null {
   if (activityItem === null || activityItem === undefined) return null;
   if (activityItem.availabilityRequest === null) return null;
   const offered = activityItem.availabilityRequest.metadata.offeredHourlyRate;
+  if (offered == null) return null;
+  if (typeof offered.decimal !== "string" || typeof offered.verbose !== "string") return null;
   return { decimal: offered.decimal, verbose: offered.verbose };
 }
 

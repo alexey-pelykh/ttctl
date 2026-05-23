@@ -248,6 +248,37 @@ describe("applications.list", () => {
     expect(res.items[0]?.fixedRate).toBeNull();
     expect(res.items[0]?.availabilityRequest).toBeNull();
   });
+
+  // Per the #530 schema split, `AvailabilityRequestMetadata` is a
+  // polymorphic supertype and `offeredHourlyRate` is only selected on
+  // the `AvailabilityRequestFixedMetadata` inline fragment. Non-Fixed
+  // variants return `metadata.__typename` (used for kind discrimination
+  // downstream) but no `offeredHourlyRate`, so `fixedRate` must project
+  // to `null` for those rows.
+  it.each([["AvailabilityRequestFlexibleMetadata"], ["MarketplaceAvailabilityRequestFlexibleMetadata"]])(
+    "projects fixedRate=null when metadata is non-Fixed variant %s (#530)",
+    async (typename) => {
+      const rowWithFlexibleMetadata = {
+        ...ITEM_FIXTURE,
+        availabilityRequest: {
+          __typename: "AvailabilityRequest",
+          id: "ar-flex",
+          metadata: { __typename: typename },
+        },
+      };
+      reply({
+        body: {
+          data: {
+            viewer: { id: "v1", jobActivityList: { entities: [rowWithFlexibleMetadata], totalCount: 1 } },
+          },
+        },
+      });
+      const res = await list(TOKEN);
+      expect(res.items[0]?.fixedRate).toBeNull();
+      // The AR presence indicator still rides through — only the rate is null.
+      expect(res.items[0]?.availabilityRequest).toEqual({ id: "ar-flex" });
+    },
+  );
 });
 
 describe("applications.show", () => {
@@ -334,6 +365,23 @@ describe("applications.show", () => {
     const item = await show(TOKEN, "act-1");
     expect(item.fixedRate).toBeNull();
     expect(item.availabilityRequest).toBeNull();
+  });
+
+  it("projects fixedRate=null on show when metadata is non-Fixed variant (#530)", async () => {
+    const detailWithFlexibleMetadata = {
+      ...DETAIL_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-flex-detail",
+        metadata: { __typename: "AvailabilityRequestFlexibleMetadata" },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: detailWithFlexibleMetadata } } },
+    });
+    const item = await show(TOKEN, "act-1");
+    expect(item.fixedRate).toBeNull();
+    expect(item.availabilityRequest).toEqual({ id: "ar-flex-detail" });
   });
 
   it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
