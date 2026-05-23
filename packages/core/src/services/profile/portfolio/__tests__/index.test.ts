@@ -410,6 +410,257 @@ describe("portfolio.list", () => {
     expect(items.find((it) => it.id === "p-missing-typename")?.details).toBeNull();
     expect(items.find((it) => it.id === "p-non-string-id")?.details).toBeNull();
   });
+
+  it("selects files connection with inline fragments for both variants (#549)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({ body: { data: { profile: { id: "p1", portfolioItems: { nodes: [] } } } } });
+
+    await list(TOKEN);
+
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const query = call.body.query;
+    // The `files { nodes { __typename ... } }` connection selector and the
+    // __typename discriminator are load-bearing — without them the
+    // projection cannot tell PDF from image and drops every node.
+    expect(query).toMatch(/files\s*\{\s*nodes\s*\{/);
+    expect(query).toMatch(/\.\.\.\s*on\s+PortfolioItemFilePdf/);
+    expect(query).toMatch(/\.\.\.\s*on\s+PortfolioItemFileImage/);
+  });
+
+  it("projects files=[] when the wire returns null files (item has no attachments)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, files: null }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.files).toEqual([]);
+  });
+
+  it("projects files=[] when the connection has empty nodes", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, files: { nodes: [] } }] } } },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.files).toEqual([]);
+  });
+
+  it("projects a pdf file (kind=pdf, with fileUrl + primaryContentType)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  files: {
+                    nodes: [
+                      {
+                        __typename: "PortfolioItemFilePdf",
+                        id: "file-pdf-1",
+                        title: "Case study",
+                        description: "A deep dive",
+                        contentType: "application/pdf",
+                        fileUrl: "https://cdn.example/case-study.pdf",
+                        primaryContentType: "pdf",
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.files).toEqual([
+      {
+        kind: "pdf",
+        id: "file-pdf-1",
+        title: "Case study",
+        description: "A deep dive",
+        contentType: "application/pdf",
+        fileUrl: "https://cdn.example/case-study.pdf",
+        primaryContentType: "pdf",
+      },
+    ]);
+  });
+
+  it("projects an image file (kind=image, with thumb/optimized URLs)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  files: {
+                    nodes: [
+                      {
+                        __typename: "PortfolioItemFileImage",
+                        id: "file-img-1",
+                        title: "Screenshot",
+                        description: null,
+                        contentType: "image/png",
+                        image: { thumbUrl: "https://cdn.example/t.png", optimizedUrl: "https://cdn.example/o.png" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.files).toEqual([
+      {
+        kind: "image",
+        id: "file-img-1",
+        title: "Screenshot",
+        description: null,
+        contentType: "image/png",
+        image: { thumbUrl: "https://cdn.example/t.png", optimizedUrl: "https://cdn.example/o.png" },
+      },
+    ]);
+  });
+
+  it("projects a mixed pdf + image connection preserving wire order", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  files: {
+                    nodes: [
+                      {
+                        __typename: "PortfolioItemFilePdf",
+                        id: "f-pdf",
+                        title: null,
+                        description: null,
+                        contentType: "application/pdf",
+                        fileUrl: "https://cdn.example/a.pdf",
+                        primaryContentType: "pdf",
+                      },
+                      {
+                        __typename: "PortfolioItemFileImage",
+                        id: "f-img",
+                        title: null,
+                        description: null,
+                        contentType: "image/jpeg",
+                        image: { thumbUrl: null, optimizedUrl: "https://cdn.example/b.jpg" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+    const files = items[0]?.files ?? [];
+
+    expect(files.map((f) => f.kind)).toEqual(["pdf", "image"]);
+    expect(files[0]?.id).toBe("f-pdf");
+    expect(files[1]?.id).toBe("f-img");
+  });
+
+  it("drops file nodes with unknown __typename (forward-compat with new server variants)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  files: {
+                    nodes: [
+                      { __typename: "PortfolioItemFileVideo", id: "f-future", title: "x" },
+                      {
+                        __typename: "PortfolioItemFilePdf",
+                        id: "f-keep",
+                        title: null,
+                        description: null,
+                        contentType: null,
+                        fileUrl: null,
+                        primaryContentType: null,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+    const files = items[0]?.files ?? [];
+
+    // The unknown variant is dropped; the known PDF node survives.
+    expect(files).toHaveLength(1);
+    expect(files[0]?.id).toBe("f-keep");
+  });
+
+  it("drops file nodes with missing __typename or non-string id", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  files: {
+                    nodes: [
+                      { id: "no-typename", title: "missing __typename" },
+                      { __typename: "PortfolioItemFilePdf", id: 42, title: "non-string id" },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.files).toEqual([]);
+  });
 });
 
 describe("portfolio.add", () => {

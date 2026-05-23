@@ -221,6 +221,66 @@ export interface PortfolioGalleryItem {
 }
 
 /**
+ * `PortfolioItem.files` attachment — a file uploaded for the portfolio
+ * item (a PDF document or an image), the read-side counterpart to the
+ * write-side `uploadPortfolioFile` mutation. The wire surface is a
+ * GraphQL connection (`PortfolioItemFileConnection`) whose `nodes` are a
+ * union resolved via `__typename` discrimination across two concrete
+ * variants (Pdf, Image), each carrying a different content shape.
+ *
+ * **[INFERRED — schema-synth understated]** The synthesized SDL at
+ * `research/graphql/talent_profile/schema.graphql:403` declares
+ * `PortfolioItemFileConnection { nodes: PortfolioItemFilePdf }` — a
+ * singular concrete node type — but the empirical talent-profile
+ * fragments project the nodes as a union via inline fragments:
+ *
+ *   ```graphql
+ *   files {
+ *     nodes {
+ *       __typename
+ *       ... on PortfolioItemFilePdf   { id title description contentType fileUrl primaryContentType }
+ *       ... on PortfolioItemFileImage { id title description contentType image { thumbUrl optimizedUrl } }
+ *     }
+ *   }
+ *   ```
+ *
+ * (sources: `research/graphql/talent_profile/fragments/PortfolioItemFileConnection.graphql`,
+ * `PortfolioItemFile{,Pdf,Image,ImageContent}.graphql`). The SDL
+ * synthesis collapses the `nodes` union to whichever concrete type the
+ * introspection root saw first, hence the understated declaration. The
+ * shared `title` / `description` / `contentType` fields come from the
+ * `PortfolioItemFile` interface both variants implement.
+ *
+ * `kind` is the lowercase variant discriminator projected by
+ * {@link projectFiles} from the wire `__typename`. Nodes with an unknown
+ * `__typename` (a new server variant), a missing `__typename`, or a
+ * non-string `id` are dropped from the array — silently absent rather
+ * than a fabricated shape. The `assertWireShapeStable` snapshot at
+ * `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+ * catches `__typename` drift across releases.
+ */
+export type PortfolioItemFile = PortfolioFilePdf | PortfolioFileImage;
+
+export interface PortfolioFilePdf {
+  kind: "pdf";
+  id: string;
+  title: string | null;
+  description: string | null;
+  contentType: string | null;
+  fileUrl: string | null;
+  primaryContentType: string | null;
+}
+
+export interface PortfolioFileImage {
+  kind: "image";
+  id: string;
+  title: string | null;
+  description: string | null;
+  contentType: string | null;
+  image: { thumbUrl: string | null; optimizedUrl: string | null } | null;
+}
+
+/**
  * Read-side portfolio item shape — projection of the `Portfolio` fragment.
  * Service callers receive this on `list()` / mutation responses; the
  * mutation responses also surface the full mutated list on `profile.portfolioItems.nodes`.
@@ -234,6 +294,12 @@ export interface PortfolioGalleryItem {
  * attached (typical for freshly-created items); the four block variants
  * (`image` / `text` / `video` / `gallery`) carry distinct shapes the
  * caller discriminates via the `kind` field.
+ *
+ * `files` (#549) carries the item's attached files — see
+ * {@link PortfolioItemFile}. Empty array `[]` when the item has no
+ * attachments (typical for freshly-created items); the two variants
+ * (`pdf` / `image`) carry distinct shapes the caller discriminates via
+ * the `kind` field.
  */
 export interface PortfolioItem {
   id: string;
@@ -252,6 +318,7 @@ export interface PortfolioItem {
   skills: SkillRef[];
   industries: { id: string; name: string }[];
   details: PortfolioItemDetails | null;
+  files: PortfolioItemFile[];
 }
 
 interface TalentProfileResponse<T> {
@@ -261,10 +328,10 @@ interface TalentProfileResponse<T> {
 
 /**
  * Map a portfolio fragment node from the wire shape to the typed
- * {@link PortfolioItem}. The wire shape carries many more fields (skills,
- * industries, files, kpis, quotes, details unions) — those are out of
- * scope for the v0 read surface and dropped here. Callers that need the
- * extras can issue a richer query in a follow-up.
+ * {@link PortfolioItem}. Skills, industries, `details` (#548), and
+ * `files` (#549) are projected here; the remaining wire fields (`kpis`,
+ * `quotes`) stay out of scope for the read surface and are dropped.
+ * Callers that need the extras can issue a richer query in a follow-up.
  */
 function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
   const id = node["id"];
@@ -302,6 +369,7 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
     skills,
     industries,
     details: projectDetails(node["details"]),
+    files: projectFiles(node["files"]),
   };
 }
 
@@ -389,6 +457,73 @@ function projectImage(raw: unknown): { thumbUrl: string | null; optimizedUrl: st
     thumbUrl: typeof obj["thumbUrl"] === "string" ? obj["thumbUrl"] : null,
     optimizedUrl: typeof obj["optimizedUrl"] === "string" ? obj["optimizedUrl"] : null,
   };
+}
+
+/**
+ * Wire `__typename` → surface `kind` discriminator for file attachments.
+ * Centralized so the mapping is auditable from one place when the server
+ * adds new file variants.
+ */
+const FILE_TYPENAME_TO_KIND = {
+  PortfolioItemFilePdf: "pdf",
+  PortfolioItemFileImage: "image",
+} as const satisfies Record<string, PortfolioItemFile["kind"]>;
+
+/**
+ * Defensively project the `files` connection wire field into a typed
+ * {@link PortfolioItemFile} array. Returns `[]` when the wire returned
+ * `null`/missing (item has no attachments) or `nodes` is absent/not an
+ * array. Individual nodes that fail projection (unknown/missing
+ * `__typename`, non-string `id`) are dropped rather than fabricated — a
+ * partial array is preferable to a poisoned one. The `__typename`
+ * regression itself surfaces loudly via the
+ * `createPortfolioItem.snapshot.json` snapshot.
+ */
+function projectFiles(raw: unknown): PortfolioItemFile[] {
+  if (raw === null || raw === undefined || typeof raw !== "object") return [];
+  const nodes = (raw as Record<string, unknown>)["nodes"];
+  if (!Array.isArray(nodes)) return [];
+  return nodes.flatMap((node): PortfolioItemFile[] => {
+    const file = projectFile(node);
+    return file ? [file] : [];
+  });
+}
+
+/**
+ * Project a single `files.nodes[]` entry into a typed
+ * {@link PortfolioItemFile}, or `null` when the node isn't an object,
+ * `__typename` is absent/unrecognized, or `id` is missing. Per-variant
+ * nested-field shape mismatches degrade to `null` within the variant
+ * rather than dropping the whole node — the top-level `kind`
+ * discriminator is the contract; sub-field types are INFERRED and can
+ * shift independently of the variant identity.
+ */
+function projectFile(raw: unknown): PortfolioItemFile | null {
+  if (raw === null || raw === undefined || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const typename = obj["__typename"];
+  if (typeof typename !== "string") return null;
+  const kind = (FILE_TYPENAME_TO_KIND as Record<string, PortfolioItemFile["kind"] | undefined>)[typename];
+  if (kind === undefined) return null;
+  const id = obj["id"];
+  if (typeof id !== "string") return null;
+  const title = typeof obj["title"] === "string" ? obj["title"] : null;
+  const description = typeof obj["description"] === "string" ? obj["description"] : null;
+  const contentType = typeof obj["contentType"] === "string" ? obj["contentType"] : null;
+  switch (kind) {
+    case "pdf":
+      return {
+        kind: "pdf",
+        id,
+        title,
+        description,
+        contentType,
+        fileUrl: typeof obj["fileUrl"] === "string" ? obj["fileUrl"] : null,
+        primaryContentType: typeof obj["primaryContentType"] === "string" ? obj["primaryContentType"] : null,
+      };
+    case "image":
+      return { kind: "image", id, title, description, contentType, image: projectImage(obj["image"]) };
+  }
 }
 
 /**
@@ -506,6 +641,13 @@ const PORTFOLIO_NODE_SELECTION = `
     ... on PortfolioItemTextBlock { id title contentHast }
     ... on PortfolioItemVideoBlock { id title videoUrl }
     ... on PortfolioItemGalleryBlock { id title items { id contentType image { thumbUrl optimizedUrl } } }
+  }
+  files {
+    nodes {
+      __typename
+      ... on PortfolioItemFilePdf { id title description contentType fileUrl primaryContentType }
+      ... on PortfolioItemFileImage { id title description contentType image { thumbUrl optimizedUrl } }
+    }
   }
 `;
 

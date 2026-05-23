@@ -188,6 +188,13 @@ function renderPortfolioItem(it: profile.portfolio.PortfolioItem): string {
     lines.push(renderDetailsSummary(it.details, detailIndent));
   }
 
+  // `files` (#549) are the item's attachments — PDF documents and
+  // images. Skip-if-empty (most items have none); when present, render
+  // a short list: one row per file with its kind, URL, and title.
+  if (it.files.length > 0) {
+    lines.push(renderFilesSummary(it.files, detailIndent));
+  }
+
   return lines.join("\n");
 }
 
@@ -216,6 +223,31 @@ function renderDetailsSummary(d: profile.portfolio.PortfolioItemDetails, indent:
       return `${indent}Details: Gallery (${count.toString()} ${noun})${suffix}`;
     }
   }
+}
+
+/**
+ * Render the attachment list for a portfolio item: a `Files (N):` header
+ * followed by one row per file — `- <Kind>: <url> — <title>`. PDF files
+ * surface their `fileUrl`; image files surface the optimized (falling
+ * back to thumb) URL. Title suffix is appended when present. Callers
+ * guard on `files.length > 0`, so this never renders an empty list.
+ */
+function renderFilesSummary(files: profile.portfolio.PortfolioItemFile[], indent: string): string {
+  const count = files.length;
+  const noun = count === 1 ? "file" : "files";
+  const fileIndent = `${indent}  `;
+  const rows = files.map((f) => {
+    const suffix = f.title !== null && f.title !== "" ? ` — ${f.title}` : "";
+    switch (f.kind) {
+      case "pdf":
+        return `${fileIndent}- PDF: ${f.fileUrl ?? "(no url)"}${suffix}`;
+      case "image": {
+        const url = f.image?.optimizedUrl ?? f.image?.thumbUrl ?? null;
+        return `${fileIndent}- Image: ${url ?? "(no url)"}${suffix}`;
+      }
+    }
+  });
+  return [`${indent}Files (${count.toString()} ${noun}):`, ...rows].join("\n");
 }
 
 /**
