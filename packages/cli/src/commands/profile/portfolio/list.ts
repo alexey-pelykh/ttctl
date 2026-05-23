@@ -203,6 +203,15 @@ function renderPortfolioItem(it: profile.portfolio.PortfolioItem): string {
     lines.push(renderKpisSummary(it.kpis, detailIndent));
   }
 
+  // `quotes` (#551) are the talent-authored client / stakeholder
+  // testimonials for the project. Skip-if-empty (most items have none);
+  // when present, render one row per quote: `- "<text>" — <attribution>`
+  // where attribution interleaves clientName, clientRole, and company.
+  // The order in the wire response is preserved.
+  if (it.quotes.length > 0) {
+    lines.push(renderQuotesSummary(it.quotes, detailIndent));
+  }
+
   return lines.join("\n");
 }
 
@@ -276,6 +285,33 @@ function renderKpisSummary(kpis: profile.portfolio.PortfolioItemKpi[], indent: s
     return `${kpiIndent}- ${value}: ${description}`;
   });
   return [`${indent}KPIs (${count.toString()} ${noun}):`, ...rows].join("\n");
+}
+
+/**
+ * Render the testimonial list for a portfolio item: a `Quotes (N):` header
+ * followed by one row per quote — `- "<text>" — <attribution>`. The
+ * attribution interleaves `clientName`, `clientRole`, and `company`
+ * (`Jane Doe, VP Engineering @ Acme`), omitting any part that is
+ * null/empty; when none are present the ` — <attribution>` suffix is
+ * dropped entirely. The testimonial body falls back to `(unset)` when
+ * null/empty so the structural presence of a quote entry stays visible
+ * even when the talent only filled out the attribution. Callers guard on
+ * `quotes.length > 0`, so this never renders an empty list.
+ */
+function renderQuotesSummary(quotes: profile.portfolio.PortfolioItemQuote[], indent: string): string {
+  const count = quotes.length;
+  const noun = count === 1 ? "quote" : "quotes";
+  const quoteIndent = `${indent}  `;
+  const rows = quotes.map((q) => {
+    const text = q.text !== null && q.text !== "" ? `"${q.text}"` : "(unset)";
+    const namePart = q.clientName !== null && q.clientName !== "" ? q.clientName : null;
+    const rolePart = q.clientRole !== null && q.clientRole !== "" ? q.clientRole : null;
+    const companyPart = q.company !== null && q.company !== "" ? q.company : null;
+    const who = [namePart, rolePart].filter((p): p is string => p !== null).join(", ");
+    const attribution = companyPart !== null ? (who !== "" ? `${who} @ ${companyPart}` : companyPart) : who;
+    return attribution !== "" ? `${quoteIndent}- ${text} — ${attribution}` : `${quoteIndent}- ${text}`;
+  });
+  return [`${indent}Quotes (${count.toString()} ${noun}):`, ...rows].join("\n");
 }
 
 /**

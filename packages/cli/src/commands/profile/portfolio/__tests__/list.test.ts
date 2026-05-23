@@ -36,6 +36,7 @@ const FULL_ITEM: profile.portfolio.PortfolioItem = {
   details: null,
   files: [],
   kpis: [],
+  quotes: [],
 };
 
 const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
@@ -57,6 +58,7 @@ const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
   details: null,
   files: [],
   kpis: [],
+  quotes: [],
 };
 
 const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
@@ -78,6 +80,7 @@ const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
   details: null,
   files: [],
   kpis: [],
+  quotes: [],
 };
 
 describe("formatPortfolioPretty", () => {
@@ -362,6 +365,64 @@ describe("formatPortfolioPretty", () => {
   it("skips the KPIs line when the item has no KPIs (kpis=[])", () => {
     const out = formatPortfolioPretty([MINIMAL_ITEM]);
     expect(out).not.toContain("KPIs");
+  });
+
+  // #551: `quotes` rendering — talent-authored client/stakeholder testimonials.
+  it("renders Quotes (N): block with quoted text and full attribution rows", () => {
+    const withQuotes: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      quotes: [
+        { id: "q-1", text: "Shipped on time.", clientName: "Jane Doe", clientRole: "VP Engineering", company: "Acme" },
+        { id: "q-2", text: "A pleasure to work with.", clientName: "John Roe", clientRole: null, company: "Globex" },
+      ],
+    };
+    const out = formatPortfolioPretty([withQuotes]);
+    expect(out).toContain("    Quotes (2 quotes):");
+    expect(out).toContain('      - "Shipped on time." — Jane Doe, VP Engineering @ Acme');
+    expect(out).toContain('      - "A pleasure to work with." — John Roe @ Globex');
+  });
+
+  it("uses singular `quote` noun for a single entry", () => {
+    const oneQuote: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      quotes: [{ id: "q-1", text: "Excellent.", clientName: "Ada", clientRole: "Lead", company: "Eng" }],
+    };
+    const out = formatPortfolioPretty([oneQuote]);
+    expect(out).toContain("    Quotes (1 quote):");
+    expect(out).toContain('      - "Excellent." — Ada, Lead @ Eng');
+  });
+
+  it("renders (unset) when the quote text is null/empty", () => {
+    const partial: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      quotes: [{ id: "q-1", text: null, clientName: "Jane", clientRole: "PM", company: "Acme" }],
+    };
+    const out = formatPortfolioPretty([partial]);
+    expect(out).toContain("      - (unset) — Jane, PM @ Acme");
+  });
+
+  it("omits the attribution suffix when no client fields are present", () => {
+    const noAttribution: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      quotes: [{ id: "q-1", text: "Solid delivery.", clientName: null, clientRole: null, company: null }],
+    };
+    const out = formatPortfolioPretty([noAttribution]);
+    const line = out.split("\n").find((l) => l.includes("Solid delivery"));
+    expect(line).toBe('      - "Solid delivery."');
+  });
+
+  it("interleaves partial attribution (name + company, no role)", () => {
+    const partialAttr: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      quotes: [{ id: "q-1", text: "Great.", clientName: "Ada", clientRole: null, company: "Eng" }],
+    };
+    const out = formatPortfolioPretty([partialAttr]);
+    expect(out).toContain('      - "Great." — Ada @ Eng');
+  });
+
+  it("skips the Quotes line when the item has no quotes (quotes=[])", () => {
+    const out = formatPortfolioPretty([MINIMAL_ITEM]);
+    expect(out).not.toContain("Quotes");
   });
 });
 

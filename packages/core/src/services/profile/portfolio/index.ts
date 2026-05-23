@@ -336,6 +336,69 @@ export interface PortfolioItemKpi {
 }
 
 /**
+ * `PortfolioItem.quotes` entry — a talent-authored client / stakeholder
+ * testimonial about the portfolio project (e.g., `{ text: "Shipped on time
+ * and under budget.", clientName: "Jane Doe", clientRole: "VP Engineering",
+ * company: "Acme" }`).
+ *
+ * **[INFERRED — wire shape verified by live elimination probe, 2026-05-23]**
+ * The synthesized SDL at
+ * `research/graphql/talent_profile/schema.graphql:389` declares
+ * `PortfolioItem.quotes: Unknown` (introspection didn't expose the
+ * structured shape). The empirical `Portfolio.graphql` fragment + captured
+ * `getProfileData.graphql:255-261` operation both project:
+ *
+ *   ```graphql
+ *   quotes { id text clientName clientRole company }
+ *   ```
+ *
+ * (sources: `research/graphql/talent_profile/fragments/Portfolio.graphql:32-38`,
+ * `research/captures/web/operations/getProfileData.graphql:255-261`,
+ * `research/.tmp/web-bundles/main.49dbe1ed.js:401` — the live Toptal web
+ * bundle pulls `quotes:h` straight off the response without `.nodes`,
+ * confirming the direct-list shape, in contrast to the sibling `files:f`
+ * which the same bundle reads via `f.nodes`).
+ *
+ * Live-probe evidence (`.tmp/probe-quotes-551-transcript.txt`, 2026-05-23
+ * against the maintainer's profile):
+ *
+ *   - The shape `quotes { id text clientName clientRole company }` is
+ *     accepted on the wire (HTTP 200, no GraphQL errors when projected via
+ *     the talent-profile surface).
+ *   - The element type is `PortfolioItemQuote` (revealed by the error
+ *     "Field 'X' doesn't exist on type 'PortfolioItemQuote'" returned when
+ *     probing extra fields).
+ *   - The 5 fields {id, text, clientName, clientRole, company} are the
+ *     accepted set on the element type. The issue's guessed
+ *     `{quote, attribution, role}` were ALL rejected as undefined fields
+ *     on `PortfolioItemQuote` — the guess was wrong; the empirical fragment
+ *     names were right.
+ *   - The wire shape is a **direct list** (NOT a connection): probing
+ *     `quotes { nodes }` errors with "Field 'nodes' doesn't exist on type
+ *     'PortfolioItemQuote'".
+ *   - Empty case returns `[]` (NOT `null`): all 32 items on the test
+ *     account had `quotes: []`. The populated sub-field scalar types
+ *     remain INFERRED — every probed item was empty, so concrete values
+ *     for `text` / `clientName` / `clientRole` / `company` were not
+ *     observed. Field semantics (testimonial body, client name, client
+ *     role/title, company name) match the String types in the Portfolio
+ *     fragment.
+ *
+ * Defensive projection: nodes without a string `id` are dropped from the
+ * array — silently absent rather than fabricated. The
+ * `assertWireShapeStable` snapshot at
+ * `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+ * catches shape drift across releases.
+ */
+export interface PortfolioItemQuote {
+  id: string;
+  text: string | null;
+  clientName: string | null;
+  clientRole: string | null;
+  company: string | null;
+}
+
+/**
  * Read-side portfolio item shape — projection of the `Portfolio` fragment.
  * Service callers receive this on `list()` / mutation responses; the
  * mutation responses also surface the full mutated list on `profile.portfolioItems.nodes`.
@@ -361,6 +424,12 @@ export interface PortfolioItemKpi {
  * has no KPIs (typical for items without quantified metrics); each entry
  * carries `{id, value, description}` (e.g., `value: "40%"`,
  * `description: "page load reduction"`).
+ *
+ * `quotes` (#551) carries the talent-authored client / stakeholder
+ * testimonials for the project — see {@link PortfolioItemQuote}. Empty
+ * array `[]` when the item has no quotes (typical for items without
+ * testimonials); each entry carries
+ * `{id, text, clientName, clientRole, company}`.
  */
 export interface PortfolioItem {
   id: string;
@@ -381,6 +450,7 @@ export interface PortfolioItem {
   details: PortfolioItemDetails | null;
   files: PortfolioItemFile[];
   kpis: PortfolioItemKpi[];
+  quotes: PortfolioItemQuote[];
 }
 
 interface TalentProfileResponse<T> {
@@ -391,9 +461,9 @@ interface TalentProfileResponse<T> {
 /**
  * Map a portfolio fragment node from the wire shape to the typed
  * {@link PortfolioItem}. Skills, industries, `details` (#548), `files`
- * (#549), and `kpis` (#550) are projected here; the remaining wire field
- * (`quotes`) stays out of scope for the read surface and is dropped.
- * Callers that need the extras can issue a richer query in a follow-up.
+ * (#549), `kpis` (#550), and `quotes` (#551) are all projected here — the
+ * read surface now covers every structured sub-field of the empirical
+ * `Portfolio` fragment.
  */
 function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
   const id = node["id"];
@@ -433,6 +503,7 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
     details: projectDetails(node["details"]),
     files: projectFiles(node["files"]),
     kpis: projectKpis(node["kpis"]),
+    quotes: projectQuotes(node["quotes"]),
   };
 }
 
@@ -618,6 +689,36 @@ function projectKpis(raw: unknown): PortfolioItemKpi[] {
 }
 
 /**
+ * Defensively project the `quotes` wire field into a typed
+ * {@link PortfolioItemQuote} array. Returns `[]` when the wire returned
+ * `null`/missing/non-array — silently absent rather than throwing.
+ * Per-element nodes without a string `id` are dropped (siblings preserved);
+ * `text`, `clientName`, `clientRole`, and `company` are nullable scalars
+ * projected as strings or `null` (the wire field types are INFERRED — see
+ * {@link PortfolioItemQuote} for the full evidence chain).
+ *
+ * Wire shape: direct list (NOT a connection — verified via probe error
+ * "Field 'nodes' doesn't exist on type 'PortfolioItemQuote'", 2026-05-23).
+ * Element type `PortfolioItemQuote` with exactly the 5 fields below
+ * (verified by elimination: the issue's guessed `quote` / `attribution` /
+ * `role` were all rejected as undefined fields on `PortfolioItemQuote`).
+ */
+function projectQuotes(raw: unknown): PortfolioItemQuote[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((node): PortfolioItemQuote[] => {
+    if (node === null || typeof node !== "object") return [];
+    const obj = node as Record<string, unknown>;
+    const id = obj["id"];
+    if (typeof id !== "string") return [];
+    const text = typeof obj["text"] === "string" ? obj["text"] : null;
+    const clientName = typeof obj["clientName"] === "string" ? obj["clientName"] : null;
+    const clientRole = typeof obj["clientRole"] === "string" ? obj["clientRole"] : null;
+    const company = typeof obj["company"] === "string" ? obj["company"] : null;
+    return [{ id, text, clientName, clientRole, company }];
+  });
+}
+
+/**
  * Common "200 with errors" shape handler. Returns the unwrapped payload
  * (the value of the single root data field) as `unknown`; callers
  * narrow at the call site to their per-operation payload shape. The
@@ -741,6 +842,7 @@ const PORTFOLIO_NODE_SELECTION = `
     }
   }
   kpis { id value description }
+  quotes { id text clientName clientRole company }
 `;
 
 const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {
