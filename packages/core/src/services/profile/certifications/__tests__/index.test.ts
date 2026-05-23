@@ -58,6 +58,7 @@ const CERT_1 = {
   validToMonth: null,
   validToYear: null,
   highlight: false,
+  status: "valid",
 };
 
 const CERT_2 = {
@@ -71,6 +72,7 @@ const CERT_2 = {
   validToMonth: 6,
   validToYear: 2025,
   highlight: true,
+  status: "expired",
 };
 
 beforeEach(() => {
@@ -88,6 +90,36 @@ describe("list", () => {
     expect(rows).toEqual([CERT_1, CERT_2]);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("GET_CERTIFICATION");
+  });
+
+  it("selects status in the CERTIFICATION_FRAGMENT (#557)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [] } } } } });
+    await list(TOKEN);
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.body.query).toContain("status");
+  });
+
+  it("surfaces status verbatim on every row (#557)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            certifications: {
+              nodes: [
+                { ...CERT_1, status: "valid" },
+                { ...CERT_2, status: "pending-verification" },
+                { ...CERT_1, id: "V1-Certification-3", status: null },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const rows = await list(TOKEN);
+    expect(rows.map((r) => r.status)).toEqual(["valid", "pending-verification", null]);
   });
 
   it("throws AuthRevokedError on 401", async () => {

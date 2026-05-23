@@ -235,6 +235,7 @@ export const CERT_AWS_PRO: Certification = {
   validToMonth: 3,
   validToYear: 2026,
   highlight: true,
+  status: "valid",
 };
 
 export const CERT_CKAD: Certification = {
@@ -248,6 +249,7 @@ export const CERT_CKAD: Certification = {
   validToMonth: 6,
   validToYear: 2025,
   highlight: false,
+  status: "expired",
 };
 
 // -----------------------------------------------------------------------

@@ -231,6 +231,7 @@ export function buildMinimalProfile(): ProfileFixture {
     validToMonth: null,
     validToYear: null,
     highlight: false,
+    status: null,
   };
 
   const minimalIndustry: IndustryProfile = {

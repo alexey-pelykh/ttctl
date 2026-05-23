@@ -1,0 +1,58 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-23T14:58:55.916Z",
+  "operationName": "GET_CERTIFICATION",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "certifications": {
+        "kind": "object",
+        "fields": {
+          "nodes": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "certificate": {
+                  "kind": "string"
+                },
+                "highlight": {
+                  "kind": "boolean"
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "institution": {
+                  "kind": "string"
+                },
+                "link": {
+                  "kind": "null"
+                },
+                "number": {
+                  "kind": "null"
+                },
+                "status": {
+                  "kind": "string"
+                },
+                "validFromMonth": {
+                  "kind": "number"
+                },
+                "validFromYear": {
+                  "kind": "number"
+                },
+                "validToMonth": {
+                  "kind": "null"
+                },
+                "validToYear": {
+                  "kind": "null"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

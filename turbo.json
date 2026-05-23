@@ -17,6 +17,7 @@
       "cache": false,
       "passThroughEnv": [
         "TTCTL_E2E",
+        "TTCTL_UPDATE_WIRE_SNAPSHOTS",
         "TTCTL_CONFIG_FILE",
         "XDG_CONFIG_HOME",
         "HOME",
