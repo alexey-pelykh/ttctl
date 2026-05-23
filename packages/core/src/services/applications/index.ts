@@ -602,10 +602,14 @@ export interface ApplicationsStats {
 // ---------------------------------------------------------------------
 
 // `availabilityRequest.metadata.offeredHourlyRate { decimal verbose }`
-// surfaces the recruiter-pinned Fixed rate (#410). The schema declares
-// `AvailabilityRequest.metadata: AvailabilityRequestFixedMetadata!` and
-// `AvailabilityRequestFixedMetadata.offeredHourlyRate: Money!`, both
-// non-null when an AR exists. The hand-authored selection lives in the
+// surfaces the recruiter-pinned Fixed rate (#410). Per the #530 schema
+// split, `AvailabilityRequest.metadata: AvailabilityRequestMetadata!` is
+// a polymorphic supertype with three known variants — `offeredHourlyRate`
+// lives only on `AvailabilityRequestFixedMetadata` (as `Money!`), so the
+// selection wraps it in an inline fragment and the Flexible /
+// MarketplaceFlexible variants return `metadata` without the rate.
+// `projectFixedRate` handles the absent-on-non-Fixed branch by short-
+// circuiting to `null`. The hand-authored selection lives in the
 // schema-coverage gap region (`JobActivityItems` is T1 per
 // `docs/wire-validation-routing.md`), so the live E2E run is the
 // authority — the existing `15-applications-list.e2e.test.ts` /
@@ -638,7 +642,12 @@ const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $o
           id
           metadata {
             __typename
-            offeredHourlyRate { __typename decimal verbose }
+            ... on AvailabilityRequestFixedMetadata {
+              __typename
+              offeredHourlyRate { __typename decimal verbose }
+            }
+            ... on AvailabilityRequestFlexibleMetadata { __typename }
+            ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
           }
         }
         interview { __typename id }
@@ -694,7 +703,12 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
         id
         metadata {
           __typename
-          offeredHourlyRate { __typename decimal verbose }
+          ... on AvailabilityRequestFixedMetadata {
+            __typename
+            offeredHourlyRate { __typename decimal verbose }
+          }
+          ... on AvailabilityRequestFlexibleMetadata { __typename }
+          ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
         }
       }
       interview { __typename id }
@@ -712,18 +726,21 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
  * Wire-side shape of `availabilityRequest` as returned by the trimmed
  * `JobActivityItems` / `JobActivityItem` selection set. `id` is the
  * presence indicator; `metadata.offeredHourlyRate` (the Money shape) is
- * the recruiter-pinned Fixed rate (#410). The flatten step in
- * {@link projectActivityItem} lifts `offeredHourlyRate` into the
- * row-level `fixedRate` projection field so callers (CLI, MCP, LLM
- * agents) can rate-triage without traversing the AR sub-shape.
+ * the recruiter-pinned Fixed rate (#410) and is only selected on the
+ * `AvailabilityRequestFixedMetadata` variant — Flexible / marketplace
+ * variants return `metadata` without `offeredHourlyRate` (#530). The
+ * flatten step in {@link projectActivityItem} lifts `offeredHourlyRate`
+ * into the row-level `fixedRate` projection field so callers (CLI, MCP,
+ * LLM agents) can rate-triage without traversing the AR sub-shape.
  */
 interface AvailabilityRequestWireEntity {
   id: string;
   metadata: {
-    offeredHourlyRate: {
+    __typename?: string | null;
+    offeredHourlyRate?: {
       decimal: string;
       verbose: string;
-    };
+    } | null;
   };
 }
 
@@ -807,14 +824,22 @@ interface JobActivityItemResponse {
 /**
  * Lift the wire's `availabilityRequest.metadata.offeredHourlyRate` Money
  * shape into a row-level {@link FixedRate} projection field (#410).
- * Returns `null` when the row carries no AR (typical for `APPLIED` /
- * engagement-only rows) or when an AR exists but the metadata is absent
- * (defensive — schema declares both non-null, but the live wire is the
- * authority).
+ * Returns `null` when:
+ *
+ * - The row carries no AR (typical for `APPLIED` / engagement-only rows).
+ * - The AR's `metadata` resolves to a non-Fixed variant
+ *   (`AvailabilityRequestFlexibleMetadata`,
+ *   `MarketplaceAvailabilityRequestFlexibleMetadata`, or a future variant) —
+ *   `offeredHourlyRate` is only selected on the Fixed inline fragment, so it
+ *   is absent on the wire for non-Fixed metadata (#530 schema split of
+ *   `AvailabilityRequestMetadata` into a polymorphic supertype).
+ * - The metadata shape is defensively partial (decimal or verbose missing).
  */
 function projectFixedRate(ar: AvailabilityRequestWireEntity | null): FixedRate | null {
   if (ar === null) return null;
   const offered = ar.metadata.offeredHourlyRate;
+  if (offered == null) return null;
+  if (typeof offered.decimal !== "string" || typeof offered.verbose !== "string") return null;
   return { decimal: offered.decimal, verbose: offered.verbose };
 }
 

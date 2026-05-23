@@ -548,6 +548,58 @@ describe("jobs fixedRate projection (#410)", () => {
     const job = await show(TOKEN, "job-1");
     expect(job.fixedRate).toBeNull();
   });
+
+  // Per the #530 schema split, `AvailabilityRequestMetadata` is a
+  // polymorphic supertype and `offeredHourlyRate` is only selected on
+  // the `AvailabilityRequestFixedMetadata` inline fragment. Non-Fixed
+  // variants return `metadata.__typename` but no `offeredHourlyRate`,
+  // so `fixedRate` must project to `null` for those rows on both the
+  // list and show paths.
+  it.each([["AvailabilityRequestFlexibleMetadata"], ["MarketplaceAvailabilityRequestFlexibleMetadata"]])(
+    "lists projects fixedRate=null when metadata is non-Fixed variant %s (#530)",
+    async (typename) => {
+      const flexibleEntity = {
+        ...JOB_LIST_ENTITY,
+        id: "job-flex",
+        activityItem: {
+          __typename: "TalentJobActivityItem",
+          id: "act-flex",
+          availabilityRequest: {
+            __typename: "AvailabilityRequest",
+            id: "ar-flex",
+            metadata: { __typename: typename },
+          },
+        },
+      };
+      reply({
+        body: {
+          data: { viewer: { id: "v1", eligibleJobs: { entities: [flexibleEntity], totalCount: 1 } } },
+        },
+      });
+      const page = await list(TOKEN);
+      expect(page.items[0]?.fixedRate).toBeNull();
+    },
+  );
+
+  it("show projects fixedRate=null when metadata is non-Fixed variant (#530)", async () => {
+    const flexibleDetail = {
+      ...JOB_DETAIL_ENTITY,
+      activityItem: {
+        __typename: "TalentJobActivityItem",
+        id: "act-flex-show",
+        availabilityRequest: {
+          __typename: "AvailabilityRequest",
+          id: "ar-flex-show",
+          metadata: { __typename: "AvailabilityRequestFlexibleMetadata" },
+        },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", job: flexibleDetail } } },
+    });
+    const job = await show(TOKEN, "job-1");
+    expect(job.fixedRate).toBeNull();
+  });
 });
 
 describe("jobs interest mutations", () => {
