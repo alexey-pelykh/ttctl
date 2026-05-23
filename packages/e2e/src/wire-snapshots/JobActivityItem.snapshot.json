@@ -1,0 +1,382 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-23T20:49:17.396Z",
+  "operationName": "JobActivityItem",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "billCycle": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "verbose": {
+            "kind": "string"
+          }
+        }
+      },
+      "breaks": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "commitment": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "slug": {
+            "kind": "string"
+          }
+        }
+      },
+      "currentAgreement": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "applicationRate": {
+            "kind": "string"
+          },
+          "commitment": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "slug": {
+                "kind": "string"
+              }
+            }
+          },
+          "marketplaceMargin": {
+            "kind": "null"
+          },
+          "talentHourlyRate": {
+            "kind": "string"
+          },
+          "talentRate": {
+            "kind": "string"
+          },
+          "timePeriod": {
+            "kind": "string"
+          }
+        }
+      },
+      "earning": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "paid": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "decimal": {
+                "kind": "string"
+              }
+            }
+          }
+        }
+      },
+      "eligibleForPayment": {
+        "kind": "boolean"
+      },
+      "eligibleToViewTimeOffs": {
+        "kind": "boolean"
+      },
+      "eligibleToViewTimesheets": {
+        "kind": "boolean"
+      },
+      "endDate": {
+        "kind": "null"
+      },
+      "engagementId": {
+        "kind": "string"
+      },
+      "expectedHours": {
+        "kind": "number"
+      },
+      "id": {
+        "kind": "string"
+      },
+      "job": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "client": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "city": {
+                "kind": "null"
+              },
+              "countryName": {
+                "kind": "string"
+              },
+              "foundingYear": {
+                "kind": "null"
+              },
+              "fullName": {
+                "kind": "string"
+              },
+              "id": {
+                "kind": "string"
+              },
+              "industry": {
+                "kind": "null"
+              },
+              "isEnterprise": {
+                "kind": "boolean"
+              },
+              "teamSize": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "value": {
+                    "kind": "null"
+                  }
+                }
+              }
+            }
+          },
+          "commitment": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "slug": {
+                "kind": "string"
+              }
+            }
+          },
+          "contacts": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "email": {
+                  "kind": "string"
+                },
+                "fullName": {
+                  "kind": "string"
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "phoneNumber": {
+                  "kind": "string"
+                },
+                "position": {
+                  "kind": "string"
+                },
+                "timeZone": {
+                  "kind": "object",
+                  "fields": {
+                    "location": {
+                      "kind": "string"
+                    },
+                    "name": {
+                      "kind": "string"
+                    },
+                    "value": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "descriptionMd": {
+            "kind": "string"
+          },
+          "expectedHours": {
+            "kind": "number"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "isCoaching": {
+            "kind": "boolean"
+          },
+          "isToptalProject": {
+            "kind": "boolean"
+          },
+          "pointsOfContact": {
+            "kind": "object",
+            "fields": {
+              "current": {
+                "kind": "object",
+                "fields": {
+                  "contactFields": {
+                    "kind": "object",
+                    "fields": {
+                      "communitySlackId": {
+                        "kind": "string"
+                      },
+                      "email": {
+                        "kind": "string"
+                      },
+                      "phoneNumber": {
+                        "kind": "string"
+                      },
+                      "skype": {
+                        "kind": "null"
+                      }
+                    }
+                  },
+                  "fullName": {
+                    "kind": "string"
+                  },
+                  "id": {
+                    "kind": "string"
+                  },
+                  "photo": {
+                    "kind": "object",
+                    "fields": {
+                      "small": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  "timeZone": {
+                    "kind": "object",
+                    "fields": {
+                      "location": {
+                        "kind": "string"
+                      },
+                      "name": {
+                        "kind": "string"
+                      },
+                      "value": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  "vacation": {
+                    "kind": "object",
+                    "fields": {
+                      "endDate": {
+                        "kind": "string"
+                      },
+                      "id": {
+                        "kind": "string"
+                      },
+                      "startDate": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "handoff": {
+                "kind": "null"
+              },
+              "kind": {
+                "kind": "string"
+              }
+            }
+          },
+          "specialization": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "title": {
+                "kind": "string"
+              }
+            }
+          },
+          "startDate": {
+            "kind": "string"
+          },
+          "title": {
+            "kind": "string"
+          },
+          "url": {
+            "kind": "string"
+          },
+          "workType": {
+            "kind": "object",
+            "fields": {
+              "__typename": {
+                "kind": "string"
+              },
+              "slug": {
+                "kind": "string"
+              }
+            }
+          }
+        }
+      },
+      "lastUpdatedAt": {
+        "kind": "string"
+      },
+      "proposedEnd": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "endDate": {
+            "kind": "string"
+          },
+          "status": {
+            "kind": "string"
+          }
+        }
+      },
+      "startDate": {
+        "kind": "string"
+      },
+      "statusColor": {
+        "kind": "string"
+      },
+      "statusGroupV2": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "value": {
+            "kind": "string"
+          },
+          "verbose": {
+            "kind": "string"
+          }
+        }
+      },
+      "statusV2": {
+        "kind": "object",
+        "fields": {
+          "__typename": {
+            "kind": "string"
+          },
+          "value": {
+            "kind": "string"
+          },
+          "verbose": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}
