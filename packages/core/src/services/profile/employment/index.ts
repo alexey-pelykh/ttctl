@@ -89,6 +89,43 @@ export interface Employment {
    * wire-shape snapshot (T1).
    */
   isEnterpriseExperience: boolean | null;
+  /**
+   * Hydrated employer-catalog card for the resolved employer (#555).
+   * `null` for custom (non-catalog) workplaces — the same rows where
+   * {@link Employment.employerId} is `null`. The wire selects a curated
+   * subset of the canonical `Employer` fragment
+   * (`research/graphql/talent_profile/fragments/Employer.graphql`):
+   * `name`, `city`, `country`, `logoUrl`, `employeeCount`, and
+   * `industries`. The remaining `Employer` fields (`revenue`,
+   * `otherNames`, `otherUrls`, `lastSyncedAt`, `website`) are NOT
+   * projected — deferred as a lower-priority follow-up per #555.
+   *
+   * Schema-synth marked every `Employer` field `Unknown`
+   * (`research/graphql/talent_profile/schema.graphql`); the shapes are
+   * INFERRED — `name` is a non-null display string, `city` / `country` /
+   * `logoUrl` are nullable strings (matching the {@link EmployerSuggestion}
+   * autocomplete shape), `employeeCount` is a nullable number (the web
+   * app renders it through the same numeric formatter as the sibling
+   * numeric `revenue` field), and `industries` is the same `{ id, name }[]`
+   * connection projection used at the employment level. Validated by the
+   * `GET_WORK_EXPERIENCE` wire-shape snapshot (T1).
+   *
+   * `employer.id` equals the flat {@link Employment.employerId} (both
+   * derive from the single `employer { id … }` selection); `employerId`
+   * remains the field consumed by the update-merge path (#394), while
+   * `employer` is the display-side hydration. Consumers wanting `revenue`
+   * or the other employer fields should fetch them via
+   * `employersAutocomplete` or a future dedicated employer query.
+   */
+  employer: {
+    id: string;
+    name: string;
+    city: string | null;
+    country: string | null;
+    logoUrl: string | null;
+    employeeCount: number | null;
+    industries: { id: string; name: string }[];
+  } | null;
 }
 
 /**
@@ -243,7 +280,7 @@ const EMPLOYMENT_FRAGMENT = `fragment Employment on Employment {
   reportingTo
   industries { nodes { id name } }
   primaryGeography { id code name }
-  employer { id }
+  employer { id name city country logoUrl employeeCount industries { nodes { id name } } }
   skills { nodes { id name } }
   managementExperience { isLeadPosition reportsRange }
   engagement { id }
@@ -321,6 +358,25 @@ interface MutationPayload {
 }
 
 /**
+ * Project a GraphQL `{ nodes }` connection of `{ id, name }` objects to a
+ * flat `{ id: string; name: string }[]`, dropping any node whose `id` or
+ * `name` is not a string. Shared by the three `{ id name }` connections
+ * the employment read shape projects: the row-level `industries`,
+ * `skills`, and the hydrated `employer.industries` (#555). Extracted from
+ * the previously-inline industries/skills projections so the new
+ * employer-card path reuses the identical defensive logic.
+ */
+function projectIdNameNodes(
+  conn: { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined,
+): { id: string; name: string }[] {
+  return Array.isArray(conn?.nodes)
+    ? conn.nodes.flatMap((n) =>
+        typeof n.id === "string" && typeof n.name === "string" ? [{ id: n.id, name: n.name }] : [],
+      )
+    : [];
+}
+
+/**
  * Map an Employment fragment node from the raw wire shape to the typed
  * {@link Employment}. Mirrors `mapPortfolioNode` in the portfolio
  * service — the wire surfaces `industries` / `primaryGeography` as a
@@ -329,12 +385,9 @@ interface MutationPayload {
  * than a direct cast) is required. Introduced for #344.
  */
 function mapEmploymentNode(node: Record<string, unknown>): Employment {
-  const industriesConn = node["industries"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
-  const industries: { id: string; name: string }[] = Array.isArray(industriesConn?.nodes)
-    ? industriesConn.nodes.flatMap((i) =>
-        typeof i.id === "string" && typeof i.name === "string" ? [{ id: i.id, name: i.name }] : [],
-      )
-    : [];
+  const industries = projectIdNameNodes(
+    node["industries"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined,
+  );
   const geoRaw = node["primaryGeography"] as { id?: unknown; code?: unknown; name?: unknown } | null | undefined;
   const primaryGeography =
     geoRaw && typeof geoRaw.id === "string"
@@ -344,14 +397,42 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
           name: typeof geoRaw.name === "string" ? geoRaw.name : null,
         }
       : null;
-  const employerRaw = node["employer"] as { id?: unknown } | null | undefined;
+  const employerRaw = node["employer"] as
+    | {
+        id?: unknown;
+        name?: unknown;
+        city?: unknown;
+        country?: unknown;
+        logoUrl?: unknown;
+        employeeCount?: unknown;
+        industries?: { nodes?: { id?: unknown; name?: unknown }[] } | null;
+      }
+    | null
+    | undefined;
   const employerId = employerRaw && typeof employerRaw.id === "string" ? employerRaw.id : null;
-  const skillsConn = node["skills"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
-  const skills: { id: string; name: string }[] = Array.isArray(skillsConn?.nodes)
-    ? skillsConn.nodes.flatMap((s) =>
-        typeof s.id === "string" && typeof s.name === "string" ? [{ id: s.id, name: s.name }] : [],
-      )
-    : [];
+  // #555 — hydrated employer card. Built only when the wire returned an
+  // employer object carrying a string `id` (catalog-resolved rows); the
+  // custom-workplace rows where `employerId` is null collapse the whole
+  // card to null (the gate mirrors the `engagement { id }` projection
+  // below). Each scalar is independently typeof-guarded — synth SDL marks
+  // every Employer field Unknown, so a wire drift collapses the individual
+  // field to its null/empty default rather than fabricating a mistyped
+  // value (`name` falls back to "" like the row-level `company`).
+  const employer =
+    employerRaw && typeof employerRaw.id === "string"
+      ? {
+          id: employerRaw.id,
+          name: typeof employerRaw.name === "string" ? employerRaw.name : "",
+          city: typeof employerRaw.city === "string" ? employerRaw.city : null,
+          country: typeof employerRaw.country === "string" ? employerRaw.country : null,
+          logoUrl: typeof employerRaw.logoUrl === "string" ? employerRaw.logoUrl : null,
+          employeeCount: typeof employerRaw.employeeCount === "number" ? employerRaw.employeeCount : null,
+          industries: projectIdNameNodes(employerRaw.industries),
+        }
+      : null;
+  const skills = projectIdNameNodes(
+    node["skills"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined,
+  );
   const meRaw = node["managementExperience"] as { isLeadPosition?: unknown; reportsRange?: unknown } | null | undefined;
   const managementExperience =
     meRaw && typeof meRaw.isLeadPosition === "boolean"
@@ -363,7 +444,7 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
   // #554 — engagement projection. The wire selects `engagement { id }`
   // only (no scalar fields beyond the id); when the row is not linked
   // to a Toptal engagement the field comes back `null`. Defensive shape
-  // check mirrors the `employer { id }` projection above — a missing or
+  // check mirrors the employer card's `id`-gate above — a missing or
   // string-less `id` collapses to `null` rather than fabricating a
   // partial-shape object.
   const engagementRaw = node["engagement"] as { id?: unknown } | null | undefined;
@@ -393,6 +474,7 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
     industries,
     primaryGeography,
     employerId,
+    employer,
     skills,
     managementExperience,
     engagement,

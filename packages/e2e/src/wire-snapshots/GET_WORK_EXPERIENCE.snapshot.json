@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-23T17:55:00.000Z",
+  "capturedAt": "2026-05-23T18:25:00.000Z",
   "operationName": "GET_WORK_EXPERIENCE",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -16,6 +16,58 @@
           "kind": "nullable",
           "inner": {
             "kind": "string"
+          }
+        },
+        "employer": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "object",
+            "fields": {
+              "city": {
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
+              },
+              "country": {
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
+              },
+              "employeeCount": {
+                "kind": "nullable",
+                "inner": {
+                  "kind": "number"
+                }
+              },
+              "id": {
+                "kind": "string"
+              },
+              "industries": {
+                "kind": "array",
+                "item": {
+                  "kind": "object",
+                  "fields": {
+                    "id": {
+                      "kind": "string"
+                    },
+                    "name": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              },
+              "logoUrl": {
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
           }
         },
         "employerId": {

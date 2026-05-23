@@ -206,6 +206,7 @@ export function buildMinimalProfile(): ProfileFixture {
     industries: [],
     primaryGeography: null,
     employerId: null,
+    employer: null,
     skills: [],
     managementExperience: null,
     engagement: null,

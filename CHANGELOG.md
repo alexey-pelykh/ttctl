@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`profile.employment.list` / `profile.employment.show`: hydrate the
+  `employer` catalog card (`name`, `city`, `country`, `logoUrl`,
+  `employeeCount`, `industries`) on the `Employment` read shape (#555).**
+  Previously `Employment` surfaced only the employer's catalog **id**
+  (`employerId`), forcing a separate `employersAutocomplete` lookup for
+  any context. Extends `EMPLOYMENT_FRAGMENT`'s `employer { id }`
+  sub-selection to the curated subset of the canonical `Employer`
+  fragment (`research/graphql/talent_profile/fragments/Employer.graphql`)
+  and projects a nested `employer` object through `mapEmploymentNode`
+  with per-scalar defensive guards (the card collapses to `null` for
+  custom non-catalog workplaces — the same rows where `employerId` is
+  `null`; `name` falls back to `""`, the nullable scalars to `null`,
+  `employeeCount` to `null` for any non-number, `industries` to `[]`).
+  `revenue` / `otherNames` / `otherUrls` / `lastSyncedAt` / `website`
+  remain unprojected (lower-priority follow-up). The flat `employerId`
+  is unchanged — it remains the field consumed by the update-merge path
+  (#394). Wire-shape disposition: Schema/contract rule **triggered** with
+  **INFERRED** wire shape (every `Employer` field is `Unknown` in synth
+  SDL — `employeeCount` typed `number | null` from the web app's numeric
+  rendering, the rest from the `EmployerSuggestion` autocomplete shape);
+  Track 1 (wire-shape snapshot at
+  `packages/e2e/src/wire-snapshots/GET_WORK_EXPERIENCE.snapshot.json`,
+  extended with the `employer` sub-shape). The pre-existing
+  `43-profile-employment.e2e.test.ts` already exercises
+  `GET_WORK_EXPERIENCE` post-projection wire shape via
+  `assertWireShapeStable`; the new sub-fields land inside the same shape
+  contract automatically.
+  - **CLI renderer changes**: `formatEmploymentText` (per-row pretty)
+    gains a compact `employer: <name> (<city, country>; ~<N> employees)`
+    header with optional `logo` and `employer industries` sub-lines (all
+    omitted for custom workplaces). `formatEmploymentTable` (key/value)
+    gains one row per card field (`employer`, `employerCity`,
+    `employerCountry`, `employerLogo`, `employeeCount`,
+    `employerIndustries`). `formatEmploymentListTable` gains an
+    `Employees` column (the company-size signal — the count, or `—` when
+    no catalog employer / count is resolved).
+  - **MCP**: `ttctl_profile_employment_list` /
+    `ttctl_profile_employment_show` return the row verbatim via
+    `jsonSuccess`; the nested `employer` object flows through
+    automatically via interface-based serialization. The `_list` tool
+    description now mentions the employer card so MCP-side agents can
+    answer "How big are the companies I have worked at, and where are
+    they based?" style prompts.
 - **`profile.employment.list` / `profile.employment.show`: expose
   `engagement` (link to `TalentEngagement`) and `isEnterpriseExperience`
   on `Employment` read shape (#554).** Two well-known fields on

@@ -85,6 +85,9 @@ const EMP_1_MAPPED = {
   industries: [],
   primaryGeography: null,
   employerId: null,
+  // #555: the wire omits `employer` entirely, so the hydrated card
+  // projects null — mirrors the employerId null-default above.
+  employer: null,
   skills: [],
   managementExperience: null,
   // #554: when the wire omits engagement and isEnterpriseExperience, the
@@ -128,6 +131,9 @@ const EMP_2_MAPPED = {
   ...EMP_2,
   industries: [{ id: "V1-Industry-1", name: "Software" }],
   employerId: null,
+  // #555: EMP_2's wire node carries no `employer` selection either, so
+  // the hydrated card projects null.
+  employer: null,
   skills: [],
   managementExperience: null,
 };
@@ -1084,6 +1090,116 @@ describe("mapEmploymentNode projection (#554 engagement + isEnterpriseExperience
 
     const [e] = await list(TOKEN);
     expect(e?.isEnterpriseExperience).toBeNull();
+  });
+});
+
+describe("mapEmploymentNode projection (#555 employer card)", () => {
+  // A fully-populated `employer { … }` wire sub-object — the catalog-
+  // resolved happy path.
+  const EMPLOYER_WIRE = {
+    id: "V1-Employer-1",
+    name: "Globex Corp",
+    city: "Springfield",
+    country: "United States",
+    logoUrl: "https://globex.test/logo.png",
+    employeeCount: 4200,
+    industries: {
+      nodes: [
+        { id: "V1-Industry-1", name: "Software" },
+        { id: "V1-Industry-2", name: "Fintech" },
+      ],
+    },
+  };
+
+  it("projects the full employer card and keeps employerId in lock-step", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [{ ...EMP_1, employer: EMPLOYER_WIRE }] } } } },
+    });
+
+    const [e] = await list(TOKEN);
+    expect(e?.employer).toEqual({
+      id: "V1-Employer-1",
+      name: "Globex Corp",
+      city: "Springfield",
+      country: "United States",
+      logoUrl: "https://globex.test/logo.png",
+      employeeCount: 4200,
+      industries: [
+        { id: "V1-Industry-1", name: "Software" },
+        { id: "V1-Industry-2", name: "Fintech" },
+      ],
+    });
+    // The flat employerId derives from the same `employer { id }`.
+    expect(e?.employerId).toBe("V1-Employer-1");
+  });
+
+  it("defaults employer to null when the wire omits it (custom workplace)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+
+    const [e] = await list(TOKEN);
+    expect(e?.employer).toBeNull();
+    expect(e?.employerId).toBeNull();
+  });
+
+  it("collapses the whole card to null when the employer object has no string id", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            // Wire returned an employer object but the id slot is non-string;
+            // the gate collapses the card to null rather than fabricating a
+            // partial. employerId collapses identically.
+            employments: { nodes: [{ ...EMP_1, employer: { ...EMPLOYER_WIRE, id: 99 } }] },
+          },
+        },
+      },
+    });
+
+    const [e] = await list(TOKEN);
+    expect(e?.employer).toBeNull();
+    expect(e?.employerId).toBeNull();
+  });
+
+  it("defends each scalar independently — bad name → '', bad employeeCount → null, missing geo → null, non-array industries → []", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            employments: {
+              nodes: [
+                {
+                  ...EMP_1,
+                  employer: {
+                    id: "V1-Employer-2",
+                    name: 123, // non-string → ""
+                    // city / country / logoUrl absent → null
+                    employeeCount: "4200", // non-number (e.g. a bucket string) → null
+                    industries: null, // non-connection → []
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const [e] = await list(TOKEN);
+    expect(e?.employer).toEqual({
+      id: "V1-Employer-2",
+      name: "",
+      city: null,
+      country: null,
+      logoUrl: null,
+      employeeCount: null,
+      industries: [],
+    });
   });
 });
 

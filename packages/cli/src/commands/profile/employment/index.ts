@@ -538,6 +538,21 @@ export function formatEmploymentText(e: profile.employment.Employment): string {
     lines.push(`  public: ${e.publicationPermit ? "yes" : "no"}`);
   }
   if (e.engagement !== null) lines.push(`  engagement: ${e.engagement.id}`);
+  // #555 — hydrated employer card. `null` for custom (non-catalog)
+  // workplaces; rendered as a compact header line (name + location +
+  // size) with optional logo / employer-industry sub-lines.
+  if (e.employer !== null) {
+    const emp = e.employer;
+    const loc = [emp.city, emp.country].filter((v): v is string => v !== null && v !== "").join(", ");
+    const meta = [loc, emp.employeeCount !== null ? `~${emp.employeeCount.toString()} employees` : ""].filter(
+      (s) => s !== "",
+    );
+    lines.push(`  employer: ${emp.name}${meta.length > 0 ? ` (${meta.join("; ")})` : ""}`);
+    if (emp.logoUrl !== null && emp.logoUrl !== "") lines.push(`    logo: ${emp.logoUrl}`);
+    if (emp.industries.length > 0) {
+      lines.push(`    employer industries: ${emp.industries.map((i) => i.name).join(", ")}`);
+    }
+  }
   lines.push(`  id: ${e.id}`);
   return lines.join("\n");
 }
@@ -562,6 +577,14 @@ export function formatEmploymentTable(e: profile.employment.Employment): string 
     ["primaryGeography", geo],
     ["enterprise", e.isEnterpriseExperience === null ? "" : e.isEnterpriseExperience.toString()],
     ["engagement", e.engagement?.id ?? ""],
+    // #555 — hydrated employer card, one key/value row per named field
+    // (empty string when no catalog employer is resolved on the row).
+    ["employer", e.employer?.name ?? ""],
+    ["employerCity", e.employer?.city ?? ""],
+    ["employerCountry", e.employer?.country ?? ""],
+    ["employerLogo", e.employer?.logoUrl ?? ""],
+    ["employeeCount", e.employer?.employeeCount?.toString() ?? ""],
+    ["employerIndustries", e.employer === null ? "" : e.employer.industries.map((i) => i.name).join(", ")],
   ];
   return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
 }
@@ -587,11 +610,13 @@ export function formatEmploymentListText(rows: profile.employment.Employment[]):
  *
  * The `Enterprise` column surfaces `Employment.isEnterpriseExperience`
  * (#554) as a compact tri-state: `yes` (true), `no` (false), `—` (null
- * — older / non-applicable rows).
+ * — older / non-applicable rows). The `Employees` column surfaces the
+ * hydrated `employer.employeeCount` (#555) as the company-size signal:
+ * the count, or `—` when no catalog employer / no count is resolved.
  */
 export function formatEmploymentListTable(rows: profile.employment.Employment[]): string {
   const table = new Table({
-    head: ["Position", "Company", "Years", "Highlight", "Enterprise", "Id"],
+    head: ["Position", "Company", "Years", "Highlight", "Enterprise", "Employees", "Id"],
     wordWrap: true,
   });
   for (const e of rows) {
@@ -601,6 +626,7 @@ export function formatEmploymentListTable(rows: profile.employment.Employment[])
       formatYearRange(e.startDate, e.endDate),
       e.highlight ? "yes" : "no",
       e.isEnterpriseExperience === null ? "—" : e.isEnterpriseExperience ? "yes" : "no",
+      e.employer?.employeeCount != null ? e.employer.employeeCount.toString() : "—",
       e.id,
     ]);
   }
