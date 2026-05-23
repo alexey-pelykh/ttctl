@@ -33,7 +33,6 @@ import { registerProfileExternalUpdateTool } from "./profile_external_update.js"
 import { registerProfileReviewsApproveItemTool } from "./profile_reviews_approve_item.js";
 import { registerProfileReviewsApproveSectionTool } from "./profile_reviews_approve_section.js";
 import { registerProfileReviewsListTool } from "./profile_reviews_list.js";
-import { registerProfileReviewsSubmitForReviewTool } from "./profile_reviews_submit_for_review.js";
 import { registerProfileSkillsAddTool } from "./profile_skills_add.js";
 import { registerProfileSkillsAutocompleteTool } from "./profile_skills_autocomplete.js";
 import { registerProfileSkillsListTool } from "./profile_skills_list.js";
@@ -111,11 +110,13 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileExternalRecommendationsTool(server, ctx);
   registerProfileExternalAdvancedWizardShowTool(server, ctx);
 
-  // profile.reviews — 4 leaves (#76)
+  // profile.reviews — 3 leaves (#76; #544 removed the unusable
+  // `submit_for_review` leaf — its input shape was INFERRED-UNVERIFIED
+  // per #91 wontfix and the underlying flow is unnecessary anyway,
+  // since profile edits land live on Toptal without a "submit" gate).
   registerProfileReviewsListTool(server, ctx);
   registerProfileReviewsApproveItemTool(server, ctx);
   registerProfileReviewsApproveSectionTool(server, ctx);
-  registerProfileReviewsSubmitForReviewTool(server, ctx);
 
   // profile.specializations — 2 leaves (#466 + #467). Read-only
   // enumeration of the talent's specialization tracks via
