@@ -106,7 +106,10 @@ describe("applications show (live mobile-gateway)", () => {
 
       const detail = await cli.run(["applications", "show", probeId, "-o", "json"]);
       expect(detail.exitCode).toBe(0);
-      const payload = JSON.parse(detail.stdout) as { fixedRate?: unknown };
+      const payload = JSON.parse(detail.stdout) as {
+        fixedRate?: unknown;
+        availabilityRequest?: Record<string, unknown> | null;
+      };
       // `fixedRate` MUST be a key on the detail payload — `null` when
       // no AR or no metadata; Money-shaped when present.
       expect("fixedRate" in payload).toBe(true);
@@ -118,4 +121,51 @@ describe("applications show (live mobile-gateway)", () => {
       expect(typeof rate.verbose).toBe("string");
     },
   );
+
+  // -------------------------------------------------------------------
+  // Embedded AR projection on show (#539)
+  //
+  // The `availabilityRequest { ... }` sub-selection on the
+  // `JobActivityItem` detail operation carries the talent-response
+  // triple + recruiter identity. INFERRED fields (`rejectReason` /
+  // `recruiter`) need live verification per the schema/contract rule.
+  // The assertion is tolerant of pre-response rows: keys present +
+  // shape correct when populated.
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("show surfaces the embedded AR projection keys when an AR is present (#539)", async () => {
+    // Prefer an ON_RECRUITER_REVIEW row (carries an AR); fall back to
+    // the first row otherwise.
+    const irList = await cli.run(["applications", "list", "--status-group", "ON_RECRUITER_REVIEW", "-o", "json"]);
+    expect(irList.exitCode).toBe(0);
+    const irItems = JSON.parse(irList.stdout) as { items: Array<{ id?: string }> };
+    const probeId = irItems.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write(
+        "[16-applications-show] No ON_RECRUITER_REVIEW row available; embedded-AR projection assertion skipped.\n",
+      );
+      return;
+    }
+
+    const detail = await cli.run(["applications", "show", probeId, "-o", "json"]);
+    expect(detail.exitCode).toBe(0);
+    const payload = JSON.parse(detail.stdout) as { availabilityRequest?: Record<string, unknown> | null };
+    const ar = payload.availabilityRequest;
+    if (ar === null || ar === undefined) {
+      process.stderr.write(
+        "[16-applications-show] Probe row carries no AR; embedded-AR projection assertion skipped.\n",
+      );
+      return;
+    }
+    for (const key of ["id", "talentComment", "requestedHourlyRate", "rejectReason", "recruiter"]) {
+      expect(key in ar).toBe(true);
+    }
+    const recruiter = ar["recruiter"];
+    if (recruiter !== null && recruiter !== undefined) {
+      const rec = recruiter as Record<string, unknown>;
+      for (const k of ["firstName", "lastName", "fullName"]) {
+        expect(k in rec).toBe(true);
+      }
+    }
+  });
 });

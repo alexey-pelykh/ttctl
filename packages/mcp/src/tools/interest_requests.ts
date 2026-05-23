@@ -96,6 +96,13 @@ export interface InterestRequestRow {
    * pretty rendering (server-formatted, e.g. `"$77.00/hr"`).
    */
   fixedRate: applications.FixedRate | null;
+  /**
+   * Recruiter contact identity (#539). Lifted from the embedded AR
+   * sub-selection. Useful for personalising decline drafts by first
+   * name. `null` when the row has no AR, or the wire elided the
+   * recruiter sub-selection.
+   */
+  recruiter: applications.RecruiterRef | null;
 }
 
 /**
@@ -107,7 +114,7 @@ export function projectRow(
     lastUpdatedAt: string;
     statusV2: { verbose: string };
     job: { title: string | null; url: string | null; client: { fullName: string | null } | null };
-    availabilityRequest: { id: string } | null;
+    availabilityRequest: applications.AvailabilityRequestEmbed | null;
     fixedRate: applications.FixedRate | null;
   },
   now: number,
@@ -126,6 +133,7 @@ export function projectRow(
     lastUpdatedAt: row.lastUpdatedAt,
     daysPending,
     fixedRate: row.fixedRate,
+    recruiter: row.availabilityRequest?.recruiter ?? null,
   };
 }
 
@@ -173,7 +181,12 @@ export function registerInterestRequestsTools(server: McpServer, ctx: ToolRegist
         "On the wire these are activity-list rows in the `ON_RECRUITER_REVIEW` status group;",
         "this tool wraps `ttctl_applications_list --statusGroups ON_RECRUITER_REVIEW` and",
         "projects each row into a trimmed triage shape: id, statusVerbose, jobTitle, clientName,",
-        "jobUrl, lastUpdatedAt, daysPending.",
+        "jobUrl, lastUpdatedAt, daysPending, fixedRate, recruiter.",
+        "",
+        "`recruiter` (#539) carries `firstName` / `lastName` / `fullName` lifted from the",
+        "embedded `availabilityRequest.recruiter` sub-selection. Useful for personalising",
+        "decline drafts (greeting the recruiter by first name) and detecting recurring",
+        "recruiter relationships across multiple Interest Requests.",
         "",
         "Optional filter:",
         "  - `olderThan`: staleness threshold. Accepts `<N>d` (days), `<N>w` (weeks),",

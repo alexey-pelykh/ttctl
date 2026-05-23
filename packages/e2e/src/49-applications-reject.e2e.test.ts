@@ -145,15 +145,22 @@ describe("applications reject (live mobile-gateway)", () => {
         throw new Error("reject-reasons inventory empty — cannot pick a reason for the gated test");
       }
 
-      const outcome = await applications.reject(
-        token,
-        rejectArId,
-        candidate.isMandatory ? { reason: candidate.key, comment: "automated e2e reject" } : { reason: candidate.key },
-      );
+      // #539 — round-trip a known talentComment so the read-side
+      // assertion below can prove the value persisted onto the
+      // `AvailabilityRequest` read surface. Always send a comment
+      // (even for non-mandatory reasons) to exercise the round-trip.
+      const roundTripComment = `automated e2e reject (#539 round-trip ${Date.now().toString()})`;
+      const outcome = await applications.reject(token, rejectArId, {
+        reason: candidate.key,
+        comment: roundTripComment,
+      });
       expect(outcome.kind).toBe("applied");
       if (outcome.kind !== "applied") return;
       expect(outcome.result.id).toBe(rejectArId);
       expect(outcome.result.statusV2.value).toContain("REJECTED");
+      // The mutation echo already carries talentComment + rejectReason.
+      expect(outcome.result.talentComment).toBe(roundTripComment);
+      expect(outcome.result.rejectReason).toBe(candidate.key);
 
       expect(() =>
         assertWireShapeStable({
@@ -163,6 +170,23 @@ describe("applications reject (live mobile-gateway)", () => {
           response: outcome.result,
         }),
       ).not.toThrow();
+
+      // #539 — read the AR back through the `AvailabilityRequest` query
+      // and assert the talent-response fields persisted onto the READ
+      // surface (the schema/contract rule's round-trip requirement).
+      // This is the read-side mirror of the mutation echo above: it
+      // proves the extended AVAILABILITY_REQUEST_QUERY selection set
+      // surfaces talentComment / rejectReason / recruiter on the wire.
+      const readBack = await applications.availabilityRequests.show(token, rejectArId);
+      expect(readBack.id).toBe(rejectArId);
+      expect(readBack.status).toBe("REJECTED");
+      expect(readBack.talentComment).toBe(roundTripComment);
+      expect(readBack.rejectReason).toBe(candidate.key);
+      // recruiter is present on the wire regardless of lifecycle stage;
+      // when populated it carries the three name fields.
+      if (readBack.recruiter !== null) {
+        expect(readBack.recruiter.fullName === null || typeof readBack.recruiter.fullName === "string").toBe(true);
+      }
     },
   );
 });

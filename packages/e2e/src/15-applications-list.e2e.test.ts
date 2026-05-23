@@ -338,4 +338,66 @@ describe("applications list (live mobile-gateway)", () => {
       expect(typeof sample?.verbose).toBe("string");
     },
   );
+
+  // -------------------------------------------------------------------
+  // Embedded AR projection (#539)
+  //
+  // The `availabilityRequest { ... }` sub-selection on the
+  // `JobActivityItems` operation now carries the talent-response triple
+  // (`talentComment`, `requestedHourlyRate`, `rejectReason`) plus the
+  // `recruiter` contact identity. `recruiter` (incl. `firstName` /
+  // `lastName`) is INFERRED-present per #539 — only a live call can
+  // verify the wire returns the field shape, so this assertion is part
+  // of the schema/contract rule's wire-validation track.
+  //
+  // ON_RECRUITER_REVIEW rows are typically pre-response (talent-response
+  // triple null) but carry the recruiter identity; the assertion is
+  // tolerant of either state — the contract is "keys present + shape
+  // correct when populated", not "values populated".
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "applications list ON_RECRUITER_REVIEW rows carry the embedded AR projection keys (#539)",
+    async () => {
+      const result = await cli.run(["applications", "list", "--status-group", "ON_RECRUITER_REVIEW", "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        items: Array<{ availabilityRequest?: Record<string, unknown> | null }>;
+      };
+      const withAr = payload.items.filter(
+        (row) => row.availabilityRequest !== null && row.availabilityRequest !== undefined,
+      );
+      if (withAr.length === 0) {
+        process.stderr.write(
+          "warning: test account has no ON_RECRUITER_REVIEW rows carrying an AR; embedded-AR projection assertion skipped\n",
+        );
+        return;
+      }
+      const ar = withAr[0]?.availabilityRequest;
+      expect(ar).toBeDefined();
+      if (ar === undefined || ar === null) return;
+      // Required embed keys — a regression in the trimmed selection would
+      // surface as a missing key here.
+      for (const key of ["id", "talentComment", "requestedHourlyRate", "rejectReason", "recruiter"]) {
+        expect(key in ar).toBe(true);
+      }
+      // recruiter shape when populated.
+      const recruiter = ar["recruiter"];
+      if (recruiter !== null && recruiter !== undefined) {
+        const rec = recruiter as Record<string, unknown>;
+        for (const k of ["firstName", "lastName", "fullName"]) {
+          expect(k in rec).toBe(true);
+          const v = rec[k];
+          expect(v === null || typeof v === "string").toBe(true);
+        }
+      }
+      // requestedHourlyRate (Money | null) shape when populated.
+      const reqRate = ar["requestedHourlyRate"];
+      if (reqRate !== null && reqRate !== undefined) {
+        const r = reqRate as { decimal?: unknown; verbose?: unknown };
+        expect(typeof r.decimal).toBe("string");
+        expect(typeof r.verbose).toBe("string");
+      }
+    },
+  );
 });
