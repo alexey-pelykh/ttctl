@@ -238,6 +238,11 @@ export function buildMinimalProfile(): ProfileFixture {
     title: "Test Industry",
     about: null,
     domainArea: null,
+    employments: [],
+    educations: [],
+    certifications: [],
+    portfolioItems: [],
+    highlights: [],
   };
 
   const minimalVisa: TravelVisa = {

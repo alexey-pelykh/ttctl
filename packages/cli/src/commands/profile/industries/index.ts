@@ -393,18 +393,30 @@ async function runAutocomplete(query: string, options: { limit: string; output: 
 }
 
 /**
- * Pretty-print an IndustryProfile row.
+ * Pretty-print an IndustryProfile row. The five curation cross-
+ * reference arrays (`employments` / `educations` / `certifications` /
+ * `portfolioItems` / `highlights`) are rendered when populated — each
+ * line lists the count then the IDs (one per curation kind) so the
+ * operator can chase any of them via the matching per-resource
+ * `show` (e.g. `ttctl profile employment show <id>`). Empty curation
+ * suppresses the section entirely (no noise on industries with no
+ * curated rows).
  */
 export function formatIndustryText(i: profile.industries.IndustryProfile): string {
   const lines: string[] = [i.title];
   if (i.domainArea) lines.push(`  domain: ${i.domainArea}`);
   if (i.about) lines.push(`  ${i.about}`);
   lines.push(`  id: ${i.id}`);
+  lines.push(...formatCurationLines(i));
   return lines.join("\n");
 }
 
 /**
- * Pretty-print an IndustryProfile row as a key/value table.
+ * Pretty-print an IndustryProfile row as a key/value table. Curation
+ * arrays are rendered as count-then-ids strings (e.g. "2: V1-Employment-E1,
+ * V1-Employment-E2") so the table stays one-line-per-key while still
+ * surfacing the cross-reference targets. Empty curation renders as
+ * "0" so column alignment stays stable across rows.
  */
 export function formatIndustryTable(i: profile.industries.IndustryProfile): string {
   const rows: [string, string][] = [
@@ -412,6 +424,11 @@ export function formatIndustryTable(i: profile.industries.IndustryProfile): stri
     ["title", i.title],
     ["domain", i.domainArea ?? ""],
     ["about", i.about ?? ""],
+    ["employments", formatRefsCell(i.employments)],
+    ["educations", formatRefsCell(i.educations)],
+    ["certifications", formatRefsCell(i.certifications)],
+    ["portfolioItems", formatRefsCell(i.portfolioItems)],
+    ["highlights", formatRefsCell(i.highlights)],
   ];
   return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
 }
@@ -421,9 +438,52 @@ export function formatIndustryListText(rows: profile.industries.IndustryProfile[
   return rows.map(formatIndustryText).join("\n\n");
 }
 
+/**
+ * Pretty-print the list-output table. Adds a `curation` column that
+ * summarises the five cross-reference counts as `Nemp/Nedu/Ncert/Npf/Nhl`
+ * so a quick scan of `ttctl profile industries list -o table` shows
+ * which industries have curated rows behind them.
+ */
 export function formatIndustryListTable(rows: profile.industries.IndustryProfile[]): string {
   if (rows.length === 0) return "(no industries on this profile)";
-  return rows.map((i) => `${i.id}\t${i.title}\t${i.domainArea ?? ""}`).join("\n");
+  return rows
+    .map(
+      (i) =>
+        `${i.id}\t${i.title}\t${i.domainArea ?? ""}\t${i.employments.length.toString()}/${i.educations.length.toString()}/${i.certifications.length.toString()}/${i.portfolioItems.length.toString()}/${i.highlights.length.toString()}`,
+    )
+    .join("\n");
+}
+
+/**
+ * Pretty-text helper: emit the curation block as indented lines under
+ * an `industry`. Only includes kinds with at least one entry — an
+ * industry with no curated rows produces no curation lines at all
+ * (rather than rendering five empty `(0)` lines).
+ */
+function formatCurationLines(i: profile.industries.IndustryProfile): string[] {
+  const sections: { label: string; refs: readonly { id: string }[] }[] = [
+    { label: "employments", refs: i.employments },
+    { label: "educations", refs: i.educations },
+    { label: "certifications", refs: i.certifications },
+    { label: "portfolioItems", refs: i.portfolioItems },
+    { label: "highlights", refs: i.highlights },
+  ];
+  const out: string[] = [];
+  for (const { label, refs } of sections) {
+    if (refs.length === 0) continue;
+    out.push(`  ${label} (${refs.length.toString()}): ${refs.map((r) => r.id).join(", ")}`);
+  }
+  return out;
+}
+
+/**
+ * Table-cell helper: render a curation-ref array as `N: id1, id2`
+ * (or just `0` when empty). Keeps the table single-line-per-field
+ * even for industries with many cross-references.
+ */
+function formatRefsCell(refs: readonly { id: string }[]): string {
+  if (refs.length === 0) return "0";
+  return `${refs.length.toString()}: ${refs.map((r) => r.id).join(", ")}`;
 }
 
 export function formatCatalogText(rows: profile.industries.IndustryCatalogEntry[]): string {

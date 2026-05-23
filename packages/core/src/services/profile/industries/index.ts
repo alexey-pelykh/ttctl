@@ -10,17 +10,51 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
 /**
  * `IndustryProfile` row as ttctl exposes it. Mirrors the read-side
  * `IndustryProfile` GraphQL fragment (see
- * `research/graphql/talent_profile/fragments/IndustryProfile.graphql`)
- * trimmed to identity fields. The richer relational fields (`employments`,
- * `educations`, `certifications`, `portfolioItems`, `highlights`) are
- * exposed as raw `unknown` for now — callers who need them can deserialize
- * via the generated GraphQL types.
+ * `research/graphql/talent_profile/fragments/IndustryProfile.graphql`) —
+ * the four identity columns (`id`, `title`, `about`, `domainArea`) plus
+ * the five **curated cross-reference arrays** (`employments`,
+ * `educations`, `certifications`, `portfolioItems`, `highlights`) that
+ * encode the user's per-industry curation. Per-industry curation is
+ * the entire point of having industry profiles — without these arrays
+ * the read is decorative. Each cross-reference is a bare `{ id }`
+ * pointing back into the matching per-resource service:
+ *
+ *   - `employments[].id` → `profile.employment.show(id)`
+ *   - `educations[].id` → `profile.education.show(id)`
+ *   - `certifications[].id` → `profile.certifications.show(id)`
+ *   - `portfolioItems[].id` → `profile.portfolio.show(id)`
+ *   - `highlights[].id` → highlighted entity's per-resource show (kind
+ *     not yet surfaced; future expansion if/when the wire surfaces it)
+ *
+ * The IDs are projected from a connection-shape sub-field
+ * (`{ nodes: [{ id }] }`) — see {@link projectCurationRefs} for the
+ * defensive parse. Missing or shape-mismatched sub-fields collapse to
+ * `[]` (graceful degradation — silently absent curation, not a wire
+ * regression). The fragment itself is the contract: if the server
+ * rejects the selection (`Field 'X' doesn't exist on type
+ * 'IndustryProfile'`), `ensureNoTopLevelErrors` throws and the failure
+ * is loud.
  */
 export interface IndustryProfile {
   id: string;
   title: string;
   about: string | null;
   domainArea: string | null;
+  employments: IndustryCurationRef[];
+  educations: IndustryCurationRef[];
+  certifications: IndustryCurationRef[];
+  portfolioItems: IndustryCurationRef[];
+  highlights: IndustryCurationRef[];
+}
+
+/**
+ * Cross-reference to a profile row curated under this industry. Bare
+ * `{ id }` shape — chase the matching per-resource `show()` for full
+ * detail. Issued per #553 to surface the IDs that
+ * `addProfileIndustryConnections` (and its UI siblings) wire up.
+ */
+export interface IndustryCurationRef {
+  id: string;
 }
 
 /**
@@ -46,11 +80,42 @@ export interface IndustryCatalogEntry {
   name: string;
 }
 
+/**
+ * `IndustryProfile` fragment selection set. Identity columns plus the
+ * five curation cross-references introduced in #553. The five
+ * connection-shape sub-fields (`{ nodes { id } }`) are INFERRED — the
+ * synthesized SDL types every IndustryProfile column as `Maybe<Scalars
+ * ['Unknown']['output']>` (gappy schema region per `research/notes/11`),
+ * so the only authority for the wire is the live API. The connection
+ * shape is extrapolated from `addProfileIndustryConnections` which
+ * already selects `profile.{portfolioItems,employments} { nodes { id, … } }`
+ * — see this file's `ADD_PROFILE_INDUSTRY_CONNECTIONS_MUTATION` and the
+ * captured portal document at
+ * `research/graphql/gateway/operations/portal/AddProfileIndustryConnections.graphql`.
+ * Wire-shape mismatches throw `GRAPHQL_ERROR` at the document-validation
+ * layer (before the resolver runs), so a wrong shape surfaces loudly
+ * rather than silently.
+ *
+ * **T1 wire-shape snapshot disposition** (per `docs/wire-validation-routing.md`):
+ * the post-projection `IndustryProfile` shape is captured by the
+ * existing snapshot infrastructure at
+ * `packages/e2e/src/41-profile-industries.e2e.test.ts` (assertWireShapeStable
+ * over `ListIndustryProfiles` / `GetIndustryProfile`). The maintainer's
+ * test account cannot seed IndustryProfile rows
+ * (auto-memory `project_test_account_industries_disabled`), so the
+ * round-trip + snapshot capture gracefully skip — when/if a seedable
+ * account exercises the path, the snapshot lands.
+ */
 const INDUSTRY_PROFILE_FRAGMENT = `fragment IndustryProfile on IndustryProfile {
   id
   title
   about
   domainArea
+  employments { nodes { id } }
+  educations { nodes { id } }
+  certifications { nodes { id } }
+  portfolioItems { nodes { id } }
+  highlights { nodes { id } }
 }`;
 
 const GET_INDUSTRY_PROFILE_QUERY = `query GetIndustryProfile($id: ID!) {
@@ -135,8 +200,30 @@ const LIST_INDUSTRY_PROFILES_QUERY = `query ListIndustryProfiles($profileId: ID!
 }
 ${INDUSTRY_PROFILE_FRAGMENT}`;
 
+/**
+ * Wire-shape baseline for a raw `IndustryProfile` row before
+ * projection. Identity columns are typed as the surface contract
+ * promises; the five curation sub-fields are typed `unknown` because
+ * the synthesized SDL types them as `Scalars['Unknown']['output']` and
+ * the connection shape (`{ nodes: [{ id }] }`) is INFERRED. The
+ * `projectIndustryProfile` helper walks each sub-field defensively
+ * (graceful on null / missing / shape-mismatched payloads) and emits
+ * the surface `IndustryProfile`.
+ */
+interface RawIndustryProfile {
+  id: string;
+  title: string;
+  about: string | null;
+  domainArea: string | null;
+  employments?: unknown;
+  educations?: unknown;
+  certifications?: unknown;
+  portfolioItems?: unknown;
+  highlights?: unknown;
+}
+
 interface NodeResponse {
-  data?: { node?: IndustryProfile | null } | null;
+  data?: { node?: RawIndustryProfile | null } | null;
   errors?: GraphQLErrorEntry[] | null;
 }
 
@@ -159,10 +246,65 @@ interface ListResponse {
   data?: {
     profile?: {
       id?: unknown;
-      industryProfiles?: { nodes?: (IndustryProfile | null)[] | null } | null;
+      industryProfiles?: { nodes?: (RawIndustryProfile | null)[] | null } | null;
     } | null;
   } | null;
   errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Project a connection-shape sub-field (`{ nodes: [{ id }] }`) into a
+ * flat array of `IndustryCurationRef`. Defensive against the three
+ * documented degradation modes:
+ *
+ *   - `raw == null` (sub-field absent or null on the wire) → `[]`
+ *   - `raw.nodes` missing / null / non-array → `[]`
+ *   - per-node `id` missing / non-string → row filtered out
+ *
+ * The reason for the graceful degradation (rather than throwing) is
+ * that the IndustryProfile sub-field shape is INFERRED — the
+ * synthesized SDL types these as `Scalars['Unknown']['output']` and the
+ * Connection wrapping is extrapolated from
+ * `addProfileIndustryConnections`. A wrong shape from the server is
+ * possible (per-account / per-feature-flag), and silently surfacing
+ * `[]` lets the rest of the read still succeed while a follow-up E2E
+ * (issue body acknowledges the test-account-state constraint) catches
+ * the actual wire layout. The asymmetry vs the top-level `nodes` check
+ * in `list()` (which throws on non-array) is intentional: top-level
+ * structure is verified, sub-field projection is best-effort.
+ */
+function projectCurationRefs(raw: unknown): IndustryCurationRef[] {
+  if (raw === null || raw === undefined) return [];
+  if (typeof raw !== "object") return [];
+  const nodes = (raw as { nodes?: unknown }).nodes;
+  if (!Array.isArray(nodes)) return [];
+  const result: IndustryCurationRef[] = [];
+  for (const n of nodes) {
+    if (n === null || typeof n !== "object") continue;
+    const id = (n as { id?: unknown }).id;
+    if (typeof id === "string" && id.length > 0) result.push({ id });
+  }
+  return result;
+}
+
+/**
+ * Project a raw `IndustryProfile` wire-shape into the surface
+ * `IndustryProfile` interface — the identity columns straight through,
+ * the five curation sub-fields routed through
+ * {@link projectCurationRefs}.
+ */
+function projectIndustryProfile(raw: RawIndustryProfile): IndustryProfile {
+  return {
+    id: raw.id,
+    title: raw.title,
+    about: raw.about,
+    domainArea: raw.domainArea,
+    employments: projectCurationRefs(raw.employments),
+    educations: projectCurationRefs(raw.educations),
+    certifications: projectCurationRefs(raw.certifications),
+    portfolioItems: projectCurationRefs(raw.portfolioItems),
+    highlights: projectCurationRefs(raw.highlights),
+  };
 }
 
 /**
@@ -218,7 +360,7 @@ export async function list(token: string, options?: { profileId?: string }): Pro
       `industries list returned non-array \`data.profile.industryProfiles.nodes\` (wire shape mismatch).`,
     );
   }
-  return nodes.filter((n): n is IndustryProfile => n !== null);
+  return nodes.filter((n): n is RawIndustryProfile => n !== null).map(projectIndustryProfile);
 }
 
 /**
@@ -239,7 +381,7 @@ export async function show(token: string, id: string): Promise<IndustryProfile> 
   if (!node) {
     throw new ProfileError("VALIDATION_ERROR", `IndustryProfile with id "${id}" not found.`);
   }
-  return node;
+  return projectIndustryProfile(node);
 }
 
 /**
