@@ -246,6 +246,7 @@ export const EDUCATION_STANFORD_BS: Education = {
   yearFrom: 2010,
   yearTo: 2014,
   highlight: true,
+  skills: [],
 };
 
 // -----------------------------------------------------------------------

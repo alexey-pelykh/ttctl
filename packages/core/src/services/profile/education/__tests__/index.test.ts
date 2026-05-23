@@ -48,6 +48,11 @@ function replyStock(...responses: MockResponse[]): void {
   }
 }
 
+// `EDU_*` are RAW WIRE nodes (what the mock transport returns). `list()`
+// / `add()` / `update()` run them through `mapEducationNode` (#556), so
+// assertions compare against the `EDU_*_MAPPED` typed projections, never
+// the raw fixtures.
+
 const EDU_1 = {
   id: "V1-Education-1",
   institution: "MIT",
@@ -58,6 +63,13 @@ const EDU_1 = {
   yearFrom: 2010,
   yearTo: 2014,
   highlight: false,
+  // #556 wire shape: `skills { nodes [{ id, name }] }`. Mapper flattens.
+  skills: { nodes: [] as { id: string; name: string }[] },
+};
+
+const EDU_1_MAPPED = {
+  ...EDU_1,
+  skills: [] as { id: string; name: string }[],
 };
 
 const EDU_2 = {
@@ -70,6 +82,12 @@ const EDU_2 = {
   yearFrom: 2014,
   yearTo: 2016,
   highlight: true,
+  skills: { nodes: [{ id: "V1-Skill-7", name: "Computer Engineering" }] },
+};
+
+const EDU_2_MAPPED = {
+  ...EDU_2,
+  skills: [{ id: "V1-Skill-7", name: "Computer Engineering" }],
 };
 
 beforeEach(() => {
@@ -84,11 +102,59 @@ describe("list", () => {
 
     const rows = await list(TOKEN);
 
-    expect(rows).toEqual([EDU_1]);
+    expect(rows).toEqual([EDU_1_MAPPED]);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.surface).toBe("talent-profile");
     expect(call.body.operationName).toBe("GET_EDUCATION");
     expect(call.body.variables).toEqual({ profileId: "p1" });
+  });
+
+  it("selects skills { nodes { id name } } in the EDUCATION_FRAGMENT (#556)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [] } } } } });
+    await list(TOKEN);
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.body.query).toContain("skills { nodes { id name } }");
+  });
+
+  it("flattens skills { nodes } to SkillRef[] on every row (#556)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            educations: {
+              nodes: [
+                EDU_1, // wire: { nodes: [] } → mapped: []
+                EDU_2, // wire: { nodes: [{ id, name }] } → mapped: [{ id, name }]
+              ],
+            },
+          },
+        },
+      },
+    });
+    const rows = await list(TOKEN);
+    expect(rows.map((r) => r.skills)).toEqual([[], [{ id: "V1-Skill-7", name: "Computer Engineering" }]]);
+  });
+
+  it("defaults skills to [] when wire omits the connection (#556)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            educations: {
+              // Wire intentionally omits the `skills` field entirely.
+              nodes: [{ id: "V1-Education-9", institution: "X", degree: "Y", highlight: false }],
+            },
+          },
+        },
+      },
+    });
+    const rows = await list(TOKEN);
+    expect(rows[0]?.skills).toEqual([]);
   });
 
   it("filters out null nodes (defensive)", async () => {
@@ -169,7 +235,7 @@ describe("add", () => {
 
     const created = await add(TOKEN, { institution: "Stanford", degree: "MSc" });
 
-    expect(created.id).toBe(EDU_2.id);
+    expect(created).toEqual(EDU_2_MAPPED);
     const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(createCall.body.operationName).toBe("CREATE_EDUCATION");
     expect(createCall.body.variables).toEqual({

@@ -223,6 +223,7 @@ export function buildMinimalProfile(): ProfileFixture {
     yearFrom: null,
     yearTo: null,
     highlight: false,
+    skills: [],
   };
 
   const minimalCertification: Certification = {
