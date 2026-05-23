@@ -12,6 +12,14 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  * trimmed to the fields ttctl currently surfaces. Validity dates are split
  * across `validFromMonth` / `validFromYear` (always set) and
  * `validToMonth` / `validToYear` (nullable for non-expiring certificates).
+ *
+ * `status` carries Toptal's verification / expiry state. Typed `string |
+ * null` because the synthesized SDL types it `Unknown` (see #557) — the
+ * concrete enum members (likely `valid` / `expired` / `pending-verification`
+ * per the upstream fragment in
+ * `research/graphql/talent_profile/fragments/Certification.graphql`) are
+ * inferred from the wire and surfaced verbatim; the field is read-only
+ * (not on `CertificationInput`).
  */
 export interface Certification {
   id: string;
@@ -24,6 +32,7 @@ export interface Certification {
   validToMonth: number | null;
   validToYear: number | null;
   highlight: boolean;
+  status: string | null;
 }
 
 /**
@@ -55,6 +64,7 @@ const CERTIFICATION_FRAGMENT = `fragment Certification on Certification {
   validToMonth
   validToYear
   highlight
+  status
 }`;
 
 const GET_CERTIFICATION_QUERY = `query GET_CERTIFICATION($profileId: ID!) {

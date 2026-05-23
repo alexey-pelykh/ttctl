@@ -331,6 +331,7 @@ function applyDateFlags(
 export function formatCertificationText(c: profile.certifications.Certification): string {
   const lines: string[] = [`${c.certificate} — ${c.institution}`];
   lines.push(`  ${formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)}`);
+  if (c.status) lines.push(`  status: ${c.status}`);
   if (c.number) lines.push(`  cred-id: ${c.number}`);
   if (c.link) lines.push(`  ${c.link}`);
   if (c.highlight) lines.push(`  highlighted`);
@@ -347,6 +348,7 @@ export function formatCertificationTable(c: profile.certifications.Certification
     ["certificate", c.certificate],
     ["institution", c.institution],
     ["valid", formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)],
+    ["status", c.status ?? ""],
     ["number", c.number ?? ""],
     ["link", c.link ?? ""],
     ["highlight", c.highlight.toString()],
@@ -376,14 +378,14 @@ function formatMonthYear(month: number | null, year: number | null): string {
 
 /**
  * Pretty-print a list of Certification rows. One row per line, tab-separated:
- * certificate, institution, validity range, id.
+ * certificate, institution, validity range, status, id.
  */
 export function formatCertificationListText(rows: profile.certifications.Certification[]): string {
   if (rows.length === 0) return "(no certifications on profile)";
   return rows
     .map(
       (c) =>
-        `${c.certificate}\t${c.institution}\t${formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)}\t${c.id}`,
+        `${c.certificate}\t${c.institution}\t${formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)}\t${c.status ?? "—"}\t${c.id}`,
     )
     .join("\n");
 }
@@ -392,12 +394,13 @@ export function formatCertificationListText(rows: profile.certifications.Certifi
  * Pretty-print a list of Certification rows as a cli-table3 table.
  */
 export function formatCertificationListTable(rows: profile.certifications.Certification[]): string {
-  const table = new Table({ head: ["Certificate", "Issuer", "Valid", "Highlight", "Id"], wordWrap: true });
+  const table = new Table({ head: ["Certificate", "Issuer", "Valid", "Status", "Highlight", "Id"], wordWrap: true });
   for (const c of rows) {
     table.push([
       c.certificate,
       c.institution,
       formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear),
+      c.status ?? "—",
       c.highlight ? "yes" : "no",
       c.id,
     ]);

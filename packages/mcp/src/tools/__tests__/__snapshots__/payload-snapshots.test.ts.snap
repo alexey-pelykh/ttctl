@@ -440,7 +440,8 @@ exports[`MCP profile_certifications — payload snapshots > payload: full profil
     "validFromYear": 2023,
     "validToMonth": 3,
     "validToYear": 2026,
-    "highlight": true
+    "highlight": true,
+    "status": "valid"
   },
   {
     "id": "cert_test_002",
@@ -452,7 +453,8 @@ exports[`MCP profile_certifications — payload snapshots > payload: full profil
     "validFromYear": 2022,
     "validToMonth": 6,
     "validToYear": 2025,
-    "highlight": false
+    "highlight": false,
+    "status": "expired"
   }
 ]"
 `;
