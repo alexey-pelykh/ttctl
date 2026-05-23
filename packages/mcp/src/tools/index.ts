@@ -41,6 +41,7 @@ import { registerProfileSkillsReadinessTool } from "./profile_skills_readiness.j
 import { registerProfileSkillsRemoveTool } from "./profile_skills_remove.js";
 import { registerProfileSkillsShowTool } from "./profile_skills_show.js";
 import { registerProfileSkillsUpdateTool } from "./profile_skills_update.js";
+import { registerProfileSpecializationsShowTool } from "./profile_specializations_show.js";
 
 export type { ToolRegistrationContext } from "./_shared.js";
 
@@ -114,6 +115,11 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileReviewsApproveItemTool(server, ctx);
   registerProfileReviewsApproveSectionTool(server, ctx);
   registerProfileReviewsSubmitForReviewTool(server, ctx);
+
+  // profile.specializations — 1 leaf (#466). Read-only enumeration of
+  // the talent's specialization tracks (Core, Marketplace, Expert
+  // Crowd, etc.) via the gateway-portal `GetTalentSpecializations` op.
+  registerProfileSpecializationsShowTool(server, ctx);
 
   // applications — 3 leaves (#15). Read-only access to the user's
   // Toptal Talent Activity view (TalentJobActivityItem rows). Per

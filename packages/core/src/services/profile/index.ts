@@ -25,3 +25,4 @@ export * as visas from "./visas/index.js";
 export * as resume from "./resume/index.js";
 export * as external from "./external/index.js";
 export * as reviews from "./reviews/index.js";
+export * as specializations from "./specializations/index.js";
