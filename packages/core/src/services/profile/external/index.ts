@@ -191,19 +191,40 @@ function coerceString(value: unknown): string | null {
  * are optional; the caller is responsible for passing at least one or the
  * service will reject with `VALIDATION_ERROR`.
  *
- * `twitter / behance / dribbble` are exposed because they are present in the
- * `UpdateExternalProfilesPayload` response selection of the captured
- * `UpdateExternalProfiles` mutation document
- * (`research/graphql/talent_profile/operations/UpdateExternalProfiles.graphql`).
- * `skype` is also present on the underlying `Profile` type but the captured
- * mutation document does not request it back; we omit it from the v0 surface
- * (the user can still update it via the web portal).
+ * **`twitter` is deliberately absent from the write input** (#526). The live
+ * `talent-profile` server rejects `twitter` on `ExternalProfilesInput` with
+ * `"Variable $input of type UpdateExternalProfilesInput! was provided
+ * invalid value for profile.twitter (Field is not defined on
+ * ExternalProfilesInput)"`. Crucially the failure is transactional — a
+ * caller batching `linkedin / github / website / twitter` loses the entire
+ * batch (the three valid fields are NOT persisted alongside the rejected
+ * one). Plausibly an artifact of Toptal's X migration: the input field was
+ * dropped server-side but the `Profile`-entity `twitter` read field
+ * survives for backward compatibility, which is why
+ * {@link ExternalProfiles} (read) + {@link UpdateExternalProfilesResult}
+ * (echo) still surface it. Twitter is no longer settable via this leaf;
+ * the user can update it via the web portal if Toptal's UI still exposes
+ * it. The previous claim in `research/notes/10-mutation-input-patterns.md`
+ * § Social (and `05-talent-profile-api.md` line 191) was INFERRED from
+ * selection-set presence — that inference is now contradicted by live
+ * wire evidence and was load-bearing on the wrong assumption that led to
+ * #345's selection-set fix.
+ *
+ * `behance / dribbble` remain on the input — they were also inferred from
+ * selection-set presence, but no contradicting wire evidence exists. The
+ * reporter's E2E (issue #526 body) only named `twitter` in the rejection
+ * message, and a follow-up call with `twitter` removed succeeded on all
+ * other supplied fields. If a follow-up wire report names `behance` or
+ * `dribbble` as rejected, apply the same drop-from-input treatment.
+ *
+ * `skype` is present on the underlying `Profile` type but the captured
+ * mutation document does not request it back; we omit it from the v0
+ * surface (the user can still update it via the web portal).
  */
 export interface ExternalProfilesUpdate {
   linkedin?: string;
   github?: string;
   website?: string;
-  twitter?: string;
   behance?: string;
   dribbble?: string;
 }
@@ -214,12 +235,13 @@ export interface ExternalProfilesUpdate {
  * because the server returns `null` for any external link the talent has
  * not set.
  *
- * `twitter` was added in #345 to close a write-only-echo gap — the input
- * accepts `twitter` (see {@link ExternalProfilesUpdate}) but the mutation
- * response previously dropped it, so callers could SET a twitter URL but
- * not VERIFY it from the response alone (had to issue a follow-up
- * {@link show} call). Adding it to the selection set + this interface
- * makes the response self-contained for round-trip verification.
+ * `twitter` remains on the **echo** side even though it was removed from
+ * the write input in #526 — the server's `Profile` entity still exposes
+ * the field (it was apparently kept for backward compatibility after the
+ * X migration dropped the input field). Keeping the echo lets callers
+ * observe the persisted `twitter` value (set elsewhere, e.g. via the web
+ * portal) without a separate {@link show} round-trip. The selection set
+ * is unchanged from #345; what changed is the input, not the output.
  */
 export interface UpdateExternalProfilesResult {
   profile: {
@@ -274,7 +296,7 @@ interface UpdateExternalProfilesInput {
     linkedin?: string;
     github?: string;
     website?: string;
-    twitter?: string;
+    // twitter intentionally NOT writable here — see #526 / ExternalProfilesUpdate.
     behance?: string;
     dribbble?: string;
   };
@@ -297,10 +319,11 @@ interface UpdateExternalProfilesPayload {
 }
 
 /**
- * Update external profile URLs (linkedin / github / website / twitter /
- * behance / dribbble). Each field is optional; the caller must pass at
- * least one. Unknown / extraneous fields are rejected at compile time by
- * the {@link ExternalProfilesUpdate} type.
+ * Update external profile URLs (linkedin / github / website / behance /
+ * dribbble). Each field is optional; the caller must pass at least one.
+ * Unknown / extraneous fields are rejected at compile time by the
+ * {@link ExternalProfilesUpdate} type. **`twitter` is not writable** —
+ * see {@link ExternalProfilesUpdate} for the #526 evidence and rationale.
  *
  * Wire shape: `{ input: { profileId, profile: { …urls } } }`. Validated
  * 2026-05-17 via the round-trip E2E at
@@ -323,13 +346,12 @@ export async function update(token: string, changes: ExternalProfilesUpdate): Pr
   if (changes.linkedin !== undefined) fields.linkedin = changes.linkedin;
   if (changes.github !== undefined) fields.github = changes.github;
   if (changes.website !== undefined) fields.website = changes.website;
-  if (changes.twitter !== undefined) fields.twitter = changes.twitter;
   if (changes.behance !== undefined) fields.behance = changes.behance;
   if (changes.dribbble !== undefined) fields.dribbble = changes.dribbble;
   if (Object.keys(fields).length === 0) {
     throw new ProfileError(
       "VALIDATION_ERROR",
-      "External profile update requires at least one of linkedin/github/website/twitter/behance/dribbble.",
+      "External profile update requires at least one of linkedin/github/website/behance/dribbble.",
     );
   }
 

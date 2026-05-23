@@ -162,20 +162,20 @@ describe("update", () => {
         profile: { github: "https://github.com/ada", website: "https://ada.dev" },
       },
     });
-    // linkedin / twitter / behance / dribbble must NOT be in the input.
+    // linkedin / behance / dribbble must NOT be in the input.
     const profileFields = (call?.body.variables as { input: { profile: Record<string, unknown> } }).input.profile;
     expect(Object.keys(profileFields).sort()).toEqual(["github", "website"]);
   });
 
-  it("returns twitter on the result when the server echoes it (#345 — closes Class B gap)", async () => {
-    // Regression test for #345: prior to this fix, UpdateExternalProfiles'
-    // response selection set omitted `twitter`, so callers could SET a
-    // twitter URL but the mutation response would return
-    // `twitter: undefined` on the typed result (the field was not in the
-    // declared `UpdateExternalProfilesResult.profile` shape at all). After
-    // #345 the selection set + interface + mapping all echo `twitter`,
-    // and a caller can verify the persisted value from the response
-    // without a follow-up `show()` round-trip.
+  it("returns twitter on the result when the server echoes it (#345 — echo retained post-#526)", async () => {
+    // Regression test for #345 still applies — even though `twitter` is
+    // no longer writable on the input (per #526's transactional-failure
+    // evidence), the `UpdateExternalProfiles` response selection set
+    // continues to echo it because the server's `Profile` entity still
+    // exposes the field. Callers writing OTHER fields will see the
+    // pre-existing `twitter` value (set elsewhere — e.g. via the web
+    // portal) reflected on the result without a follow-up `show()`
+    // round-trip, which preserves the verification benefit #345 added.
     mockProfileIdResolver();
     replyImpersonated({
       body: {
@@ -187,7 +187,7 @@ describe("update", () => {
             profile: {
               id: PROFILE_ID,
               updatedByTalentAt: "2026-05-07T12:00:00Z",
-              linkedin: null,
+              linkedin: "https://linkedin.com/in/ada",
               github: null,
               website: null,
               twitter: "https://twitter.com/ada",
@@ -199,17 +199,20 @@ describe("update", () => {
       },
     });
 
-    const result = await update(TOKEN, { twitter: "https://twitter.com/ada" });
+    const result = await update(TOKEN, { linkedin: "https://linkedin.com/in/ada" });
 
-    // Wire input carries twitter under the `profile:` wrapper.
+    // Wire input carries ONLY linkedin under the `profile:` wrapper —
+    // twitter is intentionally absent (#526 — server rejects it).
     const call = mockedImpersonated.mock.calls[0]?.[0];
     expect(call?.body.variables).toMatchObject({
-      input: { profileId: PROFILE_ID, profile: { twitter: "https://twitter.com/ada" } },
+      input: { profileId: PROFILE_ID, profile: { linkedin: "https://linkedin.com/in/ada" } },
     });
-    // Wire output echoes twitter through the result.
+    const profileFields = (call?.body.variables as { input: { profile: Record<string, unknown> } }).input.profile;
+    expect("twitter" in profileFields).toBe(false);
+    // But the wire output still echoes twitter through the result
+    // (server-side echo retained for backward compatibility).
     expect(result.profile.twitter).toBe("https://twitter.com/ada");
-    // Other URLs round-trip as null (the server returns null for unset).
-    expect(result.profile.linkedin).toBeNull();
+    expect(result.profile.linkedin).toBe("https://linkedin.com/in/ada");
     expect(result.profile.github).toBeNull();
     expect(result.profile.website).toBeNull();
     expect(result.profile.behance).toBeNull();

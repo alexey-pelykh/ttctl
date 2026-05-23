@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`profile.external.update`: drop unwritable `twitter` from input
+  (#526).** Reporter (rc.7 MCP) called `external_update` with
+  `linkedin + github + website + twitter` and the live
+  `talent-profile` server rejected the variable verbatim: `"Variable
+$input of type UpdateExternalProfilesInput! was provided invalid value
+  for profile.twitter (Field is not defined on ExternalProfilesInput)"`.
+  Crucially the failure is **transactional** — the three otherwise-valid
+  URLs (`linkedin`, `github`, `website`) were also NOT persisted; a
+  follow-up call with the same payload minus `twitter` succeeded on all
+  three. Earlier rc.3 work (#345) had grown `twitter` into the typed
+  input/result on the inference that response-selection presence
+  implied input acceptance — that inference is now contradicted by live
+  wire evidence and was load-bearing on the same data point
+  (`research/notes/10-mutation-input-patterns.md` § Social and
+  `05-talent-profile-api.md` line 191, which both list `twitter` as a
+  writable social field). Most plausible cause: Toptal's X migration
+  (Twitter → X) dropped the input field from `ExternalProfilesInput`
+  but kept the read field on the `Profile` entity for backward
+  compatibility, which is why `external show` continues to surface a
+  `twitter` value.
+  - **Surfaces updated**:
+    - `packages/core/src/services/profile/external/index.ts` —
+      `ExternalProfilesUpdate` and the internal
+      `UpdateExternalProfilesInput.profile` shape drop `twitter`; the
+      `update()` builder no longer forwards it; the
+      `VALIDATION_ERROR` message lists the five remaining writable
+      fields (linkedin / github / website / behance / dribbble). The
+      response selection set and `UpdateExternalProfilesResult.profile`
+      KEEP `twitter` so callers writing other fields still observe the
+      server-side echo for round-trip verification (the
+      `Profile`-entity field is intact server-side).
+    - `packages/cli/src/commands/profile/external/index.ts` —
+      removes `--twitter <url>` and trims the action signature; the
+      command description now references the 5 settable fields and
+      points callers at `external show` for the read side.
+    - `packages/cli/src/commands/profile/external/update.ts` —
+      action handler and VALIDATION_ERROR message updated to match
+      the 5-field surface. `formatUpdatePrettyEntity` continues to
+      render `twitter` when the server echoes a non-null value
+      (preserves the post-update visibility benefit from #345).
+    - `packages/mcp/src/tools/profile_external_update.ts` —
+      `inputSchema` drops `twitter`; the dispatcher no longer
+      forwards it; tool title/description/example-prompts updated.
+      `ttctl_profile_external_show` continues to surface the field
+      on the read side (no MCP-side change there).
+  - **Tests updated**:
+    - `packages/core/src/services/profile/external/__tests__/index.test.ts` —
+      the #345 regression test ("returns twitter on the result when
+      the server echoes it") is rewritten to drive the mutation with
+      `linkedin` (the write side) while asserting the echo still
+      surfaces twitter on the response. Adds an explicit
+      `expect("twitter" in profileFields).toBe(false)` to lock the
+      input shape against regression.
+    - `packages/e2e/src/42-profile-external-show.e2e.test.ts` —
+      introduces `WRITABLE_URL_FIELDS` (5 entries, no `twitter`) for
+      round-trip subject selection; `URL_FIELDS` (6 entries with
+      `twitter`) remains for read-shape coverage. The
+      `UpdateExternalProfiles` snapshot subtest still expects
+      `twitter` in the response shape — `Profile` echo is unchanged.
+  - **Schema/contract rule**: TRIGGERED. Touches
+    `packages/core/src/services/profile/external/index.ts` (the
+    file-path trigger) and modifies the live wire shape of
+    `UpdateExternalProfiles` (removes a field from the input). E2E
+    coverage at `42-profile-external-show.e2e.test.ts` exercises the
+    new 5-field input via the existing round-trip subtest; the
+    `UpdateExternalProfiles` snapshot test continues to assert the
+    response echo. The reporter's wire evidence in the issue body
+    is the load-bearing transcript for this change — the failure
+    mode is itself the contract assertion.
+  - **Track 1 vs Track 2**: T1 unchanged for `UpdateExternalProfiles`
+    (op remains in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`); the existing
+    `packages/e2e/src/wire-snapshots/UpdateExternalProfiles.snapshot.json`
+    captures the response shape including `twitter` and remains
+    unmodified (the input-shape change does not alter the response
+    selection set or its received shape — twitter was already `null`
+    in the snapshot's source capture).
+  - **Doc surface**: TRIGGERED for the MCP tool description and the
+    CLI command description; both are updated to name `external show`
+    as the canonical read path for `twitter`. No README content
+    references `--twitter`.
+  - **Surface coverage / write-read symmetry / E2E coverage gates**:
+    unchanged. Write-read symmetry now has one fewer input field to
+    verify (twitter dropped from the writable surface); the gate
+    continues to pass for the remaining five.
+
 ### Changed
 
 - **`profile skills add` — transparent autocomplete resolution
