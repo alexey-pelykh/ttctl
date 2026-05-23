@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+// e2e-covers: JobShow
+
 /**
  * E2E coverage for `ttctl jobs` (#148).
  *
@@ -117,6 +119,44 @@ describe("jobs (live mobile-gateway)", () => {
       expect(typeof rate.verbose).toBe("string");
     },
   );
+
+  it.skipIf(!e2eEnabled)("jobs show projects counterparty identity: contacts + pointsOfContact (#545)", async () => {
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const probeId = listed.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write("warning: no eligible jobs in test account — jobs show contacts assertion skipped\n");
+      return;
+    }
+    const showResult = await cli.run(["jobs", "show", probeId, "-o", "json"]);
+    expect(showResult.exitCode).toBe(0);
+    const detail = JSON.parse(showResult.stdout) as Record<string, unknown>;
+
+    // `contacts` (client-side hiring managers) and `pointsOfContact`
+    // (Toptal-side recruiter) MUST be keys on the detail payload. Both
+    // may be empty/null on a sparse account, so populated assertions are
+    // conditional; presence + shape checks are unconditional.
+    expect("contacts" in detail).toBe(true);
+    expect(Array.isArray(detail["contacts"])).toBe(true);
+    expect("pointsOfContact" in detail).toBe(true);
+
+    const contacts = detail["contacts"] as Array<Record<string, unknown>>;
+    if (contacts.length > 0) {
+      // `CompanyRepresentative.fullName: String!` — well-typed, must be a string.
+      expect(typeof contacts[0]?.["fullName"]).toBe("string");
+    }
+
+    const poc = detail["pointsOfContact"] as Record<string, unknown> | null;
+    if (poc !== null) {
+      expect("current" in poc).toBe(true);
+      const current = poc["current"] as Record<string, unknown> | null;
+      if (current !== null) {
+        // "Who's the recruiter on this job" — `Recruiter.fullName: String!`.
+        expect(typeof current["fullName"]).toBe("string");
+      }
+    }
+  });
 
   it.skipIf(!e2eEnabled)("round-trips save → saved → unsave → saved against a real job", async () => {
     // Step 1: find a job to use as the round-trip subject.

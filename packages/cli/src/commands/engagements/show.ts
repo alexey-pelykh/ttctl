@@ -92,6 +92,11 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
     }
   }
 
+  // Counterparty identity (#545): client-side hiring managers + Toptal-side
+  // recruiter points-of-contact. Grouped right after the Job/client block.
+  lines.push(...formatContactsSection(item.job.contacts));
+  lines.push(...formatPointsOfContactSection(item.job.pointsOfContact));
+
   lines.push("");
   lines.push("Engagement");
   if (item.startDate !== null) lines.push(`  Started: ${item.startDate}`);
@@ -151,4 +156,72 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Resolve a contact/recruiter time zone to a display string — prefer the
+ * human-readable `name` (e.g. `Pacific Time (US & Canada)`), fall back to
+ * the IANA `location` (e.g. `America/New_York`), then `value`. Returns
+ * `null` when none is present. (#545)
+ */
+function contactTimeZoneLabel(
+  tz: { location: string | null; name: string | null; value: string | null } | null,
+): string | null {
+  if (tz === null) return null;
+  const label = tz.name ?? tz.location ?? tz.value;
+  return label != null && label !== "" ? label : null;
+}
+
+/**
+ * Render the client-side hiring-manager contacts as an indented section
+ * (#545). Returns `[]` (no section) when the contact list is empty — the
+ * wire returns `[]` for jobs with no client-side contact bound. Mirrors
+ * the `jobs show` Contacts section verbatim (per-command render convention).
+ */
+function formatContactsSection(contacts: engagements.CompanyRepresentative[]): string[] {
+  if (contacts.length === 0) return [];
+  const lines: string[] = ["", `Contacts (${contacts.length.toString()})`];
+  for (const c of contacts) {
+    const name = c.fullName ?? "(no name)";
+    const position = c.position != null && c.position !== "" ? ` — ${c.position}` : "";
+    lines.push(`  • ${name}${position}`);
+    if (c.email != null && c.email !== "") lines.push(`    Email: ${c.email}`);
+    if (c.phoneNumber != null && c.phoneNumber !== "") lines.push(`    Phone: ${c.phoneNumber}`);
+    const tz = contactTimeZoneLabel(c.timeZone);
+    if (tz !== null) lines.push(`    Time zone: ${tz}`);
+  }
+  return lines;
+}
+
+/**
+ * Render one recruiter (current or handoff) as an indented sub-block under
+ * the Points of Contact section (#545). `label` is the role ("Current
+ * recruiter" / "Handoff recruiter").
+ */
+function formatRecruiterLines(label: string, r: engagements.Recruiter): string[] {
+  const lines: string[] = [`  ${label}: ${r.fullName ?? "(no name)"}`];
+  const cf = r.contactFields;
+  if (cf !== null) {
+    if (cf.email != null && cf.email !== "") lines.push(`    Email: ${cf.email}`);
+    if (cf.phoneNumber != null && cf.phoneNumber !== "") lines.push(`    Phone: ${cf.phoneNumber}`);
+    if (cf.skype != null && cf.skype !== "") lines.push(`    Skype: ${cf.skype}`);
+    if (cf.communitySlackId != null && cf.communitySlackId !== "") lines.push(`    Slack: ${cf.communitySlackId}`);
+  }
+  const tz = contactTimeZoneLabel(r.timeZone);
+  if (tz !== null) lines.push(`    Time zone: ${tz}`);
+  return lines;
+}
+
+/**
+ * Render the Toptal-side recruiter points-of-contact as an indented section
+ * (#545). Returns `[]` when the struct is null or carries neither a current
+ * nor a handoff recruiter.
+ */
+function formatPointsOfContactSection(poc: engagements.PointsOfContact | null): string[] {
+  if (poc === null || (poc.current === null && poc.handoff === null)) return [];
+  const lines: string[] = ["", "Points of Contact"];
+  if (poc.current !== null) lines.push(...formatRecruiterLines("Current recruiter", poc.current));
+  if (poc.handoff !== null) lines.push(...formatRecruiterLines("Handoff recruiter", poc.handoff));
+  if (poc.kind != null && poc.kind !== "") lines.push(`  Kind: ${poc.kind}`);
+  return lines;
 }

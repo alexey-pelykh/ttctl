@@ -75,6 +75,8 @@ const JOB_DETAIL_FIXTURE: jobs.JobDetail = {
   jobTimeZone: null,
   skills: [{ id: "sk-1", name: "React", rating: 5, isOptional: false }],
   languages: [],
+  contacts: [],
+  pointsOfContact: null,
 };
 
 const QUESTIONS_FIXTURE: applications.ApplicationQuestions = {

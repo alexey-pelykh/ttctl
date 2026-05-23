@@ -387,6 +387,82 @@ export interface JobListItem {
 }
 
 /**
+ * Time-zone identity (subset of the well-typed `TimeZone` SDL type) —
+ * `location`, `name`, and `value`. `location`/`value` mirror the
+ * live-verified `timesheet.show` selection; `name` (the human-readable
+ * label) is added per the #545 spec's `timeZone { name }` ask. Surfaced
+ * on both {@link CompanyRepresentative} and {@link Recruiter} (#545).
+ * Duplicated from `engagements.ContactTimeZone` per the per-service type
+ * convention (cf. {@link FixedRate}).
+ */
+export interface ContactTimeZone {
+  location: string | null;
+  name: string | null;
+  value: string | null;
+}
+
+/**
+ * Recruiter contact channels (`ContactFields` SDL type) — mirrors the
+ * live-verified `contactFieldsData` selection from `timesheet.show`.
+ * Duplicated from `engagements.RecruiterContactFields` (#545).
+ */
+export interface RecruiterContactFields {
+  communitySlackId: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  skype: string | null;
+}
+
+/**
+ * Toptal-side recruiter contact identity (`Recruiter` SDL type) — the
+ * "who's the recruiter on this job" counterparty (#545). Mirrors the
+ * live-verified `recruiterData` fragment from `timesheet.show`.
+ *
+ * **INFERRED note**: `Recruiter.vacation` is `Unknown` in the synth SDL;
+ * the `{ id startDate endDate }` shape is proven by the shipped,
+ * `TTCTL_E2E=1`-gated `timesheet.show` selection. Duplicated from
+ * `engagements.Recruiter` per the per-service type convention.
+ */
+export interface Recruiter {
+  id: string;
+  fullName: string | null;
+  contactFields: RecruiterContactFields | null;
+  photo: { small: string | null } | null;
+  vacation: { id: string; startDate: string | null; endDate: string | null } | null;
+  timeZone: ContactTimeZone | null;
+}
+
+/**
+ * Job points-of-contact (`PointsOfContact` SDL type) — `current` is the
+ * active recruiter, `handoff` the prior/secondary recruiter, `kind` a
+ * free-text discriminator (#545).
+ *
+ * **INFERRED note**: `PointsOfContact.handoff` is `Unknown` in the synth
+ * SDL; the `Recruiter`-shaped selection is proven by the shipped,
+ * `TTCTL_E2E=1`-gated `timesheet.show` `pointOfContactData` fragment.
+ */
+export interface PointsOfContact {
+  current: Recruiter | null;
+  handoff: Recruiter | null;
+  kind: string | null;
+}
+
+/**
+ * Client-side hiring-manager contact (`CompanyRepresentative` SDL type) —
+ * the "who's the client-side contact on this job" counterparty (#545).
+ * All fields are non-null in the synth SDL; typed nullable defensively.
+ * Duplicated from `engagements.CompanyRepresentative`.
+ */
+export interface CompanyRepresentative {
+  id: string;
+  email: string | null;
+  fullName: string | null;
+  phoneNumber: string | null;
+  position: string | null;
+  timeZone: ContactTimeZone | null;
+}
+
+/**
  * Detail-view shape for `jobs show <id>`. Extends {@link JobListItem}
  * with descriptive fields and client metadata. Field selection is
  * conservative — fields the CLI / MCP renders.
@@ -417,6 +493,10 @@ export interface JobDetail extends JobListItem {
     | null;
   skills: { id: string; name: string; rating: number | null; isOptional: boolean | null }[];
   languages: { id: string; name: string | null }[];
+  /** Client-side hiring-manager contacts (#545). `[]` when the wire elides them. */
+  contacts: CompanyRepresentative[];
+  /** Toptal-side recruiter points-of-contact (#545). `null` when the wire elides them. */
+  pointsOfContact: PointsOfContact | null;
 }
 
 /**
@@ -599,6 +679,37 @@ const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
         website
         linkedin
         teamSize { __typename value }
+      }
+      contacts {
+        __typename
+        id
+        email
+        fullName
+        phoneNumber
+        position
+        timeZone { __typename location name value }
+      }
+      pointsOfContact {
+        __typename
+        current {
+          __typename
+          id
+          fullName
+          contactFields { __typename communitySlackId email phoneNumber skype }
+          photo { __typename small }
+          vacation { __typename id startDate endDate }
+          timeZone { __typename location name value }
+        }
+        handoff {
+          __typename
+          id
+          fullName
+          contactFields { __typename communitySlackId email phoneNumber skype }
+          photo { __typename small }
+          vacation { __typename id startDate endDate }
+          timeZone { __typename location name value }
+        }
+        kind
       }
       jobSkillSetsV2 {
         __typename
@@ -860,6 +971,11 @@ interface JobDetailEntity extends JobListEntity {
       | null;
   } | null;
   languages: { id: string; name: string | null }[] | null;
+  // `contacts` is `[CompanyRepresentative]!` on the wire — a non-null list
+  // of NULLABLE items; outer `| null` tolerates fixtures that pre-date the
+  // #545 selection. `projectContacts` filters the nulls.
+  contacts: (CompanyRepresentative | null)[] | null;
+  pointsOfContact: PointsOfContact | null;
 }
 
 interface JobShowResponse {
@@ -1005,6 +1121,80 @@ function projectListItem(entity: JobListEntity): JobListItem {
   };
 }
 
+/**
+ * Project the wire `Recruiter` sub-shape into the public {@link Recruiter}
+ * type (#545), defensively coalescing every nullable hop and dropping the
+ * wire `__typename`. Returns `null` when the wire elides the recruiter.
+ * Duplicated from `engagements.index.ts` per the per-service convention.
+ */
+function projectRecruiter(wire: Recruiter | null | undefined): Recruiter | null {
+  if (wire == null) return null;
+  return {
+    id: wire.id,
+    fullName: wire.fullName ?? null,
+    contactFields:
+      wire.contactFields == null
+        ? null
+        : {
+            communitySlackId: wire.contactFields.communitySlackId ?? null,
+            email: wire.contactFields.email ?? null,
+            phoneNumber: wire.contactFields.phoneNumber ?? null,
+            skype: wire.contactFields.skype ?? null,
+          },
+    photo: wire.photo == null ? null : { small: wire.photo.small ?? null },
+    vacation:
+      wire.vacation == null
+        ? null
+        : { id: wire.vacation.id, startDate: wire.vacation.startDate ?? null, endDate: wire.vacation.endDate ?? null },
+    timeZone:
+      wire.timeZone == null
+        ? null
+        : {
+            location: wire.timeZone.location ?? null,
+            name: wire.timeZone.name ?? null,
+            value: wire.timeZone.value ?? null,
+          },
+  };
+}
+
+/**
+ * Project the wire `PointsOfContact` into the public {@link PointsOfContact}
+ * type (#545). Returns `null` when the wire elides the struct entirely.
+ */
+function projectPointsOfContact(wire: PointsOfContact | null | undefined): PointsOfContact | null {
+  if (wire == null) return null;
+  return {
+    current: projectRecruiter(wire.current),
+    handoff: projectRecruiter(wire.handoff),
+    kind: wire.kind ?? null,
+  };
+}
+
+/**
+ * Project the wire `contacts` list (`[CompanyRepresentative]!` — non-null
+ * list of nullable items) into a clean {@link CompanyRepresentative}`[]`
+ * (#545), filtering null entries and dropping `__typename`.
+ */
+function projectContacts(wire: (CompanyRepresentative | null)[] | null | undefined): CompanyRepresentative[] {
+  if (wire == null) return [];
+  const out: CompanyRepresentative[] = [];
+  for (const c of wire) {
+    if (c == null) continue;
+    out.push({
+      id: c.id,
+      email: c.email ?? null,
+      fullName: c.fullName ?? null,
+      phoneNumber: c.phoneNumber ?? null,
+      position: c.position ?? null,
+      timeZone:
+        c.timeZone == null
+          ? null
+          : { location: c.timeZone.location ?? null, name: c.timeZone.name ?? null, value: c.timeZone.value ?? null },
+    });
+  }
+  return out;
+}
+
 function projectJobDetail(entity: JobDetailEntity): JobDetail {
   const skills: JobDetail["skills"] = [];
   const edges = entity.jobSkillSetsV2?.edges ?? [];
@@ -1032,6 +1222,8 @@ function projectJobDetail(entity: JobDetailEntity): JobDetail {
     client: entity.client,
     skills,
     languages: (entity.languages ?? []).map((lang) => ({ id: lang.id, name: lang.name })),
+    contacts: projectContacts(entity.contacts),
+    pointsOfContact: projectPointsOfContact(entity.pointsOfContact),
   };
 }
 

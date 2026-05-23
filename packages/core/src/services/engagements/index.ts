@@ -237,6 +237,87 @@ export interface EngagementBreak {
 }
 
 /**
+ * Time-zone identity (subset of the well-typed `TimeZone` SDL type) —
+ * `location`, `name`, and `value`. `location`/`value` mirror the
+ * live-verified `timeZoneFields` selection from `timesheet.show`; `name`
+ * (the human-readable label, e.g. "Pacific Time (US & Canada)") is added
+ * per the #545 spec, which calls for `timeZone { name }` on the CLI
+ * "Time zone" line. Surfaced on both {@link CompanyRepresentative} and
+ * {@link Recruiter}. Leaf fields are `String!` in the SDL; typed nullable
+ * defensively per project convention.
+ */
+export interface ContactTimeZone {
+  location: string | null;
+  name: string | null;
+  value: string | null;
+}
+
+/**
+ * Recruiter contact channels (`ContactFields` SDL type). Mirrors the
+ * live-verified `contactFieldsData` selection from `timesheet.show`.
+ */
+export interface RecruiterContactFields {
+  communitySlackId: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  skype: string | null;
+}
+
+/**
+ * Toptal-side recruiter contact identity (`Recruiter` SDL type) — the
+ * "who's my recruiter on this engagement" counterparty. The selection
+ * mirrors the live-verified `recruiterData` fragment from `timesheet.show`
+ * (`TIMESHEET_DETAILS_QUERY`): `id fullName contactFields photo vacation
+ * timeZone`.
+ *
+ * **INFERRED note**: `Recruiter.vacation` is typed `Unknown` in the
+ * synthesized SDL; the `{ id startDate endDate }` shape is proven by the
+ * shipped, `TTCTL_E2E=1`-gated `timesheet.show` selection. All leaf fields
+ * are nullable defensively (applications `RecruiterRef` #539 idiom). The
+ * same wire shape is duplicated as `jobs.Recruiter` per the per-service
+ * type convention (cf. `FixedRate`).
+ */
+export interface Recruiter {
+  id: string;
+  fullName: string | null;
+  contactFields: RecruiterContactFields | null;
+  photo: { small: string | null } | null;
+  vacation: { id: string; startDate: string | null; endDate: string | null } | null;
+  timeZone: ContactTimeZone | null;
+}
+
+/**
+ * Job points-of-contact (`PointsOfContact` SDL type). `current` is the
+ * active recruiter; `handoff` is the prior/secondary recruiter (same
+ * `Recruiter` shape); `kind` is a free-text discriminator.
+ *
+ * **INFERRED note**: `PointsOfContact.handoff` is typed `Unknown` in the
+ * synthesized SDL; the `Recruiter`-shaped selection is proven by the
+ * shipped, `TTCTL_E2E=1`-gated `timesheet.show` `pointOfContactData`
+ * fragment.
+ */
+export interface PointsOfContact {
+  current: Recruiter | null;
+  handoff: Recruiter | null;
+  kind: string | null;
+}
+
+/**
+ * Client-side hiring-manager contact (`CompanyRepresentative` SDL type) —
+ * the "who's the client-side contact on this job" counterparty. All
+ * fields are `String!` / `ID!` (non-null) in the synth SDL; typed nullable
+ * defensively per project convention. `timeZone` reuses {@link ContactTimeZone}.
+ */
+export interface CompanyRepresentative {
+  id: string;
+  email: string | null;
+  fullName: string | null;
+  phoneNumber: string | null;
+  position: string | null;
+  timeZone: ContactTimeZone | null;
+}
+
+/**
  * Detail-view shape for `engagements show <id>`. Extends
  * {@link EngagementListItem} with additional engagement metadata
  * (current agreement, bill cycle, earning summary) AND inlines the
@@ -274,6 +355,10 @@ export interface EngagementDetail extends EngagementListItem {
     startDate: string | null;
     isCoaching: boolean | null;
     isToptalProject: boolean | null;
+    /** Client-side hiring-manager contacts (#545). `[]` when the wire elides them. */
+    contacts: CompanyRepresentative[];
+    /** Toptal-side recruiter points-of-contact (#545). `null` when the wire elides them. */
+    pointsOfContact: PointsOfContact | null;
   };
   breaks: EngagementBreak[];
 }
@@ -601,6 +686,8 @@ const ENGAGEMENT_SHOW_QUERY = `query JobActivityItem($id: ID!) {
         isCoaching
         isToptalProject
         client { __typename id fullName }
+        contacts { __typename id email fullName phoneNumber position timeZone { __typename ...timeZoneFields } }
+        pointsOfContact { __typename ...pointOfContactData }
       }
       engagement {
         __typename
@@ -647,6 +734,38 @@ fragment engagementBreakData on TalentEngagementBreak {
     removeEngagementBreak { __typename callable }
     rescheduleEngagementBreak { __typename callable }
   }
+}
+
+fragment timeZoneFields on TimeZone {
+  __typename
+  location
+  name
+  value
+}
+
+fragment contactFieldsData on ContactFields {
+  __typename
+  communitySlackId
+  email
+  phoneNumber
+  skype
+}
+
+fragment recruiterData on Recruiter {
+  __typename
+  id
+  fullName
+  contactFields { __typename ...contactFieldsData }
+  photo { __typename small }
+  vacation { __typename id startDate endDate }
+  timeZone { __typename ...timeZoneFields }
+}
+
+fragment pointOfContactData on PointsOfContact {
+  __typename
+  current { __typename ...recruiterData }
+  handoff { __typename ...recruiterData }
+  kind
 }`;
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/EngagementBreaks.graphql`.
@@ -724,7 +843,12 @@ interface EngagementShowItem {
   statusGroupV2: EngagementStatus;
   statusColor: string | null;
   lastUpdatedAt: string;
-  job: EngagementDetail["job"];
+  // `contacts` is `[CompanyRepresentative]!` on the wire — a non-null list
+  // of NULLABLE items; `projectContacts` filters the nulls. `pointsOfContact`
+  // shares the output `PointsOfContact` shape (defensively nullable already).
+  job: Omit<EngagementDetail["job"], "contacts"> & {
+    contacts: (CompanyRepresentative | null)[];
+  };
   engagement: {
     id: string;
     startDate: string | null;
@@ -840,6 +964,81 @@ function projectListItem(entity: EngagementsListEntity): EngagementListItem {
 }
 
 /**
+ * Project the wire `Recruiter` sub-shape into the public {@link Recruiter}
+ * type (#545), defensively coalescing every nullable hop and dropping the
+ * wire `__typename`. Returns `null` when the wire elides the recruiter.
+ * Mirrors the applications #539 `RecruiterRef` projection idiom; duplicated
+ * verbatim in `jobs.index.ts` per the per-service type convention.
+ */
+function projectRecruiter(wire: Recruiter | null | undefined): Recruiter | null {
+  if (wire == null) return null;
+  return {
+    id: wire.id,
+    fullName: wire.fullName ?? null,
+    contactFields:
+      wire.contactFields == null
+        ? null
+        : {
+            communitySlackId: wire.contactFields.communitySlackId ?? null,
+            email: wire.contactFields.email ?? null,
+            phoneNumber: wire.contactFields.phoneNumber ?? null,
+            skype: wire.contactFields.skype ?? null,
+          },
+    photo: wire.photo == null ? null : { small: wire.photo.small ?? null },
+    vacation:
+      wire.vacation == null
+        ? null
+        : { id: wire.vacation.id, startDate: wire.vacation.startDate ?? null, endDate: wire.vacation.endDate ?? null },
+    timeZone:
+      wire.timeZone == null
+        ? null
+        : {
+            location: wire.timeZone.location ?? null,
+            name: wire.timeZone.name ?? null,
+            value: wire.timeZone.value ?? null,
+          },
+  };
+}
+
+/**
+ * Project the wire `PointsOfContact` into the public {@link PointsOfContact}
+ * type (#545). Returns `null` when the wire elides the struct entirely.
+ */
+function projectPointsOfContact(wire: PointsOfContact | null | undefined): PointsOfContact | null {
+  if (wire == null) return null;
+  return {
+    current: projectRecruiter(wire.current),
+    handoff: projectRecruiter(wire.handoff),
+    kind: wire.kind ?? null,
+  };
+}
+
+/**
+ * Project the wire `contacts` list (`[CompanyRepresentative]!` — non-null
+ * list of nullable items) into a clean {@link CompanyRepresentative}`[]`
+ * (#545), filtering null entries and dropping `__typename`.
+ */
+function projectContacts(wire: (CompanyRepresentative | null)[] | null | undefined): CompanyRepresentative[] {
+  if (wire == null) return [];
+  const out: CompanyRepresentative[] = [];
+  for (const c of wire) {
+    if (c == null) continue;
+    out.push({
+      id: c.id,
+      email: c.email ?? null,
+      fullName: c.fullName ?? null,
+      phoneNumber: c.phoneNumber ?? null,
+      position: c.position ?? null,
+      timeZone:
+        c.timeZone == null
+          ? null
+          : { location: c.timeZone.location ?? null, name: c.timeZone.name ?? null, value: c.timeZone.value ?? null },
+    });
+  }
+  return out;
+}
+
+/**
  * List the signed-in user's engagements.
  *
  * Default scope is active engagements only (`status: "active"` →
@@ -930,7 +1129,14 @@ export async function show(token: string, id: string): Promise<EngagementDetail>
     statusGroupV2: item.statusGroupV2,
     statusColor: item.statusColor,
     lastUpdatedAt: item.lastUpdatedAt,
-    job: item.job,
+    // Spread keeps the existing wire job fields verbatim; the two #545
+    // counterparty fields are projected to clean public shapes (null-filtered
+    // contacts, recruiter __typename dropped).
+    job: {
+      ...item.job,
+      contacts: projectContacts(item.job.contacts),
+      pointsOfContact: projectPointsOfContact(item.job.pointsOfContact),
+    },
     startDate: item.engagement.startDate,
     endDate: item.engagement.endDate,
     expectedHours: item.engagement.expectedHours,

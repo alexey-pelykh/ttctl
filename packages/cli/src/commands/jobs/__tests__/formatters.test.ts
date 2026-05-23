@@ -62,6 +62,40 @@ const DETAIL_FIXTURE: jobs.JobDetail = {
   },
   skills: [{ id: "sk-1", name: "React", rating: 5, isOptional: false }],
   languages: [{ id: "lang-1", name: "English" }],
+  contacts: [
+    {
+      id: "rep-1",
+      email: "jane@acme.com",
+      fullName: "Jane Doe",
+      phoneNumber: "+1-555-0100",
+      position: "Hiring Manager",
+      timeZone: { location: "America/New_York", name: "Eastern Time (US & Canada)", value: "EST" },
+    },
+  ],
+  pointsOfContact: {
+    current: {
+      id: "rec-1",
+      fullName: "Alex Recruiter",
+      contactFields: {
+        communitySlackId: "alex.slack",
+        email: "alex@toptal.com",
+        phoneNumber: "+1-555-0200",
+        skype: "alex.skype",
+      },
+      photo: { small: "https://cdn.example/alex-small.jpg" },
+      vacation: { id: "vac-1", startDate: "2026-07-01", endDate: "2026-07-08" },
+      timeZone: { location: "Europe/London", name: "London", value: "GMT" },
+    },
+    handoff: {
+      id: "rec-2",
+      fullName: "Sam Prior",
+      contactFields: { communitySlackId: null, email: "sam@toptal.com", phoneNumber: null, skype: null },
+      photo: null,
+      vacation: null,
+      timeZone: { location: "America/Chicago", name: "Central Time (US & Canada)", value: "CST" },
+    },
+    kind: "standard",
+  },
 };
 
 const INTEREST_STATE_FIXTURE: jobs.JobInterestState = {
@@ -284,6 +318,29 @@ describe("formatJobDetail", () => {
   it("renders coaching tag when isCoaching=true", () => {
     const output = formatJobDetail({ ...DETAIL_FIXTURE, isCoaching: true });
     expect(output).toContain("Type: coaching");
+  });
+
+  it("renders the Contacts section with name, position, email, time zone (#545)", () => {
+    const output = formatJobDetail(DETAIL_FIXTURE);
+    expect(output).toContain("Contacts (1)");
+    expect(output).toContain("• Jane Doe — Hiring Manager");
+    expect(output).toContain("Email: jane@acme.com");
+    expect(output).toContain("Time zone: Eastern Time (US & Canada)");
+  });
+
+  it("renders Points of Contact with both current and handoff recruiters (#545)", () => {
+    const output = formatJobDetail(DETAIL_FIXTURE);
+    expect(output).toContain("Points of Contact");
+    expect(output).toContain("Current recruiter: Alex Recruiter");
+    expect(output).toContain("Slack: alex.slack");
+    expect(output).toContain("Handoff recruiter: Sam Prior");
+    expect(output).toContain("Kind: standard");
+  });
+
+  it("omits Contacts + Points of Contact sections when empty/null (#545)", () => {
+    const output = formatJobDetail({ ...DETAIL_FIXTURE, contacts: [], pointsOfContact: null });
+    expect(output).not.toContain("Contacts (");
+    expect(output).not.toContain("Points of Contact");
   });
 });
 

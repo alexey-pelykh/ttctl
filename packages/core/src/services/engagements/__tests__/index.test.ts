@@ -71,6 +71,64 @@ const ENGAGEMENT_DETAIL_ITEM = {
     specialization: { __typename: "TalentSpecialization", title: "Backend" },
     isCoaching: false,
     isToptalProject: false,
+    // #545 — counterparty identity. `contacts` carries a trailing null to
+    // exercise the `[CompanyRepresentative]!`-nullable-item filter.
+    contacts: [
+      {
+        __typename: "CompanyRepresentative",
+        id: "rep-1",
+        email: "jane@acme.com",
+        fullName: "Jane Doe",
+        phoneNumber: "+1-555-0100",
+        position: "Hiring Manager",
+        timeZone: {
+          __typename: "TimeZone",
+          location: "America/New_York",
+          name: "Eastern Time (US & Canada)",
+          value: "EST",
+        },
+      },
+      null,
+    ],
+    pointsOfContact: {
+      __typename: "PointsOfContact",
+      current: {
+        __typename: "Recruiter",
+        id: "rec-1",
+        fullName: "Alex Recruiter",
+        contactFields: {
+          __typename: "ContactFields",
+          communitySlackId: "alex.slack",
+          email: "alex@toptal.com",
+          phoneNumber: "+1-555-0200",
+          skype: "alex.skype",
+        },
+        photo: { __typename: "Photo", small: "https://cdn.example/alex-small.jpg" },
+        vacation: { __typename: "Unknown", id: "vac-1", startDate: "2026-07-01", endDate: "2026-07-08" },
+        timeZone: { __typename: "TimeZone", location: "Europe/London", name: "London", value: "GMT" },
+      },
+      handoff: {
+        __typename: "Recruiter",
+        id: "rec-2",
+        fullName: "Sam Prior",
+        contactFields: {
+          __typename: "ContactFields",
+          communitySlackId: null,
+          email: "sam@toptal.com",
+          phoneNumber: null,
+          skype: null,
+        },
+        photo: null,
+        vacation: null,
+        timeZone: {
+          __typename: "TimeZone",
+          location: "America/Chicago",
+          name: "Central Time (US & Canada)",
+          value: "CST",
+        },
+      },
+      kind: "standard",
+    },
   },
   engagement: {
     __typename: "TalentEngagement",
@@ -265,6 +323,56 @@ describe("engagements.show", () => {
       operationName: "JobActivityItem",
       variables: { id: "act-eng-1" },
     });
+  });
+
+  it("projects counterparty identity: contacts + pointsOfContact (#545)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: ENGAGEMENT_DETAIL_ITEM } } },
+    });
+    const item = await show(TOKEN, "act-eng-1");
+
+    // contacts: trailing null filtered; __typename dropped; fields projected.
+    expect(item.job.contacts).toHaveLength(1);
+    expect(item.job.contacts[0]?.fullName).toBe("Jane Doe");
+    expect(item.job.contacts[0]?.email).toBe("jane@acme.com");
+    expect(item.job.contacts[0]?.position).toBe("Hiring Manager");
+    expect(item.job.contacts[0]?.timeZone?.location).toBe("America/New_York");
+    expect(item.job.contacts[0]?.timeZone?.name).toBe("Eastern Time (US & Canada)");
+    expect(item.job.contacts[0]).not.toHaveProperty("__typename");
+
+    // pointsOfContact.current — the Toptal-side recruiter.
+    expect(item.job.pointsOfContact?.current?.fullName).toBe("Alex Recruiter");
+    expect(item.job.pointsOfContact?.current?.contactFields?.email).toBe("alex@toptal.com");
+    expect(item.job.pointsOfContact?.current?.contactFields?.communitySlackId).toBe("alex.slack");
+    expect(item.job.pointsOfContact?.current?.photo?.small).toBe("https://cdn.example/alex-small.jpg");
+    expect(item.job.pointsOfContact?.current?.vacation?.startDate).toBe("2026-07-01");
+    expect(item.job.pointsOfContact?.current?.timeZone?.location).toBe("Europe/London");
+    expect(item.job.pointsOfContact?.current?.timeZone?.name).toBe("London");
+
+    // pointsOfContact.handoff (INFERRED Unknown on the wire) + kind.
+    expect(item.job.pointsOfContact?.handoff?.fullName).toBe("Sam Prior");
+    expect(item.job.pointsOfContact?.handoff?.contactFields?.phoneNumber).toBeNull();
+    expect(item.job.pointsOfContact?.handoff?.photo).toBeNull();
+    expect(item.job.pointsOfContact?.kind).toBe("standard");
+  });
+
+  it("projects empty contacts + null pointsOfContact when the wire elides them (#545)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            jobActivityItem: {
+              ...ENGAGEMENT_DETAIL_ITEM,
+              job: { ...ENGAGEMENT_DETAIL_ITEM.job, contacts: [], pointsOfContact: null },
+            },
+          },
+        },
+      },
+    });
+    const item = await show(TOKEN, "act-eng-1");
+    expect(item.job.contacts).toEqual([]);
+    expect(item.job.pointsOfContact).toBeNull();
   });
 
   it("includes engagement breaks when present", async () => {

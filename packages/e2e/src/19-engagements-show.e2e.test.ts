@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+// e2e-covers: JobActivityItem
+
 /**
  * E2E coverage for `ttctl engagements show <id>` (#147).
  *
@@ -69,6 +71,30 @@ describe("engagements show (live mobile-gateway)", () => {
     expect("commitment" in job).toBe(true);
     expect("workType" in job).toBe(true);
     expect("specialization" in job).toBe(true);
+
+    // Counterparty identity (#545): client-side contacts + Toptal-side
+    // recruiter points-of-contact. `contacts` may be `[]` and a recruiter
+    // may be elided on a sparse account, so the populated assertions are
+    // conditional — the presence + array-shape checks are unconditional.
+    expect("contacts" in job).toBe(true);
+    expect(Array.isArray(job["contacts"])).toBe(true);
+    expect("pointsOfContact" in job).toBe(true);
+
+    const contacts = job["contacts"] as Array<Record<string, unknown>>;
+    if (contacts.length > 0) {
+      // Well-typed `CompanyRepresentative.fullName: String!` — must be a string.
+      expect(typeof contacts[0]?.["fullName"]).toBe("string");
+    }
+
+    const poc = job["pointsOfContact"] as Record<string, unknown> | null;
+    if (poc !== null) {
+      expect("current" in poc).toBe(true);
+      const current = poc["current"] as Record<string, unknown> | null;
+      if (current !== null) {
+        // "Who's my recruiter" — the core #545 value; `Recruiter.fullName: String!`.
+        expect(typeof current["fullName"]).toBe("string");
+      }
+    }
   });
 
   it.skipIf(!e2eEnabled)("returns a structured NOT_FOUND error for an unknown id", async () => {

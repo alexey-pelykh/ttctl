@@ -237,11 +237,14 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       title: "Show one job by id",
       description: [
         "Fetch a single job's detail view by id.",
-        "Returns title, description, skills, client metadata, time-zone, rates, and interest-state flags.",
+        "Returns title, description, skills, client metadata, time-zone, rates, interest-state flags,",
+        "the client-side hiring-manager contacts (`contacts`), and the Toptal-side recruiter",
+        "points-of-contact (`pointsOfContact.current` / `.handoff`).",
         "",
         "Example user prompts:",
         '  - "Show me Toptal job job_abc123."',
         '  - "What\'s the description for that job I just listed?"',
+        '  - "Who is the client-side hiring manager on job job_abc123?"',
       ].join("\n"),
       inputSchema: {
         id: z.string().describe("Job id (from `ttctl_jobs_list`)"),

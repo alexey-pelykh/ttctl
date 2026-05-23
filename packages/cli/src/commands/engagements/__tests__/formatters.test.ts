@@ -42,6 +42,33 @@ const DETAIL_FIXTURE: engagements.EngagementDetail = {
     startDate: "2026-01-01",
     isCoaching: false,
     isToptalProject: false,
+    contacts: [
+      {
+        id: "rep-1",
+        email: "jane@acme.com",
+        fullName: "Jane Doe",
+        phoneNumber: "+1-555-0100",
+        position: "Hiring Manager",
+        timeZone: { location: "America/New_York", name: "Eastern Time (US & Canada)", value: "EST" },
+      },
+    ],
+    pointsOfContact: {
+      current: {
+        id: "rec-1",
+        fullName: "Alex Recruiter",
+        contactFields: {
+          communitySlackId: "alex.slack",
+          email: "alex@toptal.com",
+          phoneNumber: "+1-555-0200",
+          skype: "alex.skype",
+        },
+        photo: { small: "https://cdn.example/alex-small.jpg" },
+        vacation: { id: "vac-1", startDate: "2026-07-01", endDate: "2026-07-08" },
+        timeZone: { location: "Europe/London", name: "London", value: "GMT" },
+      },
+      handoff: null,
+      kind: "standard",
+    },
   },
   currentAgreement: {
     applicationRate: "120.00",
@@ -166,6 +193,34 @@ describe("formatEngagementDetail", () => {
     expect(out).toContain("Description:");
     expect(out).toContain("Engineering role.");
     expect(out).toContain("Long-term placement.");
+  });
+
+  it("renders the Contacts section with name, position, email, time zone (#545)", () => {
+    const out = formatEngagementDetail(DETAIL_FIXTURE);
+    expect(out).toContain("Contacts (1)");
+    expect(out).toContain("• Jane Doe — Hiring Manager");
+    expect(out).toContain("Email: jane@acme.com");
+    expect(out).toContain("Phone: +1-555-0100");
+    expect(out).toContain("Time zone: Eastern Time (US & Canada)");
+  });
+
+  it("renders the Points of Contact section with the current recruiter (#545)", () => {
+    const out = formatEngagementDetail(DETAIL_FIXTURE);
+    expect(out).toContain("Points of Contact");
+    expect(out).toContain("Current recruiter: Alex Recruiter");
+    expect(out).toContain("Email: alex@toptal.com");
+    expect(out).toContain("Slack: alex.slack");
+    expect(out).toContain("Time zone: London");
+    expect(out).toContain("Kind: standard");
+  });
+
+  it("omits Contacts + Points of Contact sections when empty/null (#545)", () => {
+    const out = formatEngagementDetail({
+      ...DETAIL_FIXTURE,
+      job: { ...DETAIL_FIXTURE.job, contacts: [], pointsOfContact: null },
+    });
+    expect(out).not.toContain("Contacts (");
+    expect(out).not.toContain("Points of Contact");
   });
 });
 

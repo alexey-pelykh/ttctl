@@ -108,6 +108,45 @@ const JOB_DETAIL_ENTITY = {
     ],
   },
   languages: [{ __typename: "Language", id: "lang-1", name: "English" }],
+  // #545 — counterparty identity. `contacts` carries a trailing null to
+  // exercise the `[CompanyRepresentative]!`-nullable-item filter.
+  contacts: [
+    {
+      __typename: "CompanyRepresentative",
+      id: "rep-1",
+      email: "jane@acme.com",
+      fullName: "Jane Doe",
+      phoneNumber: "+1-555-0100",
+      position: "Hiring Manager",
+      timeZone: {
+        __typename: "TimeZone",
+        location: "America/New_York",
+        name: "Eastern Time (US & Canada)",
+        value: "EST",
+      },
+    },
+    null,
+  ],
+  pointsOfContact: {
+    __typename: "PointsOfContact",
+    current: {
+      __typename: "Recruiter",
+      id: "rec-1",
+      fullName: "Alex Recruiter",
+      contactFields: {
+        __typename: "ContactFields",
+        communitySlackId: "alex.slack",
+        email: "alex@toptal.com",
+        phoneNumber: "+1-555-0200",
+        skype: "alex.skype",
+      },
+      photo: { __typename: "Photo", small: "https://cdn.example/alex-small.jpg" },
+      vacation: { __typename: "Unknown", id: "vac-1", startDate: "2026-07-01", endDate: "2026-07-08" },
+      timeZone: { __typename: "TimeZone", location: "Europe/London", name: "London", value: "GMT" },
+    },
+    handoff: null,
+    kind: "standard",
+  },
 };
 
 const INTEREST_STATE = {
@@ -403,6 +442,44 @@ describe("jobs.show", () => {
     expect(job.skills).toHaveLength(1);
     expect(job.skills[0]).toMatchObject({ id: "sk-1", name: "React", rating: 5 });
     expect(job.languages).toEqual([{ id: "lang-1", name: "English" }]);
+  });
+
+  it("projects counterparty identity: contacts + pointsOfContact (#545)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", job: JOB_DETAIL_ENTITY } } },
+    });
+    const job = await show(TOKEN, "job-1");
+
+    // contacts: trailing null filtered; __typename dropped; fields projected.
+    expect(job.contacts).toHaveLength(1);
+    expect(job.contacts[0]?.fullName).toBe("Jane Doe");
+    expect(job.contacts[0]?.email).toBe("jane@acme.com");
+    expect(job.contacts[0]?.position).toBe("Hiring Manager");
+    expect(job.contacts[0]?.timeZone?.location).toBe("America/New_York");
+    expect(job.contacts[0]?.timeZone?.name).toBe("Eastern Time (US & Canada)");
+    expect(job.contacts[0]).not.toHaveProperty("__typename");
+
+    // pointsOfContact.current — the Toptal-side recruiter; handoff null here.
+    expect(job.pointsOfContact?.current?.fullName).toBe("Alex Recruiter");
+    expect(job.pointsOfContact?.current?.contactFields?.email).toBe("alex@toptal.com");
+    expect(job.pointsOfContact?.current?.photo?.small).toBe("https://cdn.example/alex-small.jpg");
+    expect(job.pointsOfContact?.current?.vacation?.endDate).toBe("2026-07-08");
+    expect(job.pointsOfContact?.current?.timeZone?.name).toBe("London");
+    expect(job.pointsOfContact?.handoff).toBeNull();
+    expect(job.pointsOfContact?.kind).toBe("standard");
+  });
+
+  it("projects empty contacts + null pointsOfContact when the wire elides them (#545)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { id: "v1", job: { ...JOB_DETAIL_ENTITY, contacts: [], pointsOfContact: null } },
+        },
+      },
+    });
+    const job = await show(TOKEN, "job-1");
+    expect(job.contacts).toEqual([]);
+    expect(job.pointsOfContact).toBeNull();
   });
 
   it("translates `Record not found` GraphQL error to NOT_FOUND", async () => {
