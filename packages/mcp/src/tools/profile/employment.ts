@@ -50,7 +50,10 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         "`USER_ERROR: employerId: You can't leave this empty` (#484 — settled by `45-profile-employment-add.e2e.test.ts`). " +
         "`industryIds` (at least one required) attaches catalog industries to the entry — " +
         "discover ids via `ttctl_profile_industries_autocomplete`. " +
-        "Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); year only is stored.",
+        "Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); ttctl normalizes to year (YYYY) on the wire (the " +
+        "Toptal `EmploymentInput.startDate` / `.endDate` wire fields are typed `Int`, year-only). Sub-year precision " +
+        "(month/day) is silently dropped client-side before the mutation is sent — the public resume renders year only, " +
+        "matching the stored value. Pass YYYY explicitly to avoid the implicit truncation (#527).",
       inputSchema: {
         company: z
           .string()
@@ -87,8 +90,18 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .describe(
             "custom (non-catalog) workplace: send the free-text `company` with employerId:null and skip the employer-autocomplete catalog. Cannot be combined with `employerId`. Requires either `website` (a URL) or `noWebsite: true` per the #484 CREATE-side anchor contract.",
           ),
-        from: dateInput.optional().describe("start date — ISO-8601 or year"),
-        to: dateInput.optional().describe("end date — ISO-8601 or year"),
+        from: dateInput
+          .optional()
+          .describe(
+            "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY). Normalized to year client-side before the wire (#527); " +
+              "sub-year precision is silently dropped.",
+          ),
+        to: dateInput
+          .optional()
+          .describe(
+            "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY). Normalized to year client-side before the wire (#527); " +
+              "sub-year precision is silently dropped.",
+          ),
         current: z.boolean().optional().describe("mark as current position (no end date)"),
         website: z.url().optional().describe("company website (mutually exclusive with `noWebsite: true`)"),
         noWebsite: z
@@ -193,14 +206,27 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       description:
         "Update an existing employment entry by id. At least one field must be supplied. `description` is multi-paragraph free-text and splits on blank lines. " +
         "`industryIds`, when supplied, replaces the entry's entire industry set (omit to preserve the current set) — discover ids via `ttctl_profile_industries_autocomplete`. " +
+        "`from` / `to` accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); ttctl normalizes to year (YYYY) on the wire (#527) — " +
+        "the Toptal `EmploymentInput.startDate` / `.endDate` wire fields are typed `Int`, year-only. Sub-year precision is " +
+        "silently dropped client-side before the mutation. " +
         "`publicationPermit`, `showViaToptal`, and `toptalRelated` are server-gated booleans (#402); each carries a distinct server constraint — see per-field descriptions. " +
         '`publicationPermit` carries TWO independent server-side mechanisms (#488): an input-side Rails `.blank?` gate that rejects `false` on the wire with `USER_ERROR: "You can\'t leave this empty"` (so any update on a row currently at `false` requires passing `true` explicitly to satisfy the gate), AND a server-controlled persisted-state determination — sending `true` does NOT guarantee a `false`-current row flips to `true`, mirroring `toptalRelated`. The field does NOT gate public listing on the resume.',
       inputSchema: {
         id: z.string().min(1).describe("employment id (V1-Employment-NNN)"),
         company: z.string().optional(),
         role: z.string().optional(),
-        from: dateInput.optional(),
-        to: dateInput.optional(),
+        from: dateInput
+          .optional()
+          .describe(
+            "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY). Normalized to year client-side before the wire (#527); " +
+              "sub-year precision is silently dropped.",
+          ),
+        to: dateInput
+          .optional()
+          .describe(
+            "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY). Normalized to year client-side before the wire (#527); " +
+              "sub-year precision is silently dropped.",
+          ),
         current: z.boolean().optional(),
         website: z.url().optional(),
         description: z

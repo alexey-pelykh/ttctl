@@ -12,8 +12,18 @@ import type { DryRunPreview } from "../../../transport.js";
  * the `Employment` GraphQL fragment (see
  * `research/graphql/talent_profile/fragments/Employment.graphql`). Years
  * are integers (`startDate`, `endDate`) per the empirical capture
- * `research/captures/web/inputs/UpdateEmploymentInput.json`. `endDate` is
- * `null` for current positions.
+ * `research/captures/web/inputs/UpdateEmploymentInput.json` and the
+ * `GET_WORK_EXPERIENCE.snapshot.json` wire-shape snapshot (`startDate:
+ * number`, `endDate: number | null`). `endDate` is `null` for current
+ * positions.
+ *
+ * **Date-precision contract (#527)**: the wire type is `Int (year)`, NOT
+ * a calendar date. The CLI/MCP tool surfaces accept ISO-8601 (YYYY-MM-DD)
+ * as a convenience and normalize to year client-side via
+ * `parseDateInput(...).year` — sub-year precision (month/day) is silently
+ * dropped before the mutation. The public Toptal resume renders year
+ * only, matching the stored value. This typing reflects what the wire
+ * stores; callers passing YYYY-MM-DD on the surface see year-only behavior.
  *
  * The last four fields close the #344 read/write asymmetry; see
  * {@link mapEmploymentNode} for why the read shape uses nested
@@ -90,7 +100,13 @@ export interface EmploymentFields {
   position?: string;
   companyWebsite?: string | null;
   noWebsite?: boolean;
+  // #527: wire type is `Int (year)`. Callers using the CLI/MCP surface pass
+  // YYYY-MM-DD or YYYY and `parseDateInput(...).year` strips month/day before
+  // populating this field. Direct core consumers should pass a year integer.
   startDate?: number;
+  // #527: wire type is `Int (year)` with `null` semantically meaning "current
+  // role" (force-echo three-state, see {@link buildUpdateEmploymentInput} §
+  // endDate force-echo). Sub-year precision is dropped client-side.
   endDate?: number | null;
   experienceItems?: string[];
   highlight?: boolean;
