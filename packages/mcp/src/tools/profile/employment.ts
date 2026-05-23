@@ -189,8 +189,8 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       description:
         "Update an existing employment entry by id. At least one field must be supplied. `description` is multi-paragraph free-text and splits on blank lines. " +
         "`industryIds`, when supplied, replaces the entry's entire industry set (omit to preserve the current set) — discover ids via `ttctl_profile_industries_autocomplete`. " +
-        "`publicationPermit`, `showViaToptal`, and `toptalRelated` are server-gated booleans that callers may explicitly override (#402); each carries a distinct server constraint — see per-field descriptions. " +
-        '`publicationPermit` is Rails `.blank?`-gated: the server rejects `false` with `USER_ERROR: "You can\'t leave this empty"`, so any update on a row currently at `false` requires passing `true` explicitly — otherwise the read-current+merge preserves the `false` and the wire rejects.',
+        "`publicationPermit`, `showViaToptal`, and `toptalRelated` are server-gated booleans (#402); each carries a distinct server constraint — see per-field descriptions. " +
+        '`publicationPermit` carries TWO independent server-side mechanisms (#488): an input-side Rails `.blank?` gate that rejects `false` on the wire with `USER_ERROR: "You can\'t leave this empty"` (so any update on a row currently at `false` requires passing `true` explicitly to satisfy the gate), AND a server-controlled persisted-state determination — sending `true` does NOT guarantee a `false`-current row flips to `true`, mirroring `toptalRelated`. The field does NOT gate public listing on the resume.',
       inputSchema: {
         id: z.string().min(1).describe("employment id (V1-Employment-NNN)"),
         company: z.string().optional(),
@@ -212,7 +212,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .boolean()
           .optional()
           .describe(
-            "Whether this entry is publicly listable. Rails `.blank?`-gated on the server (#402): the server rejects `false` with USER_ERROR. When supplied, overrides the merged current value; when omitted, current state is preserved (defaulting to `true` for null current). Updating any field on a row currently at `false` requires passing `true` explicitly to avoid the blank-gate USER_ERROR.",
+            "Server-controlled boolean with two independent server-side mechanisms (#488). (1) INPUT-side Rails `.blank?` gate (#402): the server rejects `false` on the wire with USER_ERROR — pass `true` to clear the gate when the row's current value is `false`. (2) PERSISTED-state is server-controlled: sending `true` does NOT guarantee a `false`-current row flips to `true` — the server applies its own determination on read, mirroring `toptalRelated`. The field does NOT gate public resume listing — `false` entries still render publicly. Wire shape is correct (verified via `UpdateEmployment.snapshot.json`); the persisted-state divergence is server-side.",
           ),
         showViaToptal: z
           .boolean()

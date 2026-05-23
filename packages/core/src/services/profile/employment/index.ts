@@ -529,6 +529,11 @@ export async function add(token: string, fields: EmploymentFields, options: AddO
   //     default to `true` to satisfy the Rails `.blank?` gate. Mirrors the
   //     `buildUpdateEmploymentInput` fallback (`current.publicationPermit
   //     ?? true`) so add/update agree on the no-caller-input semantics.
+  //     NOTE (#488): the field's PERSISTED-state on update is server-
+  //     controlled (sending `true` does NOT guarantee a `false`-current
+  //     row flips to `true`, mirroring `toptalRelated`); the create-side
+  //     default here only satisfies the input-side `.blank?` gate. The
+  //     field does NOT gate public resume listing.
   // Callers may still override.
   const employment: Omit<EmploymentFields, "noEmployer" | "employerId"> & { employerId: string | null } = {
     experienceItems: [],

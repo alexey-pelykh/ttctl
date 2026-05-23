@@ -78,7 +78,12 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
         websiteUrl: z.string().optional().describe("Public website URL associated with the item"),
         accomplishment: z.string().optional().describe("Short accomplishment summary"),
         clientOrCompanyName: z.string().optional().describe("Client or company name"),
-        publicationPermit: z.boolean().optional().describe("Whether the user has permission to publish this item"),
+        publicationPermit: z
+          .boolean()
+          .optional()
+          .describe(
+            "Server-gated boolean: the server's Rails `.blank?` gate rejects `false` on create with USER_ERROR (`code: blank, key: publicationPermit`) — pass `true` (the default) to satisfy the gate. The same field on Employment has a server-controlled persisted-state semantic (#488) where the caller-supplied value may not match what the server persists; Portfolio likely shares this semantic (uninvestigated). The field does NOT gate public listing on the resume.",
+          ),
         toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
@@ -130,7 +135,12 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
         websiteUrl: z.string().optional().describe("Public website URL associated with the item"),
         accomplishment: z.string().optional().describe("Short accomplishment summary"),
         clientOrCompanyName: z.string().optional().describe("Client or company name"),
-        publicationPermit: z.boolean().optional().describe("Whether the user has permission to publish this item"),
+        publicationPermit: z
+          .boolean()
+          .optional()
+          .describe(
+            "Server-gated boolean: input-side Rails `.blank?` gate rejects `false` on the wire with USER_ERROR (`code: blank, key: publicationPermit`) — pass `true` when updating a `false`-current item so other fields can be updated. The same field on Employment has a server-controlled persisted-state semantic (#488) where the caller-supplied value may not match what the server persists; Portfolio likely shares this semantic (uninvestigated). The field does NOT gate public listing on the resume.",
+          ),
         toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),

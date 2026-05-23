@@ -42,6 +42,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     unchanged. `skillId` remains write-only-annotated; the resolved
     binding echoes via `skill.id` / `skill.name` on the read side.
 
+### Fixed
+
+- **`profile.employment.update`: correct misleading `publicationPermit`
+  documentation (#488).** Reporter (rc.7 MCP) observed two anomalies:
+  (1) supplying `publicationPermit: true` on an entry currently at
+  `false` succeeds on the wire (mutation returns `ok`) but a follow-up
+  `employment_show` still reports `false` — verified 3× including a
+  `publicationPermit`-only update; (2) two employment entries with
+  `publicationPermit: false` render on the public resume regardless,
+  so the field does NOT gate public listing. Reporter's decisive
+  checks (dryRun vs. live wire faithfulness) confirmed via the
+  committed `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json`
+  capturing `publicationPermit: { kind: "boolean" }` and the
+  `research/captures/web/inputs/UpdateEmploymentInput.json` declaring
+  `EmploymentInput.publicationPermit: Boolean` — ttctl IS sending the
+  field correctly. Settlement: the field has TWO independent server-side
+  mechanisms — (a) input-side Rails `.blank?` gate that rejects `false`
+  on the wire with USER_ERROR (the #402 settlement, accurate), and (b)
+  server-controlled persisted-state determination where the wire accepts
+  the input without error but the server applies its own logic on read
+  (newly observed, mirrors `toptalRelated`). Sending `true` does NOT
+  guarantee a `false`-current row flips to `true`. The "publicly
+  listable" framing in the rc.6 (#402) MCP description is inaccurate —
+  the field does not gate resume rendering. No code behavior change
+  (wire shape unchanged; merge logic unchanged): the fix is purely
+  documentation correction across the MCP tool descriptions, service-
+  layer comments, and the existing E2E docstring.
+  - **Surfaces updated**:
+    - `packages/mcp/src/tools/profile/employment.ts` —
+      `ttctl_profile_employment_update` tool main description (`publicationPermit`
+      sentence) and per-field `publicationPermit` description.
+    - `packages/mcp/src/tools/profile/portfolio.ts` —
+      `ttctl_profile_portfolio_add` + `_update` per-field
+      `publicationPermit` descriptions (same wire field; Portfolio
+      likely shares the server-controlled persisted-state semantic —
+      uninvestigated).
+    - `packages/core/src/services/profile/employment/index.ts` —
+      inline comment in `add()` documents the cross-cutting #488 note.
+    - `packages/core/src/services/profile/portfolio/index.ts` —
+      inline comment in `add()` documents the cross-cutting #488 note.
+    - `packages/e2e/src/52-profile-employment-update-blank-gate-overrides.e2e.test.ts` —
+      docstring acknowledges the #488 coverage gap (we cannot construct
+      a `false`-current sentinel via ttctl — the create-side `.blank?`
+      gate rejects `false`).
+  - **Schema/contract rule**: NOT triggered. Touches files under
+    `packages/core/src/services/profile/**` (the file-path trigger), but
+    comment-only — no wire format change, no new GraphQL op, no
+    inferred contract introduced. The existing
+    `UpdateEmployment.snapshot.json` and live-capture inputs remain the
+    authoritative wire contract.
+  - **Track 1 vs Track 2**: T1 (unchanged) — `UpdateEmployment` remains
+    on the wire-shape-snapshot track; this change introduces no new op.
+  - **Doc surface**: TRIGGERED. Touches
+    `packages/mcp/src/tools/profile/employment.ts` and sibling Portfolio
+    tool descriptions — the documentation is the user-facing surface
+    being corrected. No code-path behavior changed.
+
 ## [v0.1.0-rc.8] - 2026-05-22
 
 ### Added
