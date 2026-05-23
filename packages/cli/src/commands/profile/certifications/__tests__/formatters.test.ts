@@ -25,6 +25,10 @@ const ROW_EXPIRES: profile.certifications.Certification = {
   validToYear: 2023,
   highlight: true,
   status: "expired",
+  skills: [
+    { id: "V1-Skill-1", name: "AWS" },
+    { id: "V1-Skill-2", name: "Cloud Architecture" },
+  ],
 };
 
 const ROW_NO_EXPIRY: profile.certifications.Certification = {
@@ -39,6 +43,7 @@ const ROW_NO_EXPIRY: profile.certifications.Certification = {
   validToYear: null,
   highlight: false,
   status: "valid",
+  skills: [{ id: "V1-Skill-3", name: "Scrum" }],
 };
 
 const ROW_NULL_STATUS: profile.certifications.Certification = {
@@ -53,20 +58,25 @@ const ROW_NULL_STATUS: profile.certifications.Certification = {
   validToYear: null,
   highlight: false,
   status: null,
+  skills: [],
 };
 
-describe("formatCertificationListText (#341, status added #557)", () => {
-  it("renders one tab-separated line per row, with status before the id", () => {
+describe("formatCertificationListText (#341, status added #557, skills added #558)", () => {
+  it("renders one tab-separated line per row, with skills between status and id (#558)", () => {
     const out = formatCertificationListText([ROW_EXPIRES, ROW_NO_EXPIRY]);
     const lines = out.split("\n");
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toBe("AWS Solutions Architect\tAmazon Web Services\t03/2020–03/2023\texpired\tV1-Certification-1");
-    expect(lines[1]).toBe("Certified Scrum Master\tScrum Alliance\t06/2019–no expiry\tvalid\tV1-Certification-2");
+    expect(lines[0]).toBe(
+      "AWS Solutions Architect\tAmazon Web Services\t03/2020–03/2023\texpired\tAWS, Cloud Architecture\tV1-Certification-1",
+    );
+    expect(lines[1]).toBe(
+      "Certified Scrum Master\tScrum Alliance\t06/2019–no expiry\tvalid\tScrum\tV1-Certification-2",
+    );
   });
 
-  it("renders an em-dash when status is null (#557)", () => {
+  it("renders an em-dash when status is null and another when skills is empty (#557, #558)", () => {
     const out = formatCertificationListText([ROW_NULL_STATUS]);
-    expect(out).toBe("Legacy Certificate\tLegacy Inc.\t01/2015–no expiry\t—\tV1-Certification-3");
+    expect(out).toBe("Legacy Certificate\tLegacy Inc.\t01/2015–no expiry\t—\t—\tV1-Certification-3");
   });
 
   it("renders an empty-list sentinel when the list is empty", () => {
@@ -74,24 +84,27 @@ describe("formatCertificationListText (#341, status added #557)", () => {
   });
 });
 
-describe("formatCertificationListTable (#341, status added #557)", () => {
-  it("emits a cli-table3 table with Status column populated from c.status", () => {
+describe("formatCertificationListTable (#341, status added #557, skills added #558)", () => {
+  it("emits a cli-table3 table with Status and Skills columns populated from c.status / c.skills", () => {
     const out = formatCertificationListTable([ROW_EXPIRES, ROW_NO_EXPIRY, ROW_NULL_STATUS]);
     expect(out).toContain("Certificate");
     expect(out).toContain("Issuer");
     expect(out).toContain("Valid");
     expect(out).toContain("Status");
+    expect(out).toContain("Skills");
     expect(out).toContain("Highlight");
     expect(out).toContain("AWS Solutions Architect");
     expect(out).toContain("Amazon Web Services");
     expect(out).toContain("03/2020–03/2023");
     expect(out).toContain("expired");
+    expect(out).toContain("AWS, Cloud");
     expect(out).toContain("Certified Scrum Master");
     expect(out).toContain("Scrum Alliance");
     expect(out).toContain("06/2019–no expiry");
     expect(out).toContain("valid");
+    expect(out).toContain("Scrum");
     expect(out).toContain("Legacy Certificate");
-    // The em-dash sentinel for null status.
+    // The em-dash sentinel for null status / empty skills.
     expect(out).toContain("—");
     expect(out).toContain("yes");
     expect(out).toContain("no");

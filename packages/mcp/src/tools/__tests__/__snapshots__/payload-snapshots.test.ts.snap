@@ -441,7 +441,17 @@ exports[`MCP profile_certifications — payload snapshots > payload: full profil
     "validToMonth": 3,
     "validToYear": 2026,
     "highlight": true,
-    "status": "valid"
+    "status": "valid",
+    "skills": [
+      {
+        "id": "skill_test_aws_pro_1",
+        "name": "AWS"
+      },
+      {
+        "id": "skill_test_aws_pro_2",
+        "name": "Cloud Architecture"
+      }
+    ]
   },
   {
     "id": "cert_test_002",
@@ -454,7 +464,8 @@ exports[`MCP profile_certifications — payload snapshots > payload: full profil
     "validToMonth": 6,
     "validToYear": 2025,
     "highlight": false,
-    "status": "expired"
+    "status": "expired",
+    "skills": []
   }
 ]"
 `;

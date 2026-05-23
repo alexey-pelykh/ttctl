@@ -20,6 +20,12 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  * `research/graphql/talent_profile/fragments/Certification.graphql`) are
  * inferred from the wire and surfaced verbatim; the field is read-only
  * (not on `CertificationInput`).
+ *
+ * `skills` carries the talent's self-attested skill links per
+ * certification (#558). Wire shape is the connection
+ * `skills { nodes { id name } }` per the upstream fragment; ttctl
+ * flattens it to `SkillRef[]` (mirrors `Employment.skills`). Read-only
+ * (not on `CertificationInput`).
  */
 export interface Certification {
   id: string;
@@ -33,6 +39,7 @@ export interface Certification {
   validToYear: number | null;
   highlight: boolean;
   status: string | null;
+  skills: { id: string; name: string }[];
 }
 
 /**
@@ -65,6 +72,7 @@ const CERTIFICATION_FRAGMENT = `fragment Certification on Certification {
   validToYear
   highlight
   status
+  skills { nodes { id name } }
 }`;
 
 const GET_CERTIFICATION_QUERY = `query GET_CERTIFICATION($profileId: ID!) {
@@ -115,7 +123,7 @@ const HIGHLIGHT_CERTIFICATION_MUTATION = `mutation highlightCertification($id: I
 }`;
 
 interface ListResponse {
-  data?: { profile?: { id: string; certifications: { nodes: (Certification | null)[] } } | null } | null;
+  data?: { profile?: { id: string; certifications: { nodes: (Record<string, unknown> | null)[] } } | null } | null;
   errors?: GraphQLErrorEntry[] | null;
 }
 
@@ -123,7 +131,7 @@ interface MutationPayload {
   success?: boolean | null;
   notice?: string | null;
   errors?: UserError[] | null;
-  profile?: { id: string; certifications: { nodes: (Certification | null)[] } } | null;
+  profile?: { id: string; certifications: { nodes: (Record<string, unknown> | null)[] } } | null;
 }
 
 interface HighlightPayload {
@@ -136,6 +144,37 @@ interface HighlightPayload {
 interface MutationResponse {
   data?: Record<string, MutationPayload | HighlightPayload | null> | null;
   errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Map a Certification fragment node from the raw wire shape to the typed
+ * {@link Certification}. The wire surfaces `skills` as a nested
+ * connection (`skills { nodes [{ id, name }] }`), not the flat
+ * `SkillRef[]` ttctl exposes — so a projection step is required.
+ * Mirrors `mapEmploymentNode` in the employment service. Introduced for
+ * #558.
+ */
+function mapCertificationNode(node: Record<string, unknown>): Certification {
+  const skillsConn = node["skills"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
+  const skills: { id: string; name: string }[] = Array.isArray(skillsConn?.nodes)
+    ? skillsConn.nodes.flatMap((s) =>
+        typeof s.id === "string" && typeof s.name === "string" ? [{ id: s.id, name: s.name }] : [],
+      )
+    : [];
+  return {
+    id: typeof node["id"] === "string" ? node["id"] : "",
+    certificate: typeof node["certificate"] === "string" ? node["certificate"] : "",
+    institution: typeof node["institution"] === "string" ? node["institution"] : "",
+    link: typeof node["link"] === "string" ? node["link"] : null,
+    number: typeof node["number"] === "string" ? node["number"] : null,
+    validFromMonth: typeof node["validFromMonth"] === "number" ? node["validFromMonth"] : null,
+    validFromYear: typeof node["validFromYear"] === "number" ? node["validFromYear"] : null,
+    validToMonth: typeof node["validToMonth"] === "number" ? node["validToMonth"] : null,
+    validToYear: typeof node["validToYear"] === "number" ? node["validToYear"] : null,
+    highlight: Boolean(node["highlight"]),
+    status: typeof node["status"] === "string" ? node["status"] : null,
+    skills,
+  };
 }
 
 /**
@@ -165,7 +204,7 @@ async function listByProfileId(token: string, profileId: string): Promise<Certif
   ensureNoTopLevelErrors(body, "certifications list");
   const profile = body?.data?.profile;
   if (!profile) throw new ProfileError("UNKNOWN", "certifications list response had no `data.profile` field");
-  return profile.certifications.nodes.filter((n): n is Certification => n !== null);
+  return profile.certifications.nodes.filter((n): n is Record<string, unknown> => n !== null).map(mapCertificationNode);
 }
 
 /**
@@ -204,7 +243,10 @@ export async function add(token: string, fields: CertificationFields): Promise<C
     "certifications add",
   );
   const payload = unwrapMutation(res, "createCertification", "certifications add");
-  const after = payload.profile?.certifications.nodes.filter((n): n is Certification => n !== null) ?? [];
+  const after =
+    payload.profile?.certifications.nodes
+      .filter((n): n is Record<string, unknown> => n !== null)
+      .map(mapCertificationNode) ?? [];
   const created = after.find((c) => !beforeIds.has(c.id));
   if (!created) {
     throw new ProfileError("UNKNOWN", "certifications add returned success but no new row was found in the response.");
@@ -229,7 +271,8 @@ export async function update(token: string, id: string, fields: CertificationFie
   );
   const payload = unwrapMutation(res, "updateCertification", "certifications update");
   const updated = payload.profile?.certifications.nodes
-    .filter((n): n is Certification => n !== null)
+    .filter((n): n is Record<string, unknown> => n !== null)
+    .map(mapCertificationNode)
     .find((c) => c.id === id);
   if (!updated) {
     throw new ProfileError(

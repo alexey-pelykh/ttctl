@@ -47,6 +47,11 @@ function replyStock(...responses: MockResponse[]): void {
   }
 }
 
+// `CERT_*` are RAW WIRE nodes (what the mock transport returns). `list()`
+// / `add()` / `update()` now run them through `mapCertificationNode`
+// (#558), so assertions compare against the `CERT_*_MAPPED` typed
+// projections, never the raw fixtures.
+
 const CERT_1 = {
   id: "V1-Certification-1",
   certificate: "AWS Certified",
@@ -59,6 +64,13 @@ const CERT_1 = {
   validToYear: null,
   highlight: false,
   status: "valid",
+  // #558 wire shape: `skills { nodes [{ id, name }] }`. Mapper flattens.
+  skills: { nodes: [] as { id: string; name: string }[] },
+};
+
+const CERT_1_MAPPED = {
+  ...CERT_1,
+  skills: [] as { id: string; name: string }[],
 };
 
 const CERT_2 = {
@@ -73,6 +85,12 @@ const CERT_2 = {
   validToYear: 2025,
   highlight: true,
   status: "expired",
+  skills: { nodes: [{ id: "V1-Skill-7", name: "GCP" }] },
+};
+
+const CERT_2_MAPPED = {
+  ...CERT_2,
+  skills: [{ id: "V1-Skill-7", name: "GCP" }],
 };
 
 beforeEach(() => {
@@ -87,7 +105,7 @@ describe("list", () => {
 
     const rows = await list(TOKEN);
 
-    expect(rows).toEqual([CERT_1, CERT_2]);
+    expect(rows).toEqual([CERT_1_MAPPED, CERT_2_MAPPED]);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("GET_CERTIFICATION");
   });
@@ -98,6 +116,14 @@ describe("list", () => {
     await list(TOKEN);
     const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
     expect(call.body.query).toContain("status");
+  });
+
+  it("selects skills { nodes { id name } } in the CERTIFICATION_FRAGMENT (#558)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [] } } } } });
+    await list(TOKEN);
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    expect(call.body.query).toContain("skills { nodes { id name } }");
   });
 
   it("surfaces status verbatim on every row (#557)", async () => {
@@ -122,6 +148,46 @@ describe("list", () => {
     expect(rows.map((r) => r.status)).toEqual(["valid", "pending-verification", null]);
   });
 
+  it("flattens skills { nodes } to SkillRef[] on every row (#558)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            certifications: {
+              nodes: [
+                CERT_1, // wire: { nodes: [] } → mapped: []
+                CERT_2, // wire: { nodes: [{ id, name }] } → mapped: [{ id, name }]
+              ],
+            },
+          },
+        },
+      },
+    });
+    const rows = await list(TOKEN);
+    expect(rows.map((r) => r.skills)).toEqual([[], [{ id: "V1-Skill-7", name: "GCP" }]]);
+  });
+
+  it("defaults skills to [] when wire omits the connection (#558)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            certifications: {
+              // Wire intentionally omits the `skills` field entirely.
+              nodes: [{ id: "V1-Certification-9", certificate: "X", institution: "Y", highlight: false }],
+            },
+          },
+        },
+      },
+    });
+    const rows = await list(TOKEN);
+    expect(rows[0]?.skills).toEqual([]);
+  });
+
   it("throws AuthRevokedError on 401", async () => {
     replyStock({ body: VIEWER_OK });
     replyImpersonated({ status: 401, body: {} });
@@ -135,7 +201,7 @@ describe("show", () => {
     replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [CERT_1, CERT_2] } } } } });
 
     const c = await show(TOKEN, CERT_2.id);
-    expect(c).toEqual(CERT_2);
+    expect(c).toEqual(CERT_2_MAPPED);
   });
 
   it("throws VALIDATION_ERROR when id not found", async () => {

@@ -334,6 +334,7 @@ export function formatCertificationText(c: profile.certifications.Certification)
   if (c.status) lines.push(`  status: ${c.status}`);
   if (c.number) lines.push(`  cred-id: ${c.number}`);
   if (c.link) lines.push(`  ${c.link}`);
+  if (c.skills.length > 0) lines.push(`  skills: ${c.skills.map((s) => s.name).join(", ")}`);
   if (c.highlight) lines.push(`  highlighted`);
   lines.push(`  id: ${c.id}`);
   return lines.join("\n");
@@ -351,6 +352,7 @@ export function formatCertificationTable(c: profile.certifications.Certification
     ["status", c.status ?? ""],
     ["number", c.number ?? ""],
     ["link", c.link ?? ""],
+    ["skills", c.skills.map((s) => s.name).join(", ")],
     ["highlight", c.highlight.toString()],
   ];
   return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
@@ -378,14 +380,16 @@ function formatMonthYear(month: number | null, year: number | null): string {
 
 /**
  * Pretty-print a list of Certification rows. One row per line, tab-separated:
- * certificate, institution, validity range, status, id.
+ * certificate, institution, validity range, status, skills (comma-joined),
+ * id. `skills` follows `status` and precedes `id` so additive fields
+ * stay clustered before the trailing id.
  */
 export function formatCertificationListText(rows: profile.certifications.Certification[]): string {
   if (rows.length === 0) return "(no certifications on profile)";
   return rows
     .map(
       (c) =>
-        `${c.certificate}\t${c.institution}\t${formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)}\t${c.status ?? "—"}\t${c.id}`,
+        `${c.certificate}\t${c.institution}\t${formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear)}\t${c.status ?? "—"}\t${formatSkillsList(c.skills)}\t${c.id}`,
     )
     .join("\n");
 }
@@ -394,16 +398,29 @@ export function formatCertificationListText(rows: profile.certifications.Certifi
  * Pretty-print a list of Certification rows as a cli-table3 table.
  */
 export function formatCertificationListTable(rows: profile.certifications.Certification[]): string {
-  const table = new Table({ head: ["Certificate", "Issuer", "Valid", "Status", "Highlight", "Id"], wordWrap: true });
+  const table = new Table({
+    head: ["Certificate", "Issuer", "Valid", "Status", "Skills", "Highlight", "Id"],
+    wordWrap: true,
+  });
   for (const c of rows) {
     table.push([
       c.certificate,
       c.institution,
       formatValidityRange(c.validFromMonth, c.validFromYear, c.validToMonth, c.validToYear),
       c.status ?? "—",
+      formatSkillsList(c.skills),
       c.highlight ? "yes" : "no",
       c.id,
     ]);
   }
   return table.toString();
+}
+
+/**
+ * Render a `SkillRef[]` as a comma-separated list of skill names, or
+ * the em-dash sentinel when empty. Pure — no I/O.
+ */
+function formatSkillsList(skills: { id: string; name: string }[]): string {
+  if (skills.length === 0) return "—";
+  return skills.map((s) => s.name).join(", ");
 }
