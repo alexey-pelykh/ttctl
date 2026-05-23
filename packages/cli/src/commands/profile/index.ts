@@ -18,6 +18,7 @@ import { buildProfilePortfolioCommand } from "./portfolio/index.js";
 import { buildProfileResumeCommand } from "./resume/index.js";
 import { buildProfileReviewsCommand } from "./reviews/index.js";
 import { buildProfileSkillsCommand } from "./skills/index.js";
+import { buildProfileSpecializationsCommand } from "./specializations/index.js";
 import { buildProfileVisasCommand } from "./visas/index.js";
 
 /**
@@ -88,6 +89,7 @@ export function buildProfileCommand(): Command {
   profile.addCommand(buildProfileResumeCommand());
   profile.addCommand(buildProfileReviewsCommand());
   profile.addCommand(buildProfileSkillsCommand());
+  profile.addCommand(buildProfileSpecializationsCommand());
   profile.addCommand(buildProfileVisasCommand());
 
   return profile;
