@@ -212,6 +212,91 @@ export function registerIndustriesTools(server: McpServer, ctx: ToolRegistration
   );
 
   server.registerTool(
+    "ttctl_profile_industries_add_connections",
+    {
+      title: "Link industry to employment/portfolio rows (Pattern-6)",
+      description: [
+        "Link a catalog industry to one or more employment and/or portfolio rows so the public profile shows 'Industry X (at company Y, …)' rather than orphan tags. Resolve `industryId` via `ttctl_profile_industries_autocomplete`; resolve `employmentIds` via `ttctl_profile_employment_list` and `portfolioItemIds` via `ttctl_profile_portfolio_list`. At least one of `employmentIds` / `portfolioItemIds` is required.",
+        "",
+        "**DESTRUCTIVE**: this writes recruiter-visible industry tags onto profile rows. The caller MUST set `profileCapabilityConsentIssued: true` to authorize the mutation. See ADR-009 (ttctl) for the per-domain consent vocabulary.",
+        "",
+        "**INFERRED — UNVERIFIED**: the `AddProfileIndustryConnectionsInput` wire shape is recovered from the portal-bundle decompile (gateway-portal SDL declares only `{ _placeholder: String }`); the live API is the only authority. Wire-shape stability is locked post-merge via the T1 snapshot at `packages/e2e/src/wire-snapshots/AddProfileIndustryConnections.snapshot.json`.",
+      ].join("\n"),
+      inputSchema: {
+        industryId: z
+          .string()
+          .min(1)
+          .describe("Catalog Industry id (V1-Industry-<n>). Resolve via ttctl_profile_industries_autocomplete."),
+        employmentIds: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Employment row ids (V1-Employment-<n>) to link to this industry. Resolve via ttctl_profile_employment_list.",
+          ),
+        portfolioItemIds: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Portfolio item ids (V1-PortfolioItem-<n>) to link to this industry. Resolve via ttctl_profile_portfolio_list.",
+          ),
+        profileCapabilityConsentIssued: z
+          .literal(true)
+          .describe(
+            "REQUIRED — MUST be `true`. Acknowledges this is a destructive profile-capability action (writes recruiter-visible industry tags onto profile rows). See ADR-009 (ttctl) § Decision Part 1 for the per-domain consent vocabulary.",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+      annotations: {
+        destructiveHint: true,
+      },
+    },
+    async (input) => {
+      const auth = await ctx.resolveTokenForTool("profile.industries.add-connections");
+      if ("error" in auth) return auth.error;
+
+      const profileItems = [...(input.employmentIds ?? []), ...(input.portfolioItemIds ?? [])];
+      if (profileItems.length === 0) {
+        return presentToolError(
+          "profile.industries.add-connections",
+          new Error("at least one of employmentIds or portfolioItemIds is required"),
+        );
+      }
+
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "AddProfileIndustryConnections",
+            "mobile-gateway",
+            {
+              input: {
+                profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER,
+                industriesConnections: [
+                  {
+                    industryId: input.industryId,
+                    profileItems,
+                  },
+                ],
+              },
+            },
+            auth.token,
+          ),
+        );
+      }
+
+      try {
+        const result = await profile.industries.addConnections(
+          auth.token,
+          [{ industryId: input.industryId, profileItems }],
+          { profileCapabilityConsentIssued: input.profileCapabilityConsentIssued },
+        );
+        return jsonSuccess(result);
+      } catch (err) {
+        return presentToolError("profile.industries.add-connections", err);
+      }
+    },
+  );
+
+  server.registerTool(
     "ttctl_profile_industries_autocomplete",
     {
       title: "Search industries catalog",
