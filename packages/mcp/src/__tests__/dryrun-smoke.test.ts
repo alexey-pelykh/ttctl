@@ -215,8 +215,13 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_external_readiness: {},
   ttctl_profile_external_recommendations: {},
   ttctl_profile_external_update: { linkedin: "https://linkedin.com/in/jdoe" },
-  // profile.industries (6, +show #342)
+  // profile.industries (7, +show #342, +add_connections #465)
   ttctl_profile_industries_add: { name: "Healthcare" },
+  ttctl_profile_industries_add_connections: {
+    industryId: "V1-Industry-Fintech",
+    employmentIds: ["V1-Employment-E1"],
+    profileCapabilityConsentIssued: true,
+  },
   ttctl_profile_industries_autocomplete: { query: "Health" },
   ttctl_profile_industries_list: {},
   ttctl_profile_industries_remove: { id: "ind_123" },
@@ -304,7 +309,7 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 119 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 120 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
@@ -316,8 +321,10 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     // availability-request-detail tool (#442):
     // applications_availability_request_show + 1 new interview-guide
     // tool (#470): applications_interview_guide_show + 1 new
-    // specializations read (#466): profile_specializations_show.
-    expect(Object.keys(tools)).toHaveLength(119);
+    // specializations read (#466): profile_specializations_show + 1
+    // new Pattern-6 connection helper (#465):
+    // profile_industries_add_connections.
+    expect(Object.keys(tools)).toHaveLength(120);
   });
 
   it("every registered tool has a fixture", () => {

@@ -45,12 +45,13 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_skills_list",
   "ttctl_profile_skills_autocomplete",
   "ttctl_profile_skills_readiness",
-  // industries (#74, +show #342)
+  // industries (#74, +show #342, +add-connections #465)
   "ttctl_profile_industries_add",
   "ttctl_profile_industries_update",
   "ttctl_profile_industries_remove",
   "ttctl_profile_industries_show",
   "ttctl_profile_industries_list",
+  "ttctl_profile_industries_add_connections",
   "ttctl_profile_industries_autocomplete",
   // education (#74, +list #341)
   "ttctl_profile_education_add",
@@ -228,7 +229,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (119 tools = 62 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the EXPECTED_TOOLS set (120 tools = 63 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #465 industries_add_connections] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

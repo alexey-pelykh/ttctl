@@ -12,7 +12,7 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { add, autocomplete, list, remove, show, update } from "../index.js";
+import { add, addConnections, autocomplete, list, remove, show, update } from "../index.js";
 import { impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
 import { VIEWER_OK } from "../../__tests__/fixtures.js";
@@ -323,5 +323,171 @@ describe("autocomplete", () => {
     });
     const r = await autocomplete(TOKEN, "X");
     expect(r).toHaveLength(1);
+  });
+});
+
+describe("addConnections (Pattern-6 industry ↔ employment/portfolio link)", () => {
+  const CONSENT = { profileCapabilityConsentIssued: true } as const;
+
+  /**
+   * Standard happy-path response. Mirrors the captured selection set —
+   * `{ success, notice, errors, profile: { id, portfolioItems.nodes[], employments.nodes[] } }`
+   * — with one employment and one portfolio row each carrying the
+   * newly-linked industry.
+   */
+  function addConnectionsBody(): unknown {
+    return {
+      data: {
+        addProfileIndustryConnections: {
+          success: true,
+          notice: null,
+          errors: null,
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  id: "V1-PortfolioItem-PF1",
+                  title: "Acme Banking Platform",
+                  industries: { nodes: [{ id: "V1-Industry-Fintech", name: "Fintech" }] },
+                },
+              ],
+            },
+            employments: {
+              nodes: [
+                {
+                  id: "V1-Employment-E1",
+                  company: "Acme Bank",
+                  industries: { nodes: [{ id: "V1-Industry-Fintech", name: "Fintech" }] },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+  }
+
+  it("refuses without profileCapabilityConsentIssued (ADR-009 gate)", async () => {
+    await expect(
+      addConnections(
+        TOKEN,
+        [{ industryId: "V1-Industry-Fintech", profileItems: ["V1-Employment-E1"] }],
+        // Cast bypasses the static `true` literal to exercise the runtime gate.
+        {} as unknown as { profileCapabilityConsentIssued: true },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONSENT_REQUIRED",
+      domain: "profile-capability",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("refuses when links is empty (VALIDATION_ERROR)", async () => {
+    await expect(addConnections(TOKEN, [], CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("refuses when an entry has no profileItems (VALIDATION_ERROR)", async () => {
+    await expect(
+      addConnections(TOKEN, [{ industryId: "V1-Industry-Fintech", profileItems: [] }], CONSENT),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("refuses when an entry has an empty industryId (VALIDATION_ERROR)", async () => {
+    await expect(
+      addConnections(TOKEN, [{ industryId: "", profileItems: ["V1-Employment-E1"] }], CONSENT),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("dispatches AddProfileIndustryConnections on the gateway with Pattern-6 wire shape", async () => {
+    // extractProfileId via mobile-gateway viewer query.
+    replyStock({ body: VIEWER_OK });
+    // mutation response (also on the gateway / stock transport).
+    replyStock({ body: addConnectionsBody() });
+
+    const result = await addConnections(
+      TOKEN,
+      [
+        {
+          industryId: "V1-Industry-Fintech",
+          profileItems: ["V1-Employment-E1", "V1-PortfolioItem-PF1"],
+        },
+      ],
+      CONSENT,
+    );
+
+    // The mutation call is the SECOND stock call (extractProfileId is the first).
+    const mutationCall = mockedStock.mock.calls[1]?.[0] as TransportRequest;
+    expect(mutationCall.surface).toBe("mobile-gateway");
+    expect(mutationCall.body.operationName).toBe("AddProfileIndustryConnections");
+    expect(mutationCall.body.variables).toEqual({
+      input: {
+        profileId: "p1",
+        industriesConnections: [
+          {
+            industryId: "V1-Industry-Fintech",
+            profileItems: ["V1-Employment-E1", "V1-PortfolioItem-PF1"],
+          },
+        ],
+      },
+    });
+
+    expect(result.notice).toBeNull();
+    expect(result.employments).toEqual([
+      {
+        id: "V1-Employment-E1",
+        title: null,
+        company: "Acme Bank",
+        industries: [{ id: "V1-Industry-Fintech", name: "Fintech" }],
+      },
+    ]);
+    expect(result.portfolioItems).toEqual([
+      {
+        id: "V1-PortfolioItem-PF1",
+        title: "Acme Banking Platform",
+        company: null,
+        industries: [{ id: "V1-Industry-Fintech", name: "Fintech" }],
+      },
+    ]);
+  });
+
+  it("propagates USER_ERROR from the mutation payload's errors array", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyStock({
+      body: {
+        data: {
+          addProfileIndustryConnections: {
+            success: false,
+            notice: null,
+            errors: [{ code: "INVALID", key: "industryId", message: "unknown industry" }],
+            profile: null,
+          },
+        },
+      },
+    });
+
+    await expect(
+      addConnections(TOKEN, [{ industryId: "V1-Industry-Unknown", profileItems: ["V1-Employment-E1"] }], CONSENT),
+    ).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("unknown industry"),
+    });
+  });
+
+  it("propagates GRAPHQL_ERROR on top-level errors[]", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyStock({
+      body: {
+        errors: [{ message: "no permission" }],
+      },
+    });
+
+    await expect(
+      addConnections(TOKEN, [{ industryId: "V1-Industry-Fintech", profileItems: ["V1-Employment-E1"] }], CONSENT),
+    ).rejects.toMatchObject({ code: "GRAPHQL_ERROR" });
   });
 });

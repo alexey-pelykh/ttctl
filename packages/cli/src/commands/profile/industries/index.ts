@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { profile } from "@ttctl/core";
+import { TtctlError, profile } from "@ttctl/core";
 import { Command, Option } from "commander";
 
+import { presentTtctlError } from "../../../errors.js";
 import {
   emitAddSuccess,
   emitErrorAndExit,
@@ -11,6 +12,7 @@ import {
   emitUpdateSuccess,
   wrapListEnvelope,
 } from "../../../lib/envelopes.js";
+import type { EnvelopeError } from "../../../lib/envelopes.js";
 import { OUTPUT_FORMATS, emitResult } from "../../../lib/output.js";
 import type { OutputFormat } from "../../../lib/output.js";
 import { loadAuthTokenOrExit, parseLimitOrExit, presentSubDomainError } from "../shared.js";
@@ -128,7 +130,62 @@ export function buildProfileIndustriesCommand(): Command {
       await runAutocomplete(query, options);
     });
 
+  industries
+    .command("add-connections")
+    .description(
+      "Link a catalog industry to one or more employment and/or portfolio rows (Pattern-6 connection helper). " +
+        "Resolve --industry-id via `profile industries autocomplete`; resolve --employment-id via " +
+        "`profile employment list` and --portfolio-item-id via `profile portfolio list`. Repeat the flags " +
+        "to link multiple profile items in a single call.",
+    )
+    .requiredOption(
+      "--industry-id <id>",
+      "catalog industry id (V1-Industry-<n>) — resolve via `profile industries autocomplete`",
+    )
+    .option(
+      "--employment-id <id>",
+      "employment row id (V1-Employment-<n>) to link to this industry. Repeatable.",
+      collectRepeated,
+      [] as string[],
+    )
+    .option(
+      "--portfolio-item-id <id>",
+      "portfolio item id (V1-PortfolioItem-<n>) to link to this industry. Repeatable.",
+      collectRepeated,
+      [] as string[],
+    )
+    .option(
+      "--consent-profile-capability",
+      "REQUIRED. Acknowledge this is a destructive profile-capability action — writes recruiter-visible industry tags onto profile rows. See ADR-009 (ttctl) for the per-domain consent vocabulary.",
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(
+      async (options: {
+        industryId: string;
+        employmentId: string[];
+        portfolioItemId: string[];
+        consentProfileCapability?: boolean;
+        output: OutputFormat;
+      }) => {
+        await runAddConnections(options);
+      },
+    );
+
   return industries;
+}
+
+/**
+ * commander.js option-collector — accumulates each `--employment-id <id>`
+ * / `--portfolio-item-id <id>` invocation into an array so the caller
+ * can link N profile rows to a single industry in one CLI call. Default
+ * is `[] as string[]` (see option registrations above).
+ */
+function collectRepeated(value: string, previous: string[]): string[] {
+  return previous.concat([value]);
 }
 
 interface AddOptions {
@@ -237,6 +294,89 @@ async function runList(format: OutputFormat): Promise<void> {
   });
 }
 
+async function runAddConnections(options: {
+  industryId: string;
+  employmentId: string[];
+  portfolioItemId: string[];
+  consentProfileCapability?: boolean;
+  output: OutputFormat;
+}): Promise<void> {
+  const profileItems = [...options.employmentId, ...options.portfolioItemId];
+  if (profileItems.length === 0) {
+    emitErrorAndExit({
+      operation: "profile.industries.add-connections",
+      format: options.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "at least one --employment-id or --portfolio-item-id is required",
+        },
+      ],
+      prettySummary:
+        "profile industries add-connections failed (VALIDATION_ERROR): at least one --employment-id or --portfolio-item-id is required",
+    });
+  }
+
+  const token = await loadAuthTokenOrExit("profile industries add-connections", options.output);
+
+  // Static type narrows to literal-true; the widening cast lets the
+  // `false` (= operator omits the flag) case reach the runtime gate at
+  // the service entry, which raises ConsentRequiredError. Mirrors the
+  // submit-for-review CLI handler.
+  const consent = {
+    profileCapabilityConsentIssued: options.consentProfileCapability ?? false,
+  } as unknown as { profileCapabilityConsentIssued: true };
+
+  let result: profile.industries.AddIndustryConnectionsResult;
+  try {
+    result = await profile.industries.addConnections(
+      token,
+      [{ industryId: options.industryId, profileItems }],
+      consent,
+    );
+  } catch (err) {
+    handleAddConnectionsError(err, options.output);
+    return;
+  }
+
+  emitUpdateSuccess({
+    operation: "profile.industries.add-connections",
+    format: options.output,
+    updated: result,
+    prettySummary: `Linked industry ${options.industryId} to ${profileItems.length.toString()} profile item(s).`,
+    prettyEntity: formatAddConnectionsResultText,
+    notice: result.notice ?? undefined,
+  });
+}
+
+function handleAddConnectionsError(err: unknown, format: OutputFormat): never {
+  if (err instanceof TtctlError) {
+    if (format === "pretty") presentTtctlError(err);
+    const errors: EnvelopeError[] = [{ code: err.code, message: err.message, hint: err.recovery }];
+    emitErrorAndExit({
+      operation: "profile.industries.add-connections",
+      format,
+      errors,
+      exitCode: err.code === "CF_403_CLEARANCE" || err.code === "CF_403_PERSISTENT" ? 2 : 1,
+    });
+  }
+  if (err instanceof profile.basic.ProfileError) {
+    emitErrorAndExit({
+      operation: "profile.industries.add-connections",
+      format,
+      errors: [{ code: err.code, message: err.message }],
+      prettySummary: `profile industries add-connections failed (${err.code}): ${err.message}`,
+    });
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  emitErrorAndExit({
+    operation: "profile.industries.add-connections",
+    format,
+    errors: [{ code: "INTERNAL_ERROR", message }],
+    prettySummary: `profile industries add-connections failed: ${message}`,
+  });
+}
+
 async function runAutocomplete(query: string, options: { limit: string; output: OutputFormat }): Promise<void> {
   const limit = parseLimitOrExit(options.limit, "profile industries autocomplete", options.output);
   const token = await loadAuthTokenOrExit("profile industries autocomplete", options.output);
@@ -294,4 +434,31 @@ export function formatCatalogText(rows: profile.industries.IndustryCatalogEntry[
 export function formatCatalogTable(rows: profile.industries.IndustryCatalogEntry[]): string {
   if (rows.length === 0) return "(no matches)";
   return rows.map((r) => `${r.id}\t${r.name}`).join("\n");
+}
+
+/**
+ * Pretty-print an `addConnections` result. Lists each linked employment
+ * and portfolio row with its post-link industry tags so the operator can
+ * verify the link materialized.
+ */
+export function formatAddConnectionsResultText(result: profile.industries.AddIndustryConnectionsResult): string {
+  const lines: string[] = [];
+  if (result.employments.length > 0) {
+    lines.push("Employments:");
+    for (const e of result.employments) {
+      const tags = e.industries.map((i) => i.name).join(", ");
+      lines.push(`  - ${e.company ?? "(no company)"} (${e.id})`);
+      if (tags) lines.push(`      industries: ${tags}`);
+    }
+  }
+  if (result.portfolioItems.length > 0) {
+    lines.push("Portfolio items:");
+    for (const p of result.portfolioItems) {
+      const tags = p.industries.map((i) => i.name).join(", ");
+      lines.push(`  - ${p.title ?? "(no title)"} (${p.id})`);
+      if (tags) lines.push(`      industries: ${tags}`);
+    }
+  }
+  if (lines.length === 0) lines.push("(no items returned)");
+  return lines.join("\n");
 }
