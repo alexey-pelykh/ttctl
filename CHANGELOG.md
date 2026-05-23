@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`profile.employment.list` / `profile.employment.show`: expose
+  `engagement` (link to `TalentEngagement`) and `isEnterpriseExperience`
+  on `Employment` read shape (#554).** Two well-known fields on
+  `Employment` (`research/graphql/talent_profile/schema.graphql:269-290`)
+  were `Unknown`-typed in synth SDL but selected by the upstream canonical
+  fragment at
+  `research/graphql/talent_profile/fragments/Employment.graphql:36-38`.
+  Extends `EMPLOYMENT_FRAGMENT` with `engagement { id }` and
+  `isEnterpriseExperience`, projects through `mapEmploymentNode` with
+  defensive shape guards (engagement-without-string-id collapses to
+  `null`; non-Boolean `isEnterpriseExperience` collapses to `null`).
+  Wire-shape disposition: Schema/contract rule **triggered** with
+  **INFERRED** wire shape; Track 1 (wire-shape snapshot at
+  `packages/e2e/src/wire-snapshots/GET_WORK_EXPERIENCE.snapshot.json`)
+  for ongoing drift detection. Pre-existing
+  `43-profile-employment.e2e.test.ts` already exercises
+  `GET_WORK_EXPERIENCE` post-projection wire shape via
+  `assertWireShapeStable`; the new fields land inside the same shape
+  contract automatically.
+  - **CLI renderer changes**: `formatEmploymentText` (per-row pretty)
+    surfaces an `enterprise` line (when `true`) and an `engagement:
+<id>` discovery hint (when set). `formatEmploymentTable` (key/value)
+    gains two rows: `enterprise` and `engagement`.
+    `formatEmploymentListTable` gains an `Enterprise` column with
+    tri-state `yes` / `no` / `—` rendering (the em-dash represents
+    the nullable older / non-applicable case).
+  - **MCP**: `ttctl_profile_employment_list` /
+    `ttctl_profile_employment_show` return the row verbatim via
+    `jsonSuccess`; the new fields flow through automatically via
+    interface-based serialization. The `_list` tool description now
+    mentions the engagement / enterprise fields so MCP-side agents can
+    answer "Which of my Toptal employments were Toptal engagements?"
+    style prompts.
 - **`profile.employment.update` / `profile.portfolio.update`: expose
   `skills` on the update path (MCP tools + CLI subcommands, #541).**
   The core `EmploymentFields.skills` (`packages/core/src/services/profile/employment/index.ts`)

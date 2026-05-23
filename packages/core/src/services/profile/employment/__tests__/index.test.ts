@@ -87,6 +87,11 @@ const EMP_1_MAPPED = {
   employerId: null,
   skills: [],
   managementExperience: null,
+  // #554: when the wire omits engagement and isEnterpriseExperience, the
+  // mapper projects null for both — mirrors the publicationPermit / reportingTo
+  // defaults above. Exercises the typeof-guarded null-default branch.
+  engagement: null,
+  isEnterpriseExperience: null,
 };
 
 // EMP_2: the four #344 fields PRESENT in their nested wire shape —
@@ -109,6 +114,10 @@ const EMP_2 = {
   reportingTo: "VP Engineering",
   industries: { nodes: [{ id: "V1-Industry-1", name: "Software" }] },
   primaryGeography: { id: "V1-Geo-1", code: "US", name: "United States" },
+  // #554: wire-side `engagement { id }` projects to `{ id: string }`;
+  // `isEnterpriseExperience` is a primitive Boolean on the wire.
+  engagement: { id: "V1-TalentEngagement-7" },
+  isEnterpriseExperience: true,
 };
 
 // EMP_2 and its mapped form differ in fields that get projected from
@@ -1010,6 +1019,71 @@ describe("mapEmploymentNode projection (#344)", () => {
     expect(e?.industries).toEqual([{ id: "ok", name: "Fintech" }]);
     // primaryGeography with no string `id` projects to null.
     expect(e?.primaryGeography).toBeNull();
+  });
+});
+
+describe("mapEmploymentNode projection (#554 engagement + isEnterpriseExperience)", () => {
+  it("projects engagement {id} and a Boolean isEnterpriseExperience verbatim", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_2] } } } } });
+
+    const [e] = await list(TOKEN);
+    expect(e?.engagement).toEqual({ id: "V1-TalentEngagement-7" });
+    expect(e?.isEnterpriseExperience).toBe(true);
+  });
+
+  it("defaults engagement and isEnterpriseExperience to null when the wire omits them", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", employments: { nodes: [EMP_1] } } } } });
+
+    const [e] = await list(TOKEN);
+    expect(e?.engagement).toBeNull();
+    expect(e?.isEnterpriseExperience).toBeNull();
+  });
+
+  it("collapses an engagement object without a string id to null", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            employments: {
+              nodes: [
+                {
+                  ...EMP_1,
+                  // Wire sent an engagement object but the id slot is non-string;
+                  // defensive mapper collapses to null rather than fabricating a partial.
+                  engagement: { id: 99 },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const [e] = await list(TOKEN);
+    expect(e?.engagement).toBeNull();
+  });
+
+  it("collapses a non-boolean isEnterpriseExperience value to null", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            employments: {
+              nodes: [{ ...EMP_1, isEnterpriseExperience: "true" }],
+            },
+          },
+        },
+      },
+    });
+
+    const [e] = await list(TOKEN);
+    expect(e?.isEnterpriseExperience).toBeNull();
   });
 });
 

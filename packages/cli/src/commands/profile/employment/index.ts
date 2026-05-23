@@ -525,6 +525,7 @@ export function formatEmploymentText(e: profile.employment.Employment): string {
     }
   }
   if (e.highlight) lines.push(`  highlighted`);
+  if (e.isEnterpriseExperience === true) lines.push(`  enterprise`);
   if (e.reportingTo !== null && e.reportingTo !== "") lines.push(`  reports to: ${e.reportingTo}`);
   if (e.industries.length > 0) {
     lines.push(`  industries: ${e.industries.map((i) => i.name).join(", ")}`);
@@ -536,6 +537,7 @@ export function formatEmploymentText(e: profile.employment.Employment): string {
   if (e.publicationPermit !== null) {
     lines.push(`  public: ${e.publicationPermit ? "yes" : "no"}`);
   }
+  if (e.engagement !== null) lines.push(`  engagement: ${e.engagement.id}`);
   lines.push(`  id: ${e.id}`);
   return lines.join("\n");
 }
@@ -558,6 +560,8 @@ export function formatEmploymentTable(e: profile.employment.Employment): string 
     ["reportingTo", e.reportingTo ?? ""],
     ["industries", e.industries.map((i) => i.name).join(", ")],
     ["primaryGeography", geo],
+    ["enterprise", e.isEnterpriseExperience === null ? "" : e.isEnterpriseExperience.toString()],
+    ["engagement", e.engagement?.id ?? ""],
   ];
   return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
 }
@@ -580,11 +584,25 @@ export function formatEmploymentListText(rows: profile.employment.Employment[]):
 
 /**
  * Pretty-print a list of Employment rows as a cli-table3 table.
+ *
+ * The `Enterprise` column surfaces `Employment.isEnterpriseExperience`
+ * (#554) as a compact tri-state: `yes` (true), `no` (false), `—` (null
+ * — older / non-applicable rows).
  */
 export function formatEmploymentListTable(rows: profile.employment.Employment[]): string {
-  const table = new Table({ head: ["Position", "Company", "Years", "Highlight", "Id"], wordWrap: true });
+  const table = new Table({
+    head: ["Position", "Company", "Years", "Highlight", "Enterprise", "Id"],
+    wordWrap: true,
+  });
   for (const e of rows) {
-    table.push([e.position, e.company, formatYearRange(e.startDate, e.endDate), e.highlight ? "yes" : "no", e.id]);
+    table.push([
+      e.position,
+      e.company,
+      formatYearRange(e.startDate, e.endDate),
+      e.highlight ? "yes" : "no",
+      e.isEnterpriseExperience === null ? "—" : e.isEnterpriseExperience ? "yes" : "no",
+      e.id,
+    ]);
   }
   return table.toString();
 }

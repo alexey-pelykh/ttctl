@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-21T16:43:01.524Z",
+  "capturedAt": "2026-05-23T17:55:00.000Z",
   "operationName": "GET_WORK_EXPERIENCE",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -30,6 +30,9 @@
             "kind": "number"
           }
         },
+        "engagement": {
+          "kind": "null"
+        },
         "experienceItems": {
           "kind": "array",
           "item": {
@@ -55,6 +58,9 @@
               }
             }
           }
+        },
+        "isEnterpriseExperience": {
+          "kind": "boolean"
         },
         "managementExperience": {
           "kind": "object",

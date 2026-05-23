@@ -206,6 +206,8 @@ export function buildMinimalProfile(): ProfileFixture {
     employerId: null,
     skills: [],
     managementExperience: null,
+    engagement: null,
+    isEnterpriseExperience: null,
   };
 
   const minimalEducation: Education = {
