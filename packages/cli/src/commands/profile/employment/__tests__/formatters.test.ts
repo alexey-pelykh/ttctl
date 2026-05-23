@@ -43,6 +43,15 @@ const FULL: profile.employment.Employment = {
   primaryGeography: { id: "V1-Geo-1", code: "US", name: "United States" },
   engagement: { id: "V1-TalentEngagement-42" },
   isEnterpriseExperience: true,
+  employer: {
+    id: "V1-Employer-1",
+    name: "Globex Corp",
+    city: "Springfield",
+    country: "United States",
+    logoUrl: "https://globex.test/logo.png",
+    employeeCount: 4200,
+    industries: [{ id: "V1-Industry-1", name: "Software" }],
+  },
 };
 
 const BARE: profile.employment.Employment = {
@@ -63,6 +72,7 @@ const BARE: profile.employment.Employment = {
   primaryGeography: null,
   engagement: null,
   isEnterpriseExperience: null,
+  employer: null,
 };
 
 describe("formatEmploymentText (#344 fields)", () => {
@@ -175,6 +185,78 @@ describe("formatEmploymentListTable (#554 Enterprise column)", () => {
     // Each value appears at least once in the table body.
     expect(out).toContain("yes");
     expect(out).toContain("no");
+    expect(out).toContain("—");
+  });
+});
+
+describe("formatEmploymentText (#555 employer card)", () => {
+  it("renders the employer header with name, location, and employee count", () => {
+    const out = formatEmploymentText(FULL);
+    expect(out).toContain("employer: Globex Corp (Springfield, United States; ~4200 employees)");
+  });
+
+  it("renders the logo and employer-industries sub-lines when present", () => {
+    const out = formatEmploymentText(FULL);
+    expect(out).toContain("logo: https://globex.test/logo.png");
+    expect(out).toContain("employer industries: Software");
+  });
+
+  it("omits the employer block entirely when there is no catalog employer", () => {
+    const out = formatEmploymentText(BARE);
+    expect(out).not.toContain("employer:");
+    expect(out).not.toContain("employer industries:");
+  });
+
+  it("omits the employee-count clause when the count is null but keeps the location", () => {
+    const out = formatEmploymentText({
+      ...FULL,
+      employer: {
+        id: "V1-Employer-1",
+        name: "Globex Corp",
+        city: "Springfield",
+        country: "United States",
+        logoUrl: "https://globex.test/logo.png",
+        employeeCount: null,
+        industries: [{ id: "V1-Industry-1", name: "Software" }],
+      },
+    });
+    expect(out).toContain("employer: Globex Corp (Springfield, United States)");
+    expect(out).not.toContain("employees");
+  });
+});
+
+describe("formatEmploymentTable (#555 employer rows)", () => {
+  it("emits one key/value row per employer-card field when present", () => {
+    const out = formatEmploymentTable(FULL);
+    expect(out).toContain("employer\tGlobex Corp");
+    expect(out).toContain("employerCity\tSpringfield");
+    expect(out).toContain("employerCountry\tUnited States");
+    expect(out).toContain("employerLogo\thttps://globex.test/logo.png");
+    expect(out).toContain("employeeCount\t4200");
+    expect(out).toContain("employerIndustries\tSoftware");
+  });
+
+  it("emits empty values for every employer row when there is no catalog employer", () => {
+    const out = formatEmploymentTable(BARE);
+    expect(out).toContain("employer\t");
+    expect(out).toContain("employerCity\t");
+    expect(out).toContain("employerCountry\t");
+    expect(out).toContain("employerLogo\t");
+    expect(out).toContain("employeeCount\t");
+    expect(out).toContain("employerIndustries\t");
+  });
+});
+
+describe("formatEmploymentListTable (#555 Employees column)", () => {
+  it("renders the Employees column header", () => {
+    const out = formatEmploymentListTable([FULL]);
+    expect(out).toContain("Employees");
+  });
+
+  it("renders the count for a hydrated employer and an em-dash when absent", () => {
+    const out = formatEmploymentListTable([FULL, BARE]);
+    // FULL → 4200; BARE → no employer → em-dash.
+    expect(out).toContain("4200");
     expect(out).toContain("—");
   });
 });
