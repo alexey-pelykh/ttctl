@@ -34,6 +34,7 @@ const FULL_ITEM: profile.portfolio.PortfolioItem = {
   skills: [],
   industries: [],
   details: null,
+  files: [],
 };
 
 const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
@@ -53,6 +54,7 @@ const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
   skills: [],
   industries: [],
   details: null,
+  files: [],
 };
 
 const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
@@ -72,6 +74,7 @@ const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
   skills: [],
   industries: [],
   details: null,
+  files: [],
 };
 
 describe("formatPortfolioPretty", () => {
@@ -237,6 +240,80 @@ describe("formatPortfolioPretty", () => {
   it("skips the Details line when the item has no body block (details=null)", () => {
     const out = formatPortfolioPretty([MINIMAL_ITEM]);
     expect(out).not.toContain("Details:");
+  });
+
+  // #549: `files` attachment rendering — a `Files (N):` header plus one
+  // row per file with kind, URL, and optional title.
+  it("renders attached files: PDF (fileUrl) and Image (optimized URL) rows", () => {
+    const withFiles: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      files: [
+        {
+          kind: "pdf",
+          id: "f-1",
+          title: "Case study",
+          description: null,
+          contentType: "application/pdf",
+          fileUrl: "https://cdn.example/case.pdf",
+          primaryContentType: "pdf",
+        },
+        {
+          kind: "image",
+          id: "f-2",
+          title: null,
+          description: null,
+          contentType: "image/png",
+          image: { thumbUrl: "https://cdn.example/t.png", optimizedUrl: "https://cdn.example/o.png" },
+        },
+      ],
+    };
+    const out = formatPortfolioPretty([withFiles]);
+    expect(out).toContain("    Files (2 files):");
+    expect(out).toContain("      - PDF: https://cdn.example/case.pdf — Case study");
+    expect(out).toContain("      - Image: https://cdn.example/o.png");
+  });
+
+  it("uses the singular `file` noun for a single attachment and falls back to thumbUrl", () => {
+    const oneFile: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      files: [
+        {
+          kind: "image",
+          id: "f-1",
+          title: null,
+          description: null,
+          contentType: "image/png",
+          image: { thumbUrl: "https://cdn.example/thumb.png", optimizedUrl: null },
+        },
+      ],
+    };
+    const out = formatPortfolioPretty([oneFile]);
+    expect(out).toContain("    Files (1 file):");
+    expect(out).toContain("      - Image: https://cdn.example/thumb.png");
+  });
+
+  it("renders `(no url)` when a PDF file has no fileUrl", () => {
+    const noUrl: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      files: [
+        {
+          kind: "pdf",
+          id: "f-1",
+          title: null,
+          description: null,
+          contentType: null,
+          fileUrl: null,
+          primaryContentType: null,
+        },
+      ],
+    };
+    const out = formatPortfolioPretty([noUrl]);
+    expect(out).toContain("      - PDF: (no url)");
+  });
+
+  it("skips the Files line when the item has no attachments (files=[])", () => {
+    const out = formatPortfolioPretty([MINIMAL_ITEM]);
+    expect(out).not.toContain("Files");
   });
 });
 

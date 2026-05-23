@@ -108,6 +108,7 @@ export const PORTFOLIO_DISTRIBUTED_LEDGER: PortfolioItem = {
   skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
   industries: [{ id: "ind_test_finance", name: "Financial Software" }],
   details: null,
+  files: [],
 };
 
 export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
@@ -130,6 +131,7 @@ export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
   skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
   industries: [{ id: "ind_test_healthcare", name: "Healthcare Software" }],
   details: null,
+  files: [],
 };
 
 export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
@@ -152,6 +154,7 @@ export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
   skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
   industries: [{ id: "ind_test_software", name: "Software" }],
   details: null,
+  files: [],
 };
 
 // -----------------------------------------------------------------------
