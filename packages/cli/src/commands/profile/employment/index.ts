@@ -101,7 +101,8 @@ export function buildProfileEmploymentCommand(): Command {
     .option("--website <url>", "company website")
     .option(
       "--description <text>",
-      'multi-paragraph description (inline text, "-" for stdin, or "@path" to read from file)',
+      'multi-paragraph description (inline text, "-" for stdin, or "@path" to read from file). ' +
+        "Each paragraph (split on blank lines) must be 50-250 characters; the Toptal server rejects out-of-range items (#492).",
     )
     .option("--edit", "open $EDITOR to compose the description (cannot be combined with --description)", false)
     .option("--highlight <bool>", "set highlight flag (true|false)")

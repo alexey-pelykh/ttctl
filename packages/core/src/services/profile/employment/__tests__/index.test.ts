@@ -21,6 +21,7 @@ import {
   remove,
   show,
   update,
+  validateExperienceItems,
 } from "../index.js";
 import type { Employment } from "../index.js";
 import { impersonatedTransport, stockTransport } from "../../../../transport.js";
@@ -874,12 +875,16 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
   });
 
   it("lets user-supplied required-non-null fields override the current-derived defaults", () => {
+    // Each paragraph must be 50-250 chars (#492 server-side gate) — use
+    // realistic in-range content so the validator does not trip here.
+    const para1 = "Led a team of five engineers on a payment-platform migration project.";
+    const para2 = "Owned the wire-shape regression test pipeline across three downstream services.";
     const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
-      experienceItems: ["paragraph 1", "paragraph 2"],
+      experienceItems: [para1, para2],
       showViaToptal: false,
       startDate: 2025,
     });
-    expect(merged.experienceItems).toEqual(["paragraph 1", "paragraph 2"]);
+    expect(merged.experienceItems).toEqual([para1, para2]);
     expect(merged.showViaToptal).toBe(false);
     expect(merged.startDate).toBe(2025);
     // skills preserved from current (EMP_1_MAPPED.skills is []).
@@ -1080,5 +1085,234 @@ describe("employerAutocomplete", () => {
     replyImpersonated({ body: { data: { employersAutocomplete: null } } });
     const results = await employerAutocomplete(TOKEN, "ZZZ");
     expect(results).toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------
+// #492 — server-side 50-250 char/item gate on experienceItems.
+//
+// Toptal's `talent_profile/graphql` rejects per-item paragraphs that
+// are < 50 or >= 250 characters with USER_ERROR:
+//   `employment add rejected (experienceItems): Each item must have at
+//    least 50 and less than 250 characters`.
+//
+// Pre-#492 ttctl did NOT validate client-side. The dryRun preview
+// accepted any item length, so an agentic / batch caller drafting a
+// description got false confidence — the dryRun read `ok: true`, the
+// live call rejected. Closing it requires:
+//   - core's `add()` and `buildUpdateEmploymentInput()` to validate
+//     BEFORE the wire call AND BEFORE the dryRun branch
+//   - a 250-char string (the upper-bound boundary) MUST fail
+//     ("less than 250" is server wording; the gate is strict-less-than)
+// -------------------------------------------------------------------
+describe("validateExperienceItems (#492)", () => {
+  const longEnough = (n: number, char = "a") => char.repeat(n);
+
+  it("accepts an empty array (the wire allows experienceItems: [])", () => {
+    expect(() => {
+      validateExperienceItems([]);
+    }).not.toThrow();
+  });
+
+  it("accepts a single item exactly at the lower bound (50 chars)", () => {
+    expect(() => {
+      validateExperienceItems([longEnough(50)]);
+    }).not.toThrow();
+  });
+
+  it("accepts a single item at the upper-bound interior (249 chars)", () => {
+    expect(() => {
+      validateExperienceItems([longEnough(249)]);
+    }).not.toThrow();
+  });
+
+  it("rejects a 49-char item (just below the lower bound)", () => {
+    expect(() => {
+      validateExperienceItems([longEnough(49)]);
+    }).toThrow(/49 characters/);
+  });
+
+  it("rejects a 250-char item (server's exclusive upper bound)", () => {
+    // The server message reads "less than 250 characters" — strict
+    // less-than. 250 itself is rejected.
+    expect(() => {
+      validateExperienceItems([longEnough(250)]);
+    }).toThrow(/250 characters/);
+  });
+
+  it("rejects an empty-string item (length 0 < 50)", () => {
+    expect(() => {
+      validateExperienceItems([""]);
+    }).toThrow(/0 characters/);
+  });
+
+  it("names the offending paragraph's index when it sits mid-array", () => {
+    expect(() => {
+      validateExperienceItems([longEnough(60), longEnough(70), longEnough(300), longEnough(80)]);
+    }).toThrow(/experienceItems\[2\] is 300 characters/);
+  });
+
+  it("error message includes a truncated preview of the offender", () => {
+    const tooLong = "X".repeat(300);
+    expect(() => {
+      validateExperienceItems([tooLong]);
+    }).toThrow(/Offending paragraph: "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\.\.\."/);
+  });
+
+  it("throws ProfileError with VALIDATION_ERROR code", () => {
+    expect(() => {
+      validateExperienceItems(["too short"]);
+    }).toThrow(
+      expect.objectContaining({
+        code: "VALIDATION_ERROR",
+      }) as unknown as Error,
+    );
+  });
+});
+
+describe("add — #492 experienceItems length gate", () => {
+  it("rejects a too-long paragraph BEFORE firing any transport (apply path)", async () => {
+    const tooLong = "A".repeat(300);
+    await expect(
+      add(TOKEN, {
+        company: "Globex",
+        position: "Senior Engineer",
+        employerId: "V1-Employer-9",
+        experienceItems: [tooLong],
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/experienceItems\[0\] is 300 characters/) as unknown,
+    });
+    // The gate must fire before any wire I/O — no list, no autocomplete,
+    // no mutation.
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a too-short paragraph in dryRun (the false-confidence gap from #492)", async () => {
+    const tooShort = "short text";
+    // Even on dry-run, the validator must fire — pre-#492 the dryRun
+    // would have returned ok:true and the live wire would have
+    // rejected. Now both paths reject identically.
+    await expect(
+      add(
+        TOKEN,
+        {
+          company: "Globex",
+          position: "Senior Engineer",
+          employerId: "V1-Employer-9",
+          experienceItems: [tooShort],
+        },
+        { dryRun: true },
+      ),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/experienceItems\[0\] is 10 characters/) as unknown,
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a 250-char paragraph (strict upper bound — 'less than 250 characters')", async () => {
+    await expect(
+      add(
+        TOKEN,
+        {
+          company: "Globex",
+          position: "Senior Engineer",
+          employerId: "V1-Employer-9",
+          experienceItems: ["B".repeat(250)],
+        },
+        { dryRun: true },
+      ),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/250 characters/) as unknown,
+    });
+  });
+
+  it("rejects when ONE item in a multi-paragraph array is out of range (mid-array offender)", async () => {
+    await expect(
+      add(TOKEN, {
+        company: "Globex",
+        position: "Senior Engineer",
+        employerId: "V1-Employer-9",
+        experienceItems: [
+          "A".repeat(60),
+          "B".repeat(70),
+          "C".repeat(40), // below the lower bound
+          "D".repeat(80),
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/experienceItems\[2\] is 40 characters/) as unknown,
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("accepts an in-range multi-paragraph array (boundary 50 + interior 249) on dryRun", async () => {
+    const outcome = await add(
+      TOKEN,
+      {
+        company: "Globex",
+        position: "Senior Engineer",
+        employerId: "V1-Employer-9",
+        experienceItems: ["A".repeat(50), "B".repeat(120), "C".repeat(249)],
+      },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    const vars = outcome.preview.variables as {
+      input: { employment: { experienceItems: string[] } };
+    };
+    expect(vars.input.employment.experienceItems).toHaveLength(3);
+    // No autocomplete fires (explicit employerId bypass + dry-run).
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildUpdateEmploymentInput — #492 experienceItems length gate", () => {
+  function fromMapped(mapped: typeof EMP_1_MAPPED): Employment {
+    return mapped as Employment;
+  }
+
+  it("rejects a too-long paragraph supplied by the caller (the false-confidence gap from #492)", () => {
+    expect(() =>
+      buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
+        experienceItems: ["X".repeat(300)],
+      }),
+    ).toThrow(/experienceItems\[0\] is 300 characters/);
+  });
+
+  it("rejects a too-short paragraph supplied by the caller", () => {
+    expect(() =>
+      buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
+        experienceItems: ["short"],
+      }),
+    ).toThrow(/experienceItems\[0\] is 5 characters/);
+  });
+
+  it("preserves current.experienceItems through the merge when caller omits the field (no validation needed)", () => {
+    // Pre-#492 sanity: when the caller does NOT supply experienceItems,
+    // the merge injects current.experienceItems verbatim (server-vetted
+    // state already; the validator is for caller-supplied input). The
+    // length gate must NOT trip on the read-current echo path even if
+    // the current row carries items outside the bounds (which can
+    // happen for legacy data).
+    const legacyShort = { ...EMP_1_MAPPED, experienceItems: ["legacy"] } as Employment;
+    const merged = buildUpdateEmploymentInput(legacyShort, { position: "Lead" });
+    expect(merged.experienceItems).toEqual(["legacy"]);
+  });
+
+  it("accepts caller-supplied in-range items (boundary 50 + interior 249)", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), {
+      experienceItems: ["A".repeat(50), "B".repeat(249)],
+    });
+    expect(merged.experienceItems).toEqual(["A".repeat(50), "B".repeat(249)]);
   });
 });

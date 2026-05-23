@@ -100,7 +100,11 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         description: z
           .string()
           .optional()
-          .describe("multi-paragraph description; split on blank lines into experienceItems"),
+          .describe(
+            "multi-paragraph description; split on blank lines into experienceItems. " +
+              "Each paragraph must be 50-250 characters — the Toptal server rejects out-of-range items with USER_ERROR (#492). " +
+              "ttctl validates client-side before EITHER apply or dryRun, so the dryRun preview is a trustworthy pre-flight gate.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -199,7 +203,14 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
         to: dateInput.optional(),
         current: z.boolean().optional(),
         website: z.url().optional(),
-        description: z.string().optional(),
+        description: z
+          .string()
+          .optional()
+          .describe(
+            "Multi-paragraph free-text; split on blank lines into experienceItems. " +
+              "Each paragraph must be 50-250 characters — the Toptal server rejects out-of-range items with USER_ERROR (#492). " +
+              "ttctl validates client-side before EITHER apply or dryRun, so the dryRun preview is a trustworthy pre-flight gate.",
+          ),
         highlight: z.boolean().optional(),
         industryIds: z
           .array(z.string())
@@ -272,6 +283,19 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       if (input.publicationPermit !== undefined) fields.publicationPermit = input.publicationPermit;
       if (input.showViaToptal !== undefined) fields.showViaToptal = input.showViaToptal;
       if (input.toptalRelated !== undefined) fields.toptalRelated = input.toptalRelated;
+
+      // #492 — server-side 50-250 char/item gate fires on EITHER path
+      // (apply or dryRun). The apply path routes through
+      // `update()` → `buildUpdateEmploymentInput()` which runs the same
+      // gate; the dryRun branch below does NOT call
+      // `buildUpdateEmploymentInput`, so we run the validator here too.
+      if (fields.experienceItems !== undefined) {
+        try {
+          profile.employment.validateExperienceItems(fields.experienceItems);
+        } catch (err) {
+          return presentToolError("profile.employment.update", err);
+        }
+      }
 
       if (input.dryRun === true) {
         // Dry-run preview shows the full merged shape — the wire-required
