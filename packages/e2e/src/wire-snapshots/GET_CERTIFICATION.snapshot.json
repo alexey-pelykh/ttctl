@@ -33,6 +33,20 @@
                 "number": {
                   "kind": "null"
                 },
+                "skills": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "object",
+                    "fields": {
+                      "id": {
+                        "kind": "string"
+                      },
+                      "name": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                },
                 "status": {
                   "kind": "string"
                 },

@@ -236,6 +236,10 @@ export const CERT_AWS_PRO: Certification = {
   validToYear: 2026,
   highlight: true,
   status: "valid",
+  skills: [
+    { id: "skill_test_aws_pro_1", name: "AWS" },
+    { id: "skill_test_aws_pro_2", name: "Cloud Architecture" },
+  ],
 };
 
 export const CERT_CKAD: Certification = {
@@ -250,6 +254,7 @@ export const CERT_CKAD: Certification = {
   validToYear: 2025,
   highlight: false,
   status: "expired",
+  skills: [],
 };
 
 // -----------------------------------------------------------------------
