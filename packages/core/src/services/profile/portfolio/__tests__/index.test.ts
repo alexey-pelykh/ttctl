@@ -818,6 +818,191 @@ describe("portfolio.list", () => {
     expect(items[0]?.kpis).toEqual([]);
     expect(items[1]?.kpis).toEqual([]);
   });
+
+  // #551: `quotes` direct-list selection — talent-authored client /
+  // stakeholder testimonials. Wire shape verified by live probe 2026-05-23:
+  // `quotes { id text clientName clientRole company }` (direct list, NOT a
+  // connection; element type `PortfolioItemQuote`; the issue's guessed
+  // `quote`/`attribution`/`role` were rejected on the wire).
+  it("selects quotes as a direct list with id/text/clientName/clientRole/company (#551)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({ body: { data: { profile: { id: "p1", portfolioItems: { nodes: [] } } } } });
+
+    await list(TOKEN);
+
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const query = call.body.query;
+    // quotes is a direct list, NOT a connection — the live probe confirmed
+    // `quotes { nodes }` errors with "Field 'nodes' doesn't exist on type
+    // 'PortfolioItemQuote'". The selection must use the direct shape.
+    expect(query).toMatch(/quotes\s*\{\s*id\s+text\s+clientName\s+clientRole\s+company\s*\}/);
+    expect(query).not.toMatch(/quotes\s*\{\s*nodes\s*\{/);
+  });
+
+  it("projects quotes=[] when the wire returns null quotes (item has no quotes)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, quotes: null }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.quotes).toEqual([]);
+  });
+
+  it("projects quotes=[] when the wire returns an empty list", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, quotes: [] }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.quotes).toEqual([]);
+  });
+
+  it("projects a populated quote entry preserving all fields", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  quotes: [
+                    {
+                      id: "q-1",
+                      text: "Shipped on time and under budget.",
+                      clientName: "Jane Doe",
+                      clientRole: "VP Engineering",
+                      company: "Acme",
+                    },
+                    {
+                      id: "q-2",
+                      text: "A pleasure to work with.",
+                      clientName: "John Roe",
+                      clientRole: "CTO",
+                      company: "Globex",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.quotes).toEqual([
+      {
+        id: "q-1",
+        text: "Shipped on time and under budget.",
+        clientName: "Jane Doe",
+        clientRole: "VP Engineering",
+        company: "Acme",
+      },
+      {
+        id: "q-2",
+        text: "A pleasure to work with.",
+        clientName: "John Roe",
+        clientRole: "CTO",
+        company: "Globex",
+      },
+    ]);
+  });
+
+  it("projects quote entries with nullable text/clientName/clientRole/company", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  quotes: [
+                    { id: "q-1", text: null, clientName: "Jane Doe", clientRole: null, company: null },
+                    { id: "q-2", text: "Great work", clientName: null, clientRole: "CTO", company: null },
+                    { id: "q-3", text: null, clientName: null, clientRole: null, company: null },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.quotes).toEqual([
+      { id: "q-1", text: null, clientName: "Jane Doe", clientRole: null, company: null },
+      { id: "q-2", text: "Great work", clientName: null, clientRole: "CTO", company: null },
+      { id: "q-3", text: null, clientName: null, clientRole: null, company: null },
+    ]);
+  });
+
+  it("drops quote entries with missing or non-string id (siblings preserved)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  quotes: [
+                    { id: 42, text: "non-string id", clientName: null, clientRole: null, company: null },
+                    { text: "missing id", clientName: null, clientRole: null, company: null },
+                    { id: "q-keep", text: "good entry", clientName: "Jane", clientRole: "PM", company: "Acme" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.quotes).toEqual([
+      { id: "q-keep", text: "good entry", clientName: "Jane", clientRole: "PM", company: "Acme" },
+    ]);
+  });
+
+  it("projects quotes=[] when the wire returns a non-array (defensive)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                { ...PORTFOLIO_NODE, quotes: { unexpected: "shape" } },
+                { ...PORTFOLIO_NODE, id: "pi2", quotes: "string-not-array" },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.quotes).toEqual([]);
+    expect(items[1]?.quotes).toEqual([]);
+  });
 });
 
 describe("portfolio.add", () => {
