@@ -503,6 +503,14 @@ export async function add(token: string, fields: EmploymentFields, options: AddO
     );
   }
 
+  // #492 — server-side 50-250 char/item gate. Validate client-side
+  // before EITHER the apply or dryRun path so the dryRun preview is a
+  // trustworthy pre-flight gate. (Fires after the anchor / contradiction
+  // guards above so the more-specific shape errors still surface first.)
+  if (fields.experienceItems !== undefined) {
+    validateExperienceItems(fields.experienceItems);
+  }
+
   // Resolve employerId BEFORE branching on dryRun so the preview's wire
   // shape matches what the live mutation would transmit (#395 explicit
   // AC). The autocomplete query is a read, not a mutation — it fires in
@@ -670,6 +678,63 @@ function formatCandidate(m: EmployerSuggestion): string {
 }
 
 /**
+ * Server-side length bounds on each `experienceItem` paragraph (#492).
+ *
+ * Toptal's `talent_profile/graphql` server enforces a per-paragraph
+ * length rule on `employment.experienceItems`: each item must be
+ * **between 50 and 250 characters** (inclusive lower bound, exclusive
+ * upper bound — empirically the server message reads "at least 50 and
+ * less than 250 characters"). Violating it returns:
+ *
+ *   `employment add rejected (experienceItems): Each item must have at
+ *    least 50 and less than 250 characters`
+ *
+ * The constraint is server-side, so pre-#492 it surfaced only on live
+ * mutations — the dryRun preview passed, the live call rejected. This
+ * gives false confidence on agentic / batch flows that compose
+ * descriptions from prose. Validating client-side closes that gap for
+ * both apply and dryRun.
+ */
+const EXPERIENCE_ITEM_MIN_CHARS = 50;
+const EXPERIENCE_ITEM_MAX_CHARS = 250;
+
+/**
+ * Validate each `experienceItem` paragraph against the server's
+ * 50–250 char/item rule (#492). Throws `ProfileError(VALIDATION_ERROR)`
+ * on the first offender, naming its index, length, and a truncated
+ * preview so the caller can locate the offending paragraph.
+ *
+ * Empty arrays pass silently (the server accepts `experienceItems: []`
+ * — the wire-required-non-null gate is on the FIELD's presence, not on
+ * any per-item content). Whitespace-only items are out of band — the
+ * `splitParagraphs` helper drops them upstream; this validator does NOT
+ * re-trim before measuring (the wire shape captures whatever the caller
+ * passed verbatim, modulo the splitter).
+ *
+ * Exported so the MCP `update` tool can run the same gate before
+ * building its dryRun preview (the dryRun branch in the MCP layer does
+ * NOT route through `buildUpdateEmploymentInput`, so the core's
+ * embedded check would not fire there).
+ */
+export function validateExperienceItems(items: readonly string[]): void {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item === undefined) continue; // noUncheckedIndexedAccess guard; unreachable.
+    const len = item.length;
+    if (len < EXPERIENCE_ITEM_MIN_CHARS || len >= EXPERIENCE_ITEM_MAX_CHARS) {
+      const preview = item.length > 40 ? `${item.slice(0, 37)}...` : item;
+      throw new ProfileError(
+        "VALIDATION_ERROR",
+        `experienceItems[${i.toString()}] is ${len.toString()} characters; ` +
+          `each paragraph must be between ${EXPERIENCE_ITEM_MIN_CHARS.toString()} and ${EXPERIENCE_ITEM_MAX_CHARS.toString()} characters ` +
+          `(the Toptal server rejects out-of-range items with USER_ERROR on the live wire). ` +
+          `Offending paragraph: "${preview}"`,
+      );
+    }
+  }
+}
+
+/**
  * Placeholder string substituted into a dry-run `UpdateEmployment`
  * preview's variables payload for fields that the apply-path resolves by
  * reading the current row (`experienceItems`, `position`, `skills`,
@@ -757,6 +822,13 @@ export const DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER = "<resolved at send-time by r
 export function buildUpdateEmploymentInput(current: Employment, fields: EmploymentFields): EmploymentFields {
   if (Object.keys(fields).length === 0) {
     throw new ProfileError("VALIDATION_ERROR", "employment update requires at least one field flag.");
+  }
+  // #492 — same server-side 50-250 char/item gate that applies to add().
+  // Catches mistakes before the wire so the live mutation is not the
+  // first place a too-long paragraph surfaces. Caller-supplied items
+  // only — the read-current echo path is server-vetted state already.
+  if (fields.experienceItems !== undefined) {
+    validateExperienceItems(fields.experienceItems);
   }
   const startDate = fields.startDate ?? current.startDate;
   if (startDate === null) {
