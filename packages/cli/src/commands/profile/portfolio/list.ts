@@ -179,7 +179,43 @@ function renderPortfolioItem(it: profile.portfolio.PortfolioItem): string {
     lines.push(renderMultiParagraph("Accomplishment", it.accomplishment, detailIndent));
   }
 
+  // `details` (#548) is the structured body block — Image / Text /
+  // Video / Gallery. Skip-if-null (most items have no body block).
+  // A one-line per-variant summary plus an optional title — the body
+  // content (full HAST tree, every gallery item URL) is reserved for
+  // a future `portfolio show` deep view; here we keep the list dense.
+  if (it.details !== null) {
+    lines.push(renderDetailsSummary(it.details, detailIndent));
+  }
+
   return lines.join("\n");
+}
+
+/**
+ * Render a one-line `Details:` summary for the variant: `<Kind>: <body>`
+ * with an optional ` — <title>` suffix. Kept compact so the list view
+ * stays scannable; future `portfolio show` can hydrate the full body
+ * (text-block HAST traversal, gallery thumbnails, etc.).
+ */
+function renderDetailsSummary(d: profile.portfolio.PortfolioItemDetails, indent: string): string {
+  const suffix = d.title !== null && d.title !== "" ? ` — ${d.title}` : "";
+  switch (d.kind) {
+    case "image": {
+      const url = d.image?.optimizedUrl ?? d.image?.thumbUrl ?? null;
+      const body = url ?? "(no url)";
+      return `${indent}Details: Image: ${body}${suffix}`;
+    }
+    case "text":
+      // HAST tree is opaque; surface its presence without serializing it.
+      return `${indent}Details: Text${d.contentHast !== null ? " (rich body)" : ""}${suffix}`;
+    case "video":
+      return `${indent}Details: Video: ${d.videoUrl ?? "(no url)"}${suffix}`;
+    case "gallery": {
+      const count = d.items.length;
+      const noun = count === 1 ? "item" : "items";
+      return `${indent}Details: Gallery (${count.toString()} ${noun})${suffix}`;
+    }
+  }
 }
 
 /**

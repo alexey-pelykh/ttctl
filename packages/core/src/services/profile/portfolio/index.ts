@@ -135,6 +135,92 @@ export interface PortfolioItemInput {
 }
 
 /**
+ * `PortfolioItem.details` body block — the structured project narrative
+ * the talent authored. The wire surface is a GraphQL union resolved via
+ * `__typename` discrimination across four concrete variants (Image,
+ * Text, Video, Gallery), each carrying a different content shape.
+ *
+ * **[INFERRED — schema-synth understated]** The synthesized SDL at
+ * `research/graphql/talent_profile/schema.graphql:380` declares
+ * `details: PortfolioItemImageBlock` as a singular concrete type, but
+ * empirical operations on the talent-profile surface use inline
+ * fragments to project four variants:
+ *
+ *   ```graphql
+ *   details {
+ *     __typename
+ *     ... on PortfolioItemImageBlock   { id title image { thumbUrl optimizedUrl } }
+ *     ... on PortfolioItemTextBlock    { id title contentHast }
+ *     ... on PortfolioItemVideoBlock   { id title videoUrl }
+ *     ... on PortfolioItemGalleryBlock { id title items { id image { thumbUrl optimizedUrl } contentType } }
+ *   }
+ *   ```
+ *
+ * (sources: `research/graphql/talent_profile/fragments/Portfolio.graphql`,
+ * `PortfolioItem{Image,Text,Video,Gallery}Block.graphql`; live operation
+ * `research/captures/web/operations/getProfileData.graphql:237-244`).
+ * The SDL synthesis sees only the first concrete type from the
+ * introspection root, hence the understated declaration.
+ *
+ * `kind` is the lowercase variant discriminator projected by
+ * {@link projectDetails} from the wire `__typename`. Unknown
+ * `__typename` values, null details, or shape mismatches collapse to
+ * `null` — silently absent body content rather than a fabricated shape.
+ * The `assertWireShapeStable` snapshot at
+ * `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+ * catches `__typename` drift across releases.
+ */
+export type PortfolioItemDetails =
+  | PortfolioImageBlock
+  | PortfolioTextBlock
+  | PortfolioVideoBlock
+  | PortfolioGalleryBlock;
+
+export interface PortfolioImageBlock {
+  kind: "image";
+  id: string;
+  title: string | null;
+  image: { thumbUrl: string | null; optimizedUrl: string | null } | null;
+}
+
+export interface PortfolioTextBlock {
+  kind: "text";
+  id: string;
+  title: string | null;
+  /**
+   * Hypertext Abstract Syntax Tree (HAST) — opaque structured content
+   * tree representing the formatted text body. Shape is the
+   * `unist`/`hast` JSON spec (a `root` node with child nodes for
+   * paragraphs, headings, emphasis, etc.). Surfaced as `unknown` because
+   * the synth SDL declares the field as `Unknown` and the live shape
+   * carries arbitrary depth — callers that need the rendered body should
+   * traverse the tree or hand off to a `hast-util-to-text` consumer. Set
+   * to `null` if the wire returned a non-object.
+   */
+  contentHast: unknown;
+}
+
+export interface PortfolioVideoBlock {
+  kind: "video";
+  id: string;
+  title: string | null;
+  videoUrl: string | null;
+}
+
+export interface PortfolioGalleryBlock {
+  kind: "gallery";
+  id: string;
+  title: string | null;
+  items: PortfolioGalleryItem[];
+}
+
+export interface PortfolioGalleryItem {
+  id: string;
+  contentType: string | null;
+  image: { thumbUrl: string | null; optimizedUrl: string | null } | null;
+}
+
+/**
  * Read-side portfolio item shape — projection of the `Portfolio` fragment.
  * Service callers receive this on `list()` / mutation responses; the
  * mutation responses also surface the full mutated list on `profile.portfolioItems.nodes`.
@@ -142,6 +228,12 @@ export interface PortfolioItemInput {
  * The `kind`, `skills`, and `industries` fields are populated for callers
  * that need the full state (e.g. {@link update}'s read-modify-write
  * path); the server enforces these as non-null on `update` mutations.
+ *
+ * `details` (#548) carries the structured project-narrative body — see
+ * {@link PortfolioItemDetails}. `null` when the item has no body block
+ * attached (typical for freshly-created items); the four block variants
+ * (`image` / `text` / `video` / `gallery`) carry distinct shapes the
+ * caller discriminates via the `kind` field.
  */
 export interface PortfolioItem {
   id: string;
@@ -159,6 +251,7 @@ export interface PortfolioItem {
   kind: PortfolioItemKind | null;
   skills: SkillRef[];
   industries: { id: string; name: string }[];
+  details: PortfolioItemDetails | null;
 }
 
 interface TalentProfileResponse<T> {
@@ -208,6 +301,93 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
     kind,
     skills,
     industries,
+    details: projectDetails(node["details"]),
+  };
+}
+
+/**
+ * Wire `__typename` → surface `kind` discriminator. Centralized so the
+ * mapping is auditable from one place when the server adds new variants.
+ */
+const DETAILS_TYPENAME_TO_KIND = {
+  PortfolioItemImageBlock: "image",
+  PortfolioItemTextBlock: "text",
+  PortfolioItemVideoBlock: "video",
+  PortfolioItemGalleryBlock: "gallery",
+} as const satisfies Record<string, PortfolioItemDetails["kind"]>;
+
+/**
+ * Defensively project the `details` wire field into a typed
+ * {@link PortfolioItemDetails}. Returns `null` when the wire returned
+ * `null`/missing (item has no body block), the value isn't an object,
+ * `__typename` is absent or unrecognized (a new server variant we
+ * haven't taught the projection about), or `id` is missing — silently
+ * absent body content rather than a fabricated shape. The `__typename`
+ * regression itself surfaces loudly via the
+ * `createPortfolioItem.snapshot.json` snapshot.
+ *
+ * Per-variant nested-field shape mismatches degrade to `null`/`""`
+ * within the variant rather than failing the whole projection — the
+ * top-level `kind` discriminator is the contract; sub-field types are
+ * INFERRED and can shift independently of the variant identity.
+ */
+function projectDetails(raw: unknown): PortfolioItemDetails | null {
+  if (raw === null || raw === undefined || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const typename = obj["__typename"];
+  if (typeof typename !== "string") return null;
+  const kind = (DETAILS_TYPENAME_TO_KIND as Record<string, PortfolioItemDetails["kind"] | undefined>)[typename];
+  if (kind === undefined) return null;
+  const id = obj["id"];
+  if (typeof id !== "string") return null;
+  const title = typeof obj["title"] === "string" ? obj["title"] : null;
+  switch (kind) {
+    case "image":
+      return { kind: "image", id, title, image: projectImage(obj["image"]) };
+    case "text":
+      return {
+        kind: "text",
+        id,
+        title,
+        // HAST tree shape is opaque — pass through as-is if object, else
+        // null. The caller decides whether to traverse or hand off.
+        contentHast: typeof obj["contentHast"] === "object" && obj["contentHast"] !== null ? obj["contentHast"] : null,
+      };
+    case "video":
+      return {
+        kind: "video",
+        id,
+        title,
+        videoUrl: typeof obj["videoUrl"] === "string" ? obj["videoUrl"] : null,
+      };
+    case "gallery": {
+      const items = Array.isArray(obj["items"])
+        ? obj["items"].flatMap((it): PortfolioGalleryItem[] => {
+            if (it === null || typeof it !== "object") return [];
+            const rec = it as Record<string, unknown>;
+            const itemId = rec["id"];
+            if (typeof itemId !== "string") return [];
+            return [
+              {
+                id: itemId,
+                contentType: typeof rec["contentType"] === "string" ? rec["contentType"] : null,
+                image: projectImage(rec["image"]),
+              },
+            ];
+          })
+        : [];
+      return { kind: "gallery", id, title, items };
+    }
+  }
+}
+
+/** Project the `{ thumbUrl, optimizedUrl }` image sub-shape. Both fields nullable. */
+function projectImage(raw: unknown): { thumbUrl: string | null; optimizedUrl: string | null } | null {
+  if (raw === null || raw === undefined || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  return {
+    thumbUrl: typeof obj["thumbUrl"] === "string" ? obj["thumbUrl"] : null,
+    optimizedUrl: typeof obj["optimizedUrl"] === "string" ? obj["optimizedUrl"] : null,
   };
 }
 
@@ -320,6 +500,13 @@ const PORTFOLIO_NODE_SELECTION = `
   kind
   skills { nodes { id name } }
   industries { nodes { id name } }
+  details {
+    __typename
+    ... on PortfolioItemImageBlock { id title image { thumbUrl optimizedUrl } }
+    ... on PortfolioItemTextBlock { id title contentHast }
+    ... on PortfolioItemVideoBlock { id title videoUrl }
+    ... on PortfolioItemGalleryBlock { id title items { id contentType image { thumbUrl optimizedUrl } } }
+  }
 `;
 
 const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {
