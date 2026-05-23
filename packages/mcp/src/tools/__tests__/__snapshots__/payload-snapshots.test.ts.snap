@@ -633,7 +633,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
         "id": "ind_test_finance",
         "name": "Financial Software"
       }
-    ]
+    ],
+    "details": null
   },
   {
     "id": "port_test_002",
@@ -660,7 +661,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
         "id": "ind_test_healthcare",
         "name": "Healthcare Software"
       }
-    ]
+    ],
+    "details": null
   },
   {
     "id": "port_test_003",
@@ -687,7 +689,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
         "id": "ind_test_software",
         "name": "Software"
       }
-    ]
+    ],
+    "details": null
   }
 ]"
 `;
@@ -719,7 +722,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: single portfolio
         "id": "ind_test_finance",
         "name": "Financial Software"
       }
-    ]
+    ],
+    "details": null
   }
 ]"
 `;

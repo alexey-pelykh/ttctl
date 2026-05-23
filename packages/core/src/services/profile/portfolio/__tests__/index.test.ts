@@ -174,6 +174,242 @@ describe("portfolio.list", () => {
 
     await expect(list(TOKEN)).rejects.toBeInstanceOf(AuthRevokedError);
   });
+
+  it("selects details with inline fragments for all four block variants (#548)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({ body: { data: { profile: { id: "p1", portfolioItems: { nodes: [] } } } } });
+
+    await list(TOKEN);
+
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const query = call.body.query;
+    // Top-level `details` selector and __typename discriminator are
+    // load-bearing — without them the projection cannot tell variants
+    // apart and collapses every body block to null.
+    expect(query).toMatch(/details\s*\{/);
+    expect(query).toMatch(/__typename/);
+    expect(query).toMatch(/\.\.\.\s*on\s+PortfolioItemImageBlock/);
+    expect(query).toMatch(/\.\.\.\s*on\s+PortfolioItemTextBlock/);
+    expect(query).toMatch(/\.\.\.\s*on\s+PortfolioItemVideoBlock/);
+    expect(query).toMatch(/\.\.\.\s*on\s+PortfolioItemGalleryBlock/);
+  });
+
+  it("projects details=null when the wire returns null body (item has no block)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, details: null }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.details).toBeNull();
+  });
+
+  it("projects details as an image block (kind=image, with thumb/optimized URLs)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  details: {
+                    __typename: "PortfolioItemImageBlock",
+                    id: "block-img-1",
+                    title: "Architecture diagram",
+                    image: { thumbUrl: "https://cdn.example/thumb.png", optimizedUrl: "https://cdn.example/opt.png" },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+    const details = items[0]?.details;
+
+    expect(details).toEqual({
+      kind: "image",
+      id: "block-img-1",
+      title: "Architecture diagram",
+      image: { thumbUrl: "https://cdn.example/thumb.png", optimizedUrl: "https://cdn.example/opt.png" },
+    });
+  });
+
+  it("projects details as a text block (kind=text, contentHast preserved as opaque object)", async () => {
+    stubProfileId("p1");
+    const hast = { type: "root", children: [{ type: "element", tagName: "p", children: [] }] };
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  details: {
+                    __typename: "PortfolioItemTextBlock",
+                    id: "block-txt-1",
+                    title: null,
+                    contentHast: hast,
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+    const details = items[0]?.details;
+
+    expect(details).toEqual({ kind: "text", id: "block-txt-1", title: null, contentHast: hast });
+  });
+
+  it("projects details as a video block (kind=video, with videoUrl)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  details: {
+                    __typename: "PortfolioItemVideoBlock",
+                    id: "block-vid-1",
+                    title: "Demo reel",
+                    videoUrl: "https://youtu.be/abc",
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.details).toEqual({
+      kind: "video",
+      id: "block-vid-1",
+      title: "Demo reel",
+      videoUrl: "https://youtu.be/abc",
+    });
+  });
+
+  it("projects details as a gallery block (kind=gallery, with items[])", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  details: {
+                    __typename: "PortfolioItemGalleryBlock",
+                    id: "block-gal-1",
+                    title: "Screens",
+                    items: [
+                      {
+                        id: "gi-1",
+                        contentType: "image/png",
+                        image: { thumbUrl: "https://cdn.example/t1.png", optimizedUrl: "https://cdn.example/o1.png" },
+                      },
+                      { id: "gi-2", contentType: null, image: null },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+    const details = items[0]?.details;
+
+    expect(details).toEqual({
+      kind: "gallery",
+      id: "block-gal-1",
+      title: "Screens",
+      items: [
+        {
+          id: "gi-1",
+          contentType: "image/png",
+          image: { thumbUrl: "https://cdn.example/t1.png", optimizedUrl: "https://cdn.example/o1.png" },
+        },
+        { id: "gi-2", contentType: null, image: null },
+      ],
+    });
+  });
+
+  it("collapses details to null when __typename is unknown (forward-compat with new server variants)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  details: { __typename: "PortfolioItemFutureVariant", id: "block-x", title: "x" },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.details).toBeNull();
+  });
+
+  it("collapses details to null when __typename is missing or id is non-string", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                { ...PORTFOLIO_NODE, id: "p-missing-typename", details: { id: "x", title: "no __typename" } },
+                {
+                  ...PORTFOLIO_NODE,
+                  id: "p-non-string-id",
+                  details: { __typename: "PortfolioItemImageBlock", id: 42, title: "bad id" },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items.find((it) => it.id === "p-missing-typename")?.details).toBeNull();
+    expect(items.find((it) => it.id === "p-non-string-id")?.details).toBeNull();
+  });
 });
 
 describe("portfolio.add", () => {

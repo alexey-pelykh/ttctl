@@ -30,6 +30,10 @@ const FULL_ITEM: profile.portfolio.PortfolioItem = {
   websiteUrl: null,
   toptalRelated: false,
   showViaToptal: false,
+  kind: "classic",
+  skills: [],
+  industries: [],
+  details: null,
 };
 
 const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
@@ -45,6 +49,10 @@ const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
   websiteUrl: null,
   toptalRelated: null,
   showViaToptal: null,
+  kind: null,
+  skills: [],
+  industries: [],
+  details: null,
 };
 
 const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
@@ -60,6 +68,10 @@ const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
   websiteUrl: null,
   toptalRelated: null,
   showViaToptal: null,
+  kind: null,
+  skills: [],
+  industries: [],
+  details: null,
 };
 
 describe("formatPortfolioPretty", () => {
@@ -144,6 +156,87 @@ describe("formatPortfolioPretty", () => {
     // Production callers route empty lists through the empty-state wrapper
     // before reaching the formatter; this branch is for direct callers.
     expect(formatPortfolioPretty([])).toBe("(no portfolio items)");
+  });
+
+  // #548: `details` body block rendering — one-line summary per variant.
+  it("renders Image details with optimizedUrl preferred over thumbUrl", () => {
+    const withImage: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      details: {
+        kind: "image",
+        id: "b-1",
+        title: "Architecture",
+        image: { thumbUrl: "https://cdn.example/thumb.png", optimizedUrl: "https://cdn.example/opt.png" },
+      },
+    };
+    const out = formatPortfolioPretty([withImage]);
+    expect(out).toContain("    Details: Image: https://cdn.example/opt.png — Architecture");
+  });
+
+  it("falls back to thumbUrl when optimizedUrl is null and omits title suffix when title is null", () => {
+    const noOpt: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      details: {
+        kind: "image",
+        id: "b-1",
+        title: null,
+        image: { thumbUrl: "https://cdn.example/thumb.png", optimizedUrl: null },
+      },
+    };
+    const out = formatPortfolioPretty([noOpt]);
+    expect(out).toContain("    Details: Image: https://cdn.example/thumb.png");
+    expect(out).not.toContain(" — ");
+  });
+
+  it("renders Text details with a `(rich body)` marker when contentHast is present", () => {
+    const withText: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      details: { kind: "text", id: "b-2", title: "Project notes", contentHast: { type: "root", children: [] } },
+    };
+    const out = formatPortfolioPretty([withText]);
+    expect(out).toContain("    Details: Text (rich body) — Project notes");
+  });
+
+  it("renders Video details with the videoUrl", () => {
+    const withVideo: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      details: { kind: "video", id: "b-3", title: "Demo reel", videoUrl: "https://youtu.be/abc" },
+    };
+    const out = formatPortfolioPretty([withVideo]);
+    expect(out).toContain("    Details: Video: https://youtu.be/abc — Demo reel");
+  });
+
+  it("renders Gallery details with an item-count summary (singular/plural)", () => {
+    const oneItem: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      details: {
+        kind: "gallery",
+        id: "b-4",
+        title: null,
+        items: [{ id: "gi-1", contentType: "image/png", image: null }],
+      },
+    };
+    const threeItems: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      id: "po-gallery-3",
+      details: {
+        kind: "gallery",
+        id: "b-5",
+        title: "Screens",
+        items: [
+          { id: "gi-1", contentType: null, image: null },
+          { id: "gi-2", contentType: null, image: null },
+          { id: "gi-3", contentType: null, image: null },
+        ],
+      },
+    };
+    expect(formatPortfolioPretty([oneItem])).toContain("    Details: Gallery (1 item)");
+    expect(formatPortfolioPretty([threeItems])).toContain("    Details: Gallery (3 items) — Screens");
+  });
+
+  it("skips the Details line when the item has no body block (details=null)", () => {
+    const out = formatPortfolioPretty([MINIMAL_ITEM]);
+    expect(out).not.toContain("Details:");
   });
 });
 
