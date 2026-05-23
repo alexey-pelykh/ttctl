@@ -193,6 +193,7 @@ describe("MCP profile_basic_show — payload snapshots", () => {
     countryId: "country_ua",
     citizenshipId: "country_ua",
     phoneNumber: "+380 50 000 0000",
+    twitter: "testuser",
     softwareSkills: [{ id: "ss_typescript", name: "TypeScript" }],
   };
 
@@ -213,6 +214,7 @@ describe("MCP profile_basic_show — payload snapshots", () => {
       countryId: null,
       citizenshipId: null,
       phoneNumber: null,
+      twitter: null,
       softwareSkills: [],
     };
     expect(extractText(jsonResponse({ profile: PROFILE, basicInfo: emptyBasicInfo }))).toMatchSnapshot();

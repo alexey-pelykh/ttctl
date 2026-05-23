@@ -264,6 +264,7 @@ exports[`MCP profile_basic_show — payload snapshots > payload: BasicShowPayloa
     "countryId": null,
     "citizenshipId": null,
     "phoneNumber": null,
+    "twitter": null,
     "softwareSkills": []
   }
 }"
@@ -414,6 +415,7 @@ exports[`MCP profile_basic_show — payload snapshots > payload: full BasicShowP
     "countryId": "country_ua",
     "citizenshipId": "country_ua",
     "phoneNumber": "+380 50 000 0000",
+    "twitter": "testuser",
     "softwareSkills": [
       {
         "id": "ss_typescript",

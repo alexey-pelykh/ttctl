@@ -77,6 +77,7 @@ const APPLIED_FIXTURE: profile.basic.UpdateProfileResult = {
     id: "p1",
     about: "test bio",
     quote: null,
+    twitter: null,
   },
   notice: null,
 };
@@ -146,6 +147,8 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(inputSchema?.shape["dryRun"]).toBeDefined();
     expect(inputSchema?.shape["bio"]).toBeDefined();
     expect(inputSchema?.shape["headline"]).toBeDefined();
+    // #535 — twitter joined the basic-update input schema.
+    expect(inputSchema?.shape["twitter"]).toBeDefined();
   });
 
   it("forwards `dryRun: true` to profile.basic.set() and emits the uniform #165 dry-run envelope", async () => {
@@ -205,7 +208,7 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(MOCKED_SET.mock.calls[0]?.[2]).toEqual({ dryRun: false });
   });
 
-  it("propagates ProfileError(VALIDATION_ERROR) as an MCP error response when neither bio nor headline supplied", async () => {
+  it("propagates ProfileError(VALIDATION_ERROR) as an MCP error response when none of bio/headline/twitter supplied", async () => {
     const ctx = buildTokenSuccessCtx();
     registerProfileBasicUpdateTool(server, ctx);
     // Real `set()` would throw `ProfileError("VALIDATION_ERROR", ...)` on
@@ -213,7 +216,7 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     MOCKED_SET.mockRejectedValueOnce(
       new profile.basic.ProfileError(
         "VALIDATION_ERROR",
-        "Profile update requires at least one of `bio` or `headline`.",
+        "Profile update requires at least one of `bio`, `headline`, or `twitter`.",
       ),
     );
 
@@ -223,5 +226,43 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("VALIDATION_ERROR");
     expect(result.content[0]?.text).toContain("at least one of");
+  });
+
+  it("forwards `twitter` to profile.basic.set() (basic-owned write surface per #535)", async () => {
+    const ctx = buildTokenSuccessCtx();
+    registerProfileBasicUpdateTool(server, ctx);
+    MOCKED_SET.mockResolvedValueOnce({
+      kind: "applied",
+      result: {
+        profile: { id: "p1", about: "current", quote: "current", twitter: "alexey_pelykh" },
+        notice: null,
+      },
+    });
+
+    const handler = getToolHandler(server, TOOL_NAME);
+    await handler({ twitter: "alexey_pelykh" }, {});
+
+    expect(MOCKED_SET).toHaveBeenCalledTimes(1);
+    expect(MOCKED_SET.mock.calls[0]?.[1]).toEqual({ twitter: "alexey_pelykh" });
+  });
+
+  it("forwards `twitter: null` (the explicit clear intent) verbatim", async () => {
+    const ctx = buildTokenSuccessCtx();
+    registerProfileBasicUpdateTool(server, ctx);
+    MOCKED_SET.mockResolvedValueOnce({
+      kind: "applied",
+      result: {
+        profile: { id: "p1", about: "current", quote: "current", twitter: null },
+        notice: null,
+      },
+    });
+
+    const handler = getToolHandler(server, TOOL_NAME);
+    await handler({ twitter: null }, {});
+
+    expect(MOCKED_SET).toHaveBeenCalledTimes(1);
+    // null is a real intent per ProfileUpdate.twitter's `string | null`
+    // typing — must propagate, not be coerced to undefined.
+    expect(MOCKED_SET.mock.calls[0]?.[1]).toEqual({ twitter: null });
   });
 });

@@ -249,6 +249,7 @@ const BASIC_INFO_FULL: profile.basic.BasicInfo = {
   countryId: "country_uk",
   citizenshipId: "country_uk",
   phoneNumber: "+44 20 0000 0000",
+  twitter: "ada_lovelace",
   softwareSkills: [{ id: "ss_assembly", name: "Assembly" }],
 };
 
@@ -264,6 +265,7 @@ const BASIC_INFO_EMPTY: profile.basic.BasicInfo = {
   countryId: null,
   citizenshipId: null,
   phoneNumber: null,
+  twitter: null,
   softwareSkills: [],
 };
 

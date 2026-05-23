@@ -19,14 +19,21 @@ const TOOL_NAME = "ttctl_profile_basic_update";
 
 /**
  * Register the `ttctl_profile_basic_update` MCP tool. Mirrors the
- * `ttctl profile basic update --bio --headline` CLI leaf — updates the
- * signed-in user's bio and/or headline via the talent-profile surface.
+ * `ttctl profile basic update --bio --headline --twitter` CLI leaf —
+ * updates the signed-in user's bio, headline, and/or twitter handle
+ * via the talent-profile surface.
  *
  * Free-text input modes (stdin / `@file` / `--edit`) are CLI-specific
  * affordances and DO NOT apply here: MCP callers pass the resolved
- * string verbatim. The `bio` and `headline` parameters are both
- * optional; at least one must be supplied (the core layer validates
- * this and raises a `VALIDATION_ERROR` if both are omitted).
+ * string verbatim. The `bio`, `headline`, and `twitter` parameters
+ * are all optional; at least one must be supplied (the core layer
+ * validates this and raises a `VALIDATION_ERROR` if all three are
+ * omitted).
+ *
+ * `twitter` is owned by THIS tool (not the sibling
+ * `ttctl_profile_external_update`) per the #535 wire evidence — see
+ * `ProfileUpdate` in `@ttctl/core`'s `profile.basic` for the cross-
+ * surface rationale.
  *
  * Dry-run path (issue #10, harmonised under #165): when `dryRun: true`
  * is supplied, the tool routes through
@@ -56,13 +63,15 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
     {
       title: "Update profile basic info",
       description: [
-        "Update the signed-in user's profile bio and/or headline. At least one must be supplied.",
+        "Update the signed-in user's profile bio, headline, and/or twitter handle. At least one must be supplied.",
         "Pass `dryRun: true` to preview the request without firing the mutation.",
         "",
         "Example user prompts that should map to this tool:",
         '  - "Update my bio to: Senior backend engineer specialising in Go and PostgreSQL."',
         "  - \"Change my Toptal headline to 'CTO at AcmeCo'.\"",
         '  - "Set my profile bio and headline."',
+        '  - "Set my twitter handle to alexey_pelykh."',
+        '  - "Clear my twitter handle." (call with `twitter: ""` or `twitter: null`)',
         '  - "Show me what would be sent if I changed my bio to X."',
       ].join("\n"),
       inputSchema: {
@@ -77,6 +86,12 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
           .optional()
           .describe(
             "Short tagline shown above the user's photo (single line). Maps to GraphQL `Profile.quote`. Optional.",
+          ),
+        twitter: z
+          .union([z.string(), z.null()])
+          .optional()
+          .describe(
+            'Twitter / X handle as a bare string (e.g. `alexey_pelykh`). No leading `@`, no URL prefix. Maps 1:1 to GraphQL `Profile.twitter`. Optional. Pass `""` or `null` to clear the field; omit the parameter to leave the existing value unchanged.',
           ),
         dryRun: z
           .boolean()
@@ -93,6 +108,7 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
       const changes: profile.basic.ProfileUpdate = {};
       if (input.bio !== undefined) changes.bio = input.bio;
       if (input.headline !== undefined) changes.headline = input.headline;
+      if (input.twitter !== undefined) changes.twitter = input.twitter;
 
       try {
         const outcome = await profile.basic.set(auth.token, changes, { dryRun: input.dryRun ?? false });

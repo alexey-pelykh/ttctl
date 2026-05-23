@@ -51,31 +51,35 @@ const UPDATED: profile.basic.UpdateProfileResult = {
     id: "p1",
     about: "a brand new bio",
     quote: "shorter, sharper, smarter",
+    twitter: "alexey_pelykh",
   },
   notice: null,
 };
 
 describe("formatUpdatePrettyEntity", () => {
-  it("echoes back the new bio and headline using the user-facing flag names", () => {
+  it("echoes back the new bio, headline, and twitter using the user-facing flag names", () => {
     const out = formatUpdatePrettyEntity(UPDATED);
     expect(out).toContain("bio: a brand new bio");
     expect(out).toContain("headline: shorter, sharper, smarter");
+    // #535 — twitter is rendered alongside bio/headline.
+    expect(out).toContain("twitter: alexey_pelykh");
   });
 
   it("omits unchanged-side lines when the server does not return them", () => {
     const partial: profile.basic.UpdateProfileResult = {
-      profile: { id: "p1", about: "only bio", quote: null },
+      profile: { id: "p1", about: "only bio", quote: null, twitter: null },
       notice: null,
     };
     const out = formatUpdatePrettyEntity(partial);
     expect(out).toContain("bio: only bio");
     expect(out).not.toContain("headline:");
+    expect(out).not.toContain("twitter:");
   });
 
   it("trims every line to 80 columns (long-bio truncation must end with ellipsis)", () => {
     const longBio = "x".repeat(200);
     const wide: profile.basic.UpdateProfileResult = {
-      profile: { id: "p1", about: longBio, quote: null },
+      profile: { id: "p1", about: longBio, quote: null, twitter: null },
       notice: null,
     };
     const out = formatUpdatePrettyEntity(wide);
@@ -291,7 +295,7 @@ describe("runProfileBasicUpdate dry-run integration (#52)", () => {
     expect(out).not.toContain("Updated:");
   });
 
-  it("dry-run integration retains the existing validation guard (no --bio / --headline / --edit error)", async () => {
+  it("dry-run integration retains the existing validation guard (no --bio / --headline / --twitter / --edit error)", async () => {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -316,11 +320,84 @@ describe("runProfileBasicUpdate dry-run integration (#52)", () => {
       throw new ExitInvoked(code ?? 0);
     }) as never);
 
-    // No bio/headline/edit — the existing validation should fire BEFORE
-    // any set() call, even on the dry-run path. This guards against
-    // regression where the dry-run short-circuit might inadvertently
-    // skip the validation gate.
+    // No bio/headline/twitter/edit — the existing validation should
+    // fire BEFORE any set() call, even on the dry-run path. This guards
+    // against regression where the dry-run short-circuit might
+    // inadvertently skip the validation gate.
     await expect(runProfileBasicUpdate({ output: "pretty" })).rejects.toBeInstanceOf(ExitInvoked);
     expect(MOCKED_SET).not.toHaveBeenCalled();
+  });
+
+  it("passes a --twitter-only update through to profile.basic.set() (twitter alone clears the validation guard)", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "ttctl-twitter-only-"));
+    const configPath = join(tmpDir, ".ttctl.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "auth:",
+        '  credentials: "op://Personal/ttctl"',
+        '  token: "user_0123456789abcdef0123456789abcdef0123456789abcdef"',
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    process.env["TTCTL_CONFIG_FILE"] = configPath;
+
+    MOCKED_SET.mockResolvedValueOnce({
+      kind: "applied",
+      result: {
+        profile: { id: "p1", about: "current", quote: "current", twitter: "alexey_pelykh" },
+        notice: null,
+      },
+    });
+
+    captureStdout();
+    captureStderr();
+
+    // No bio, no headline, no edit — twitter alone must clear the gate.
+    await runProfileBasicUpdate({ twitter: "alexey_pelykh", output: "json" });
+
+    expect(MOCKED_SET).toHaveBeenCalledTimes(1);
+    const args = MOCKED_SET.mock.calls[0];
+    expect(args?.[1]).toEqual({ twitter: "alexey_pelykh" });
+  });
+
+  it("passes empty-string --twitter as the explicit clear intent (distinct from omission)", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "ttctl-twitter-clear-"));
+    const configPath = join(tmpDir, ".ttctl.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "auth:",
+        '  credentials: "op://Personal/ttctl"',
+        '  token: "user_0123456789abcdef0123456789abcdef0123456789abcdef"',
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    process.env["TTCTL_CONFIG_FILE"] = configPath;
+
+    MOCKED_SET.mockResolvedValueOnce({
+      kind: "applied",
+      result: {
+        profile: { id: "p1", about: "current", quote: "current", twitter: null },
+        notice: null,
+      },
+    });
+
+    captureStdout();
+    captureStderr();
+
+    // Empty string is a real intent on the CLI surface — distinct from
+    // omitting the flag. The handler must pass `""` verbatim, not `undefined`.
+    await runProfileBasicUpdate({ twitter: "", output: "json" });
+
+    expect(MOCKED_SET).toHaveBeenCalledTimes(1);
+    const args = MOCKED_SET.mock.calls[0];
+    expect(args?.[1]).toEqual({ twitter: "" });
   });
 });

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-19T10:07:48.333Z",
+  "capturedAt": "2026-05-23T12:00:00.000Z",
   "operationName": "UPDATE_BASIC_INFO",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -20,6 +20,9 @@
             "kind": "string"
           },
           "quote": {
+            "kind": "string"
+          },
+          "twitter": {
             "kind": "string"
           }
         }
