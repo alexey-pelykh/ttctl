@@ -986,6 +986,24 @@ export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
  * the preview's `headers.authorization` per the security contract
  * documented on {@link DryRunPreview}.
  *
+ * **Account-state precondition (#536)**: the Toptal API gates
+ * `UPDATE_BASIC_INFO` behind an account-state flag — the talent must
+ * have agreed to "receive text messages for important notifications,
+ * like job requests and upcoming interviews" in their account settings
+ * (talent.toptal.com → notifications). When SMS-notification consent
+ * is disabled, the mutation does not "go through" — observed live but
+ * the precise wire failure mode (a `USER_ERROR` with a specific
+ * `code`/`key`, a `success: false` with no error, or an HTTP-layer
+ * rejection) has NOT been empirically captured at this time. The
+ * failure surfaces today via whichever of the {@link ProfileError}
+ * branches below catches it (most likely `USER_ERROR` or
+ * `GRAPHQL_ERROR`); a dedicated domain error code is deferred until a
+ * captured failure response is available (#536 Tier 2). TTCtl
+ * deliberately does NOT expose `UpdateSmsNotificationsSettings` (see
+ * README § Out of scope — abuse-prevention rationale), so the only
+ * remediation path is a one-time toggle by the user in the web UI
+ * before retrying `basic.set`.
+ *
  * Errors:
  * - `ProfileError` with code `VALIDATION_ERROR` when none of `bio`,
  *   `headline`, or `twitter` is supplied — the contract requires at
