@@ -112,11 +112,39 @@ import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
+interface CurationRef {
+  id?: string;
+}
+
 interface IndustryShape {
   id?: string;
   title?: string | null;
   about?: string | null;
   domainArea?: string | null;
+  // Curation cross-reference arrays — added in #553. Each maps to a
+  // per-resource `show` op (employments → profile employment show, etc.).
+  employments?: CurationRef[];
+  educations?: CurationRef[];
+  certifications?: CurationRef[];
+  portfolioItems?: CurationRef[];
+  highlights?: CurationRef[];
+}
+
+/**
+ * Assert the five curation cross-reference arrays are present and
+ * shaped as `CurationRef[]` (post-projection — flat `{ id }` arrays,
+ * NOT the raw `{ nodes: [{ id }] }` connection shape). Used to confirm
+ * the #553 fragment-extension lands cleanly on whichever curated row
+ * the live API returns (even when seed disables the round-trip path
+ * per the documented test-account-state issue).
+ */
+function expectCurationFieldsShape(row: IndustryShape | undefined): void {
+  expect(row).toBeDefined();
+  expect(Array.isArray(row?.employments)).toBe(true);
+  expect(Array.isArray(row?.educations)).toBe(true);
+  expect(Array.isArray(row?.certifications)).toBe(true);
+  expect(Array.isArray(row?.portfolioItems)).toBe(true);
+  expect(Array.isArray(row?.highlights)).toBe(true);
 }
 
 /**
@@ -218,6 +246,18 @@ describe("profile industries (live talent-profile, #321 wire-fix coverage)", () 
       expect(addPayload.created?.title).toBe(catalogTitle);
       expect(addPayload.created?.domainArea).toBe(initialConnection);
       expect(typeof addPayload.created?.id).toBe("string");
+      // #553 — the post-add read-back goes through `list()` which now
+      // projects the five curation arrays; assert their shape on the
+      // returned row. Brand-new industries have empty curation (no
+      // employments/portfolio items have been linked yet), so the
+      // assertion verifies the projection ran AND the arrays land as
+      // empty rather than missing/undefined.
+      expectCurationFieldsShape(addPayload.created);
+      expect(addPayload.created?.employments).toEqual([]);
+      expect(addPayload.created?.educations).toEqual([]);
+      expect(addPayload.created?.certifications).toEqual([]);
+      expect(addPayload.created?.portfolioItems).toEqual([]);
+      expect(addPayload.created?.highlights).toEqual([]);
       const sentinelId = addPayload.created?.id;
       if (sentinelId === undefined) return;
 
@@ -237,6 +277,9 @@ describe("profile industries (live talent-profile, #321 wire-fix coverage)", () 
         expect(found).toBeDefined();
         expect(found?.title).toBe(catalogTitle);
         expect(found?.domainArea).toBe(initialConnection);
+        // #553 — list() also projects curation arrays; verify the
+        // shape lands cleanly on every row returned.
+        expectCurationFieldsShape(found);
 
         // Step 3: update — change the connection.
         const updateResult = await cli.run([
@@ -351,6 +394,14 @@ describe("profile industries (live talent-profile, #321 wire-fix coverage)", () 
     try {
       const rows = await profile.industries.list(token);
       expect(rows.length).toBeGreaterThan(0);
+      // #553 — explicit curation-shape assertion guards against the
+      // projection collapsing the connection sub-fields to undefined
+      // (which would still pass the snapshot if the snapshot itself
+      // captured the broken shape on a UPDATE run). The two checks
+      // — array-shape AND snapshot — are complementary: the array
+      // check is invariant across snapshot lifetime; the snapshot
+      // catches changes to the projected element type.
+      for (const row of rows) expectCurationFieldsShape(row);
       expect(() =>
         assertWireShapeStable({
           operationName: "ListIndustryProfiles",
@@ -373,6 +424,9 @@ describe("profile industries (live talent-profile, #321 wire-fix coverage)", () 
 
     try {
       const row = await profile.industries.show(token, seeded.id);
+      // #553 — explicit curation-shape assertion (see ListIndustryProfiles
+      // sibling above for the rationale).
+      expectCurationFieldsShape(row);
       expect(() =>
         assertWireShapeStable({
           operationName: "GetIndustryProfile",

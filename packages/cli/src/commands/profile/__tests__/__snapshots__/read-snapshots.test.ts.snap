@@ -32,9 +32,9 @@ exports[`profile.external.readiness — read snapshots > readiness payload: part
 
 exports[`profile.industries — read snapshots > list envelope: empty 1`] = `"{"version":"1.0","items":[]}"`;
 
-exports[`profile.industries — read snapshots > list envelope: full profile (2 industries) 1`] = `"{"version":"1.0","items":[{"id":"ind_test_001","title":"Financial services","about":"8 years building ledger, payments, and reconciliation systems for B2B fintech.","domainArea":"Payments and ledger"},{"id":"ind_test_002","title":"Healthcare","about":"4 years on HIPAA-compliant clinical-data infrastructure and FHIR integrations.","domainArea":"Clinical data exchange"}]}"`;
+exports[`profile.industries — read snapshots > list envelope: full profile (2 industries) 1`] = `"{"version":"1.0","items":[{"id":"ind_test_001","title":"Financial services","about":"8 years building ledger, payments, and reconciliation systems for B2B fintech.","domainArea":"Payments and ledger","employments":[],"educations":[],"certifications":[],"portfolioItems":[],"highlights":[]},{"id":"ind_test_002","title":"Healthcare","about":"4 years on HIPAA-compliant clinical-data infrastructure and FHIR integrations.","domainArea":"Clinical data exchange","employments":[],"educations":[],"certifications":[],"portfolioItems":[],"highlights":[]}]}"`;
 
-exports[`profile.industries — read snapshots > list envelope: single industry 1`] = `"{"version":"1.0","items":[{"id":"ind_test_001","title":"Financial services","about":"8 years building ledger, payments, and reconciliation systems for B2B fintech.","domainArea":"Payments and ledger"}]}"`;
+exports[`profile.industries — read snapshots > list envelope: single industry 1`] = `"{"version":"1.0","items":[{"id":"ind_test_001","title":"Financial services","about":"8 years building ledger, payments, and reconciliation systems for B2B fintech.","domainArea":"Payments and ledger","employments":[],"educations":[],"certifications":[],"portfolioItems":[],"highlights":[]}]}"`;
 
 exports[`profile.portfolio — read snapshots > list envelope: empty 1`] = `"{"version":"1.0","items":[]}"`;
 

@@ -46,11 +46,57 @@ function replyStock(...responses: MockResponse[]): void {
   }
 }
 
+/**
+ * Wire-shape fixture for `IndustryProfile` mocks. Identity columns plus
+ * the five curation sub-fields in their Connection shape
+ * (`{ nodes: [{ id }] }`) — extracted on the wire side before
+ * `projectIndustryProfile` normalises them to flat `IndustryCurationRef[]`
+ * on the surface. The empty `nodes: []` arrays here reflect the
+ * default "no curation" case so existing tests that don't care about
+ * curation continue to compare cleanly against the projected output.
+ *
+ * Tests that need to exercise populated curation supply their own
+ * inline wire bodies (see `describe("show curation projection")`).
+ */
+const IND_1_WIRE = {
+  id: "V1-IndustryProfile-1",
+  title: "Healthcare",
+  about: null,
+  domainArea: "Backend",
+  employments: { nodes: [] },
+  educations: { nodes: [] },
+  certifications: { nodes: [] },
+  portfolioItems: { nodes: [] },
+  highlights: { nodes: [] },
+};
+
+const IND_2_WIRE = {
+  id: "V1-IndustryProfile-2",
+  title: "Finance",
+  about: null,
+  domainArea: "Frontend",
+  employments: { nodes: [] },
+  educations: { nodes: [] },
+  certifications: { nodes: [] },
+  portfolioItems: { nodes: [] },
+  highlights: { nodes: [] },
+};
+
+/**
+ * Surface-shape (post-projection) expected values. Identity columns
+ * mirror the wire fixture; the five curation sub-fields collapse to
+ * empty arrays (the wire fixtures all carry `nodes: []`).
+ */
 const IND_1 = {
   id: "V1-IndustryProfile-1",
   title: "Healthcare",
   about: null,
   domainArea: "Backend",
+  employments: [],
+  educations: [],
+  certifications: [],
+  portfolioItems: [],
+  highlights: [],
 };
 
 const IND_2 = {
@@ -58,6 +104,11 @@ const IND_2 = {
   title: "Finance",
   about: null,
   domainArea: "Frontend",
+  employments: [],
+  educations: [],
+  certifications: [],
+  portfolioItems: [],
+  highlights: [],
 };
 
 /**
@@ -65,7 +116,7 @@ const IND_2 = {
  * rows array. Centralizes the post-#321 envelope shape so every test
  * uses the same structural baseline.
  */
-function listBody(rows: (typeof IND_1)[]): unknown {
+function listBody(rows: (typeof IND_1_WIRE)[]): unknown {
   return { data: { profile: { id: "p1", industryProfiles: { nodes: rows } } } };
 }
 
@@ -77,7 +128,7 @@ beforeEach(() => {
 describe("list", () => {
   it("queries industryProfiles by profileId and returns the nodes array", async () => {
     replyStock({ body: VIEWER_OK });
-    replyImpersonated({ body: listBody([IND_1, IND_2]) });
+    replyImpersonated({ body: listBody([IND_1_WIRE, IND_2_WIRE]) });
 
     const rows = await list(TOKEN);
     expect(rows).toEqual([IND_1, IND_2]);
@@ -124,7 +175,7 @@ describe("list", () => {
   it("filters out null entries inside the nodes array", async () => {
     replyStock({ body: VIEWER_OK });
     replyImpersonated({
-      body: { data: { profile: { id: "p1", industryProfiles: { nodes: [IND_1, null, IND_2] } } } },
+      body: { data: { profile: { id: "p1", industryProfiles: { nodes: [IND_1_WIRE, null, IND_2_WIRE] } } } },
     });
     const rows = await list(TOKEN);
     expect(rows).toEqual([IND_1, IND_2]);
@@ -133,7 +184,7 @@ describe("list", () => {
 
 describe("show", () => {
   it("queries node(id) and returns IndustryProfile fragment", async () => {
-    replyImpersonated({ body: { data: { node: IND_1 } } });
+    replyImpersonated({ body: { data: { node: IND_1_WIRE } } });
 
     const i = await show(TOKEN, IND_1.id);
     expect(i).toEqual(IND_1);
@@ -148,6 +199,91 @@ describe("show", () => {
   });
 });
 
+describe("show curation projection (#553)", () => {
+  it("projects connection-shape sub-fields into flat ref arrays", async () => {
+    replyImpersonated({
+      body: {
+        data: {
+          node: {
+            ...IND_1_WIRE,
+            employments: {
+              nodes: [{ id: "V1-Employment-E1" }, { id: "V1-Employment-E2" }],
+            },
+            educations: { nodes: [{ id: "V1-Education-D1" }] },
+            certifications: { nodes: [{ id: "V1-Certification-C1" }] },
+            portfolioItems: { nodes: [{ id: "V1-PortfolioItem-PF1" }] },
+            highlights: { nodes: [{ id: "V1-Employment-E1" }] },
+          },
+        },
+      },
+    });
+    const i = await show(TOKEN, IND_1.id);
+    expect(i.employments).toEqual([{ id: "V1-Employment-E1" }, { id: "V1-Employment-E2" }]);
+    expect(i.educations).toEqual([{ id: "V1-Education-D1" }]);
+    expect(i.certifications).toEqual([{ id: "V1-Certification-C1" }]);
+    expect(i.portfolioItems).toEqual([{ id: "V1-PortfolioItem-PF1" }]);
+    expect(i.highlights).toEqual([{ id: "V1-Employment-E1" }]);
+  });
+
+  it("collapses null sub-field (entire field missing on wire) to empty array", async () => {
+    replyImpersonated({
+      body: {
+        data: {
+          node: {
+            ...IND_1_WIRE,
+            employments: null,
+            educations: undefined,
+            certifications: { nodes: null },
+            portfolioItems: { nodes: "not-an-array" as unknown as null },
+            highlights: { nodes: [] },
+          },
+        },
+      },
+    });
+    const i = await show(TOKEN, IND_1.id);
+    expect(i.employments).toEqual([]);
+    expect(i.educations).toEqual([]);
+    expect(i.certifications).toEqual([]);
+    expect(i.portfolioItems).toEqual([]);
+    expect(i.highlights).toEqual([]);
+  });
+
+  it("filters per-node entries missing string id", async () => {
+    replyImpersonated({
+      body: {
+        data: {
+          node: {
+            ...IND_1_WIRE,
+            employments: {
+              nodes: [
+                { id: "V1-Employment-E1" },
+                null,
+                { id: 42 }, // non-string id
+                { id: "" }, // empty id
+                { id: "V1-Employment-E2" },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const i = await show(TOKEN, IND_1.id);
+    expect(i.employments).toEqual([{ id: "V1-Employment-E1" }, { id: "V1-Employment-E2" }]);
+  });
+
+  it("list() projects curation across every row", async () => {
+    replyStock({ body: VIEWER_OK });
+    const wireRow = {
+      ...IND_1_WIRE,
+      portfolioItems: { nodes: [{ id: "V1-PortfolioItem-PF7" }] },
+    };
+    replyImpersonated({ body: listBody([wireRow]) });
+    const rows = await list(TOKEN);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.portfolioItems).toEqual([{ id: "V1-PortfolioItem-PF7" }]);
+  });
+});
+
 describe("add", () => {
   it("requires --name (title)", async () => {
     await expect(add(TOKEN, {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -157,7 +293,7 @@ describe("add", () => {
     // extractProfileId (single basic-show via the shared profileId path).
     replyStock({ body: VIEWER_OK });
     // pre-list query.
-    replyImpersonated({ body: listBody([IND_1]) });
+    replyImpersonated({ body: listBody([IND_1_WIRE]) });
     // mutation — payload is `{ success, errors }` only.
     replyImpersonated({
       body: {
@@ -167,7 +303,7 @@ describe("add", () => {
       },
     });
     // post-list query — IND_2 is the newly-added row.
-    replyImpersonated({ body: listBody([IND_1, IND_2]) });
+    replyImpersonated({ body: listBody([IND_1_WIRE, IND_2_WIRE]) });
 
     const created = await add(TOKEN, { title: "Finance", domainArea: "Frontend" });
     expect(created).toEqual(IND_2);
@@ -196,13 +332,13 @@ describe("add", () => {
   it("throws UNKNOWN when the post-list does not surface the new row", async () => {
     // extractProfileId + pre-list.
     replyStock({ body: VIEWER_OK });
-    replyImpersonated({ body: listBody([IND_1]) });
+    replyImpersonated({ body: listBody([IND_1_WIRE]) });
     // mutation success.
     replyImpersonated({
       body: { data: { createIndustryProfile: { success: true, errors: null } } },
     });
     // post-list — same as pre-list (server filtered the row out? wire regression?).
-    replyImpersonated({ body: listBody([IND_1]) });
+    replyImpersonated({ body: listBody([IND_1_WIRE]) });
 
     await expect(add(TOKEN, { title: "Finance", domainArea: "Frontend" })).rejects.toMatchObject({
       code: "UNKNOWN",

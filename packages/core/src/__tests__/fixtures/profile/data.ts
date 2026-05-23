@@ -261,6 +261,11 @@ export const INDUSTRY_FINTECH: IndustryProfile = {
   title: "Financial services",
   about: "8 years building ledger, payments, and reconciliation systems for B2B fintech.",
   domainArea: "Payments and ledger",
+  employments: [],
+  educations: [],
+  certifications: [],
+  portfolioItems: [],
+  highlights: [],
 };
 
 export const INDUSTRY_HEALTHTECH: IndustryProfile = {
@@ -268,6 +273,11 @@ export const INDUSTRY_HEALTHTECH: IndustryProfile = {
   title: "Healthcare",
   about: "4 years on HIPAA-compliant clinical-data infrastructure and FHIR integrations.",
   domainArea: "Clinical data exchange",
+  employments: [],
+  educations: [],
+  certifications: [],
+  portfolioItems: [],
+  highlights: [],
 };
 
 // -----------------------------------------------------------------------
