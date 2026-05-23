@@ -50,11 +50,14 @@ export function buildProfileExternalCommand(): Command {
 
   external
     .command("update")
-    .description("Update external profile URLs (linkedin, github, website, twitter, behance, dribbble)")
+    .description(
+      "Update external profile URLs (linkedin, github, website, behance, dribbble). " +
+        "Twitter / X is no longer settable: the live server rejects `twitter` on the " +
+        "`ExternalProfilesInput` type as of #526 — see `external show` to read it.",
+    )
     .option("--linkedin <url>", "LinkedIn profile URL")
     .option("--github <url>", "GitHub profile URL")
     .option("--website <url>", "Personal website URL")
-    .option("--twitter <url>", "Twitter / X profile URL")
     .option("--behance <url>", "Behance profile URL")
     .option("--dribbble <url>", "Dribbble profile URL")
     .addOption(
@@ -67,7 +70,6 @@ export function buildProfileExternalCommand(): Command {
         linkedin?: string;
         github?: string;
         website?: string;
-        twitter?: string;
         behance?: string;
         dribbble?: string;
         output: OutputFormat;

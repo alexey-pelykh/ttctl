@@ -19,13 +19,17 @@ const OPERATION = "profile.external.update";
  * is not in the underlying `UpdateExternalProfilesInput` schema (the
  * portfolio URL is a server-determined read via `getPublicProfileUrl`).
  * The flags exposed here match the schema's settable external-profile
- * URLs: linkedin / github / website / twitter / behance / dribbble.
+ * URLs: linkedin / github / website / behance / dribbble. `--twitter`
+ * was removed in #526 — the live server rejects `twitter` on
+ * `ExternalProfilesInput` (the entire batch fails transactionally
+ * when twitter is co-supplied with valid fields); the read-side
+ * (`ttctl profile external show`) continues to surface `twitter`
+ * because the `Profile` entity still exposes it.
  */
 export async function runProfileExternalUpdate(options: {
   linkedin?: string;
   github?: string;
   website?: string;
-  twitter?: string;
   behance?: string;
   dribbble?: string;
   output: OutputFormat;
@@ -34,7 +38,6 @@ export async function runProfileExternalUpdate(options: {
   if (options.linkedin !== undefined) changes.linkedin = options.linkedin;
   if (options.github !== undefined) changes.github = options.github;
   if (options.website !== undefined) changes.website = options.website;
-  if (options.twitter !== undefined) changes.twitter = options.twitter;
   if (options.behance !== undefined) changes.behance = options.behance;
   if (options.dribbble !== undefined) changes.dribbble = options.dribbble;
 
@@ -45,12 +48,12 @@ export async function runProfileExternalUpdate(options: {
       errors: [
         {
           code: "VALIDATION_ERROR",
-          message: `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --twitter, --behance, --dribbble.`,
+          message: `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --behance, --dribbble.`,
           hint: "ttctl profile external update --linkedin https://linkedin.com/in/your-handle",
         },
       ],
       prettySummary:
-        `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --twitter, --behance, --dribbble.\n` +
+        `${COMMAND_LABEL} requires at least one of --linkedin, --github, --website, --behance, --dribbble.\n` +
         "Example: ttctl profile external update --linkedin https://linkedin.com/in/your-handle",
     });
   }
@@ -111,10 +114,12 @@ function handleError(err: unknown, format: OutputFormat): never {
  * `emitUpdateSuccess` appends it as a trailing indented line in pretty
  * mode.
  *
- * `twitter` was added in #345 once the mutation's response selection set
- * grew to echo it (`UPDATE_EXTERNAL_PROFILES_MUTATION` previously dropped
- * twitter so the formatter had nothing to render). Ordering matches the
- * `external show` formatter for cross-command consistency.
+ * `twitter` is still rendered when the server echoes a non-null value
+ * even though it is no longer settable via this command (see #526):
+ * the user may have set it via the web portal previously, and surfacing
+ * the persisted value lets them confirm post-update state without a
+ * separate `external show` call. Ordering matches the `external show`
+ * formatter for cross-command consistency.
  *
  * Pure — directly unit-testable.
  */
