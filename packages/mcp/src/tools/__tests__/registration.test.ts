@@ -105,8 +105,9 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_reviews_approve_item",
   "ttctl_profile_reviews_approve_section",
   "ttctl_profile_reviews_submit_for_review",
-  // specializations (#466) — 1 read-only tool (GetTalentSpecializations)
+  // specializations (#466 + #467) — 2 tools: read-only show + DESTRUCTIVE apply
   "ttctl_profile_specializations_show",
+  "ttctl_profile_specializations_apply",
   // applications (#15, +#439, +#440, +#442, +#470) — 7 read-only tools at top-level
   // (#439 adds the interview-detail sub-namespace leaf; #440 adds the
   // interview-notes sub-sub-namespace leaf; #442 adds the
@@ -229,7 +230,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (120 tools = 63 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #465 industries_add_connections] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the EXPECTED_TOOLS set (121 tools = 64 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #467 specializations_apply + 1 #465 industries_add_connections] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

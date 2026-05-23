@@ -16,10 +16,14 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { ProfileError, show } from "../index.js";
+import { ProfileError, apply, show } from "../index.js";
+import type { SpecializationApplyConsent } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
+import { ConsentRequiredError } from "../../../../consent.js";
 import { stockTransport } from "../../../../transport.js";
 import type { TransportResponse } from "../../../../transport.js";
+
+const CONSENT: SpecializationApplyConsent = { profileCapabilityConsentIssued: true };
 
 const mockedStock = vi.mocked(stockTransport);
 const TOKEN = "tok-spec-123";
@@ -208,5 +212,213 @@ describe("specializations.show (#466 / T1 GetTalentSpecializations)", () => {
     mockedStock.mockRejectedValueOnce(new Error("ECONNRESET"));
     await expect(show(TOKEN)).rejects.toMatchObject({ code: "NETWORK_ERROR" });
     await expect(show(TOKEN)).rejects.toMatchObject({ message: expect.stringContaining("ECONNRESET") });
+  });
+});
+
+describe("specializations.apply (#467 / T1 ApplyForSpecialization)", () => {
+  const SPECIALIZATION_ID = "spec-marketplace-uuid";
+
+  it("dispatches ApplyForSpecialization against the mobile-gateway surface with the supplied id", async () => {
+    reply({
+      body: { data: { specialization: { apply: { success: true, notice: "Application submitted.", errors: [] } } } },
+    });
+    await apply(TOKEN, SPECIALIZATION_ID, CONSENT);
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.surface).toBe("mobile-gateway");
+    expect(call?.authToken).toBe(TOKEN);
+    expect(call?.body.operationName).toBe("ApplyForSpecialization");
+    expect(call?.body.variables).toEqual({ specializationId: SPECIALIZATION_ID });
+  });
+
+  it("returns the applied outcome with the echoed specializationId + wire notice on success", async () => {
+    reply({
+      body: { data: { specialization: { apply: { success: true, notice: "Application submitted.", errors: [] } } } },
+    });
+    const outcome = await apply(TOKEN, SPECIALIZATION_ID, CONSENT);
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result).toEqual({
+      specializationId: SPECIALIZATION_ID,
+      notice: "Application submitted.",
+    });
+  });
+
+  it("normalises a null notice to null on the result echo", async () => {
+    reply({ body: { data: { specialization: { apply: { success: true, notice: null, errors: [] } } } } });
+    const outcome = await apply(TOKEN, SPECIALIZATION_ID, CONSENT);
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result.notice).toBeNull();
+  });
+
+  // -------- Consent gate (ADR-009 profile-capability) --------
+
+  it("refuses with ConsentRequiredError when profileCapabilityConsentIssued is false (runtime cast bypass)", async () => {
+    // Cast widens the static `true` literal so we can pass `false` to
+    // exercise the runtime gate (the CLI/MCP flow does this when the
+    // user omits the consent flag).
+    const noConsent = { profileCapabilityConsentIssued: false } as unknown as SpecializationApplyConsent;
+    await expect(apply(TOKEN, SPECIALIZATION_ID, noConsent)).rejects.toBeInstanceOf(ConsentRequiredError);
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("refuses with ConsentRequiredError when the consent field is missing", async () => {
+    const noConsent = {} as unknown as SpecializationApplyConsent;
+    await expect(apply(TOKEN, SPECIALIZATION_ID, noConsent)).rejects.toMatchObject({
+      code: "CONSENT_REQUIRED",
+      domain: "profile-capability",
+      opName: "ApplyForSpecialization",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("consent gate fires BEFORE the dry-run short-circuit (no preview emitted on refusal)", async () => {
+    const noConsent = {} as unknown as SpecializationApplyConsent;
+    await expect(apply(TOKEN, SPECIALIZATION_ID, noConsent, { dryRun: true })).rejects.toBeInstanceOf(
+      ConsentRequiredError,
+    );
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("env-var bypass (TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1) allows the call without the literal", async () => {
+    const prev = process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"];
+    process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"] = "1";
+    try {
+      reply({ body: { data: { specialization: { apply: { success: true, notice: "ok", errors: [] } } } } });
+      const noConsent = {} as unknown as SpecializationApplyConsent;
+      const outcome = await apply(TOKEN, SPECIALIZATION_ID, noConsent);
+      expect(outcome.kind).toBe("applied");
+    } finally {
+      if (prev === undefined) delete process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"];
+      else process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"] = prev;
+    }
+  });
+
+  // -------- Dry-run short-circuit --------
+
+  it("emits a DryRunPreview with the prepared variables and makes no wire call", async () => {
+    const outcome = await apply(TOKEN, SPECIALIZATION_ID, CONSENT, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.transport).toBe("stock");
+    expect(outcome.preview.operationName).toBe("ApplyForSpecialization");
+    expect(outcome.preview.variables).toEqual({ specializationId: SPECIALIZATION_ID });
+    // Bearer redacted in the preview headers.
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  // -------- Input validation --------
+
+  it("refuses with VALIDATION_ERROR on empty specializationId (no wire call)", async () => {
+    await expect(apply(TOKEN, "", CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("non-empty specializationId"),
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  // -------- Error mapping --------
+
+  it("maps a payload.errors[] entry to USER_ERROR with the server-supplied key + message", async () => {
+    reply({
+      body: {
+        data: {
+          specialization: {
+            apply: {
+              success: false,
+              notice: null,
+              errors: [{ code: null, key: "already_applied", message: "Already a member of this specialization." }],
+            },
+          },
+        },
+      },
+    });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("already_applied"),
+    });
+  });
+
+  it("maps a payload.errors[] with no key to USER_ERROR without the (key) prefix in the message", async () => {
+    reply({
+      body: {
+        data: {
+          specialization: { apply: { success: false, notice: null, errors: [{ message: "Generic failure." }] } },
+        },
+      },
+    });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("Generic failure."),
+    });
+  });
+
+  it("maps success=false with no errors[] to USER_ERROR carrying the notice", async () => {
+    reply({
+      body: {
+        data: { specialization: { apply: { success: false, notice: "Not eligible right now.", errors: [] } } },
+      },
+    });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("Not eligible right now."),
+    });
+  });
+
+  it("maps a null specialization to USER_ERROR (spec id not found)", async () => {
+    reply({ body: { data: { specialization: null } } });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining(SPECIALIZATION_ID),
+    });
+  });
+
+  it("maps a null apply payload to UNKNOWN", async () => {
+    reply({ body: { data: { specialization: { apply: null } } } });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "UNKNOWN",
+    });
+  });
+
+  // -------- Transport-level errors --------
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { data: null } });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("throws ProfileError(GRAPHQL_ERROR) on non-auth top-level errors", async () => {
+    reply({
+      body: {
+        data: null,
+        errors: [{ message: "Specialization service down", extensions: { code: "INTERNAL_SERVER_ERROR" } }],
+      },
+    });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "GRAPHQL_ERROR",
+      message: expect.stringContaining("Specialization service down"),
+    });
+  });
+
+  it("throws ProfileError(NETWORK_ERROR) when the transport itself throws", async () => {
+    mockedStock.mockRejectedValueOnce(new Error("ECONNRESET"));
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({ code: "NETWORK_ERROR" });
+  });
+
+  it("filters out null entries in payload.errors[] (defensive)", async () => {
+    reply({
+      body: {
+        data: {
+          specialization: {
+            apply: { success: false, notice: null, errors: [null, { key: "kk", message: "real error" }] },
+          },
+        },
+      },
+    });
+    await expect(apply(TOKEN, SPECIALIZATION_ID, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("kk"),
+    });
   });
 });

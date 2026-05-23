@@ -260,6 +260,10 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_skills_update: { id: "ss_123", rating: "EXPERT" },
   // profile.specializations (1, #466)
   ttctl_profile_specializations_show: {},
+  ttctl_profile_specializations_apply: {
+    specializationId: "spec-marketplace-uuid",
+    profileCapabilityConsentIssued: true,
+  },
   // profile.visas (4)
   ttctl_profile_visas_add: { countryId: "US", visaType: "B1/B2" },
   ttctl_profile_visas_list: {},
@@ -309,7 +313,7 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 120 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 121 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
@@ -322,9 +326,10 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     // applications_availability_request_show + 1 new interview-guide
     // tool (#470): applications_interview_guide_show + 1 new
     // specializations read (#466): profile_specializations_show + 1
-    // new Pattern-6 connection helper (#465):
-    // profile_industries_add_connections.
-    expect(Object.keys(tools)).toHaveLength(120);
+    // new DESTRUCTIVE specializations apply (#467):
+    // profile_specializations_apply + 1 new Pattern-6 connection
+    // helper (#465): profile_industries_add_connections.
+    expect(Object.keys(tools)).toHaveLength(121);
   });
 
   it("every registered tool has a fixture", () => {
