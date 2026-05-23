@@ -181,6 +181,8 @@ export const EMPLOYMENT_PRINCIPAL_ENGINEER: Employment = {
   employerId: "V1-Employer-test-001",
   skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
   managementExperience: null,
+  engagement: null,
+  isEnterpriseExperience: false,
 };
 
 export const EMPLOYMENT_SENIOR_ENGINEER: Employment = {
@@ -205,6 +207,8 @@ export const EMPLOYMENT_SENIOR_ENGINEER: Employment = {
   employerId: "V1-Employer-test-002",
   skills: [{ id: "sk_test_typescript", name: "TypeScript" }],
   managementExperience: null,
+  engagement: null,
+  isEnterpriseExperience: false,
 };
 
 // -----------------------------------------------------------------------

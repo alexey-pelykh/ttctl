@@ -462,10 +462,13 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       description: [
         "List every employment entry on the signed-in user's Toptal profile, with each row's full per-item shape (mirrors `ttctl_profile_employment_show`).",
         "",
+        "Each row includes `engagement` (link to a `TalentEngagement` when the row was logged against a Toptal engagement, otherwise null) and `isEnterpriseExperience` (boolean flag for enterprise-scoped roles, nullable for older rows) — #554.",
+        "",
         "Example user prompts that should map to this tool:",
         '  - "What employment entries do I have on my Toptal profile?"',
         '  - "Show me all my Toptal work experience."',
         '  - "List my Toptal employment IDs so I can edit one."',
+        '  - "Which of my Toptal employments were Toptal engagements?"',
       ].join("\n"),
       inputSchema: { dryRun: DRY_RUN_FIELD },
     },

@@ -41,6 +41,8 @@ const FULL: profile.employment.Employment = {
     { id: "V1-Industry-2", name: "Fintech" },
   ],
   primaryGeography: { id: "V1-Geo-1", code: "US", name: "United States" },
+  engagement: { id: "V1-TalentEngagement-42" },
+  isEnterpriseExperience: true,
 };
 
 const BARE: profile.employment.Employment = {
@@ -59,6 +61,8 @@ const BARE: profile.employment.Employment = {
   reportingTo: null,
   industries: [],
   primaryGeography: null,
+  engagement: null,
+  isEnterpriseExperience: null,
 };
 
 describe("formatEmploymentText (#344 fields)", () => {
@@ -118,6 +122,60 @@ describe("formatEmploymentTable (#344 fields)", () => {
       primaryGeography: { id: "V1-Geo-3", code: null, name: null },
     });
     expect(out).toContain("primaryGeography\tV1-Geo-3");
+  });
+});
+
+describe("formatEmploymentText (#554 engagement + enterprise)", () => {
+  it("emits the engagement id and enterprise marker when present", () => {
+    const out = formatEmploymentText(FULL);
+    expect(out).toContain("engagement: V1-TalentEngagement-42");
+    expect(out).toContain("enterprise");
+  });
+
+  it("omits the engagement and enterprise lines when both are null", () => {
+    const out = formatEmploymentText(BARE);
+    expect(out).not.toContain("engagement:");
+    expect(out).not.toMatch(/^\s+enterprise$/m);
+  });
+
+  it("omits the enterprise line when the flag is explicitly false", () => {
+    const out = formatEmploymentText({ ...FULL, isEnterpriseExperience: false });
+    expect(out).not.toMatch(/^\s+enterprise$/m);
+  });
+});
+
+describe("formatEmploymentTable (#554 engagement + enterprise)", () => {
+  it("emits true/value rows when both fields carry values", () => {
+    const out = formatEmploymentTable(FULL);
+    expect(out).toContain("enterprise\ttrue");
+    expect(out).toContain("engagement\tV1-TalentEngagement-42");
+  });
+
+  it("emits false for an explicit non-enterprise flag", () => {
+    const out = formatEmploymentTable({ ...FULL, isEnterpriseExperience: false });
+    expect(out).toContain("enterprise\tfalse");
+  });
+
+  it("emits empty values for both rows when null", () => {
+    const out = formatEmploymentTable(BARE);
+    expect(out).toContain("enterprise\t");
+    expect(out).toContain("engagement\t");
+  });
+});
+
+describe("formatEmploymentListTable (#554 Enterprise column)", () => {
+  it("renders the Enterprise column header", () => {
+    const out = formatEmploymentListTable([FULL]);
+    expect(out).toContain("Enterprise");
+  });
+
+  it("renders 'yes' / 'no' / em-dash for the three Enterprise states", () => {
+    const out = formatEmploymentListTable([FULL, { ...FULL, isEnterpriseExperience: false }, BARE]);
+    // FULL → true → yes; explicit false → no; BARE → null → em-dash.
+    // Each value appears at least once in the table body.
+    expect(out).toContain("yes");
+    expect(out).toContain("no");
+    expect(out).toContain("—");
   });
 });
 

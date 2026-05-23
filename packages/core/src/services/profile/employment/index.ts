@@ -65,6 +65,30 @@ export interface Employment {
   skills: { id: string; name: string }[];
   /** Management experience descriptor; force-echoed on UPDATE per #508. */
   managementExperience: { isLeadPosition: boolean; reportsRange: string | null } | null;
+  /**
+   * Link to a `TalentEngagement` when this employment row was logged
+   * against a Toptal engagement (#554). `null` for rows that are not
+   * tied to a Toptal engagement (the common case for pre-Toptal work
+   * history). The wire selects `engagement { id }` only — additional
+   * `TalentEngagement` fields (clientName, jobTitle, startDate, endDate,
+   * status, jobPlainId) are NOT projected here; consumers wanting to
+   * hydrate the engagement should fetch it explicitly via the
+   * engagements surface. Schema-synth marked the field `Unknown`; the
+   * shape `{ id: string }` is INFERRED from the canonical upstream
+   * fragment at `research/graphql/talent_profile/fragments/Employment.graphql`
+   * and validated by the `GET_WORK_EXPERIENCE` wire-shape snapshot (T1).
+   */
+  engagement: { id: string } | null;
+  /**
+   * Whether the role was enterprise-scoped at Toptal's tier-classification
+   * level (#554). Schema-synth marked the field `Unknown`; treated as
+   * `boolean | null` to accommodate rows where the server omits the flag
+   * (older entries, non-Toptal-engagement rows). The boolean kind is
+   * INFERRED from the canonical fragment selection (a primitive scalar
+   * with no sub-selection), validated by the `GET_WORK_EXPERIENCE`
+   * wire-shape snapshot (T1).
+   */
+  isEnterpriseExperience: boolean | null;
 }
 
 /**
@@ -222,6 +246,8 @@ const EMPLOYMENT_FRAGMENT = `fragment Employment on Employment {
   employer { id }
   skills { nodes { id name } }
   managementExperience { isLeadPosition reportsRange }
+  engagement { id }
+  isEnterpriseExperience
 }`;
 
 const GET_WORK_EXPERIENCE_QUERY = `query GET_WORK_EXPERIENCE($profileId: ID!) {
@@ -334,6 +360,19 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
           reportsRange: typeof meRaw.reportsRange === "string" ? meRaw.reportsRange : null,
         }
       : null;
+  // #554 — engagement projection. The wire selects `engagement { id }`
+  // only (no scalar fields beyond the id); when the row is not linked
+  // to a Toptal engagement the field comes back `null`. Defensive shape
+  // check mirrors the `employer { id }` projection above — a missing or
+  // string-less `id` collapses to `null` rather than fabricating a
+  // partial-shape object.
+  const engagementRaw = node["engagement"] as { id?: unknown } | null | undefined;
+  const engagement = engagementRaw && typeof engagementRaw.id === "string" ? { id: engagementRaw.id } : null;
+  // #554 — isEnterpriseExperience: synth-SDL `Unknown`; runtime branch
+  // accepts boolean (the canonical fragment shape) and falls through
+  // to `null` for any non-boolean / missing value.
+  const isEnterpriseExperience =
+    typeof node["isEnterpriseExperience"] === "boolean" ? node["isEnterpriseExperience"] : null;
   const rawItems = node["experienceItems"];
   return {
     id: typeof node["id"] === "string" ? node["id"] : "",
@@ -356,6 +395,8 @@ function mapEmploymentNode(node: Record<string, unknown>): Employment {
     employerId,
     skills,
     managementExperience,
+    engagement,
+    isEnterpriseExperience,
   };
 }
 

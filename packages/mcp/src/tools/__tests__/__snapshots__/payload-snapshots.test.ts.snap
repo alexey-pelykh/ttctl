@@ -517,7 +517,9 @@ exports[`MCP profile_employment — payload snapshots > payload: full profile em
         "name": "TypeScript"
       }
     ],
-    "managementExperience": null
+    "managementExperience": null,
+    "engagement": null,
+    "isEnterpriseExperience": false
   },
   {
     "id": "emp_test_002",
@@ -554,7 +556,9 @@ exports[`MCP profile_employment — payload snapshots > payload: full profile em
         "name": "TypeScript"
       }
     ],
-    "managementExperience": null
+    "managementExperience": null,
+    "engagement": null,
+    "isEnterpriseExperience": false
   }
 ]"
 `;
