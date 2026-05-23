@@ -22,9 +22,9 @@ import { registerAllTools } from "../index.js";
  * | visas (#75)         | 4 (add, update, remove, list) |
  * | resume (#75)        | 2 (upload, cancel_upload) |
  * | external (#76)      | 7 (show, update, custom_requirements_show/set, readiness, recommendations, advanced_wizard_show) |
- * | reviews (#76)       | 4 (list, approve_item, approve_section, submit_for_review) |
+ * | reviews (#76 − #544)| 3 (list, approve_item, approve_section) — `submit_for_review` removed in #544 (UX-trap: INFERRED-UNVERIFIED input + unnecessary) |
  *
- * Total: 61 profile tools (was 58 before #341 added 3 list tools).
+ * Total: 60 profile tools (was 58 before #341 added 3 list tools; #544 removed 1).
  *
  * Per project policy (#72), MCP tool names use ONLY the canonical sub-domain
  * names — no `certs`, no `experience`. These tests assert exact tool name
@@ -100,11 +100,10 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_external_readiness",
   "ttctl_profile_external_recommendations",
   "ttctl_profile_external_advanced_wizard_show",
-  // reviews (#76)
+  // reviews (#76 − #544 removed unusable submit_for_review)
   "ttctl_profile_reviews_list",
   "ttctl_profile_reviews_approve_item",
   "ttctl_profile_reviews_approve_section",
-  "ttctl_profile_reviews_submit_for_review",
   // specializations (#466 + #467) — 2 tools: read-only show + DESTRUCTIVE apply
   "ttctl_profile_specializations_show",
   "ttctl_profile_specializations_apply",
@@ -230,7 +229,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (121 tools = 64 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #467 specializations_apply + 1 #465 industries_add_connections] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the EXPECTED_TOOLS set (120 tools = 63 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #467 specializations_apply + 1 #465 industries_add_connections − 1 #544 reviews_submit_for_review] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

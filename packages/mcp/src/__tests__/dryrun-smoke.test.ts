@@ -239,11 +239,10 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   // profile.resume (2)
   ttctl_profile_resume_cancel_upload: {},
   ttctl_profile_resume_upload: { filePath: "/tmp/resume.pdf" },
-  // profile.reviews (4)
+  // profile.reviews (3; submit_for_review removed in #544)
   ttctl_profile_reviews_approve_item: { reviewId: "rv_1", itemId: "it_1", kind: "EDUCATION" },
   ttctl_profile_reviews_approve_section: { reviewId: "rv_1", section: "EDUCATION" },
   ttctl_profile_reviews_list: {},
-  ttctl_profile_reviews_submit_for_review: { profileCapabilityConsentIssued: true },
   // profile.skills (7)
   // skillId bypass keeps the dry-run path zero-transport for the smoke
   // test. Per #405, dry-run without an explicit skillId fires the
@@ -313,7 +312,7 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 121 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 120 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
@@ -328,8 +327,9 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     // specializations read (#466): profile_specializations_show + 1
     // new DESTRUCTIVE specializations apply (#467):
     // profile_specializations_apply + 1 new Pattern-6 connection
-    // helper (#465): profile_industries_add_connections.
-    expect(Object.keys(tools)).toHaveLength(121);
+    // helper (#465): profile_industries_add_connections −
+    // 1 removed unusable profile_reviews_submit_for_review (#544).
+    expect(Object.keys(tools)).toHaveLength(120);
   });
 
   it("every registered tool has a fixture", () => {

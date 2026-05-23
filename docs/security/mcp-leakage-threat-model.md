@@ -399,18 +399,20 @@ exception — it returns only the operator's own self-authored URL strings (iden
 PII, no Toptal-authored free-text), so injection severity is Low, matching
 `profile_external_update`.
 
-### profile.reviews (4 tools)
+### profile.reviews (3 tools)
 
-| tool                                | surface | dir | xuser                          | pii_self   | pii_other                   | inj     | dis     |
-| ----------------------------------- | ------- | --- | ------------------------------ | ---------- | --------------------------- | ------- | ------- |
-| `profile_reviews_list`              | TP      | R   | **Toptal** (screener comments) | employment | Toptal-screener identifiers | **Med** | **Med** |
-| `profile_reviews_approve_item`      | TP      | M   | (echoes review id)             | none       | none                        | Low     | Low     |
-| `profile_reviews_approve_section`   | TP      | M   | (echoes section id)            | none       | none                        | Low     | Low     |
-| `profile_reviews_submit_for_review` | TP      | M   | none                           | none       | none                        | Low     | Info    |
+| tool                              | surface | dir | xuser                          | pii_self   | pii_other                   | inj     | dis     |
+| --------------------------------- | ------- | --- | ------------------------------ | ---------- | --------------------------- | ------- | ------- |
+| `profile_reviews_list`            | TP      | R   | **Toptal** (screener comments) | employment | Toptal-screener identifiers | **Med** | **Med** |
+| `profile_reviews_approve_item`    | TP      | M   | (echoes review id)             | none       | none                        | Low     | Low     |
+| `profile_reviews_approve_section` | TP      | M   | (echoes section id)            | none       | none                        | Low     | Low     |
 
 **Notes**: `profile_reviews_list` is the canonical Toptal-screener free-text surface. The
 reviewer authored the text under Toptal's editorial guidelines, but those guidelines do
-not include LLM-injection awareness.
+not include LLM-injection awareness. Previously this section listed 4 tools; the
+`profile_reviews_submit_for_review` MCP tool was removed in #544 as a UX-trap
+(INFERRED-UNVERIFIED input that rejected at the wire + unnecessary in practice, since
+Toptal profile edits land live without a "submit" gate).
 
 ### applications (3 tools)
 
