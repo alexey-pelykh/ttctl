@@ -34,8 +34,12 @@ import { loadAuthTokenOrExit, parseLimitOrExit, presentSubDomainError } from "..
  *   - `highlight <id>`
  *   - `employer-autocomplete <query>` — looks up known employer names
  *
- * Date input flags accept ISO-8601 (`2023-01-15`) or year-only (`2023`).
- * Employment stores year only (Int field), so the helper drops month/day.
+ * Date input flags accept ISO-8601 (`2023-01-15`) or year-only (`2023`). The
+ * Toptal `EmploymentInput.startDate` / `.endDate` wire fields are typed `Int`
+ * (year-only) — ttctl normalizes to year client-side via
+ * `parseDateInput(...).year`, silently dropping month/day before the mutation
+ * (#527). The public Toptal resume renders year only, matching the stored
+ * value. Pass year-only (YYYY) explicitly to avoid the implicit truncation.
  *
  * `update --description` is multi-paragraph free-text via the four-mode
  * helper from `lib/freetext.ts` (#70): inline, stdin (`-`), file (`@path`),
@@ -54,8 +58,8 @@ export function buildProfileEmploymentCommand(): Command {
       "company / employer name (resolved to employerId via autocomplete unless --no-employer)",
     )
     .requiredOption("--role <title>", "job title (mapped to position)")
-    .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
-    .option("--to <date>", "end date — ISO-8601 or year")
+    .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY); normalized to year on the wire (#527)")
+    .option("--to <date>", "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY); normalized to year on the wire (#527)")
     .option("--current", "current position (no end date)", false)
     .option("--website <url>", "company website (optional)")
     .option(
@@ -95,8 +99,8 @@ export function buildProfileEmploymentCommand(): Command {
     .argument("<id>", "employment id (V1-Employment-NNN)")
     .option("--company <name>", "company name")
     .option("--role <title>", "job title")
-    .option("--from <date>", "start date — ISO-8601 or year")
-    .option("--to <date>", "end date — ISO-8601 or year")
+    .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY); normalized to year on the wire (#527)")
+    .option("--to <date>", "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY); normalized to year on the wire (#527)")
     .option("--current", "mark as current position (clears end date)", false)
     .option("--website <url>", "company website")
     .option(
