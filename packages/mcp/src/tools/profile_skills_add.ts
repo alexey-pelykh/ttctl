@@ -38,7 +38,7 @@ export function registerProfileSkillsAddTool(server: McpServer, ctx: ToolRegistr
       title: "Add a skill to profile",
       description: [
         "Add a skill to the signed-in user's profile.",
-        "Pass `name` to add a custom skill, or pair `name` with `skillId` (from `ttctl_profile_skills_autocomplete`) to bind to a catalog Skill.",
+        "Pass `name` alone — the tool searches the catalog and transparently binds to the matching catalog Skill on a single exact match (case-insensitive). If no catalog skill matches, a custom (non-catalog) skill is created from `name`. If ≥2 catalog skills match the name exactly, an actionable error lists the duplicates and you disambiguate by passing `skillId` (discoverable via `ttctl_profile_skills_autocomplete`).",
         "Proficiency dimensions (`rating`, `experience`, `public`) all have sensible defaults — pass them only when overriding.",
         "",
         "Defaults applied when omitted:",
@@ -47,15 +47,16 @@ export function registerProfileSkillsAddTool(server: McpServer, ctx: ToolRegistr
         "  - `public`: false (private)",
         "",
         "Example user prompts that should map to this tool:",
-        '  - "Add TypeScript to my Toptal skills." → `{ name: "TypeScript" }`',
+        '  - "Add TypeScript to my Toptal skills." → `{ name: "TypeScript" }` (auto-binds if catalog has exactly one "TypeScript")',
         '  - "Add PostgreSQL at expert level with 5 years experience, public." → `{ name: "PostgreSQL", rating: "EXPERT", experience: 5, public: true }`',
+        '  - Disambiguate ≥2 exact-name duplicates: `{ name: "Java", skillId: "V1-Skill-12345" }`',
       ].join("\n"),
       inputSchema: {
         name: z
           .string()
           .min(1)
           .describe(
-            "Skill name. Free-text creates a custom (non-catalog) Skill; pair with `skillId` to bind to a catalog Skill discovered via `ttctl_profile_skills_autocomplete`.",
+            "Skill name. The tool searches the catalog for `name`: a single exact match (case-insensitive, trimmed) auto-binds to that catalog Skill; ≥2 exact matches surface an actionable error with `skillId` nudge; no exact match falls back to creating a custom (non-catalog) Skill. Override the resolution with `skillId` when needed.",
           ),
         rating: PROFICIENCY_RATING.optional().describe(
           "Proficiency rating. One of COMPETENT | STRONG | EXPERT. Defaults to COMPETENT.",
@@ -72,7 +73,7 @@ export function registerProfileSkillsAddTool(server: McpServer, ctx: ToolRegistr
           .min(1)
           .optional()
           .describe(
-            "Optional catalog Skill id (e.g., `V1-Skill-278891`) to bind this entry to a catalog skill. Discover via `ttctl_profile_skills_autocomplete`. Omit to create a custom (non-catalog) skill from `name`.",
+            "Optional catalog Skill id (e.g., `V1-Skill-278891`) to bind this entry to a catalog skill explicitly. Discover via `ttctl_profile_skills_autocomplete`. Use this to bypass `name`-based auto-resolution (e.g., when ≥2 catalog skills match `name` exactly and the auto-resolution surfaces a disambiguation error).",
           ),
         dryRun: DRY_RUN_FIELD,
       },

@@ -358,9 +358,11 @@ export interface UpdateSkillResult {
  * **Optional bypass**: `skillId`. When supplied, the server binds the new
  * `ProfileSkillSet` to the catalog `Skill` identified by this id (e.g.,
  * `"V1-Skill-278891"`). Sourced via {@link autocomplete}. When omitted,
- * the server treats `name` as a free-text custom skill and creates a
- * non-catalog `Skill` to back the new `ProfileSkillSet` — this is the
- * captured "custom skill" path. Both are valid wire shapes.
+ * {@link add} fires autocomplete with `name` and applies the resolution
+ * policy (#405) — see {@link add} for the policy. Both the explicit-bypass
+ * path AND the auto-resolved path send the resolved catalog id on the
+ * wire; the custom-skill fallback (`skillSet.id` omitted) only fires when
+ * autocomplete returns zero exact matches.
  *
  * **Per the wire capture** (`research/captures/web/inputs/
  * ADD_PROFILE_SKILL_SET.json`): the wire format is
@@ -368,13 +370,6 @@ export interface UpdateSkillResult {
  * Pattern 2 with parent id; the inner `skillSet.id` is the CATALOG skill
  * id (`V1-Skill-<n>`), NOT the resulting `ProfileSkillSet` id (which is
  * `V1-ProfileSkillSet-<n>` and only exists in the response).
- *
- * **Name → id resolution is intentionally out of scope** of {@link add}:
- * callers wanting the autocomplete-resolution UX (analogous to
- * `employment.add`'s `--company` → `employerId` flow) consume
- * {@link autocomplete} explicitly and pass the resolved id via
- * `skillId`. A follow-up issue tracks wiring transparent resolution into
- * `add` itself.
  */
 export interface AddSkillFields {
   name: string;
@@ -387,8 +382,9 @@ export interface AddSkillFields {
   // write-only: catalog `Skill` id (e.g. "V1-Skill-278891") consumed to bind
   // the new ProfileSkillSet to a catalog Skill; the resolved binding is
   // echoed via skill.id / skill.name on the read side rather than the input
-  // field name. Omit for custom (non-catalog) skills. See AddSkillFields
-  // docstring § "Optional bypass" and the employment.add employerId precedent.
+  // field name. Omit to let {@link add} resolve via autocomplete (#405).
+  // See AddSkillFields docstring § "Optional bypass" and the employment.add
+  // employerId precedent.
   skillId?: string;
 }
 
@@ -399,11 +395,17 @@ export interface AddSkillFields {
  * callers branch on the {@link AddSkillOutcome} `kind` discriminator
  * regardless of which mutation they're invoking.
  *
- * Unlike `employment.add`, the {@link add} dry-run path is zero-network:
- * no autocomplete read is fired during dry-run (the caller supplies the
- * `skillId` directly if needed). The placeholder
- * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} stands in for `profileId` so
- * `extractProfileId` is also skipped.
+ * **Dry-run network behavior (#405)**: dry-run with an explicit `skillId`
+ * is zero-network — `extractProfileId` is skipped, the placeholder
+ * {@link DRY_RUN_PROFILE_ID_PLACEHOLDER} stands in for `profileId`, and
+ * the `ADD_PROFILE_SKILL_SET` mutation is NOT fired. Dry-run WITHOUT a
+ * `skillId` fires `extractProfileId` + autocomplete reads so the
+ * preview's wire shape carries the resolved `skillSet.id` (or omits it
+ * for the custom-skill fallback) — matching what the live mutation would
+ * transmit. The mutation transport is still NEVER fired in `dryRun` mode.
+ * This mirrors the {@link employment.add} (#395) dry-run pattern; the
+ * difference vs `basic.set` (zero-network dry-run) is intentional —
+ * preview wire-shape accuracy beats the zero-network invariant here.
  */
 export interface AddSkillOptions {
   dryRun?: boolean;
@@ -421,7 +423,9 @@ export interface AddSkillOutcomeCreated {
 /**
  * Discriminated outcome of an {@link add} call invoked with
  * `dryRun: true` — the structured preview of the request that WOULD
- * have been sent. No mutation OR autocomplete-read was fired.
+ * have been sent. The `skillsAutocomplete` read query MAY have been
+ * fired during dry-run to resolve `skillSet.id` (#405); the
+ * `ADD_PROFILE_SKILL_SET` mutation transport was NOT fired.
  */
 export interface AddSkillOutcomePreview {
   kind: "preview";
@@ -568,6 +572,33 @@ function raiseUserErrors(operation: string, errors: UserErrorEntry[] | null | un
  *   - `experience: 1`
  *   - `public: false` (privacy default)
  *
+ * **skillId resolution (#405)**: mirrors the {@link employment.add}
+ * (#395) `--company` → `employerId` flow so the cross-domain UX stays
+ * uniform.
+ *
+ *   1. If `fields.skillId` is supplied → use it verbatim. This is the
+ *      explicit-bypass path (`--skill-id` on CLI, `skillId` on MCP) —
+ *      useful for replay scripts, the disambiguation fallback, or
+ *      known-good catalog ids.
+ *   2. Otherwise, fire {@link autocomplete} against `fields.name`.
+ *      Practical cardinality is on EXACT NAME MATCH (case-insensitive,
+ *      trimmed):
+ *        - exactly 1 exact match → use its id transparently
+ *        - 2+ exact matches (catalog duplicates) → `VALIDATION_ERROR`
+ *          listing the duplicates + `--skill-id` nudge
+ *        - 0 exact matches → fall back to custom-skill creation
+ *          (preserves pre-#405 behavior; `skillSet.id` is OMITTED and
+ *          the server treats `name` as a free-text custom skill).
+ *
+ *      The 0-match case INTENTIONALLY differs from {@link employment.add}
+ *      (which throws): a custom-skill is a valid Toptal wire variant
+ *      (captured at `research/captures/web/inputs/ADD_PROFILE_SKILL_SET.json`),
+ *      whereas a custom-employer requires the explicit `noEmployer` opt-in
+ *      (#401). The "scoped escape hatch" is the existing `--skill-id`
+ *      flag — a user who wants a custom-skill despite an exact catalog
+ *      match should either tweak the name OR file a follow-up requesting
+ *      an explicit custom-skill flag.
+ *
  * **Bug history (#396)**: pre-#396, `add(token, name)` sent the invented
  * shape `{ input: { name } }`. The server rejected with
  * `name (Field is not defined), profileId (required), skillSet (required)`
@@ -575,23 +606,27 @@ function raiseUserErrors(operation: string, errors: UserErrorEntry[] | null | un
  * (`{ _placeholder: String }` at `schema.graphql:893`) and the shape had
  * to be derived from live capture. #396 commits the capture, fixes the
  * wire shape, and bumps the signature to a `{ fields, options }` form
- * mirroring `employment.add` (#395) and `basic.set` (#393).
+ * mirroring `employment.add` (#395) and `basic.set` (#393). #405 wires
+ * transparent autocomplete resolution on top of that capture.
  *
- * **Dry-run path**: zero-network. `extractProfileId` is skipped (the
- * placeholder `DRY_RUN_PROFILE_ID_PLACEHOLDER` stands in); the
- * `ADD_PROFILE_SKILL_SET` mutation transport is NOT fired. Use this to
- * preview the wire shape end-to-end before committing to the live call.
+ * **Dry-run network behavior**: see {@link AddSkillOptions} for the
+ * full semantics. Briefly: dry-run + explicit `skillId` = zero-network;
+ * dry-run + no `skillId` fires `extractProfileId` + autocomplete so the
+ * preview's wire shape carries the resolved `skillSet.id` (or omits it
+ * for the 0-match custom-skill fallback). The mutation transport is
+ * NEVER fired in dry-run mode.
  *
  * Errors:
  * - `SkillsError` `VALIDATION_ERROR` when `fields.name` is empty or
- *   whitespace-only.
+ *   whitespace-only, OR when autocomplete returns ≥2 exact matches and
+ *   the caller did not supply `skillId` to disambiguate.
  * - `SkillsError` `USER_ERROR` when the server reports a domain failure
  *   (e.g., skill already on profile, invalid catalog id, server-side
  *   policy rejection).
  * - `ProfileError` `NO_VIEWER` from the `extractProfileId(token)`
- *   round-trip propagates verbatim — apply path only (dry-run skips
- *   the round-trip). Surfaces with the same actionable message as
- *   `ttctl profile show`.
+ *   round-trip propagates verbatim — fires on every path EXCEPT
+ *   dry-run + explicit `skillId` (the zero-network combo). Surfaces
+ *   with the same actionable message as `ttctl profile show`.
  * - `AuthRevokedError`, `Cf403Error`, plus the standard
  *   `GRAPHQL_ERROR`/`NETWORK_ERROR`/`UNKNOWN` codes from the shared
  *   transport-error path.
@@ -621,8 +656,25 @@ export async function add(
     experience: fields.experience ?? 1,
     public: fields.public ?? false,
   };
-  if (fields.skillId !== undefined) {
+
+  // Resolve `skillSet.id` (#405). Three branches:
+  //   - explicit `skillId` → use verbatim; no autocomplete fired.
+  //   - no `skillId` → extractProfileId (autocomplete requires it) →
+  //     autocomplete → policy. Resolution fires in BOTH dry-run and
+  //     apply paths so the preview's wire shape matches what the live
+  //     mutation would transmit (mirrors #395 employment.add).
+  //
+  // `profileId` is captured here so the apply-path mutation can reuse
+  // it without re-fetching.
+  let profileId: string | undefined;
+  if (fields.skillId !== undefined && fields.skillId !== "") {
     skillSet.id = fields.skillId;
+  } else {
+    profileId = await extractProfileId(token);
+    const resolved = await resolveSkillId(token, profileId, name);
+    if (resolved !== undefined) {
+      skillSet.id = resolved;
+    }
   }
 
   if (options.dryRun === true) {
@@ -640,7 +692,10 @@ export async function add(
     };
   }
 
-  const profileId = await extractProfileId(token);
+  // Apply path. Reuse `profileId` from the resolution branch if already
+  // extracted, otherwise extract it now (explicit-skillId path skipped
+  // it above).
+  profileId ??= await extractProfileId(token);
   const data = await callTalentProfile<AddSkillSetData>(
     token,
     "ADD_PROFILE_SKILL_SET",
@@ -662,6 +717,65 @@ export async function add(
     throw new SkillsError("UNKNOWN", "Skill add succeeded but response had no `skillSet` payload");
   }
   return { kind: "created", result: normaliseSkillSet(payload.skillSet) };
+}
+
+/**
+ * Resolve `fields.skillId` for the {@link add} flow when the caller did
+ * NOT supply an explicit `skillId` (#405). Mirrors the
+ * {@link employment.add} (#395) `resolveEmployerId` policy:
+ *
+ *   - 1 exact name match (case-insensitive, trimmed) → return its id
+ *     for transparent binding to the catalog `Skill`.
+ *   - 2+ exact matches → `VALIDATION_ERROR` listing the duplicates +
+ *     `--skill-id` nudge. Catalog duplicates are rare but possible
+ *     (e.g., distinct entries with identical display names across
+ *     verticals); when they occur the caller must disambiguate.
+ *   - 0 exact matches (regardless of fuzzy count) → return `undefined`
+ *     and let `add()` fall back to the custom-skill path (omits
+ *     `skillSet.id`). This INTENTIONALLY differs from
+ *     `resolveEmployerId` — see {@link add} for the rationale.
+ *
+ * The autocomplete is fired with the default `limit: 10`. Fuzzy matches
+ * are not surfaced (the policy depends only on the exact-match
+ * cardinality), so a larger limit would only cost network without
+ * changing the resolution outcome.
+ */
+async function resolveSkillId(token: string, profileId: string, name: string): Promise<string | undefined> {
+  const matches = await autocomplete(token, profileId, name);
+  const norm = name.trim().toLowerCase();
+  const exact = matches.filter((m) => m.name.trim().toLowerCase() === norm);
+
+  if (exact.length === 1) {
+    const only = exact[0];
+    if (only === undefined) {
+      // Defensive: exact.length === 1 but indexed read is undefined —
+      // a TypeScript noUncheckedIndexedAccess guard. Unreachable at runtime.
+      throw new SkillsError("UNKNOWN", "skill-autocomplete returned 1 exact match but indexing it yielded undefined.");
+    }
+    return only.id;
+  }
+
+  if (exact.length >= 2) {
+    // Multiple catalog records share the user-supplied exact name.
+    const list = exact.map(formatSkillCandidate).join("\n");
+    throw new SkillsError(
+      "VALIDATION_ERROR",
+      `Multiple catalog skills matched "${name}" exactly (${exact.length.toString()} duplicates in the catalog):\n` +
+        `${list}\n` +
+        `Pass \`--skill-id <id>\` to disambiguate.`,
+    );
+  }
+
+  // exact.length === 0 → fall back to custom-skill creation (preserves
+  // pre-#405 behavior). The fuzzy matches are intentionally NOT
+  // surfaced here — they would just nudge the user away from the valid
+  // custom-skill path, and the resolution policy explicitly treats
+  // fuzzy-only as the same bucket as no-match-at-all.
+  return undefined;
+}
+
+function formatSkillCandidate(m: SkillSuggestion): string {
+  return `  - ${m.id}  ${m.name}`;
 }
 
 // -----------------------------------------------------------------------

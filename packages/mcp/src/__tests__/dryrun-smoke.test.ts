@@ -240,7 +240,13 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_reviews_list: {},
   ttctl_profile_reviews_submit_for_review: { profileCapabilityConsentIssued: true },
   // profile.skills (7)
-  ttctl_profile_skills_add: { name: "TypeScript" },
+  // skillId bypass keeps the dry-run path zero-transport for the smoke
+  // test. Per #405, dry-run without an explicit skillId fires the
+  // `skillsAutocomplete` read query (mirroring #395 employment.add), which
+  // is sentinel-rejected by this test's transport mock. The
+  // autocomplete-resolution path is exercised in the core service's unit
+  // tests.
+  ttctl_profile_skills_add: { name: "TypeScript", skillId: "V1-Skill-stub" },
   ttctl_profile_skills_autocomplete: { query: "Type" },
   ttctl_profile_skills_list: {},
   ttctl_profile_skills_readiness: {},

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`profile skills add` — transparent autocomplete resolution
+  (#405).** When `name` is passed without `--skill-id` (CLI) or
+  `skillId` (MCP), `profile.skills.add` now fires
+  `GET_SKILLS_FOR_AUTOCOMPLETE` and applies the resolution policy:
+  a single exact name match (case-insensitive, trimmed) auto-binds
+  to that catalog `Skill`; ≥2 exact matches surface a
+  `VALIDATION_ERROR` listing the duplicates with `--skill-id` nudge;
+  0 exact matches fall back to custom-skill creation (the pre-#405
+  behavior — `skillSet.id` is omitted and the server creates a
+  non-catalog `Skill` from the free-text `name`). Mirrors the
+  `employment.add` `--company` → `employerId` flow from #395 so the
+  cross-domain UX stays uniform.
+  - **Dry-run network behavior**: dry-run + explicit `skillId` stays
+    zero-network. Dry-run WITHOUT `skillId` now fires
+    `extractProfileId` + `skillsAutocomplete` so the preview's wire
+    shape carries the resolved `skillSet.id` (or omits it for the
+    custom-skill fallback) — matching what the live mutation would
+    transmit. The `ADD_PROFILE_SKILL_SET` mutation transport is
+    never fired in dry-run.
+  - **Schema/contract rule**: NOT triggered as a new wire-shape —
+    `ADD_PROFILE_SKILL_SET` and `GET_SKILLS_FOR_AUTOCOMPLETE` are
+    already covered by the existing #396 capture +
+    `47-profile-skills-add.e2e.test.ts` E2E. The resolution logic
+    is client-side; no new op or input field. The existing custom-
+    skill E2E continues to exercise the 0-match fallback (its
+    `TEST_SKILL_NAME = ttctl-e2e-skill-${Date.now()}` is unique by
+    construction).
+  - **Track 1 disposition**: unchanged — T1 snapshots for
+    `ADD_PROFILE_SKILL_SET` continue to apply.
+  - **Surface coverage / write-read symmetry / E2E coverage gates**:
+    unchanged. `skillId` remains write-only-annotated; the resolved
+    binding echoes via `skill.id` / `skill.name` on the read side.
+
 ## [v0.1.0-rc.8] - 2026-05-22
 
 ### Added
