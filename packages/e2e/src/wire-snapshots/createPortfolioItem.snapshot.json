@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-23T18:30:00.000Z",
+  "capturedAt": "2026-05-23T20:18:00.000Z",
   "operationName": "createPortfolioItem",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -52,6 +52,12 @@
         },
         "kind": {
           "kind": "string"
+        },
+        "kpis": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
         },
         "link": {
           "kind": "nullable",

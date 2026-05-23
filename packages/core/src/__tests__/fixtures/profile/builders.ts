@@ -187,6 +187,7 @@ export function buildMinimalProfile(): ProfileFixture {
     industries: [],
     details: null,
     files: [],
+    kpis: [],
   };
 
   const minimalEmployment: Employment = {

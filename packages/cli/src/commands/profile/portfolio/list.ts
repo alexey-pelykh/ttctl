@@ -195,6 +195,14 @@ function renderPortfolioItem(it: profile.portfolio.PortfolioItem): string {
     lines.push(renderFilesSummary(it.files, detailIndent));
   }
 
+  // `kpis` (#550) are the talent-authored quantified outcomes for the
+  // project. Skip-if-empty (many items have none); when present, render
+  // one row per KPI: `- <value>: <description>` (e.g. `- 40%: page
+  // load reduction`). The order in the wire response is preserved.
+  if (it.kpis.length > 0) {
+    lines.push(renderKpisSummary(it.kpis, detailIndent));
+  }
+
   return lines.join("\n");
 }
 
@@ -248,6 +256,26 @@ function renderFilesSummary(files: profile.portfolio.PortfolioItemFile[], indent
     }
   });
   return [`${indent}Files (${count.toString()} ${noun}):`, ...rows].join("\n");
+}
+
+/**
+ * Render the KPI list for a portfolio item: a `KPIs (N):` header followed
+ * by one row per KPI — `- <value>: <description>`. Both `value` and
+ * `description` are nullable; the row falls back to `(unset)` for either
+ * when null/empty so the structural presence of a KPI entry stays visible
+ * even when the talent only filled out part of it. Callers guard on
+ * `kpis.length > 0`, so this never renders an empty list.
+ */
+function renderKpisSummary(kpis: profile.portfolio.PortfolioItemKpi[], indent: string): string {
+  const count = kpis.length;
+  const noun = count === 1 ? "KPI" : "KPIs";
+  const kpiIndent = `${indent}  `;
+  const rows = kpis.map((k) => {
+    const value = k.value !== null && k.value !== "" ? k.value : "(unset)";
+    const description = k.description !== null && k.description !== "" ? k.description : "(unset)";
+    return `${kpiIndent}- ${value}: ${description}`;
+  });
+  return [`${indent}KPIs (${count.toString()} ${noun}):`, ...rows].join("\n");
 }
 
 /**

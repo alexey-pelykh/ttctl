@@ -109,6 +109,7 @@ export const PORTFOLIO_DISTRIBUTED_LEDGER: PortfolioItem = {
   industries: [{ id: "ind_test_finance", name: "Financial Software" }],
   details: null,
   files: [],
+  kpis: [],
 };
 
 export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
@@ -132,6 +133,7 @@ export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
   industries: [{ id: "ind_test_healthcare", name: "Healthcare Software" }],
   details: null,
   files: [],
+  kpis: [],
 };
 
 export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
@@ -155,6 +157,7 @@ export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
   industries: [{ id: "ind_test_software", name: "Software" }],
   details: null,
   files: [],
+  kpis: [],
 };
 
 // -----------------------------------------------------------------------

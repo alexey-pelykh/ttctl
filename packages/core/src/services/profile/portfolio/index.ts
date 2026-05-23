@@ -281,6 +281,61 @@ export interface PortfolioFileImage {
 }
 
 /**
+ * `PortfolioItem.kpis` entry — a quantified outcome the talent attached to
+ * a portfolio project (e.g., `{ value: "40%", description: "page load
+ * reduction" }`, `{ value: "1M", description: "monthly active users" }`).
+ *
+ * **[INFERRED — partial wire verification via empty-list probe, 2026-05-23]**
+ * The synthesized SDL at
+ * `research/graphql/talent_profile/schema.graphql:386` declares
+ * `PortfolioItem.kpis: Unknown` (introspection didn't expose the structured
+ * shape). The empirical `Portfolio.graphql` fragment + captured
+ * `getProfileData.graphql:250-254` operation both project:
+ *
+ *   ```graphql
+ *   kpis { id value description }
+ *   ```
+ *
+ * (sources: `research/graphql/talent_profile/fragments/Portfolio.graphql:27-31`,
+ * `research/captures/web/operations/getProfileData.graphql:250-254`,
+ * `research/.tmp/web-bundles/main.49dbe1ed.js:396` — the live Toptal web
+ * bundle pulls `kpis:p` straight off the response without `.nodes`,
+ * confirming the direct-list shape).
+ *
+ * Live-probe evidence (`.tmp/probe-portfolio-kpis*.mjs`, 2026-05-23 against
+ * the maintainer's profile):
+ *
+ *   - The shape `kpis { id value description }` is accepted on the wire
+ *     (no GraphQL errors when projected via the talent-profile surface).
+ *   - The element type is `PortfolioItemKpi` (revealed by the error
+ *     "Field 'X' doesn't exist on type 'PortfolioItemKpi'" returned when
+ *     probing extra fields).
+ *   - The 3 fields {id, value, description} are the only fields on the
+ *     element type (confirmed by elimination: `label`, `name`, `unit` all
+ *     rejected as undefined).
+ *   - The wire shape is a **direct list** (NOT a connection): probing
+ *     `kpis { nodes }` errors with "Field 'nodes' doesn't exist on type
+ *     'PortfolioItemKpi'".
+ *   - Empty case returns `[]` (NOT `null`): all 32 items on the test
+ *     account had `kpis: []`. The populated sub-field scalar types
+ *     remain INFERRED — every probed item was empty, so concrete values
+ *     for `value` / `description` were not observed. Field semantics
+ *     (KPI value e.g. "40%", description e.g. "page load reduction")
+ *     match String types in the Portfolio fragment.
+ *
+ * Defensive projection: nodes without a string `id` are dropped from the
+ * array — silently absent rather than fabricated. The
+ * `assertWireShapeStable` snapshot at
+ * `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+ * catches shape drift across releases.
+ */
+export interface PortfolioItemKpi {
+  id: string;
+  value: string | null;
+  description: string | null;
+}
+
+/**
  * Read-side portfolio item shape — projection of the `Portfolio` fragment.
  * Service callers receive this on `list()` / mutation responses; the
  * mutation responses also surface the full mutated list on `profile.portfolioItems.nodes`.
@@ -300,6 +355,12 @@ export interface PortfolioFileImage {
  * attachments (typical for freshly-created items); the two variants
  * (`pdf` / `image`) carry distinct shapes the caller discriminates via
  * the `kind` field.
+ *
+ * `kpis` (#550) carries the talent-authored quantified outcomes for the
+ * project — see {@link PortfolioItemKpi}. Empty array `[]` when the item
+ * has no KPIs (typical for items without quantified metrics); each entry
+ * carries `{id, value, description}` (e.g., `value: "40%"`,
+ * `description: "page load reduction"`).
  */
 export interface PortfolioItem {
   id: string;
@@ -319,6 +380,7 @@ export interface PortfolioItem {
   industries: { id: string; name: string }[];
   details: PortfolioItemDetails | null;
   files: PortfolioItemFile[];
+  kpis: PortfolioItemKpi[];
 }
 
 interface TalentProfileResponse<T> {
@@ -328,9 +390,9 @@ interface TalentProfileResponse<T> {
 
 /**
  * Map a portfolio fragment node from the wire shape to the typed
- * {@link PortfolioItem}. Skills, industries, `details` (#548), and
- * `files` (#549) are projected here; the remaining wire fields (`kpis`,
- * `quotes`) stay out of scope for the read surface and are dropped.
+ * {@link PortfolioItem}. Skills, industries, `details` (#548), `files`
+ * (#549), and `kpis` (#550) are projected here; the remaining wire field
+ * (`quotes`) stays out of scope for the read surface and is dropped.
  * Callers that need the extras can issue a richer query in a follow-up.
  */
 function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
@@ -370,6 +432,7 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
     industries,
     details: projectDetails(node["details"]),
     files: projectFiles(node["files"]),
+    kpis: projectKpis(node["kpis"]),
   };
 }
 
@@ -527,6 +590,34 @@ function projectFile(raw: unknown): PortfolioItemFile | null {
 }
 
 /**
+ * Defensively project the `kpis` wire field into a typed
+ * {@link PortfolioItemKpi} array. Returns `[]` when the wire returned
+ * `null`/missing/non-array — silently absent rather than throwing.
+ * Per-element nodes without a string `id` are dropped (siblings preserved);
+ * `value` and `description` are nullable scalars projected as strings or
+ * `null` (the wire field types are INFERRED — see {@link PortfolioItemKpi}
+ * for the full evidence chain).
+ *
+ * Wire shape: direct list (NOT a connection — verified via probe error
+ * "Field 'nodes' doesn't exist on type 'PortfolioItemKpi'", 2026-05-23).
+ * Element type `PortfolioItemKpi` with exactly the 3 fields below
+ * (verified by elimination: `label` / `name` / `unit` all rejected as
+ * undefined fields on `PortfolioItemKpi`).
+ */
+function projectKpis(raw: unknown): PortfolioItemKpi[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((node): PortfolioItemKpi[] => {
+    if (node === null || typeof node !== "object") return [];
+    const obj = node as Record<string, unknown>;
+    const id = obj["id"];
+    if (typeof id !== "string") return [];
+    const value = typeof obj["value"] === "string" ? obj["value"] : null;
+    const description = typeof obj["description"] === "string" ? obj["description"] : null;
+    return [{ id, value, description }];
+  });
+}
+
+/**
  * Common "200 with errors" shape handler. Returns the unwrapped payload
  * (the value of the single root data field) as `unknown`; callers
  * narrow at the call site to their per-operation payload shape. The
@@ -649,6 +740,7 @@ const PORTFOLIO_NODE_SELECTION = `
       ... on PortfolioItemFileImage { id title description contentType image { thumbUrl optimizedUrl } }
     }
   }
+  kpis { id value description }
 `;
 
 const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {
