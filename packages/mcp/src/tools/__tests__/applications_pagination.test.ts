@@ -75,6 +75,7 @@ const ITEM_FIXTURE: applications.JobActivityItem = {
   engagement: null,
   availabilityRequest: null,
   interview: null,
+  mostRelevantApplication: null,
 };
 
 function buildPageFixture(overrides: Partial<applications.JobActivityListPage> = {}): applications.JobActivityListPage {

@@ -168,4 +168,42 @@ describe("applications show (live mobile-gateway)", () => {
       }
     }
   });
+
+  // -------------------------------------------------------------------
+  // mostRelevantApplication projection on show (#547)
+  //
+  // `TalentJobActivityItem.mostRelevantApplication: AvailabilityRequest`
+  // is well-typed (no INFERRED risk), but the field rides the same
+  // hand-authored `JobActivityItem` op (T1 / GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS),
+  // so a live call is the authority on the wire shape. Tolerant: the key
+  // MUST be present on the detail payload; `{ id: string }` when an AR is
+  // the platform's "most relevant" pick, `null` for rows with no AR.
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)("show surfaces mostRelevantApplication (id-only | null) (#547)", async () => {
+    // Prefer an ON_RECRUITER_REVIEW row (carries an AR → likely a
+    // non-null mostRelevantApplication); fall back to the first row.
+    const irList = await cli.run(["applications", "list", "--status-group", "ON_RECRUITER_REVIEW", "-o", "json"]);
+    expect(irList.exitCode).toBe(0);
+    const irItems = JSON.parse(irList.stdout) as { items: Array<{ id?: string }> };
+    let probeId: string | undefined = irItems.items[0]?.id;
+    if (probeId === undefined) {
+      const fallback = await cli.run(["applications", "list", "-o", "json"]);
+      const fbItems = JSON.parse(fallback.stdout) as { items: Array<{ id?: string }> };
+      probeId = fbItems.items[0]?.id;
+    }
+    expect(probeId).toBeDefined();
+    if (probeId === undefined) return;
+
+    const detail = await cli.run(["applications", "show", probeId, "-o", "json"]);
+    expect(detail.exitCode).toBe(0);
+    const payload = JSON.parse(detail.stdout) as { mostRelevantApplication?: unknown };
+    // Key MUST be present — the projection always sets it (null or { id }).
+    expect("mostRelevantApplication" in payload).toBe(true);
+    const mra = payload.mostRelevantApplication;
+    if (mra === null) return;
+    expect(typeof mra).toBe("object");
+    const ref = mra as { id?: unknown };
+    expect(typeof ref.id).toBe("string");
+  });
 });

@@ -30,6 +30,7 @@ const ITEM: applications.JobActivityItem = {
   engagement: { id: "eng-1" },
   availabilityRequest: null,
   interview: null,
+  mostRelevantApplication: null,
   fixedRate: null,
 };
 
@@ -297,6 +298,23 @@ describe("formatApplicationDetail", () => {
     expect(out).not.toContain("  Talent rate:");
     expect(out).not.toContain("  Talent comment:");
     expect(out).not.toContain("  Reject reason:");
+  });
+
+  // ---------------------------------------------------------------------
+  // #547 — mostRelevantApplication deep-link hint
+  // ---------------------------------------------------------------------
+
+  it("renders the Most relevant application hint when present (#547)", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      mostRelevantApplication: { id: "ar-relevant" },
+    });
+    expect(out).toContain("Most relevant application: ar-relevant");
+  });
+
+  it("omits the Most relevant application hint when null (#547)", () => {
+    const out = formatApplicationDetail(DETAIL);
+    expect(out).not.toContain("Most relevant application:");
   });
 });
 

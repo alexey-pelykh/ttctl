@@ -78,6 +78,7 @@ function buildRow(overrides: Partial<applications.JobActivityItem> = {}): applic
       recruiter: null,
     },
     interview: null,
+    mostRelevantApplication: null,
     fixedRate: null,
     ...overrides,
   };
