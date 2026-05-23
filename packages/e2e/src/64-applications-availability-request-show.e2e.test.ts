@@ -153,13 +153,19 @@ describe("applications availability-request show (live mobile-gateway, #442)", (
       // Required projection keys — a regression in the trimmed selection
       // would surface as a missing key here. Values may legitimately be
       // null on the wire (sparse AR row); the keys themselves must be
-      // present.
+      // present. The #539 additions (talentComment / requestedHourlyRate
+      // / rejectReason / recruiter) MUST be keys regardless of lifecycle
+      // stage — pre-response ARs carry them as null.
       for (const key of [
         "id",
         "status",
         "kind",
         "fixedRate",
         "comment",
+        "talentComment",
+        "requestedHourlyRate",
+        "rejectReason",
+        "recruiter",
         "createdAt",
         "updatedAt",
         "answeredAt",
@@ -167,6 +173,36 @@ describe("applications availability-request show (live mobile-gateway, #442)", (
       ]) {
         expect(key in detail).toBe(true);
       }
+
+      // #539 — shape assertions for the INFERRED fields when populated.
+      // `requestedHourlyRate` (Money | null): non-null shape is
+      // { decimal: string, verbose: string }.
+      const reqRate = detail["requestedHourlyRate"];
+      if (reqRate !== null) {
+        expect(typeof reqRate).toBe("object");
+        const r = reqRate as { decimal?: unknown; verbose?: unknown };
+        expect(typeof r.decimal).toBe("string");
+        expect(typeof r.verbose).toBe("string");
+      }
+      // `recruiter` (RecruiterRef | null): non-null carries the three
+      // name fields (firstName / lastName INFERRED-present; fullName
+      // String! in synth SDL). Each is string | null.
+      const recruiter = detail["recruiter"];
+      if (recruiter !== null) {
+        expect(typeof recruiter).toBe("object");
+        const rec = recruiter as Record<string, unknown>;
+        for (const k of ["firstName", "lastName", "fullName"]) {
+          expect(k in rec).toBe(true);
+          const v = rec[k];
+          expect(v === null || typeof v === "string").toBe(true);
+        }
+      }
+      // `talentComment` / `rejectReason`: string | null (no shape beyond
+      // the scalar). Assert the scalar-or-null contract.
+      const talentComment = detail["talentComment"];
+      expect(talentComment === null || typeof talentComment === "string").toBe(true);
+      const rejectReason = detail["rejectReason"];
+      expect(rejectReason === null || typeof rejectReason === "string").toBe(true);
     },
   );
 

@@ -66,7 +66,17 @@ function buildRow(overrides: Partial<applications.JobActivityItem> = {}): applic
     },
     jobApplication: null,
     engagement: null,
-    availabilityRequest: { id: "ar_001" },
+    // #539 widened `availabilityRequest` from `{ id }` to the
+    // {@link applications.AvailabilityRequestEmbed} shape — the IR row
+    // typically rides pre-response (talent-response triple null) but
+    // carries the recruiter identity for personalisation.
+    availabilityRequest: {
+      id: "ar_001",
+      talentComment: null,
+      requestedHourlyRate: null,
+      rejectReason: null,
+      recruiter: null,
+    },
     interview: null,
     fixedRate: null,
     ...overrides,
@@ -128,6 +138,33 @@ describe("projectRow", () => {
     const row = buildRow(); // default: fixedRate: null
     const out = projectRow(row, Date.parse("2026-05-15T00:00:00Z"));
     expect(out.fixedRate).toBeNull();
+  });
+
+  // ----- Recruiter projection from embedded AR (#539) ----------------
+  it("lifts the recruiter from the embedded AR sub-projection into the IR row (#539)", () => {
+    const row = buildRow({
+      availabilityRequest: {
+        id: "ar_001",
+        talentComment: null,
+        requestedHourlyRate: null,
+        rejectReason: null,
+        recruiter: { firstName: "Alex", lastName: "Recruiter", fullName: "Alex Recruiter" },
+      },
+    });
+    const out = projectRow(row, Date.parse("2026-05-15T00:00:00Z"));
+    expect(out.recruiter).toEqual({ firstName: "Alex", lastName: "Recruiter", fullName: "Alex Recruiter" });
+  });
+
+  it("emits recruiter=null when the embedded AR exists but the recruiter sub-field is null (#539)", () => {
+    const row = buildRow();
+    const out = projectRow(row, Date.parse("2026-05-15T00:00:00Z"));
+    expect(out.recruiter).toBeNull();
+  });
+
+  it("emits recruiter=null when the row carries no embedded AR at all (#539)", () => {
+    const row = buildRow({ availabilityRequest: null });
+    const out = projectRow(row, Date.parse("2026-05-15T00:00:00Z"));
+    expect(out.recruiter).toBeNull();
   });
 });
 

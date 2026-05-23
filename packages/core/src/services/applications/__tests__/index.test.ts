@@ -231,9 +231,17 @@ describe("applications.list", () => {
     });
     const res = await list(TOKEN);
     expect(res.items[0]?.fixedRate).toEqual({ decimal: "77.00", verbose: "$77.00/hr" });
-    // The public availabilityRequest is narrowed to {id}; the Money
-    // payload no longer rides on it.
-    expect(res.items[0]?.availabilityRequest).toEqual({ id: "ar-1" });
+    // The public availabilityRequest carries the embed shape (#539):
+    // id + talent-response fields (null pre-response) + recruiter (null
+    // when wire-elided as in this fixture). The Money payload still
+    // flattens to row-level `fixedRate` per the #410 contract.
+    expect(res.items[0]?.availabilityRequest).toEqual({
+      id: "ar-1",
+      talentComment: null,
+      requestedHourlyRate: null,
+      rejectReason: null,
+      recruiter: null,
+    });
   });
 
   it("projects fixedRate=null when availabilityRequest is null (#410)", async () => {
@@ -275,10 +283,139 @@ describe("applications.list", () => {
       });
       const res = await list(TOKEN);
       expect(res.items[0]?.fixedRate).toBeNull();
-      // The AR presence indicator still rides through — only the rate is null.
-      expect(res.items[0]?.availabilityRequest).toEqual({ id: "ar-flex" });
+      // The AR embed still rides through — only the rate is null (#410)
+      // and the #539 fields stay null when the wire elides them.
+      expect(res.items[0]?.availabilityRequest).toEqual({
+        id: "ar-flex",
+        talentComment: null,
+        requestedHourlyRate: null,
+        rejectReason: null,
+        recruiter: null,
+      });
     },
   );
+
+  // ----- AR embed projection (#539) ---------------------------------
+  //
+  // The `availabilityRequest { ... }` sub-selection on `JobActivityList`
+  // now carries the talent-response triple (`talentComment`,
+  // `requestedHourlyRate`, `rejectReason`) plus the `recruiter` contact
+  // identity. The projection lifts those fields into the public
+  // {@link AvailabilityRequestEmbed} shape, with defensive nullability
+  // guards mirroring the {@link projectFixedRate} contract.
+
+  it("projects the full AR embed (talentComment / requestedHourlyRate / rejectReason / recruiter) from the wire (#539)", async () => {
+    const rowWithEmbed = {
+      ...ITEM_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-resp",
+        talentComment: "Sounds good — available next Monday.",
+        requestedHourlyRate: { __typename: "Money", decimal: "85.00", verbose: "$85.00/hr" },
+        rejectReason: null,
+        recruiter: {
+          __typename: "Recruiter",
+          firstName: "Alex",
+          lastName: "Recruiterson",
+          fullName: "Alex Recruiterson",
+        },
+        metadata: {
+          __typename: "AvailabilityRequestFixedMetadata",
+          offeredHourlyRate: { __typename: "Money", decimal: "80.00", verbose: "$80.00/hr" },
+        },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [rowWithEmbed], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.availabilityRequest).toEqual({
+      id: "ar-resp",
+      talentComment: "Sounds good — available next Monday.",
+      requestedHourlyRate: { decimal: "85.00", verbose: "$85.00/hr" },
+      rejectReason: null,
+      recruiter: { firstName: "Alex", lastName: "Recruiterson", fullName: "Alex Recruiterson" },
+    });
+    // fixedRate still flattens to the row level regardless (#410).
+    expect(res.items[0]?.fixedRate).toEqual({ decimal: "80.00", verbose: "$80.00/hr" });
+  });
+
+  it("coerces requestedHourlyRate to null when the wire returns a partial Money (decimal-only) (#539)", async () => {
+    const rowWithPartialRate = {
+      ...ITEM_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-partial",
+        talentComment: null,
+        requestedHourlyRate: { __typename: "Money", decimal: "85.00" },
+        rejectReason: null,
+        recruiter: null,
+        metadata: { __typename: "AvailabilityRequestFlexibleMetadata" },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [rowWithPartialRate], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.availabilityRequest?.requestedHourlyRate).toBeNull();
+  });
+
+  it("projects a rejected-AR row (rejectReason populated, talentComment populated, requestedHourlyRate null) (#539)", async () => {
+    const rowRejected = {
+      ...ITEM_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-reject",
+        talentComment: "Out of scope for me right now.",
+        requestedHourlyRate: null,
+        rejectReason: "scope_mismatch",
+        recruiter: {
+          __typename: "Recruiter",
+          firstName: "Sam",
+          lastName: null,
+          fullName: "Sam",
+        },
+        metadata: { __typename: "AvailabilityRequestFixedMetadata" },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [rowRejected], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.availabilityRequest).toEqual({
+      id: "ar-reject",
+      talentComment: "Out of scope for me right now.",
+      requestedHourlyRate: null,
+      rejectReason: "scope_mismatch",
+      recruiter: { firstName: "Sam", lastName: null, fullName: "Sam" },
+    });
+  });
+
+  it("coerces recruiter sub-fields to null when the wire returns a partial Recruiter (only fullName) (#539)", async () => {
+    const rowPartialRecruiter = {
+      ...ITEM_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-partial-recr",
+        talentComment: null,
+        requestedHourlyRate: null,
+        rejectReason: null,
+        recruiter: { __typename: "Recruiter", fullName: "Pat Recruiter" },
+        metadata: { __typename: "AvailabilityRequestFlexibleMetadata" },
+      },
+    };
+    reply({
+      body: {
+        data: { viewer: { id: "v1", jobActivityList: { entities: [rowPartialRecruiter], totalCount: 1 } } },
+      },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.availabilityRequest?.recruiter).toEqual({
+      firstName: null,
+      lastName: null,
+      fullName: "Pat Recruiter",
+    });
+  });
 });
 
 describe("applications.show", () => {
@@ -354,7 +491,13 @@ describe("applications.show", () => {
     });
     const item = await show(TOKEN, "act-1");
     expect(item.fixedRate).toEqual({ decimal: "109.00", verbose: "$109.00/hr" });
-    expect(item.availabilityRequest).toEqual({ id: "ar-9" });
+    expect(item.availabilityRequest).toEqual({
+      id: "ar-9",
+      talentComment: null,
+      requestedHourlyRate: null,
+      rejectReason: null,
+      recruiter: null,
+    });
   });
 
   it("projects fixedRate=null on show when availabilityRequest is null (#410)", async () => {
@@ -381,7 +524,49 @@ describe("applications.show", () => {
     });
     const item = await show(TOKEN, "act-1");
     expect(item.fixedRate).toBeNull();
-    expect(item.availabilityRequest).toEqual({ id: "ar-flex-detail" });
+    expect(item.availabilityRequest).toEqual({
+      id: "ar-flex-detail",
+      talentComment: null,
+      requestedHourlyRate: null,
+      rejectReason: null,
+      recruiter: null,
+    });
+  });
+
+  // ----- AR embed projection on show (#539) ---------------------------
+  it("projects the full AR embed on show (talent-response triple + recruiter) (#539)", async () => {
+    const detailWithEmbed = {
+      ...DETAIL_FIXTURE,
+      availabilityRequest: {
+        __typename: "AvailabilityRequest",
+        id: "ar-show",
+        talentComment: "Acceptance message.",
+        requestedHourlyRate: { __typename: "Money", decimal: "120.00", verbose: "$120.00/hr" },
+        rejectReason: null,
+        recruiter: {
+          __typename: "Recruiter",
+          firstName: "Casey",
+          lastName: "Recruiter",
+          fullName: "Casey Recruiter",
+        },
+        metadata: {
+          __typename: "AvailabilityRequestFixedMetadata",
+          offeredHourlyRate: { __typename: "Money", decimal: "115.00", verbose: "$115.00/hr" },
+        },
+      },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: detailWithEmbed } } },
+    });
+    const item = await show(TOKEN, "act-1");
+    expect(item.availabilityRequest).toEqual({
+      id: "ar-show",
+      talentComment: "Acceptance message.",
+      requestedHourlyRate: { decimal: "120.00", verbose: "$120.00/hr" },
+      rejectReason: null,
+      recruiter: { firstName: "Casey", lastName: "Recruiter", fullName: "Casey Recruiter" },
+    });
+    expect(item.fixedRate).toEqual({ decimal: "115.00", verbose: "$115.00/hr" });
   });
 
   it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {
@@ -2875,6 +3060,7 @@ describe("applications.availabilityRequests.show (#442)", () => {
       // createdAt / updatedAt / answeredAt omitted
       // comment omitted
       // jirStatus omitted entirely (vs `{value: null}` — both coerce to status: null)
+      // #539 fields omitted entirely
       metadata: null,
       job: null,
     };
@@ -2888,11 +3074,110 @@ describe("applications.availabilityRequests.show (#442)", () => {
       kind: null,
       fixedRate: null,
       comment: null,
+      talentComment: null,
+      requestedHourlyRate: null,
+      rejectReason: null,
+      recruiter: null,
       createdAt: null,
       updatedAt: null,
       answeredAt: null,
       job: null,
     });
+  });
+
+  // ----- New fields on the standalone AR detail (#539) ---------------
+  it("projects talentComment / requestedHourlyRate / rejectReason / recruiter from the wire (#539)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: {
+              ...arFixture({
+                jirStatus: { __typename: "AvailabilityRequestStatus", value: "REJECTED" },
+              }),
+              talentComment: "Out of scope for now — thanks.",
+              requestedHourlyRate: null,
+              rejectReason: "scope_mismatch",
+              recruiter: {
+                __typename: "Recruiter",
+                firstName: "Casey",
+                lastName: "Recruiter",
+                fullName: "Casey Recruiter",
+              },
+            },
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.status).toBe("REJECTED");
+    expect(item.talentComment).toBe("Out of scope for now — thanks.");
+    expect(item.requestedHourlyRate).toBeNull();
+    expect(item.rejectReason).toBe("scope_mismatch");
+    expect(item.recruiter).toEqual({
+      firstName: "Casey",
+      lastName: "Recruiter",
+      fullName: "Casey Recruiter",
+    });
+  });
+
+  it("projects requestedHourlyRate (Money) on a confirmed-AR detail (#539)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: {
+              ...arFixture(),
+              talentComment: "Available starting Monday.",
+              requestedHourlyRate: { __typename: "Money", decimal: "90.00", verbose: "$90.00/hr" },
+              rejectReason: null,
+            },
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.requestedHourlyRate).toEqual({ decimal: "90.00", verbose: "$90.00/hr" });
+    expect(item.talentComment).toBe("Available starting Monday.");
+    expect(item.rejectReason).toBeNull();
+  });
+
+  it("coerces requestedHourlyRate to null on partial-Money wire shape (decimal-only) (#539)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: {
+              ...arFixture(),
+              requestedHourlyRate: { __typename: "Money", decimal: "90.00" },
+            },
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.requestedHourlyRate).toBeNull();
+  });
+
+  it("coerces recruiter sub-fields to null when wire returns a partial Recruiter (only fullName) (#539)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: {
+              ...arFixture(),
+              recruiter: { __typename: "Recruiter", fullName: "Pat Recruiter" },
+            },
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.recruiter).toEqual({ firstName: null, lastName: null, fullName: "Pat Recruiter" });
   });
 
   it("coerces fixedRate to null when offeredHourlyRate is partial (decimal present, verbose absent)", async () => {

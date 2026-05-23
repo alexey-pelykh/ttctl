@@ -33,6 +33,26 @@ const ITEM: applications.JobActivityItem = {
   fixedRate: null,
 };
 
+/**
+ * Embed fixture factory (#539). The public
+ * {@link applications.AvailabilityRequestEmbed} extends prior `{ id }`
+ * presence indicator with talent-response triple + recruiter; tests
+ * default the new fields to null so fixtures stay terse, with overrides
+ * exercising the populated branches.
+ */
+function embedFixture(
+  overrides: Partial<applications.AvailabilityRequestEmbed> = {},
+): applications.AvailabilityRequestEmbed {
+  return {
+    id: "ar-1",
+    talentComment: null,
+    requestedHourlyRate: null,
+    rejectReason: null,
+    recruiter: null,
+    ...overrides,
+  };
+}
+
 describe("shortenStatusGroup", () => {
   it("maps each known group to a compact label", () => {
     expect(shortenStatusGroup("ACTIVE_ENGAGEMENT")).toBe("Active");
@@ -162,7 +182,7 @@ describe("formatApplicationDetail", () => {
   it("surfaces availability-request and interview presence indicators when present", () => {
     const out = formatApplicationDetail({
       ...DETAIL,
-      availabilityRequest: { id: "ar-1" },
+      availabilityRequest: embedFixture(),
       interview: { id: "iv-1" },
     });
     expect(out).toContain("Availability request: ar-1");
@@ -207,7 +227,7 @@ describe("formatApplicationDetail", () => {
   it("renders the Fixed rate section when fixedRate is present (#410)", () => {
     const out = formatApplicationDetail({
       ...DETAIL,
-      availabilityRequest: { id: "ar-1" },
+      availabilityRequest: embedFixture(),
       fixedRate: { decimal: "77.00", verbose: "$77.00/hr" },
     });
     expect(out).toContain("Fixed rate");
@@ -222,10 +242,61 @@ describe("formatApplicationDetail", () => {
   it("falls back to $<decimal>/h when verbose is empty (#410 defensive)", () => {
     const out = formatApplicationDetail({
       ...DETAIL,
-      availabilityRequest: { id: "ar-1" },
+      availabilityRequest: embedFixture(),
       fixedRate: { decimal: "109.00", verbose: "" },
     });
     expect(out).toContain("$109.00/h");
+  });
+
+  // ---------------------------------------------------------------------
+  // #539 — embedded AR sub-projection on JobActivityItemDetail
+  // ---------------------------------------------------------------------
+
+  it("renders the Recruiter line under Availability request when populated (#539)", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      availabilityRequest: embedFixture({
+        recruiter: { firstName: "Alex", lastName: "Recruiter", fullName: "Alex Recruiter" },
+      }),
+    });
+    expect(out).toContain("Availability request:");
+    expect(out).toContain("  Recruiter: Alex Recruiter");
+  });
+
+  it("falls back to firstName + lastName when embedded recruiter.fullName is null (#539)", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      availabilityRequest: embedFixture({
+        recruiter: { firstName: "Sam", lastName: "Recruiter", fullName: null },
+      }),
+    });
+    expect(out).toContain("  Recruiter: Sam Recruiter");
+  });
+
+  it("renders Talent rate / Talent comment / Reject reason when populated on the embed (#539)", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      availabilityRequest: embedFixture({
+        talentComment: "Available next Monday.",
+        requestedHourlyRate: { decimal: "85.00", verbose: "$85.00/hr" },
+        rejectReason: "scope_mismatch",
+      }),
+    });
+    expect(out).toContain("  Talent rate: $85.00/hr");
+    expect(out).toContain("  Talent comment: Available next Monday.");
+    expect(out).toContain("  Reject reason: scope_mismatch");
+  });
+
+  it("renders only the AR id when no #539 fields are populated", () => {
+    const out = formatApplicationDetail({
+      ...DETAIL,
+      availabilityRequest: embedFixture({ id: "ar-bare" }),
+    });
+    expect(out).toContain("Availability request: ar-bare");
+    expect(out).not.toContain("  Recruiter:");
+    expect(out).not.toContain("  Talent rate:");
+    expect(out).not.toContain("  Talent comment:");
+    expect(out).not.toContain("  Reject reason:");
   });
 });
 
@@ -590,6 +661,13 @@ describe("formatAvailabilityRequestDetail (#442)", () => {
       kind: "FIXED",
       fixedRate: { decimal: "95.00", verbose: "$95.00/hr" },
       comment: "Recruiter note one.\n\nRecruiter note two.",
+      // #539 — talent-response triple + recruiter; default to null
+      // (most fixtures don't need them; per-test overrides exercise the
+      // populated branches).
+      talentComment: null,
+      requestedHourlyRate: null,
+      rejectReason: null,
+      recruiter: null,
       createdAt: "2026-05-01T09:00:00Z",
       updatedAt: "2026-05-15T08:00:00Z",
       answeredAt: "2026-05-16T10:00:00Z",
@@ -686,6 +764,98 @@ describe("formatAvailabilityRequestDetail (#442)", () => {
     );
     expect(out).toContain("Title:  Senior Engineer");
     expect(out).not.toContain("Client:");
+  });
+
+  // ---------------------------------------------------------------------
+  // #539 — talent-response fields + recruiter section
+  // ---------------------------------------------------------------------
+
+  it("renders the talent-rate line when requestedHourlyRate is present (#539)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({ requestedHourlyRate: { decimal: "85.00", verbose: "$85.00/hr" } }),
+    );
+    expect(out).toContain("Talent rate: $85.00/hr");
+  });
+
+  it("omits the talent-rate line when requestedHourlyRate is null (#539)", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail());
+    expect(out).not.toContain("Talent rate:");
+  });
+
+  it("renders the Recruiter section with fullName when populated (#539)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        recruiter: { firstName: "Alex", lastName: "Recruiterson", fullName: "Alex Recruiterson" },
+      }),
+    );
+    expect(out).toContain("Recruiter");
+    expect(out).toContain("Name:  Alex Recruiterson");
+  });
+
+  it("falls back to firstName + lastName when recruiter.fullName is null (#539)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        recruiter: { firstName: "Sam", lastName: "Recruiter", fullName: null },
+      }),
+    );
+    expect(out).toContain("Name:  Sam Recruiter");
+  });
+
+  it("omits the Recruiter section when all three recruiter name fields are null (#539)", () => {
+    // `comment` defaults to text containing the word "Recruiter", so
+    // assert on the section's content line (`Name:`) rather than the
+    // bare word — the Recruiter section renders a `Name:` line.
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({ recruiter: { firstName: null, lastName: null, fullName: null } }),
+    );
+    expect(out).not.toContain("Name:");
+  });
+
+  it("renders the Talent comment section when talentComment is populated (#539)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({ talentComment: "Available next Monday.\n\nLooking forward." }),
+    );
+    expect(out).toContain("Talent comment");
+    expect(out).toContain("  Available next Monday.");
+    expect(out).toContain("  Looking forward.");
+  });
+
+  it("omits the Talent comment section when talentComment is null (#539)", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail());
+    expect(out).not.toContain("Talent comment");
+  });
+
+  it("omits the Talent comment section when talentComment is an empty string (#539)", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail({ talentComment: "" }));
+    expect(out).not.toContain("Talent comment");
+  });
+
+  it("renders the Reject reason line when rejectReason is populated (#539)", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail({ rejectReason: "rate_too_low" }));
+    expect(out).toContain("Reject reason: rate_too_low");
+  });
+
+  it("omits the Reject reason line when rejectReason is null (#539)", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail());
+    expect(out).not.toContain("Reject reason:");
+  });
+
+  it("renders all #539 sections together on a rejected-AR fixture (#539)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        status: "REJECTED",
+        talentComment: "Out of scope for me right now.",
+        requestedHourlyRate: null,
+        rejectReason: "scope_mismatch",
+        recruiter: { firstName: "Pat", lastName: null, fullName: "Pat" },
+      }),
+    );
+    expect(out).toContain("Status:     REJECTED");
+    expect(out).toContain("Recruiter");
+    expect(out).toContain("Name:  Pat");
+    expect(out).toContain("Talent comment");
+    expect(out).toContain("Reject reason: scope_mismatch");
+    expect(out).not.toContain("Talent rate:");
   });
 });
 

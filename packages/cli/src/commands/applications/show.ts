@@ -159,16 +159,44 @@ export function formatApplicationDetail(item: applications.JobActivityItemDetail
     }
   }
 
-  // Surface availability-request / interview presence as one-liners.
-  // The schema marks `interview` as `Unknown` so we can't safely select
-  // more than `id` — and even `id` is a presence indicator.
+  // Surface availability-request detail (#539 — extended from prior
+  // presence indicator) and the interview presence indicator. The
+  // interview shape stays minimal: the schema marks `interview` as
+  // `Unknown` so we can't safely select more than `id`.
   if (item.availabilityRequest !== null) {
     lines.push("");
     lines.push(`Availability request: ${item.availabilityRequest.id}`);
+    if (item.availabilityRequest.recruiter !== null) {
+      const name = formatEmbedRecruiterName(item.availabilityRequest.recruiter);
+      if (name !== null) lines.push(`  Recruiter: ${name}`);
+    }
+    if (item.availabilityRequest.requestedHourlyRate !== null) {
+      lines.push(`  Talent rate: ${formatFixedRate(item.availabilityRequest.requestedHourlyRate)}`);
+    }
+    if (item.availabilityRequest.talentComment !== null && item.availabilityRequest.talentComment !== "") {
+      lines.push(`  Talent comment: ${item.availabilityRequest.talentComment}`);
+    }
+    if (item.availabilityRequest.rejectReason !== null && item.availabilityRequest.rejectReason !== "") {
+      lines.push(`  Reject reason: ${item.availabilityRequest.rejectReason}`);
+    }
   }
   if (item.interview !== null) {
     lines.push(`Interview: ${item.interview.id}`);
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Render a {@link applications.RecruiterRef} from the embedded AR
+ * sub-projection (#539) as a single display name. Prefers `fullName`
+ * when populated; falls back to a `firstName lastName` join. Returns
+ * `null` when no name field is populated.
+ */
+function formatEmbedRecruiterName(recruiter: applications.RecruiterRef): string | null {
+  if (recruiter.fullName !== null && recruiter.fullName !== "") return recruiter.fullName;
+  const parts: string[] = [];
+  if (recruiter.firstName !== null && recruiter.firstName !== "") parts.push(recruiter.firstName);
+  if (recruiter.lastName !== null && recruiter.lastName !== "") parts.push(recruiter.lastName);
+  return parts.length > 0 ? parts.join(" ") : null;
 }

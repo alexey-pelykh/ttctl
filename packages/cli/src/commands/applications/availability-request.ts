@@ -47,15 +47,24 @@ export async function runApplicationsAvailabilityRequestShow(id: string, output:
  *     Availability request <id>
  *       Status:     <status>
  *       Kind:       <kind>
- *       Fixed rate: <verbose | $<decimal>/h>     // omitted if fixedRate null
+ *       Fixed rate: <verbose | $<decimal>/h>      // omitted if fixedRate null
+ *       Talent rate: <verbose | $<decimal>/h>     // omitted if requestedHourlyRate null (#539)
  *       Created:    <createdAt>
  *       Updated:    <updatedAt>
- *       Answered:   <answeredAt>                 // omitted if null (pending)
+ *       Answered:   <answeredAt>                  // omitted if null (pending)
  *
- *     Comment                                    // omitted if comment null/empty
+ *     Recruiter                                   // #539; omitted if recruiter is null
+ *       Name:  <fullName | firstName lastName>
+ *
+ *     Comment                                     // recruiter note; omitted if null/empty
  *       <recruiter note, paragraph-preserved>
  *
- *     Job                                        // omitted if job is null
+ *     Talent comment                              // #539; omitted if null/empty
+ *       <talent's free-text response, paragraph-preserved>
+ *
+ *     Reject reason: <key>                        // #539; omitted if null
+ *
+ *     Job                                         // omitted if job is null
  *       Job id: <id>
  *       Title:  <title>
  *       URL:    <url>
@@ -71,9 +80,21 @@ export function formatAvailabilityRequestDetail(item: applications.AvailabilityR
   if (item.status !== null) lines.push(`  Status:     ${item.status}`);
   if (item.kind !== null) lines.push(`  Kind:       ${item.kind}`);
   if (item.fixedRate !== null) lines.push(`  Fixed rate: ${formatFixedRate(item.fixedRate)}`);
+  if (item.requestedHourlyRate !== null) {
+    lines.push(`  Talent rate: ${formatFixedRate(item.requestedHourlyRate)}`);
+  }
   if (item.createdAt !== null) lines.push(`  Created:    ${item.createdAt}`);
   if (item.updatedAt !== null) lines.push(`  Updated:    ${item.updatedAt}`);
   if (item.answeredAt !== null) lines.push(`  Answered:   ${item.answeredAt}`);
+
+  if (item.recruiter !== null) {
+    const name = formatRecruiterName(item.recruiter);
+    if (name !== null) {
+      lines.push("");
+      lines.push("Recruiter");
+      lines.push(`  Name:  ${name}`);
+    }
+  }
 
   if (item.comment !== null && item.comment !== "") {
     lines.push("");
@@ -81,6 +102,19 @@ export function formatAvailabilityRequestDetail(item: applications.AvailabilityR
     for (const para of item.comment.split(/\n+/)) {
       if (para.trim().length > 0) lines.push(`  ${para}`);
     }
+  }
+
+  if (item.talentComment !== null && item.talentComment !== "") {
+    lines.push("");
+    lines.push("Talent comment");
+    for (const para of item.talentComment.split(/\n+/)) {
+      if (para.trim().length > 0) lines.push(`  ${para}`);
+    }
+  }
+
+  if (item.rejectReason !== null && item.rejectReason !== "") {
+    lines.push("");
+    lines.push(`Reject reason: ${item.rejectReason}`);
   }
 
   if (item.job !== null) {
@@ -95,4 +129,19 @@ export function formatAvailabilityRequestDetail(item: applications.AvailabilityR
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Render a {@link applications.RecruiterRef} as a single display name.
+ * Prefers `fullName` when present; falls back to a `firstName lastName`
+ * join (allowing single-part names) when fullName is absent. Returns
+ * `null` when no name field is populated — the caller suppresses the
+ * Recruiter section in that case.
+ */
+function formatRecruiterName(recruiter: applications.RecruiterRef): string | null {
+  if (recruiter.fullName !== null && recruiter.fullName !== "") return recruiter.fullName;
+  const parts: string[] = [];
+  if (recruiter.firstName !== null && recruiter.firstName !== "") parts.push(recruiter.firstName);
+  if (recruiter.lastName !== null && recruiter.lastName !== "") parts.push(recruiter.lastName);
+  return parts.length > 0 ? parts.join(" ") : null;
 }

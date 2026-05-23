@@ -276,6 +276,59 @@ export interface FixedRate {
 }
 
 /**
+ * Recruiter contact identity surfaced on `AvailabilityRequest.recruiter`
+ * (#539). The synthesized SDL declares only `fullName: String!` on the
+ * `Recruiter` type (`../research/graphql/gateway/schema.graphql:1384`);
+ * `firstName` / `lastName` are **INFERRED — present on the wire** per
+ * empirical probe (issue #539). The selection set in the
+ * `AvailabilityRequest` query and the embedded `availabilityRequest
+ * { ... }` sub-selections in `JobActivityList` / `JobActivityItem` add
+ * all three fields so consumers can address recruiters by first name
+ * without dropping to manual GraphQL.
+ *
+ * All three are nullable defensively — the wire returns server-typed
+ * non-null strings in practice, but the projection guards against
+ * future trimmed selections and per-account empty-state oddities.
+ */
+export interface RecruiterRef {
+  /** Recruiter's first name. INFERRED — present on the wire (#539). */
+  firstName: string | null;
+  /** Recruiter's last name. INFERRED — present on the wire (#539). */
+  lastName: string | null;
+  /** Recruiter's full name. `String!` in synthesized SDL. */
+  fullName: string | null;
+}
+
+/**
+ * Embedded availability-request projection on activity-item rows (#539).
+ * Surfaces the talent's own response data — comment, counter-rate,
+ * reject reason — plus the recruiter contact identity, lifted from the
+ * `availabilityRequest { ... }` sub-selection on `JobActivityList` /
+ * `JobActivityItem` queries.
+ *
+ * `id` is the {@link AvailabilityRequest} handle (the same id the
+ * `applications.availabilityRequests.show()` /
+ * `applications.confirm()` / `applications.reject()` calls accept).
+ *
+ * Talent-response fields (`talentComment` / `requestedHourlyRate` /
+ * `rejectReason`) are typically null for rows whose AR is still
+ * `PENDING` — they populate after the talent confirms or rejects.
+ * `recruiter` is populated regardless of lifecycle stage when the
+ * recruiter identity is bound on the wire.
+ */
+export interface AvailabilityRequestEmbed {
+  id: string;
+  /** Talent's own free-text response. `null` pre-response or wire-elided. */
+  talentComment: string | null;
+  /** Hourly rate the talent posted in response (Money shape). `null` pre-response. */
+  requestedHourlyRate: FixedRate | null;
+  /** Reject-reason `key` (e.g. `"rate_too_low"`) when rejected. `null` otherwise. */
+  rejectReason: string | null;
+  /** Recruiter contact identity. `null` when the wire elides the recruiter. */
+  recruiter: RecruiterRef | null;
+}
+
+/**
  * `AvailabilityRequestKindEnum` values (#411). **INFERRED — UNVERIFIED**
  * from the synthesized schema, which declares the enum as `_UNKNOWN` (line
  * 2729 of `../research/graphql/gateway/schema.graphql` — "values not
@@ -507,7 +560,16 @@ export interface JobActivityItem {
   job: ApplicationJobRef;
   jobApplication: { id: string } | null;
   engagement: { id: string } | null;
-  availabilityRequest: { id: string } | null;
+  /**
+   * Availability-request projection (#539 — extended from the prior
+   * `{ id }` presence indicator). Surfaces talent-response data
+   * (`talentComment`, `requestedHourlyRate`, `rejectReason`) and the
+   * `recruiter` contact identity at row level when the activity has an
+   * associated AR. Backwards-compatible widening: existing consumers
+   * that only read `.id` continue to work; the additional fields are
+   * additive.
+   */
+  availabilityRequest: AvailabilityRequestEmbed | null;
   interview: { id: string } | null;
   fixedRate: FixedRate | null;
 }
@@ -640,6 +702,10 @@ const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $o
         availabilityRequest {
           __typename
           id
+          talentComment
+          requestedHourlyRate { __typename decimal verbose }
+          rejectReason
+          recruiter { __typename firstName lastName fullName }
           metadata {
             __typename
             ... on AvailabilityRequestFixedMetadata {
@@ -701,6 +767,10 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
       availabilityRequest {
         __typename
         id
+        talentComment
+        requestedHourlyRate { __typename decimal verbose }
+        rejectReason
+        recruiter { __typename firstName lastName fullName }
         metadata {
           __typename
           ... on AvailabilityRequestFixedMetadata {
@@ -723,18 +793,43 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
 // round-trip).
 
 /**
- * Wire-side shape of `availabilityRequest` as returned by the trimmed
+ * Wire-side shape of `availabilityRequest` as returned by the
  * `JobActivityItems` / `JobActivityItem` selection set. `id` is the
- * presence indicator; `metadata.offeredHourlyRate` (the Money shape) is
- * the recruiter-pinned Fixed rate (#410) and is only selected on the
+ * AR handle; `metadata.offeredHourlyRate` (the Money shape) is the
+ * recruiter-pinned Fixed rate (#410) and is only selected on the
  * `AvailabilityRequestFixedMetadata` variant — Flexible / marketplace
  * variants return `metadata` without `offeredHourlyRate` (#530). The
  * flatten step in {@link projectActivityItem} lifts `offeredHourlyRate`
  * into the row-level `fixedRate` projection field so callers (CLI, MCP,
  * LLM agents) can rate-triage without traversing the AR sub-shape.
+ *
+ * Extended in #539 with talent-response data
+ * (`talentComment`, `requestedHourlyRate`, `rejectReason`) and the
+ * `recruiter` contact identity. `talentComment` /
+ * `requestedHourlyRate` are well-typed in the synth SDL (`String!` /
+ * `Money!`) so are required wire-side when present; the projection
+ * still guards against wire elisions defensively (post-projection
+ * shape is uniformly nullable). `rejectReason` is `Unknown`-typed in
+ * the synth SDL — treated as `string | null` here (the wire returns
+ * a `rejectReason.key` string when rejected, null otherwise).
+ * `recruiter` is absent from the synth SDL on `AvailabilityRequest`
+ * (the field itself is INFERRED) — `firstName` / `lastName` are
+ * additionally INFERRED on the `Recruiter` type, which the synth SDL
+ * declares with only `fullName`.
  */
 interface AvailabilityRequestWireEntity {
   id: string;
+  talentComment?: string | null;
+  requestedHourlyRate?: {
+    decimal: string;
+    verbose: string;
+  } | null;
+  rejectReason?: string | null;
+  recruiter?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    fullName?: string | null;
+  } | null;
   metadata: {
     __typename?: string | null;
     offeredHourlyRate?: {
@@ -844,10 +939,50 @@ function projectFixedRate(ar: AvailabilityRequestWireEntity | null): FixedRate |
 }
 
 /**
+ * Project the wire's embedded `availabilityRequest { ... }` selection
+ * into the public {@link AvailabilityRequestEmbed} shape (#539). Returns
+ * `null` when the row carries no AR. Talent-response fields
+ * (`talentComment`, `requestedHourlyRate`, `rejectReason`) coerce to
+ * `null` when the wire elides them (pre-response rows); `recruiter`
+ * coerces to `null` when the wire elides the recruiter sub-selection.
+ *
+ * `requestedHourlyRate` projects via the same defensive partial-Money
+ * guard as {@link projectFixedRate} — a wire shape carrying decimal but
+ * not verbose (or vice versa) coerces to `null` rather than passing a
+ * half-populated Money through to consumers.
+ */
+function projectAvailabilityRequestEmbed(ar: AvailabilityRequestWireEntity | null): AvailabilityRequestEmbed | null {
+  if (ar === null) return null;
+  const reqRate = ar.requestedHourlyRate;
+  const requestedHourlyRate: FixedRate | null =
+    reqRate != null && typeof reqRate.decimal === "string" && typeof reqRate.verbose === "string"
+      ? { decimal: reqRate.decimal, verbose: reqRate.verbose }
+      : null;
+  const recruiterWire = ar.recruiter;
+  const recruiter: RecruiterRef | null =
+    recruiterWire == null
+      ? null
+      : {
+          firstName: recruiterWire.firstName ?? null,
+          lastName: recruiterWire.lastName ?? null,
+          fullName: recruiterWire.fullName ?? null,
+        };
+  return {
+    id: ar.id,
+    talentComment: ar.talentComment ?? null,
+    requestedHourlyRate,
+    rejectReason: ar.rejectReason ?? null,
+    recruiter,
+  };
+}
+
+/**
  * Project a wire-shape activity-item row into the public
  * {@link JobActivityItem} surface. The `availabilityRequest` field is
- * narrowed to its presence indicator `{ id }`; the recruiter Fixed
- * rate is flattened to `fixedRate`.
+ * projected into the {@link AvailabilityRequestEmbed} shape (#539 —
+ * extended from the prior `{ id }` presence indicator); the recruiter
+ * Fixed rate is additionally flattened into `fixedRate` so consumers
+ * can rate-triage without traversing the AR sub-shape.
  */
 function projectActivityItem(wire: JobActivityItemWireEntity): JobActivityItem {
   return {
@@ -859,7 +994,7 @@ function projectActivityItem(wire: JobActivityItemWireEntity): JobActivityItem {
     job: wire.job,
     jobApplication: wire.jobApplication,
     engagement: wire.engagement,
-    availabilityRequest: wire.availabilityRequest === null ? null : { id: wire.availabilityRequest.id },
+    availabilityRequest: projectAvailabilityRequestEmbed(wire.availabilityRequest),
     interview: wire.interview,
     fixedRate: projectFixedRate(wire.availabilityRequest),
   };
@@ -880,7 +1015,7 @@ function projectActivityItemDetail(wire: JobActivityItemDetailWireEntity): JobAc
     job: wire.job,
     jobApplication: wire.jobApplication,
     engagement: wire.engagement,
-    availabilityRequest: wire.availabilityRequest === null ? null : { id: wire.availabilityRequest.id },
+    availabilityRequest: projectAvailabilityRequestEmbed(wire.availabilityRequest),
     interview: wire.interview,
     fixedRate: projectFixedRate(wire.availabilityRequest),
   };
@@ -4082,6 +4217,34 @@ export interface AvailabilityRequestDetail {
   fixedRate: FixedRate | null;
   /** Recruiter's free-text note attached to the request. */
   comment: string | null;
+  /**
+   * Talent's own free-text response (#539). Populated post-response
+   * (the wire `AvailabilityRequest.talentComment: String!` is the
+   * mirror of the `comment` arg the talent passed to
+   * `applications.confirm()` / `reject()`). `null` while the AR is
+   * still `PENDING`.
+   */
+  talentComment: string | null;
+  /**
+   * Hourly rate the talent posted in response (#539). Money shape,
+   * mirrors the `requestedHourlyRate` arg the talent passed to
+   * `applications.confirm()`. `null` while the AR is still `PENDING`.
+   */
+  requestedHourlyRate: FixedRate | null;
+  /**
+   * Reject-reason `key` when the AR was declined (#539). One of the
+   * `key` values from the inventory at {@link rejectReasons} (e.g.
+   * `"rate_too_low"`). `null` when the AR is `PENDING` or `CONFIRMED`.
+   * `Unknown`-typed in the synth SDL — treated as `string | null` per
+   * the live wire shape.
+   */
+  rejectReason: string | null;
+  /**
+   * Recruiter contact identity (#539). Absent from synthesized SDL but
+   * present on the wire per empirical probe. Useful for personalising
+   * decline drafts (addressing the recruiter by first name).
+   */
+  recruiter: RecruiterRef | null;
   /** Server-supplied creation timestamp (ISO 8601). */
   createdAt: string | null;
   /** Server-supplied last-mutation timestamp (ISO 8601). */
@@ -4120,6 +4283,12 @@ interface WireAvailabilityRequestJob {
   client?: { id: string; fullName?: string | null } | null;
 }
 
+interface WireAvailabilityRequestRecruiter {
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+}
+
 interface WireAvailabilityRequest {
   id: string;
   createdAt?: string | null;
@@ -4133,6 +4302,27 @@ interface WireAvailabilityRequest {
    * GraphQL type.
    */
   jirStatus?: WireAvailabilityRequestStatusV2 | null;
+  /**
+   * Talent's own free-text response (#539). `String!` in synth SDL but
+   * empirically `null` for pre-response ARs — the projection treats
+   * empty-string and null uniformly.
+   */
+  talentComment?: string | null;
+  /**
+   * Hourly rate the talent posted in response (#539). `Money!` in
+   * synth SDL.
+   */
+  requestedHourlyRate?: WireAvailabilityRequestMoney | null;
+  /**
+   * Reject-reason `key` (#539). `Unknown`-typed in synth SDL —
+   * empirically returns a `string | null` on the wire.
+   */
+  rejectReason?: string | null;
+  /**
+   * Recruiter contact identity (#539). Absent from synth SDL on
+   * `AvailabilityRequest`; INFERRED present on the wire.
+   */
+  recruiter?: WireAvailabilityRequestRecruiter | null;
   metadata?: WireAvailabilityRequestMetadata | null;
   job?: WireAvailabilityRequestJob | null;
 }
@@ -4165,6 +4355,10 @@ const AVAILABILITY_REQUEST_QUERY = `query AvailabilityRequest($id: ID!) {
       updatedAt
       answeredAt
       comment
+      talentComment
+      requestedHourlyRate { __typename decimal verbose }
+      rejectReason
+      recruiter { __typename firstName lastName fullName }
       jirStatus: statusV2 { __typename value }
       metadata {
         __typename
@@ -4192,12 +4386,30 @@ function projectAvailabilityRequestDetail(w: WireAvailabilityRequest): Availabil
     offered != null && typeof offered.decimal === "string" && typeof offered.verbose === "string"
       ? { decimal: offered.decimal, verbose: offered.verbose }
       : null;
+  const reqRate = w.requestedHourlyRate;
+  const requestedHourlyRate: FixedRate | null =
+    reqRate != null && typeof reqRate.decimal === "string" && typeof reqRate.verbose === "string"
+      ? { decimal: reqRate.decimal, verbose: reqRate.verbose }
+      : null;
+  const recruiterWire = w.recruiter;
+  const recruiter: RecruiterRef | null =
+    recruiterWire == null
+      ? null
+      : {
+          firstName: recruiterWire.firstName ?? null,
+          lastName: recruiterWire.lastName ?? null,
+          fullName: recruiterWire.fullName ?? null,
+        };
   return {
     id: w.id,
     status: (w.jirStatus?.value ?? null) as AvailabilityRequestStatus | null,
     kind: kindFromMetadataTypename(w.metadata?.__typename ?? null),
     fixedRate,
     comment: w.comment ?? null,
+    talentComment: w.talentComment ?? null,
+    requestedHourlyRate,
+    rejectReason: w.rejectReason ?? null,
+    recruiter,
     createdAt: w.createdAt ?? null,
     updatedAt: w.updatedAt ?? null,
     answeredAt: w.answeredAt ?? null,
