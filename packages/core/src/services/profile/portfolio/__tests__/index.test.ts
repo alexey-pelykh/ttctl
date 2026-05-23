@@ -661,6 +661,163 @@ describe("portfolio.list", () => {
 
     expect(items[0]?.files).toEqual([]);
   });
+
+  // #550: `kpis` direct-list selection — talent-authored quantified outcomes
+  // for the project. Wire shape verified by probe 2026-05-23:
+  // `kpis { id value description }` (direct list, NOT a connection).
+  it("selects kpis as a direct list with id/value/description (#550)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({ body: { data: { profile: { id: "p1", portfolioItems: { nodes: [] } } } } });
+
+    await list(TOKEN);
+
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const query = call.body.query;
+    // kpis is a direct list, NOT a connection — the live probe confirmed
+    // `kpis { nodes }` errors with "Field 'nodes' doesn't exist on type
+    // 'PortfolioItemKpi'". The selection must use the direct shape.
+    expect(query).toMatch(/kpis\s*\{\s*id\s+value\s+description\s*\}/);
+    expect(query).not.toMatch(/kpis\s*\{\s*nodes\s*\{/);
+  });
+
+  it("projects kpis=[] when the wire returns null kpis (item has no KPIs)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, kpis: null }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.kpis).toEqual([]);
+  });
+
+  it("projects kpis=[] when the wire returns an empty list", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, kpis: [] }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.kpis).toEqual([]);
+  });
+
+  it("projects a populated kpi entry preserving id/value/description", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  kpis: [
+                    { id: "kpi-1", value: "40%", description: "page load reduction" },
+                    { id: "kpi-2", value: "1M", description: "monthly active users" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.kpis).toEqual([
+      { id: "kpi-1", value: "40%", description: "page load reduction" },
+      { id: "kpi-2", value: "1M", description: "monthly active users" },
+    ]);
+  });
+
+  it("projects kpi entries with nullable value/description", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  kpis: [
+                    { id: "kpi-1", value: null, description: "no value yet" },
+                    { id: "kpi-2", value: "5x", description: null },
+                    { id: "kpi-3", value: null, description: null },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.kpis).toEqual([
+      { id: "kpi-1", value: null, description: "no value yet" },
+      { id: "kpi-2", value: "5x", description: null },
+      { id: "kpi-3", value: null, description: null },
+    ]);
+  });
+
+  it("drops kpi entries with missing or non-string id (siblings preserved)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                {
+                  ...PORTFOLIO_NODE,
+                  kpis: [
+                    { id: 42, value: "x", description: "non-string id" },
+                    { value: "y", description: "missing id" },
+                    { id: "kpi-keep", value: "z", description: "good entry" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.kpis).toEqual([{ id: "kpi-keep", value: "z", description: "good entry" }]);
+  });
+
+  it("projects kpis=[] when the wire returns a non-array (defensive)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                { ...PORTFOLIO_NODE, kpis: { unexpected: "shape" } },
+                { ...PORTFOLIO_NODE, id: "pi2", kpis: "string-not-array" },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.kpis).toEqual([]);
+    expect(items[1]?.kpis).toEqual([]);
+  });
 });
 
 describe("portfolio.add", () => {

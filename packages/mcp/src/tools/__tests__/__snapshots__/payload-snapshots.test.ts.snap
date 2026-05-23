@@ -678,7 +678,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
       }
     ],
     "details": null,
-    "files": []
+    "files": [],
+    "kpis": []
   },
   {
     "id": "port_test_002",
@@ -707,7 +708,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
       }
     ],
     "details": null,
-    "files": []
+    "files": [],
+    "kpis": []
   },
   {
     "id": "port_test_003",
@@ -736,7 +738,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
       }
     ],
     "details": null,
-    "files": []
+    "files": [],
+    "kpis": []
   }
 ]"
 `;
@@ -770,7 +773,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: single portfolio
       }
     ],
     "details": null,
-    "files": []
+    "files": [],
+    "kpis": []
   }
 ]"
 `;

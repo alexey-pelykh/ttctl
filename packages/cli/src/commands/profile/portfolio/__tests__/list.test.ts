@@ -35,6 +35,7 @@ const FULL_ITEM: profile.portfolio.PortfolioItem = {
   industries: [],
   details: null,
   files: [],
+  kpis: [],
 };
 
 const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
@@ -55,6 +56,7 @@ const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
   industries: [],
   details: null,
   files: [],
+  kpis: [],
 };
 
 const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
@@ -75,6 +77,7 @@ const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
   industries: [],
   details: null,
   files: [],
+  kpis: [],
 };
 
 describe("formatPortfolioPretty", () => {
@@ -314,6 +317,51 @@ describe("formatPortfolioPretty", () => {
   it("skips the Files line when the item has no attachments (files=[])", () => {
     const out = formatPortfolioPretty([MINIMAL_ITEM]);
     expect(out).not.toContain("Files");
+  });
+
+  // #550: `kpis` rendering — talent-authored quantified outcomes.
+  it("renders KPIs (N): block with value: description rows", () => {
+    const withKpis: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      kpis: [
+        { id: "k-1", value: "40%", description: "page load reduction" },
+        { id: "k-2", value: "1M", description: "monthly active users" },
+      ],
+    };
+    const out = formatPortfolioPretty([withKpis]);
+    expect(out).toContain("    KPIs (2 KPIs):");
+    expect(out).toContain("      - 40%: page load reduction");
+    expect(out).toContain("      - 1M: monthly active users");
+  });
+
+  it("uses singular `KPI` noun for a single entry", () => {
+    const oneKpi: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      kpis: [{ id: "k-1", value: "5x", description: "throughput improvement" }],
+    };
+    const out = formatPortfolioPretty([oneKpi]);
+    expect(out).toContain("    KPIs (1 KPI):");
+    expect(out).toContain("      - 5x: throughput improvement");
+  });
+
+  it("renders (unset) when KPI value or description is null/empty", () => {
+    const partial: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      kpis: [
+        { id: "k-1", value: null, description: "no value yet" },
+        { id: "k-2", value: "75%", description: null },
+        { id: "k-3", value: "", description: "" },
+      ],
+    };
+    const out = formatPortfolioPretty([partial]);
+    expect(out).toContain("      - (unset): no value yet");
+    expect(out).toContain("      - 75%: (unset)");
+    expect(out).toContain("      - (unset): (unset)");
+  });
+
+  it("skips the KPIs line when the item has no KPIs (kpis=[])", () => {
+    const out = formatPortfolioPretty([MINIMAL_ITEM]);
+    expect(out).not.toContain("KPIs");
   });
 });
 
