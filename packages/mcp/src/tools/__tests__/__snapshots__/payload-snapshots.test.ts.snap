@@ -483,7 +483,8 @@ exports[`MCP profile_education — payload snapshots > payload: full profile edu
     "title": "BS, Computer Science",
     "yearFrom": 2010,
     "yearTo": 2014,
-    "highlight": true
+    "highlight": true,
+    "skills": []
   }
 ]"
 `;

@@ -23,6 +23,10 @@ const ROW_A: profile.education.Education = {
   yearFrom: 2010,
   yearTo: 2014,
   highlight: true,
+  skills: [
+    { id: "V1-Skill-1", name: "Python" },
+    { id: "V1-Skill-2", name: "C" },
+  ],
 };
 
 const ROW_B: profile.education.Education = {
@@ -35,15 +39,16 @@ const ROW_B: profile.education.Education = {
   yearFrom: 2015,
   yearTo: null,
   highlight: false,
+  skills: [],
 };
 
-describe("formatEducationListText (#341)", () => {
-  it("renders one tab-separated line per row, ending with the id", () => {
+describe("formatEducationListText (#341, #556)", () => {
+  it("renders one tab-separated line per row with skills column, ending with the id", () => {
     const out = formatEducationListText([ROW_A, ROW_B]);
     const lines = out.split("\n");
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toBe("BSc\tMIT\t2010–2014\tV1-Education-1");
-    expect(lines[1]).toBe("MSc\tStanford\t2015–present\tV1-Education-2");
+    expect(lines[0]).toBe("BSc\tMIT\t2010–2014\tPython, C\tV1-Education-1");
+    expect(lines[1]).toBe("MSc\tStanford\t2015–present\t—\tV1-Education-2");
   });
 
   it("renders an empty-list sentinel when the list is empty", () => {
@@ -51,19 +56,22 @@ describe("formatEducationListText (#341)", () => {
   });
 });
 
-describe("formatEducationListTable (#341)", () => {
-  it("emits a cli-table3 table with one data row per entry plus a highlight column", () => {
+describe("formatEducationListTable (#341, #556)", () => {
+  it("emits a cli-table3 table with one data row per entry plus skills and highlight columns", () => {
     const out = formatEducationListTable([ROW_A, ROW_B]);
     expect(out).toContain("Degree");
     expect(out).toContain("Institution");
+    expect(out).toContain("Skills");
     expect(out).toContain("Highlight");
     expect(out).toContain("BSc");
     expect(out).toContain("MIT");
     expect(out).toContain("2010–2014");
+    expect(out).toContain("Python");
     expect(out).toContain("yes");
     expect(out).toContain("MSc");
     expect(out).toContain("Stanford");
     expect(out).toContain("2015–present");
+    expect(out).toContain("—");
     expect(out).toContain("no");
   });
 });

@@ -12,6 +12,16 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  * the fields ttctl currently surfaces. Years are integers (`yearFrom`,
  * `yearTo`) per the empirical capture
  * `research/captures/web/inputs/UpdateEducationInput.json`.
+ *
+ * `skills` carries the talent's self-attested skill links per education
+ * record (#556 — "learned Python during my CS degree"). Wire shape is the
+ * connection `skills { nodes { id name } }` per the upstream fragment;
+ * ttctl flattens it to `SkillRef[]` (mirrors `Employment.skills` and
+ * `Certification.skills`). Read-only (not on `EducationInput`). The
+ * synthesized SDL types `Education.skills` as `Unknown`; the shape was
+ * confirmed by a live wire probe against the talent-profile surface
+ * (2026-05-23) and is structurally locked by the
+ * `GET_EDUCATION.snapshot.json` (T1).
  */
 export interface Education {
   id: string;
@@ -23,6 +33,7 @@ export interface Education {
   yearFrom: number | null;
   yearTo: number | null;
   highlight: boolean;
+  skills: { id: string; name: string }[];
 }
 
 /**
@@ -52,6 +63,7 @@ const EDUCATION_FRAGMENT = `fragment Education on Education {
   yearFrom
   yearTo
   highlight
+  skills { nodes { id name } }
 }`;
 
 const GET_EDUCATION_QUERY = `query GET_EDUCATION($profileId: ID!) {
@@ -102,7 +114,7 @@ const HIGHLIGHT_EDUCATION_MUTATION = `mutation highlightEducation($id: ID!, $hig
 }`;
 
 interface ListResponse {
-  data?: { profile?: { id: string; educations: { nodes: (Education | null)[] } } | null } | null;
+  data?: { profile?: { id: string; educations: { nodes: (Record<string, unknown> | null)[] } } | null } | null;
   errors?: GraphQLErrorEntry[] | null;
 }
 
@@ -110,7 +122,7 @@ interface MutationPayload {
   success?: boolean | null;
   notice?: string | null;
   errors?: UserError[] | null;
-  profile?: { id: string; educations: { nodes: (Education | null)[] } } | null;
+  profile?: { id: string; educations: { nodes: (Record<string, unknown> | null)[] } } | null;
 }
 
 interface HighlightPayload {
@@ -123,6 +135,35 @@ interface HighlightPayload {
 interface MutationResponse {
   data?: Record<string, MutationPayload | HighlightPayload | null> | null;
   errors?: GraphQLErrorEntry[] | null;
+}
+
+/**
+ * Map an Education fragment node from the raw wire shape to the typed
+ * {@link Education}. The wire surfaces `skills` as a nested connection
+ * (`skills { nodes [{ id, name }] }`), not the flat `SkillRef[]` ttctl
+ * exposes — so a projection step is required. Mirrors
+ * `mapCertificationNode` in the certifications service and
+ * `mapEmploymentNode` in the employment service. Introduced for #556.
+ */
+function mapEducationNode(node: Record<string, unknown>): Education {
+  const skillsConn = node["skills"] as { nodes?: { id?: unknown; name?: unknown }[] } | null | undefined;
+  const skills: { id: string; name: string }[] = Array.isArray(skillsConn?.nodes)
+    ? skillsConn.nodes.flatMap((s) =>
+        typeof s.id === "string" && typeof s.name === "string" ? [{ id: s.id, name: s.name }] : [],
+      )
+    : [];
+  return {
+    id: typeof node["id"] === "string" ? node["id"] : "",
+    institution: typeof node["institution"] === "string" ? node["institution"] : "",
+    degree: typeof node["degree"] === "string" ? node["degree"] : "",
+    fieldOfStudy: typeof node["fieldOfStudy"] === "string" ? node["fieldOfStudy"] : null,
+    location: typeof node["location"] === "string" ? node["location"] : null,
+    title: typeof node["title"] === "string" ? node["title"] : null,
+    yearFrom: typeof node["yearFrom"] === "number" ? node["yearFrom"] : null,
+    yearTo: typeof node["yearTo"] === "number" ? node["yearTo"] : null,
+    highlight: Boolean(node["highlight"]),
+    skills,
+  };
 }
 
 /**
@@ -148,7 +189,7 @@ async function listByProfileId(token: string, profileId: string): Promise<Educat
   ensureNoTopLevelErrors(body, "education list");
   const profile = body?.data?.profile;
   if (!profile) throw new ProfileError("UNKNOWN", "education list response had no `data.profile` field");
-  return profile.educations.nodes.filter((n): n is Education => n !== null);
+  return profile.educations.nodes.filter((n): n is Record<string, unknown> => n !== null).map(mapEducationNode);
 }
 
 /**
@@ -184,7 +225,9 @@ export async function add(token: string, fields: EducationFields): Promise<Educa
     "education add",
   );
   const payload = unwrapMutation(res, "createEducation", "education add");
-  const after = payload.profile?.educations.nodes.filter((n): n is Education => n !== null) ?? [];
+  const after =
+    payload.profile?.educations.nodes.filter((n): n is Record<string, unknown> => n !== null).map(mapEducationNode) ??
+    [];
   const created = after.find((e) => !beforeIds.has(e.id));
   if (!created) {
     throw new ProfileError("UNKNOWN", "education add returned success but no new row was found in the response.");
@@ -208,7 +251,10 @@ export async function update(token: string, id: string, fields: EducationFields)
     "education update",
   );
   const payload = unwrapMutation(res, "updateEducation", "education update");
-  const updated = payload.profile?.educations.nodes.filter((n): n is Education => n !== null).find((e) => e.id === id);
+  const updated = payload.profile?.educations.nodes
+    .filter((n): n is Record<string, unknown> => n !== null)
+    .map(mapEducationNode)
+    .find((e) => e.id === id);
   if (!updated) {
     throw new ProfileError("UNKNOWN", `education update returned success but row "${id}" was not in the response.`);
   }

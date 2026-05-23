@@ -14,9 +14,9 @@ exports[`profile.certifications — read snapshots > list envelope: single certi
 
 exports[`profile.education — read snapshots > list envelope: empty 1`] = `"{"version":"1.0","items":[]}"`;
 
-exports[`profile.education — read snapshots > list envelope: full profile (1 education entry) 1`] = `"{"version":"1.0","items":[{"id":"edu_test_001","institution":"Stanford University","degree":"Bachelor of Science","fieldOfStudy":"Computer Science","location":"Stanford, CA","title":"BS, Computer Science","yearFrom":2010,"yearTo":2014,"highlight":true}]}"`;
+exports[`profile.education — read snapshots > list envelope: full profile (1 education entry) 1`] = `"{"version":"1.0","items":[{"id":"edu_test_001","institution":"Stanford University","degree":"Bachelor of Science","fieldOfStudy":"Computer Science","location":"Stanford, CA","title":"BS, Computer Science","yearFrom":2010,"yearTo":2014,"highlight":true,"skills":[]}]}"`;
 
-exports[`profile.education — read snapshots > list envelope: single education entry 1`] = `"{"version":"1.0","items":[{"id":"edu_test_001","institution":"Stanford University","degree":"Bachelor of Science","fieldOfStudy":"Computer Science","location":"Stanford, CA","title":"BS, Computer Science","yearFrom":2010,"yearTo":2014,"highlight":true}]}"`;
+exports[`profile.education — read snapshots > list envelope: single education entry 1`] = `"{"version":"1.0","items":[{"id":"edu_test_001","institution":"Stanford University","degree":"Bachelor of Science","fieldOfStudy":"Computer Science","location":"Stanford, CA","title":"BS, Computer Science","yearFrom":2010,"yearTo":2014,"highlight":true,"skills":[]}]}"`;
 
 exports[`profile.employment — read snapshots > list envelope: empty 1`] = `"{"version":"1.0","items":[]}"`;
 

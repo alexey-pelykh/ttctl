@@ -332,6 +332,7 @@ export function formatEducationText(e: profile.education.Education): string {
   if (e.location) lines.push(`  ${e.location}`);
   lines.push(`  ${formatYearRange(e.yearFrom, e.yearTo)}`);
   if (e.title) lines.push(`  ${e.title}`);
+  if (e.skills.length > 0) lines.push(`  skills: ${e.skills.map((s) => s.name).join(", ")}`);
   if (e.highlight) lines.push(`  highlighted`);
   lines.push(`  id: ${e.id}`);
   return lines.join("\n");
@@ -349,6 +350,7 @@ export function formatEducationTable(e: profile.education.Education): string {
     ["location", e.location ?? ""],
     ["title", e.title ?? ""],
     ["years", formatYearRange(e.yearFrom, e.yearTo)],
+    ["skills", e.skills.map((s) => s.name).join(", ")],
     ["highlight", e.highlight.toString()],
   ];
   return rows.map(([k, v]) => `${k}\t${v}`).join("\n");
@@ -363,20 +365,44 @@ function formatYearRange(from: number | null, to: number | null): string {
 
 /**
  * Pretty-print a list of Education rows. One row per line, tab-separated:
- * degree, institution, years, id.
+ * degree, institution, years, skills (comma-joined), id. `skills` follows
+ * `years` and precedes `id` so additive fields stay clustered before the
+ * trailing id (mirrors the certifications list shape from #558).
  */
 export function formatEducationListText(rows: profile.education.Education[]): string {
   if (rows.length === 0) return "(no education entries on profile)";
-  return rows.map((e) => `${e.degree}\t${e.institution}\t${formatYearRange(e.yearFrom, e.yearTo)}\t${e.id}`).join("\n");
+  return rows
+    .map(
+      (e) =>
+        `${e.degree}\t${e.institution}\t${formatYearRange(e.yearFrom, e.yearTo)}\t${formatSkillsList(e.skills)}\t${e.id}`,
+    )
+    .join("\n");
 }
 
 /**
  * Pretty-print a list of Education rows as a cli-table3 table.
  */
 export function formatEducationListTable(rows: profile.education.Education[]): string {
-  const table = new Table({ head: ["Degree", "Institution", "Years", "Highlight", "Id"], wordWrap: true });
+  const table = new Table({ head: ["Degree", "Institution", "Years", "Skills", "Highlight", "Id"], wordWrap: true });
   for (const e of rows) {
-    table.push([e.degree, e.institution, formatYearRange(e.yearFrom, e.yearTo), e.highlight ? "yes" : "no", e.id]);
+    table.push([
+      e.degree,
+      e.institution,
+      formatYearRange(e.yearFrom, e.yearTo),
+      formatSkillsList(e.skills),
+      e.highlight ? "yes" : "no",
+      e.id,
+    ]);
   }
   return table.toString();
+}
+
+/**
+ * Render a `SkillRef[]` as a comma-separated list of skill names, or
+ * the em-dash sentinel when empty. Pure — no I/O. Mirrors the
+ * `formatSkillsList` helper in the certifications CLI module (#558).
+ */
+function formatSkillsList(skills: { id: string; name: string }[]): string {
+  if (skills.length === 0) return "—";
+  return skills.map((s) => s.name).join(", ");
 }
