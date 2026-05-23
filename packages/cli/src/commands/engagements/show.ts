@@ -61,9 +61,6 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
   lines.push("Job");
   if (item.job.title !== null) lines.push(`  ${item.job.title}`);
   if (item.job.url !== null) lines.push(`  ${item.job.url}`);
-  if (item.job.client?.fullName != null) {
-    lines.push(`  Client: ${item.job.client.fullName}`);
-  }
   if (item.job.commitment?.slug != null) {
     lines.push(`  Commitment: ${item.job.commitment.slug}`);
   }
@@ -92,8 +89,12 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
     }
   }
 
+  // Client context (#546): the company behind the job. Mirrors the
+  // `jobs show` Client section verbatim (per-command render convention).
+  lines.push(...formatClientSection(item.job.client));
+
   // Counterparty identity (#545): client-side hiring managers + Toptal-side
-  // recruiter points-of-contact. Grouped right after the Job/client block.
+  // recruiter points-of-contact. Grouped right after the Client block.
   lines.push(...formatContactsSection(item.job.contacts));
   lines.push(...formatPointsOfContactSection(item.job.pointsOfContact));
 
@@ -156,6 +157,28 @@ export function formatEngagementDetail(item: engagements.EngagementDetail): stri
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Render the client-context section (#546). Returns `[]` only when the
+ * wire elides the client struct entirely. Mirrors the `jobs show` Client
+ * section (per-command render convention) — the engagement surface omits
+ * the `Website` / `LinkedIn` lines because those `Unknown`-typed Client
+ * fields are not selected on `ENGAGEMENT_SHOW_QUERY` (#546 scope).
+ */
+function formatClientSection(client: engagements.EngagementDetail["job"]["client"]): string[] {
+  if (client === null) return [];
+  const lines: string[] = ["", "Client"];
+  if (client.fullName !== null) lines.push(`  ${client.fullName}`);
+  if (client.industry !== null) lines.push(`  Industry: ${client.industry}`);
+  if (client.city !== null || client.countryName !== null) {
+    const loc = [client.city, client.countryName].filter((s): s is string => s !== null).join(", ");
+    if (loc !== "") lines.push(`  Location: ${loc}`);
+  }
+  if (client.foundingYear !== null) lines.push(`  Founded: ${client.foundingYear}`);
+  if (client.teamSize?.value != null) lines.push(`  Team size: ${client.teamSize.value}`);
+  if (client.isEnterprise === true) lines.push(`  Enterprise: yes`);
+  return lines;
 }
 
 /**

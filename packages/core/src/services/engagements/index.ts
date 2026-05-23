@@ -167,7 +167,10 @@ export interface EngagementStatus {
 }
 
 /**
- * Reference to the job an engagement points at.
+ * Reference to the job an engagement points at — the identity-only
+ * subset surfaced on every list row. The richer client-context shape
+ * surfaced on the detail view lives on {@link EngagementDetail.job.client}
+ * (#546).
  */
 export interface EngagementJobRef {
   id: string;
@@ -346,7 +349,7 @@ export interface EngagementDetail extends EngagementListItem {
   eligibleToViewTimesheets: boolean | null;
   eligibleToViewTimeOffs: boolean | null;
   proposedEnd: { endDate: string | null; status: string | null } | null;
-  job: EngagementJobRef & {
+  job: Omit<EngagementJobRef, "client"> & {
     descriptionMd: string | null;
     expectedHours: number | null;
     commitment: { slug: string } | null;
@@ -355,6 +358,27 @@ export interface EngagementDetail extends EngagementListItem {
     startDate: string | null;
     isCoaching: boolean | null;
     isToptalProject: boolean | null;
+    /**
+     * Client context (#546). Extends the identity pair (`id` + `fullName`)
+     * with the well-typed context fields the SDL exposes on the `Client`
+     * type (`research/graphql/gateway/schema.graphql:875`): `city`,
+     * `countryName`, `foundingYear`, `industry`, `isEnterprise`, and
+     * `teamSize`. All leaf fields are typed nullable defensively
+     * (project convention); `isEnterprise` is `Boolean!` and `teamSize`
+     * is `TeamSize!` on the wire. `Client.crunchbase / facebook /
+     * linkedin / twitter / website` are `Unknown`-typed in the SDL and
+     * intentionally OUT OF SCOPE for #546.
+     */
+    client: {
+      id: string;
+      fullName: string | null;
+      city: string | null;
+      countryName: string | null;
+      foundingYear: string | null;
+      industry: string | null;
+      isEnterprise: boolean | null;
+      teamSize: { value: string | null } | null;
+    } | null;
     /** Client-side hiring-manager contacts (#545). `[]` when the wire elides them. */
     contacts: CompanyRepresentative[];
     /** Toptal-side recruiter points-of-contact (#545). `null` when the wire elides them. */
@@ -685,7 +709,17 @@ const ENGAGEMENT_SHOW_QUERY = `query JobActivityItem($id: ID!) {
         specialization { __typename title }
         isCoaching
         isToptalProject
-        client { __typename id fullName }
+        client {
+          __typename
+          id
+          fullName
+          city
+          countryName
+          foundingYear
+          industry
+          isEnterprise
+          teamSize { __typename value }
+        }
         contacts { __typename id email fullName phoneNumber position timeZone { __typename ...timeZoneFields } }
         pointsOfContact { __typename ...pointOfContactData }
       }

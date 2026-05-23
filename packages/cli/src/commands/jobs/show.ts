@@ -179,6 +179,7 @@ export function formatJobDetail(job: jobs.JobDetail): string {
       const loc = [job.client.city, job.client.countryName].filter((s): s is string => s !== null).join(", ");
       if (loc !== "") lines.push(`  Location: ${loc}`);
     }
+    if (job.client.foundingYear !== null) lines.push(`  Founded: ${job.client.foundingYear}`);
     if (job.client.teamSize?.value != null) lines.push(`  Team size: ${job.client.teamSize.value}`);
     if (job.client.website !== null) lines.push(`  Website: ${job.client.website}`);
     if (job.client.linkedin !== null) lines.push(`  LinkedIn: ${job.client.linkedin}`);
