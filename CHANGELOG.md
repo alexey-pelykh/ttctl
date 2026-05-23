@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`profile.employment.update` / `profile.portfolio.update`: expose
+  `skills` on the update path (MCP tools + CLI subcommands, #541).**
+  The core `EmploymentFields.skills` (`packages/core/src/services/profile/employment/index.ts`)
+  and `PortfolioItemInput.skills` (`packages/core/src/services/profile/portfolio/index.ts`)
+  write paths have accepted `skills` since rc.3, but the wrapper layers
+  did not surface them on the update tools — same gap class as #487 /
+  #488 / #492. Today's practical impact during a Toptal profile uplift
+  campaign: an audit identified ~25 skill ADDs across 3 employment
+  entries and ~30 skill REMOVALs across 6 entries — none of which
+  could be executed via MCP/CLI without delete+recreate (which
+  destroys entry history for established rows). The fix exposes
+  `skills` on both surfaces with replace-on-supply semantics inherited
+  from the core merge (`{ ...merged, ...fields }` in
+  `buildUpdateEmploymentInput`; `{ skills: current.skills, ...,
+...changes }` in `portfolio.update()`): supplied set replaces the
+  entry's entire skill set; omitted preserves the current set via the
+  read-current+merge.
+  - **Surfaces updated**: - `packages/mcp/src/tools/profile/employment.ts` — adds `skills:
+z.array(z.object({ id, name? })).min(1).optional()` to
+    `ttctl_profile_employment_update`'s `inputSchema`; the handler
+    maps `name ?? ""` for the wire (the Toptal server accepts an
+    empty display name on `SkillRefInput` when the id is meaningful).
+    The dry-run preview's `DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER`
+    surface stays unchanged — caller-supplied `skills` wins via the
+    existing `...fields` spread. - `packages/mcp/src/tools/profile/portfolio.ts` — adds the same
+    shape to `ttctl_profile_portfolio_update`'s `inputSchema`;
+    `buildPortfolioInput` is extended with optional `skills` and
+    maps `name ?? ""` symmetric with the employment surface. - `packages/cli/src/commands/profile/employment/index.ts` — adds
+    `--skill-id <id>` (repeatable) to `ttctl profile employment
+update`, mirroring the existing `--skill-id` flag on the `add`
+    subcommand (#484). `UpdateOptions.skillId?: string[]` typed; the
+    handler maps to `fields.skills` with `name: ""` per the CLI
+    id-only flow. - `packages/cli/src/commands/profile/portfolio/index.ts` +
+    `update.ts` — adds `--skill-id <id>` (repeatable) to `ttctl
+profile portfolio update`; the empty-fields error message now
+    lists `--skill-id` alongside `--title` / `--description` /
+    `--link` / `--client` / `--accomplishment` / `--edit`.
+  - **Wrapper-only — schema/contract rule NOT triggered.** No file
+    under `packages/core/src/services/profile/**` is modified; no new
+    GraphQL operation is introduced. The pre-existing `UpdateEmployment`
+    and `updatePortfolioItem` documents already accept the field on the
+    wire (verified by E2E test 46-profile-employment-update-merge for
+    Employment, and 36-profile-portfolio for the Portfolio surface).
+  - **Replacement semantics** mirror `employment_add`: supplied set
+    replaces; omitted preserves. The idempotent `addSkills` /
+    `removeSkills` mutations the issue body mentions are deferred to a
+    follow-up — exposing them requires new GraphQL operations + their
+    own wire-validation track (Schema/contract rule fires).
+  - **Tests**:
+    - `packages/mcp/src/tools/__tests__/profile_update_skills.test.ts`
+      (NEW) — 6 dry-run threading cases verifying that supplied skills
+      override the placeholder (employment) or appear in the preview
+      (portfolio), id-only inputs default `name: ""`, and omitted
+      `skills` preserves the merge placeholder / omits the field.
+    - `packages/cli/src/__tests__/program.test.ts` — 2 program-shape
+      cases asserting `--skill-id` is registered on both update
+      subcommands.
+
 ### Fixed
 
 - **`profile.external.update`: drop unwritable `twitter` from input

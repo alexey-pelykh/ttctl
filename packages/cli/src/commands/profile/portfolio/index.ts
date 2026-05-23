@@ -76,6 +76,11 @@ export function buildProfilePortfolioCommand(): Command {
     .option("--link <url>", "primary URL for the item (canonical flag, equivalent to --url)")
     .option("--client <name>", "client/company name")
     .option("--accomplishment <text>", "accomplishment summary")
+    .option(
+      "--skill-id <id>",
+      "catalog Skill id (repeatable; when supplied, replaces the item's skill set — omit to preserve). Discover via `ttctl profile skills list`. The Toptal server rejects an empty skill set on update — supply at least one id when using this flag.",
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -92,6 +97,7 @@ export function buildProfilePortfolioCommand(): Command {
           link?: string;
           client?: string;
           accomplishment?: string;
+          skillId?: string[];
           output: OutputFormat;
         },
       ) => {

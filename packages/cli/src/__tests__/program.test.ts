@@ -269,6 +269,28 @@ describe("program help and metadata", () => {
     expect(jsonOpt?.flags).not.toContain("<");
     expect(yamlOpt?.flags).not.toContain("<");
   });
+
+  it("`profile employment update` exposes `--skill-id` repeatable (replacement on supply, #541)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const employment = profile?.commands.find((c) => c.name() === "employment");
+    const update = employment?.commands.find((c) => c.name() === "update");
+    expect(update).toBeDefined();
+    const skillOpt = update?.options.find((o) => o.long === "--skill-id");
+    expect(skillOpt).toBeDefined();
+    expect(skillOpt?.flags).toContain("<id>");
+  });
+
+  it("`profile portfolio update` exposes `--skill-id` repeatable (replacement on supply, #541)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const portfolio = profile?.commands.find((c) => c.name() === "portfolio");
+    const update = portfolio?.commands.find((c) => c.name() === "update");
+    expect(update).toBeDefined();
+    const skillOpt = update?.options.find((o) => o.long === "--skill-id");
+    expect(skillOpt).toBeDefined();
+    expect(skillOpt?.flags).toContain("<id>");
+  });
 });
 
 /**

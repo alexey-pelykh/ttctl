@@ -126,7 +126,10 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
     "ttctl_profile_portfolio_update",
     {
       title: "Update a portfolio item",
-      description: "Update fields on an existing portfolio item by id. Only supplied fields are updated.",
+      description:
+        "Update fields on an existing portfolio item by id. Only supplied fields are updated. " +
+        "`industryIds`, when supplied, replaces the item's entire industry set (omit to preserve). " +
+        "`skills`, when supplied, replaces the item's entire catalog-skill set (omit to preserve) — discover ids via `ttctl_profile_skills_list`.",
       inputSchema: {
         id: z.string().describe("Id of the portfolio item to update"),
         title: z.string().optional().describe("Portfolio item title"),
@@ -149,6 +152,18 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
           .min(1)
           .optional()
           .describe("Catalog Industry ids — when supplied, replaces the item's industry set (partial update)."),
+        skills: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("catalog Skill id"),
+              name: z.string().optional().describe("display name (optional; supplied verbatim if known)"),
+            }),
+          )
+          .min(1)
+          .optional()
+          .describe(
+            "Catalog skills — when supplied, replaces the item's entire skill set (partial update; omit to preserve). Discover ids via `ttctl_profile_skills_list`. The Toptal server enforces a non-empty `skills` set on `updatePortfolioItem`; ttctl mirrors that as `min(1)` on the wrapper to fail fast.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -401,6 +416,11 @@ function buildPortfolioInput(args: {
   showViaToptal?: boolean | undefined;
   highlight?: boolean | undefined;
   industryIds?: string[] | undefined;
+  // #541: catalog skill refs accepted on update. `name` is optional on
+  // the wrapper schema — falls back to "" for the wire (the Toptal
+  // server keys on `id`; the empty display-name path matches the CLI
+  // `--skill-id` shape).
+  skills?: { id: string; name?: string | undefined }[] | undefined;
 }): profile.portfolio.PortfolioItemInput {
   const out: profile.portfolio.PortfolioItemInput = {};
   if (args.title !== undefined) out.title = args.title;
@@ -414,6 +434,9 @@ function buildPortfolioInput(args: {
   if (args.showViaToptal !== undefined) out.showViaToptal = args.showViaToptal;
   if (args.highlight !== undefined) out.highlight = args.highlight;
   if (args.industryIds !== undefined) out.industryIds = args.industryIds;
+  if (args.skills !== undefined) {
+    out.skills = args.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));
+  }
   return out;
 }
 

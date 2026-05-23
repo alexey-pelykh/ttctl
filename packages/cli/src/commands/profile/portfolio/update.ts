@@ -25,6 +25,8 @@ export async function runProfilePortfolioUpdate(
     link?: string;
     client?: string;
     accomplishment?: string;
+    // Catalog skill ids supplied via `--skill-id` (repeatable, #541).
+    skillId?: string[];
     output: OutputFormat;
   },
 ): Promise<void> {
@@ -62,6 +64,15 @@ export async function runProfilePortfolioUpdate(
   if (link !== undefined) changes.link = link;
   if (options.client !== undefined) changes.clientOrCompanyName = options.client;
   if (options.accomplishment !== undefined) changes.accomplishment = options.accomplishment;
+  // #541: replace-on-supply for catalog skills. When omitted, the core
+  // read-current+merge in `portfolio.update()` preserves `current.skills`;
+  // when supplied, the caller's set REPLACES the item's entire skill set
+  // on the wire. The `name` field on `SkillRef` is supplied as the empty
+  // string — the Toptal server keys on `id` and accepts an empty display
+  // name when only the id is meaningful.
+  if (options.skillId !== undefined && options.skillId.length > 0) {
+    changes.skills = options.skillId.map((id) => ({ id, name: "" }));
+  }
 
   if (Object.keys(changes).length === 0) {
     emitErrorAndExit({
@@ -71,11 +82,11 @@ export async function runProfilePortfolioUpdate(
         {
           code: "VALIDATION_ERROR",
           message:
-            "supply at least one field flag (--title, --description, --link, --client, --accomplishment, or --edit).",
+            "supply at least one field flag (--title, --description, --link, --client, --accomplishment, --skill-id, or --edit).",
         },
       ],
       prettySummary:
-        "portfolio update failed (VALIDATION_ERROR): supply at least one field flag (--title, --description, --link, --client, --accomplishment, or --edit).",
+        "portfolio update failed (VALIDATION_ERROR): supply at least one field flag (--title, --description, --link, --client, --accomplishment, --skill-id, or --edit).",
     });
   }
   const token = await loadAuthTokenOrExit("portfolio update", options.output);

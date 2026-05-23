@@ -115,6 +115,11 @@ export function buildProfileEmploymentCommand(): Command {
       'catalog Industry id (repeatable; when supplied, replaces the entry\'s industry set — omit to preserve). Discover via `ttctl profile industries autocomplete "<query>"`.',
       (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
     )
+    .option(
+      "--skill-id <id>",
+      "catalog Skill id (repeatable; when supplied, replaces the entry's skill set — omit to preserve). Discover via `ttctl profile skills list`. The Toptal server rejects an empty skill set on update — supply at least one id when using this flag.",
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -226,6 +231,8 @@ interface UpdateOptions {
   edit: boolean;
   highlight?: string;
   industryId?: string[];
+  // Catalog skill ids supplied via `--skill-id` (repeatable, #541).
+  skillId?: string[];
   output: OutputFormat;
 }
 
@@ -374,6 +381,15 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   // `--industry-id` count toward the "at least one field flag" check.
   if (options.industryId !== undefined && options.industryId.length > 0) {
     fields.industryIds = options.industryId;
+  }
+  // #541: same replace-on-supply semantic for catalog skills. When
+  // omitted, `buildUpdateEmploymentInput` preserves `current.skills`;
+  // when supplied, the caller's set REPLACES the entry's entire skill
+  // set on the wire. The `name` field on `SkillRefInput` is supplied
+  // verbatim as the empty string — the Toptal server keys on `id` and
+  // accepts an empty display name when only the id is meaningful.
+  if (options.skillId !== undefined && options.skillId.length > 0) {
+    fields.skills = options.skillId.map((id) => ({ id, name: "" }));
   }
 
   if (Object.keys(fields).length === 0) {

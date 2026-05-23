@@ -206,6 +206,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       description:
         "Update an existing employment entry by id. At least one field must be supplied. `description` is multi-paragraph free-text and splits on blank lines. " +
         "`industryIds`, when supplied, replaces the entry's entire industry set (omit to preserve the current set) — discover ids via `ttctl_profile_industries_autocomplete`. " +
+        "`skills`, when supplied, replaces the entry's entire catalog-skill set (omit to preserve the current set) — discover ids via `ttctl_profile_skills_list`. " +
         "`from` / `to` accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY); ttctl normalizes to year (YYYY) on the wire (#527) — " +
         "the Toptal `EmploymentInput.startDate` / `.endDate` wire fields are typed `Int`, year-only. Sub-year precision is " +
         "silently dropped client-side before the mutation. " +
@@ -244,6 +245,18 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .optional()
           .describe(
             "Catalog Industry ids — when supplied, replaces the entry's industry set (partial update; omit to preserve). Discover via `ttctl_profile_industries_autocomplete`.",
+          ),
+        skills: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("catalog Skill id"),
+              name: z.string().optional().describe("display name (optional; supplied verbatim if known)"),
+            }),
+          )
+          .min(1)
+          .optional()
+          .describe(
+            'Catalog skills — when supplied, replaces the entry\'s entire skill set (partial update; omit to preserve). Discover ids via `ttctl_profile_skills_list`. The Toptal server rejects an empty `skills` array on `UpdateEmployment` with `USER_ERROR: "is too short (minimum is 1 character)"`; ttctl enforces `min(1)` on the wrapper to fail fast.',
           ),
         publicationPermit: z
           .boolean()
@@ -292,6 +305,16 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       // over the merge placeholder (dry-run) / current-state projection
       // (apply path, via `buildUpdateEmploymentInput`'s `...fields`).
       if (input.industryIds !== undefined) fields.industryIds = input.industryIds;
+      // #541: replace-on-supply for catalog skills. Same shape as
+      // `employment_add` — `name` is optional on the wrapper and falls
+      // back to "" for the wire (the Toptal server accepts an empty
+      // string for `SkillRefInput.name` when only the id is meaningful;
+      // mirroring the CLI `--skill-id` flow). Caller-supplied set wins
+      // over the merge placeholder (dry-run) / current-state echo
+      // (apply path, via `buildUpdateEmploymentInput`'s `...fields`).
+      if (input.skills !== undefined) {
+        fields.skills = input.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));
+      }
       // #402 server-gate overrides. `publicationPermit` and `showViaToptal`
       // participate in `buildUpdateEmploymentInput`'s merge (`{ ...merged,
       // ...fields }`) — supplying either beats the current-state fallback,
