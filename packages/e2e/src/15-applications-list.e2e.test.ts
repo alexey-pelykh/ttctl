@@ -400,4 +400,36 @@ describe("applications list (live mobile-gateway)", () => {
       }
     },
   );
+
+  // -------------------------------------------------------------------
+  // mostRelevantApplication projection (#547)
+  //
+  // Each row carries `mostRelevantApplication` — the platform's id-only
+  // pointer at the AR that matters most for the row. Same hand-authored
+  // op / T1 disposition as the embed above; the live call is the
+  // wire-shape authority. Tolerant: the key MUST be present on every
+  // row; `{ id: string }` when present, `null` for rows with no AR.
+  // -------------------------------------------------------------------
+
+  it.skipIf(!e2eEnabled)(
+    "applications list projects mostRelevantApplication on every row (id-only | null, #547)",
+    async () => {
+      const result = await cli.run(["applications", "list", "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        items: Array<{ id: string; mostRelevantApplication?: unknown }>;
+      };
+      expect(payload.items.length).toBeGreaterThanOrEqual(1);
+      for (const row of payload.items) {
+        // `mostRelevantApplication` MUST be a key on every row — the
+        // projection sets it to null when no AR is the relevant pick.
+        expect("mostRelevantApplication" in row).toBe(true);
+        const mra = row.mostRelevantApplication;
+        if (mra === null) continue;
+        expect(typeof mra).toBe("object");
+        const ref = mra as { id?: unknown };
+        expect(typeof ref.id).toBe("string");
+      }
+    },
+  );
 });

@@ -416,6 +416,46 @@ describe("applications.list", () => {
       fullName: "Pat Recruiter",
     });
   });
+
+  // ----- mostRelevantApplication projection (#547) --------------------
+  // `mostRelevantApplication { id }` is the platform's id-only pointer at
+  // the AvailabilityRequest that matters most for the row. The projection
+  // is presence-indicator-only (like jobApplication / interview), with a
+  // defensive null coercion for the wire-elided / id-missing cases.
+
+  it("projects mostRelevantApplication (id-only) from the wire (#547)", async () => {
+    const rowWithMra = {
+      ...ITEM_FIXTURE,
+      mostRelevantApplication: { __typename: "AvailabilityRequest", id: "ar-relevant" },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [rowWithMra], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.mostRelevantApplication).toEqual({ id: "ar-relevant" });
+  });
+
+  it("projects mostRelevantApplication=null when the wire elides it (#547)", async () => {
+    // ITEM_FIXTURE carries no mostRelevantApplication key — the projection
+    // collapses the undefined to null.
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [ITEM_FIXTURE], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.mostRelevantApplication).toBeNull();
+  });
+
+  it("coerces mostRelevantApplication to null when the wire object lacks a string id (#547)", async () => {
+    const rowBadMra = {
+      ...ITEM_FIXTURE,
+      mostRelevantApplication: { __typename: "AvailabilityRequest" },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [rowBadMra], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.mostRelevantApplication).toBeNull();
+  });
 });
 
 describe("applications.show", () => {
@@ -567,6 +607,28 @@ describe("applications.show", () => {
       recruiter: { firstName: "Casey", lastName: "Recruiter", fullName: "Casey Recruiter" },
     });
     expect(item.fixedRate).toEqual({ decimal: "115.00", verbose: "$115.00/hr" });
+  });
+
+  // ----- mostRelevantApplication projection on show (#547) ------------
+  it("projects mostRelevantApplication (id-only) on show (#547)", async () => {
+    const detailWithMra = {
+      ...DETAIL_FIXTURE,
+      mostRelevantApplication: { __typename: "AvailabilityRequest", id: "ar-show-relevant" },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: detailWithMra } } },
+    });
+    const item = await show(TOKEN, "act-1");
+    expect(item.mostRelevantApplication).toEqual({ id: "ar-show-relevant" });
+  });
+
+  it("projects mostRelevantApplication=null on show when the wire elides it (#547)", async () => {
+    // DETAIL_FIXTURE inherits ITEM_FIXTURE's absence of the key.
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityItem: DETAIL_FIXTURE } } },
+    });
+    const item = await show(TOKEN, "act-1");
+    expect(item.mostRelevantApplication).toBeNull();
   });
 
   it('translates the gateway top-level "Record not found" GraphQL error into NOT_FOUND', async () => {

@@ -180,6 +180,14 @@ export function formatApplicationDetail(item: applications.JobActivityItemDetail
       lines.push(`  Reject reason: ${item.availabilityRequest.rejectReason}`);
     }
   }
+  // Platform-blessed "most relevant" AR pointer (#547) — a deep-link hint
+  // (mirrors the `Interview: <id>` discovery hint below) the user can pass
+  // to `applications availability-request show <ar-id>`. Most useful on
+  // rows with multiple historical ARs, where it disambiguates the one that
+  // matters from this row's own `availabilityRequest`.
+  if (item.mostRelevantApplication !== null) {
+    lines.push(`Most relevant application: ${item.mostRelevantApplication.id}`);
+  }
   if (item.interview !== null) {
     lines.push(`Interview: ${item.interview.id}`);
   }
