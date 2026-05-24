@@ -261,7 +261,8 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
     "ttctl_profile_portfolio_highlight",
     {
       title: "Toggle highlight on a portfolio item",
-      description: "Set or clear the `highlight` flag on a portfolio item.",
+      description:
+        'Set or clear the `highlight` flag on a portfolio item. Toptal caps highlighted portfolio items at 3 — setting `highlight: true` when 3 are already highlighted is rejected with a generic USER_ERROR ("Something went wrong. Please try again later."). Clear an existing highlight (`highlight: false`) first; call `ttctl_profile_portfolio_list` to see which items are currently highlighted (#542).',
       inputSchema: {
         id: z.string().describe("Id of the portfolio item"),
         highlight: z.boolean().default(true).describe("`true` to set highlight, `false` to clear"),

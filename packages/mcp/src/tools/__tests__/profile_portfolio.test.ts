@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Oleksii PELYKH
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { describe, expect, it, vi } from "vitest";
+
+import type { ToolRegistrationContext } from "../_shared.js";
+import { registerPortfolioTools } from "../profile/portfolio.js";
+
+/**
+ * Portfolio MCP tool-surface contract tests.
+ *
+ * #542 — `ttctl_profile_portfolio_highlight` must surface the Toptal
+ * 3-item highlight cap in its description so MCP clients learn the
+ * constraint up-front, rather than discovering it via the generic
+ * `USER_ERROR` ("Something went wrong. Please try again later.") the
+ * server returns when a 4th item is highlighted. Mirrors the #492
+ * precedent (employment `experienceItems` range documented in the tool
+ * description) and the `jobs_apply` DESTRUCTIVE-marker test pattern of
+ * asserting against the registered tool's `description` string.
+ */
+
+interface RegisteredTool {
+  description?: string;
+}
+
+function buildStubCtx(): ToolRegistrationContext {
+  const stubToken = { token: "stub" };
+  return {
+    loadTokenForTool: vi.fn().mockResolvedValue(stubToken),
+    resolveToolAuth: vi.fn().mockResolvedValue({ ok: true, ...stubToken }),
+    resolveTokenForTool: vi.fn().mockResolvedValue(stubToken),
+  };
+}
+
+function getRegisteredTool(server: McpServer, name: string): RegisteredTool {
+  const internal = server as unknown as { _registeredTools: Record<string, RegisteredTool | undefined> };
+  const tool = internal._registeredTools[name];
+  if (tool === undefined) throw new Error(`tool ${name} not registered`);
+  return tool;
+}
+
+describe("ttctl_profile_portfolio_highlight description", () => {
+  it("documents the Toptal 3-item highlight cap (#542)", () => {
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    registerPortfolioTools(server, buildStubCtx());
+    const tool = getRegisteredTool(server, "ttctl_profile_portfolio_highlight");
+
+    expect(tool.description).toBeDefined();
+    // Names the numeric cap and frames it as a cap/limit so an MCP client
+    // can pre-flight instead of learning it from the generic server error.
+    expect(tool.description).toContain("3");
+    expect(tool.description?.toLowerCase()).toMatch(/cap|limit/);
+    // Points at the list tool so callers can see which items are already
+    // highlighted before attempting to set a new one.
+    expect(tool.description).toContain("ttctl_profile_portfolio_list");
+  });
+});
