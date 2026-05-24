@@ -149,7 +149,9 @@ export function buildProfilePortfolioCommand(): Command {
 
   portfolio
     .command("highlight")
-    .description("Toggle the highlight flag on a portfolio item (default: enable)")
+    .description(
+      "Toggle the highlight flag on a portfolio item (default: enable). Toptal caps highlights at 3 items; enabling a 4th is rejected with a generic error — clear an existing highlight (--off) first (#542).",
+    )
     .argument("<id>", "id of the portfolio item to highlight")
     .option("--off", "clear the highlight flag instead of setting it")
     .addOption(
