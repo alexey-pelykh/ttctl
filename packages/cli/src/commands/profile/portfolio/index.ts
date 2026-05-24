@@ -70,7 +70,10 @@ export function buildProfilePortfolioCommand(): Command {
     .description("Update fields on a portfolio item")
     .argument("<id>", "id of the portfolio item to update")
     .option("--title <text>", "portfolio item title")
-    .option("--description <text>", 'item description (inline text, "-" for stdin, or "@path" to read from file)')
+    .option(
+      "--description <text>",
+      'item description (inline text, "-" for stdin, or "@path" to read from file). Minimum 200 characters (#543).',
+    )
     .option("--edit", "open $EDITOR to compose the description interactively")
     .option("--url <url>", "primary URL for the item (alias for --link)")
     .option("--link <url>", "primary URL for the item (canonical flag, equivalent to --url)")
