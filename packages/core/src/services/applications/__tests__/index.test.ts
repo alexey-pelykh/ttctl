@@ -829,7 +829,7 @@ describe("applications.confirm (#411)", () => {
     expect(AVAILABILITY_REQUEST_KINDS).toEqual(["FIXED", "FLEXIBLE", "MARKETPLACE_FLEXIBLE"]);
   });
 
-  it("dryRun: short-circuits before any wire call and returns a preview envelope", async () => {
+  it("dryRun: stays zero-transport when both kind and rate are supplied (no resolution needed)", async () => {
     const outcome = await confirm(TOKEN, AR_ID, { requestedHourlyRate: "80.00", kind: "FIXED" }, { dryRun: true });
     expect(outcome.kind).toBe("preview");
     if (outcome.kind !== "preview") return;
@@ -840,18 +840,54 @@ describe("applications.confirm (#411)", () => {
       requestedHourlyRate: "80.00",
       kind: "FIXED",
     });
+    // Both values supplied → no GetAvailabilityRequestKind pre-fetch.
     expect(mockedStock).not.toHaveBeenCalled();
   });
 
-  it("dryRun: substitutes placeholders when kind/rate are unresolved (zero pre-fetch calls)", async () => {
+  it("dryRun: resolves kind + rate via the GetAvailabilityRequestKind pre-fetch when omitted, surfacing concrete values — not placeholders (#593)", async () => {
+    reply({ body: fixedKindFixture("77.00") });
     const outcome = await confirm(TOKEN, AR_ID, {}, { dryRun: true });
     expect(outcome.kind).toBe("preview");
     if (outcome.kind !== "preview") return;
+    // The whole point of #593: the preview carries the resolved rate +
+    // kind the irreversible mutation would send, NOT "<resolved at apply time>".
     expect(outcome.preview.variables).toMatchObject({
-      kind: "<resolved at apply time>",
-      requestedHourlyRate: "<resolved at apply time>",
+      id: AR_ID,
+      kind: "FIXED",
+      requestedHourlyRate: "77.00",
     });
-    expect(mockedStock).not.toHaveBeenCalled();
+    // EXACTLY one wire call — the read-only resolution. The irreversible
+    // ConfirmAvailabilityRequest mutation is NEVER issued under dry-run.
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { operationName: string };
+    expect(body.operationName).toBe("GetAvailabilityRequestKind");
+  });
+
+  it("dryRun: resolves only the missing rate when kind is supplied but rate is omitted (#593)", async () => {
+    reply({ body: fixedKindFixture("65.00") });
+    const outcome = await confirm(TOKEN, AR_ID, { kind: "FIXED" }, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.variables).toMatchObject({ kind: "FIXED", requestedHourlyRate: "65.00" });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dryRun: surfaces the FLEXIBLE-requires-rate MUTATION_ERROR in preview (mirrors apply; mutation never issued) (#593)", async () => {
+    reply({ body: flexibleKindFixture() });
+    await expect(confirm(TOKEN, AR_ID, {}, { dryRun: true })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "MUTATION_ERROR",
+    });
+    // Only the read-only resolution ran; the irreversible mutation did not.
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dryRun: surfaces NOT_FOUND when the AR resolution fails — catches the bad-id case in preview, not on the irreversible commit (#593)", async () => {
+    reply({ body: { errors: [{ message: "Record not found" }] } });
+    await expect(confirm(TOKEN, "missing-ar", {}, { dryRun: true })).rejects.toMatchObject({
+      name: "ApplicationsError",
+      code: "NOT_FOUND",
+    });
   });
 
   it("auto-resolves Fixed-kind + default rate via GetAvailabilityRequestKind pre-fetch when both inputs omitted", async () => {

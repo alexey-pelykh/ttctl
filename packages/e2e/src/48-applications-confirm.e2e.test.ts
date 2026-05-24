@@ -16,10 +16,22 @@
  *
  * **Safety**:
  *
- *   - **Always-on**: dry-run path (no wire call) and the negative path
- *     against a synthetic AR id (the gateway returns either a top-level
- *     GraphQL error or a 500 — both classes are mapped to typed errors
- *     by the service; no state changes).
+ *   - **Always-on**: dry-run path with explicit `--rate` / `--kind` (no
+ *     wire call — both values supplied, so no resolution is needed) and
+ *     the negative path against a synthetic AR id (the gateway returns
+ *     either a top-level GraphQL error or a 500 — both classes are mapped
+ *     to typed errors by the service; no state changes).
+ *
+ *   - **Gated read-only resolve path** (#593): only runs when
+ *     `TTCTL_E2E_RESOLVE_INTEREST_REQUEST=<FIXED_AR_id>` is exported. A
+ *     `--dry-run` accept with `--rate` / `--kind` OMITTED now performs the
+ *     same READ-ONLY `GetAvailabilityRequestKind` resolution the apply
+ *     path would, surfacing the concrete recruiter-pinned rate + kind in
+ *     the preview instead of placeholders. This is **non-destructive** —
+ *     the irreversible `ConfirmAvailabilityRequest` mutation is NEVER sent
+ *     under `--dry-run`; only the read-only resolution query runs. Supply a
+ *     REAL pending FIXED-kind AR id (`availabilityRequestId` from `ttctl
+ *     applications list --status-group ON_RECRUITER_REVIEW`).
  *
  *   - **Gated positive path**: only runs when
  *     `TTCTL_E2E_ACCEPT_INTEREST_REQUEST=<AR_id>` is exported. The user
@@ -48,6 +60,10 @@ import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 const acceptArId = process.env["TTCTL_E2E_ACCEPT_INTEREST_REQUEST"];
+// Read-only (#593): a REAL pending FIXED-kind AR id used to validate that
+// `--dry-run` resolves the recruiter-pinned rate + kind. Non-destructive —
+// dry-run never issues the irreversible mutation.
+const resolveArId = process.env["TTCTL_E2E_RESOLVE_INTEREST_REQUEST"];
 
 function loadSandboxBearer(sandboxConfigPath: string): string {
   const raw = readFileSync(sandboxConfigPath, "utf8");
@@ -101,6 +117,40 @@ describe("applications confirm (live mobile-gateway)", () => {
       expect(payload.preview?.variables?.["id"]).toBe("ar-doesnt-matter-in-dry-run");
       expect(payload.preview?.variables?.["requestedHourlyRate"]).toBe("80.00");
       expect(payload.preview?.variables?.["kind"]).toBe("FIXED");
+      expect(payload.updated).toBeUndefined();
+    },
+  );
+
+  it.skipIf(!e2eEnabled || resolveArId === undefined)(
+    "--dry-run with rate/kind omitted resolves the real recruiter-pinned rate + kind via GetAvailabilityRequestKind (read-only; no mutation) (#593)",
+    async () => {
+      // Gated by TTCTL_E2E_RESOLVE_INTEREST_REQUEST=<real pending FIXED AR id>.
+      // READ-ONLY and SAFE: dry-run issues only the GetAvailabilityRequestKind
+      // resolution query; the irreversible ConfirmAvailabilityRequest mutation
+      // is NEVER sent under --dry-run. This validates the live resolution path
+      // (the issue's "bonus safety" — catch a rate-resolution wire-break in
+      // PREVIEW rather than on the irreversible commit).
+      if (resolveArId === undefined) return;
+      const result = await cli.run(["--dry-run", "applications", "confirm", resolveArId, "-o", "json"]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        ok?: boolean;
+        dryRun?: boolean;
+        preview?: { operationName?: string; surface?: string; variables?: Record<string, unknown> };
+        updated?: unknown;
+      };
+      expect(payload.ok).toBe(true);
+      expect(payload.dryRun).toBe(true);
+      expect(payload.preview?.operationName).toBe("ConfirmAvailabilityRequest");
+      expect(payload.preview?.surface).toBe("mobile-gateway");
+      const vars = payload.preview?.variables ?? {};
+      // #593 headline: the preview carries CONCRETE resolved values, never
+      // the pre-#593 placeholder strings.
+      expect(vars["requestedHourlyRate"]).not.toBe("<resolved at apply time>");
+      expect(vars["kind"]).not.toBe("<resolved at apply time>");
+      expect(typeof vars["requestedHourlyRate"]).toBe("string");
+      expect(["FIXED", "FLEXIBLE", "MARKETPLACE_FLEXIBLE"]).toContain(vars["kind"]);
+      // Dry-run never mutates.
       expect(payload.updated).toBeUndefined();
     },
   );
