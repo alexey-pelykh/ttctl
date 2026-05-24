@@ -681,7 +681,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
     "details": null,
     "files": [],
     "kpis": [],
-    "quotes": []
+    "quotes": [],
+    "engagement": null
   },
   {
     "id": "port_test_002",
@@ -712,7 +713,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
     "details": null,
     "files": [],
     "kpis": [],
-    "quotes": []
+    "quotes": [],
+    "engagement": null
   },
   {
     "id": "port_test_003",
@@ -743,7 +745,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: full profile por
     "details": null,
     "files": [],
     "kpis": [],
-    "quotes": []
+    "quotes": [],
+    "engagement": null
   }
 ]"
 `;
@@ -779,7 +782,8 @@ exports[`MCP profile_portfolio — payload snapshots > payload: single portfolio
     "details": null,
     "files": [],
     "kpis": [],
-    "quotes": []
+    "quotes": [],
+    "engagement": null
   }
 ]"
 `;

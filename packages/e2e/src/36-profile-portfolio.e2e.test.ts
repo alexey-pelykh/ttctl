@@ -164,6 +164,10 @@ interface PortfolioQuoteShape {
   company?: string | null;
 }
 
+interface PortfolioEngagementShape {
+  id?: string;
+}
+
 interface PortfolioItemShape {
   id?: string;
   title?: string | null;
@@ -173,6 +177,7 @@ interface PortfolioItemShape {
   coverImage?: string | null;
   kpis?: PortfolioKpiShape[];
   quotes?: PortfolioQuoteShape[];
+  engagement?: PortfolioEngagementShape | null;
 }
 
 describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
@@ -648,6 +653,105 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
       expect(cleanup.exitCode).toBe(0);
     }
   });
+
+  it.skipIf(!e2eEnabled)(
+    "createPortfolioItem + portfolio list expose engagement as a nullable TalentEngagement reference",
+    async () => {
+      // Provenance: #552 — engagement link wire-shape verification (INFERRED → verified live).
+      // Schema/contract validation rule (CLAUDE.md): `engagement` is
+      // `Unknown` in the synthesized SDL — its wire shape is INFERRED. This
+      // test is the load-bearing live verification that:
+      //   - `engagement { id }` is the accepted projection (the query
+      //     parses + returns 200 OK; a wrong shape returns a GraphQL error
+      //     on the field selector);
+      //   - `engagement` is a SINGLE nullable object reference (NOT a list,
+      //     NOT a connection) — captured as `engagement === null` OR an
+      //     object with a string `id`, never an array and never
+      //     `engagement.nodes` (the probe confirmed `engagement { nodes }`
+      //     errors "Field 'nodes' doesn't exist on type 'TalentEngagement'");
+      //   - a newly-created portfolio item returns `engagement: null` (it is
+      //     not linked to any engagement);
+      //   - populated engagement references carry `{ id: string }` (the
+      //     referenced type is `TalentEngagement`; the id is the relay
+      //     global id, e.g. `V1-TalentEngagement-238005`).
+      //
+      // Probe context (2026-05-24): maintainer's account had 32 portfolio
+      // items — 26 with `engagement: null`, 6 with a populated `{ id }`. So
+      // the populated-shape assertion below DOES execute on this account
+      // (unlike #551 quotes, which were all empty). The wire-shape snapshot
+      // in `createPortfolioItem.snapshot.json` captures the null-case shape
+      // of a freshly-created item.
+      const sentinelTitle = `e2e-sentinel-engagement-${Date.now().toString()}`;
+      const addResult = await cli.run([
+        "profile",
+        "portfolio",
+        "add",
+        "--title",
+        sentinelTitle,
+        "--industry-id",
+        SOFTWARE_INDUSTRY_ID,
+        "-o",
+        "json",
+      ]);
+      expect(addResult.exitCode).toBe(0);
+      const addPayload = JSON.parse(addResult.stdout) as {
+        ok?: boolean;
+        created?: PortfolioItemShape[];
+      };
+      expect(addPayload.ok).toBe(true);
+      const created = addPayload.created ?? [];
+      const sentinelId = created.find((it) => it.title === sentinelTitle)?.id;
+      expect(typeof sentinelId).toBe("string");
+      if (sentinelId === undefined) return;
+
+      try {
+        // The freshly-created sentinel MUST have `engagement: null` — a new
+        // portfolio item is not linked to any engagement. The field is
+        // present-as-null (NOT missing): the mapper always projects it, so
+        // `toBeDefined()` (null passes; undefined fails) proves the key
+        // exists and `toBeNull()` proves it is the explicit null shape.
+        const sentinel = created.find((it) => it.id === sentinelId);
+        expect(sentinel?.engagement).toBeDefined();
+        expect(sentinel?.engagement).toBeNull();
+
+        // Inspect the full list — the maintainer's account carries items
+        // with populated engagements, letting us assert the per-field shape
+        // on a live wire payload.
+        const listResult = await cli.run(["profile", "portfolio", "list", "-o", "json"]);
+        expect(listResult.exitCode).toBe(0);
+        const listPayload = JSON.parse(listResult.stdout) as {
+          version?: string;
+          items?: PortfolioItemShape[];
+        };
+        const allItems = listPayload.items ?? [];
+        // Every item's `engagement` must be either `null` or a non-array
+        // object — the wire shape is a single nullable `TalentEngagement`
+        // reference, so an array would mean the projection mis-read a
+        // connection/list shape.
+        for (const it of allItems) {
+          const eng = it.engagement;
+          expect(eng === null || (typeof eng === "object" && !Array.isArray(eng))).toBe(true);
+        }
+
+        const linked = allItems.filter((it) => it.engagement !== null && it.engagement !== undefined);
+        if (linked.length > 0) {
+          // Per-field shape assertion for any populated engagement — locks
+          // the `{ id: string }` contract live. This branch DOES run on the
+          // maintainer's account (6 of 32 items linked at probe time).
+          for (const it of linked) {
+            expect(typeof it.engagement?.id).toBe("string");
+          }
+        } else {
+          process.stderr.write(
+            "info: no engagement-linked portfolio items on this account — populated-shape assertion skipped (null-case shape verified via wire-shape snapshot)\n",
+          );
+        }
+      } finally {
+        const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
+        expect(cleanup.exitCode).toBe(0);
+      }
+    },
+  );
 
   it.skipIf(!e2eEnabled)("createPortfolioItem response wire shape matches snapshot (T1 disposition)", async () => {
     // Schema/contract validation rule corollary: `createPortfolioItem`

@@ -399,6 +399,62 @@ export interface PortfolioItemQuote {
 }
 
 /**
+ * `PortfolioItem.engagement` reference — the link from a portfolio item to
+ * the underlying `TalentEngagement` (which client / job the project was
+ * delivered through). A bare `{ id }` reference, NOT an embedded copy of
+ * the engagement; consumers resolve full context by cross-referencing the
+ * id against the engagements surface (see below).
+ *
+ * **[INFERRED — wire shape verified by live elimination probe, 2026-05-24]**
+ * The synthesized SDL at
+ * `research/graphql/talent_profile/schema.graphql:374` declares
+ * `PortfolioItem.engagement: Unknown` (introspection didn't expose the
+ * structured shape). The empirical `Portfolio.graphql` fragment + captured
+ * `getProfileData.graphql:276-278` operation both project:
+ *
+ *   ```graphql
+ *   engagement { id }
+ *   ```
+ *
+ * (sources: `research/graphql/talent_profile/fragments/Portfolio.graphql:53`,
+ * `research/captures/web/operations/getProfileData.graphql:276-278`).
+ *
+ * Live-probe evidence (`.tmp/probe-engagement-552-transcript.txt`,
+ * 2026-05-24 against the maintainer's profile, 32 portfolio items):
+ *
+ *   - `engagement { id }` is accepted on the wire (HTTP 200, no GraphQL
+ *     errors via the talent-profile surface).
+ *   - The referenced type is `TalentEngagement` (revealed both by
+ *     `engagement { __typename }` → `"TalentEngagement"` and by the error
+ *     "Field 'X' doesn't exist on type 'TalentEngagement'" when probing a
+ *     bogus field).
+ *   - The wire shape is a **single nullable object reference** (NOT a list,
+ *     NOT a connection): probing `engagement { nodes }` errors with "Field
+ *     'nodes' doesn't exist on type 'TalentEngagement'". 26 of 32 items
+ *     returned `engagement: null`; 6 returned a populated `{ id }`.
+ *   - The `id` is the relay global id, e.g.
+ *     `"V1-TalentEngagement-238005"`. A sibling `plainId` (Int) field was
+ *     probe-confirmed accepted but is DELIBERATELY EXCLUDED: it is not in
+ *     the empirical fragment Toptal's own web client uses, and the
+ *     cross-reference use case keys on the relay `id` (below), not plainId.
+ *
+ * Cross-reference semantics: this `id` is a `TalentEngagement.id`, which
+ * equals `EngagementListItem.engagementId` on the engagements surface — NOT
+ * the `jobActivityItem.id` that `engagements show <id>` consumes. To resolve
+ * full engagement context, match this id against the `engagementId` column
+ * of `ttctl engagements list`.
+ *
+ * Defensive projection: a missing / `null` / non-object wire value, or an
+ * object without a string `id`, projects to `null` — silently absent rather
+ * than a fabricated shape. The `assertWireShapeStable` snapshot at
+ * `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+ * catches shape drift across releases.
+ */
+export interface PortfolioItemEngagement {
+  id: string;
+}
+
+/**
  * Read-side portfolio item shape — projection of the `Portfolio` fragment.
  * Service callers receive this on `list()` / mutation responses; the
  * mutation responses also surface the full mutated list on `profile.portfolioItems.nodes`.
@@ -430,6 +486,13 @@ export interface PortfolioItemQuote {
  * array `[]` when the item has no quotes (typical for items without
  * testimonials); each entry carries
  * `{id, text, clientName, clientRole, company}`.
+ *
+ * `engagement` (#552) is the link to the underlying `TalentEngagement` the
+ * project was delivered through — see {@link PortfolioItemEngagement}.
+ * `null` when the item is not linked to an engagement (the common case —
+ * 26 of 32 items on the maintainer's profile at probe time); a populated
+ * value carries a bare `{ id }` reference whose id cross-references the
+ * `engagementId` column of `ttctl engagements list`.
  */
 export interface PortfolioItem {
   id: string;
@@ -451,6 +514,7 @@ export interface PortfolioItem {
   files: PortfolioItemFile[];
   kpis: PortfolioItemKpi[];
   quotes: PortfolioItemQuote[];
+  engagement: PortfolioItemEngagement | null;
 }
 
 interface TalentProfileResponse<T> {
@@ -461,9 +525,9 @@ interface TalentProfileResponse<T> {
 /**
  * Map a portfolio fragment node from the wire shape to the typed
  * {@link PortfolioItem}. Skills, industries, `details` (#548), `files`
- * (#549), `kpis` (#550), and `quotes` (#551) are all projected here — the
- * read surface now covers every structured sub-field of the empirical
- * `Portfolio` fragment.
+ * (#549), `kpis` (#550), `quotes` (#551), and `engagement` (#552) are all
+ * projected here — the read surface now covers every structured sub-field
+ * of the empirical `Portfolio` fragment.
  */
 function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
   const id = node["id"];
@@ -504,6 +568,7 @@ function mapPortfolioNode(node: Record<string, unknown>): PortfolioItem {
     files: projectFiles(node["files"]),
     kpis: projectKpis(node["kpis"]),
     quotes: projectQuotes(node["quotes"]),
+    engagement: projectEngagement(node["engagement"]),
   };
 }
 
@@ -719,6 +784,27 @@ function projectQuotes(raw: unknown): PortfolioItemQuote[] {
 }
 
 /**
+ * Defensively project the `engagement` wire field into a typed
+ * {@link PortfolioItemEngagement} reference, or `null`. Returns `null` when
+ * the wire returned `null` / missing / a non-object, or when the object has
+ * no string `id` — silently absent rather than a fabricated shape.
+ *
+ * Wire shape: a single nullable object reference (NOT a list, NOT a
+ * connection — verified via probe error "Field 'nodes' doesn't exist on
+ * type 'TalentEngagement'", 2026-05-24). The referenced type is
+ * `TalentEngagement`; only `id` is projected (the empirical fragment's
+ * selection). See {@link PortfolioItemEngagement} for the full evidence
+ * chain and cross-reference semantics.
+ */
+function projectEngagement(raw: unknown): PortfolioItemEngagement | null {
+  if (raw === null || raw === undefined || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const id = obj["id"];
+  if (typeof id !== "string") return null;
+  return { id };
+}
+
+/**
  * Common "200 with errors" shape handler. Returns the unwrapped payload
  * (the value of the single root data field) as `unknown`; callers
  * narrow at the call site to their per-operation payload shape. The
@@ -843,6 +929,7 @@ const PORTFOLIO_NODE_SELECTION = `
   }
   kpis { id value description }
   quotes { id text clientName clientRole company }
+  engagement { id }
 `;
 
 const GET_PORTFOLIO_ITEMS_QUERY = `query getPortfolioItems($profileId: ID!) {

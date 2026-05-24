@@ -37,6 +37,7 @@ const FULL_ITEM: profile.portfolio.PortfolioItem = {
   files: [],
   kpis: [],
   quotes: [],
+  engagement: null,
 };
 
 const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
@@ -59,6 +60,7 @@ const MINIMAL_ITEM: profile.portfolio.PortfolioItem = {
   files: [],
   kpis: [],
   quotes: [],
+  engagement: null,
 };
 
 const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
@@ -81,6 +83,7 @@ const MULTI_PARAGRAPH_ITEM: profile.portfolio.PortfolioItem = {
   files: [],
   kpis: [],
   quotes: [],
+  engagement: null,
 };
 
 describe("formatPortfolioPretty", () => {
@@ -423,6 +426,25 @@ describe("formatPortfolioPretty", () => {
   it("skips the Quotes line when the item has no quotes (quotes=[])", () => {
     const out = formatPortfolioPretty([MINIMAL_ITEM]);
     expect(out).not.toContain("Quotes");
+  });
+
+  // Provenance: #552 — `engagement` discovery hint. The id is a
+  // TalentEngagement.id (cross-references `engagements list`'s
+  // `engagementId` column, NOT the `engagements show <id>` arg).
+  it("renders an Engagement discovery-hint line pointing at engagements list", () => {
+    const linked: profile.portfolio.PortfolioItem = {
+      ...MINIMAL_ITEM,
+      engagement: { id: "V1-TalentEngagement-238005" },
+    };
+    const out = formatPortfolioPretty([linked]);
+    expect(out).toContain(
+      "    Engagement: V1-TalentEngagement-238005 (TalentEngagement — see `ttctl engagements list`)",
+    );
+  });
+
+  it("skips the Engagement line when the item is not engagement-linked (engagement=null)", () => {
+    const out = formatPortfolioPretty([MINIMAL_ITEM]);
+    expect(out).not.toContain("Engagement:");
   });
 });
 

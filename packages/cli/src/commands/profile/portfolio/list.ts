@@ -212,6 +212,16 @@ function renderPortfolioItem(it: profile.portfolio.PortfolioItem): string {
     lines.push(renderQuotesSummary(it.quotes, detailIndent));
   }
 
+  // `engagement` (#552) is the link to the underlying TalentEngagement the
+  // project was delivered through. Skip-if-null (most items are not
+  // engagement-linked). A single-line discovery hint: the id is a
+  // `TalentEngagement.id`, which matches the `engagementId` column of
+  // `ttctl engagements list` (NOT the `engagements show <id>` arg, which is
+  // a `jobActivityItem.id` — a different id-space).
+  if (it.engagement !== null) {
+    lines.push(`${detailIndent}Engagement: ${it.engagement.id} (TalentEngagement — see \`ttctl engagements list\`)`);
+  }
+
   return lines.join("\n");
 }
 
