@@ -3275,6 +3275,8 @@ describe("applications.availabilityRequests.show (#442)", () => {
       updatedAt: null,
       answeredAt: null,
       job: null,
+      // #585 — empty-state contract: no job ⇒ no matcher questions.
+      matcherQuestions: [],
     });
   });
 
@@ -3410,6 +3412,148 @@ describe("applications.availabilityRequests.show (#442)", () => {
     });
     const item = await availabilityRequests.show(TOKEN, AR_ID);
     expect(item.job).toEqual({ id: "job-bare", title: null, url: null, client: null });
+  });
+
+  // ----- Matcher questions on the AR detail (#585) -------------------
+  // Reuses the IDENTICAL #584 matcher seam (MATCHER_QUESTION_SELECTION +
+  // MatcherQuestionWire + projectMatcherQuestion) — the projected shape
+  // must match the `applyQuestions().matcherQuestions` contract exactly.
+  function jobWithQuestions(questions: unknown[]): Record<string, unknown> {
+    return {
+      __typename: "TalentJob",
+      id: "job-1",
+      title: "Senior Engineer",
+      url: "https://www.toptal.com/jobs/job-1",
+      client: { __typename: "Client", id: "cli-1", fullName: "Acme Inc." },
+      questions,
+    };
+  }
+
+  it("projects matcherQuestions from the AR's job.questions via the shared #584 seam (#585)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({
+              job: jobWithQuestions([
+                {
+                  __typename: "JobPositionQuestion",
+                  id: "MQ-1",
+                  question: "How many hours of timezone overlap can you offer?",
+                  isRequired: true,
+                  options: ["Less than 2 hours", "2 to 6 hours", "More than 6 hours"],
+                  suggestedAnswer: { __typename: "JobPositionSuggestedAnswer", answer: "More than 6 hours" },
+                },
+              ]),
+            }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.matcherQuestions).toEqual([
+      {
+        identifier: "MQ-1",
+        prompt: "How many hours of timezone overlap can you offer?",
+        type: "matcher",
+        isMandatory: true,
+        options: ["Less than 2 hours", "2 to 6 hours", "More than 6 hours"],
+        suggestedAnswer: "More than 6 hours",
+        inputType: "dropdown",
+      },
+    ]);
+    // job projection is unchanged — matcherQuestions is a sibling field,
+    // NOT nested in the shared ApplicationJobRef shape.
+    expect(item.job).toEqual({
+      id: "job-1",
+      title: "Senior Engineer",
+      url: "https://www.toptal.com/jobs/job-1",
+      client: { id: "cli-1", fullName: "Acme Inc." },
+    });
+  });
+
+  it("derives inputType=dropdown iff options present; free-text otherwise (#585)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({
+              job: jobWithQuestions([
+                { __typename: "JobPositionQuestion", id: "drop", question: "Q1", isRequired: true, options: ["A"] },
+                { __typename: "JobPositionQuestion", id: "free", question: "Q2", isRequired: false, options: [] },
+              ]),
+            }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.matcherQuestions[0]).toEqual({
+      identifier: "drop",
+      prompt: "Q1",
+      type: "matcher",
+      isMandatory: true,
+      options: ["A"],
+      suggestedAnswer: null,
+      inputType: "dropdown",
+    });
+    expect(item.matcherQuestions[1]).toEqual({
+      identifier: "free",
+      prompt: "Q2",
+      type: "matcher",
+      isMandatory: false,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    });
+  });
+
+  it("returns matcherQuestions:[] when the job carries no questions (#585)", async () => {
+    reply({
+      body: {
+        data: { viewer: { id: "v1", availabilityRequest: arFixture({ job: jobWithQuestions([]) }) } },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.matcherQuestions).toEqual([]);
+  });
+
+  it("filters null entries in the wire questions list (#585)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            id: "v1",
+            availabilityRequest: arFixture({
+              job: jobWithQuestions([
+                null,
+                { __typename: "JobPositionQuestion", id: "MQ-9", question: "Q", isRequired: true, options: [] },
+                null,
+              ]),
+            }),
+          },
+        },
+      },
+    });
+    const item = await availabilityRequests.show(TOKEN, AR_ID);
+    expect(item.matcherQuestions.map((q) => q.identifier)).toEqual(["MQ-9"]);
+  });
+
+  it("dispatches the AvailabilityRequest op selecting the shared matcher fields (options + suggestedAnswer) (#585)", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", availabilityRequest: arFixture() } } },
+    });
+    await availabilityRequests.show(TOKEN, AR_ID);
+    const call = mockedStock.mock.calls[0]?.[0];
+    const query = (call?.body as { query?: string } | undefined)?.query ?? "";
+    // The #584 MATCHER_QUESTION_SELECTION fields are present under the
+    // job selection — proving the shared fragment is embedded on the wire,
+    // not a re-derived selection.
+    expect(query).toContain("questions(hideExpertiseQuestion: true)");
+    expect(query).toContain("options");
+    expect(query).toContain("suggestedAnswer { __typename answer }");
   });
 
   it("throws ApplicationsError(NOT_FOUND) when viewer.availabilityRequest is null on the wire", async () => {

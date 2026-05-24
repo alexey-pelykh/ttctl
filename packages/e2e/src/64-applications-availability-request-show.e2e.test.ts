@@ -18,8 +18,17 @@
  *     `availabilityRequest` presence indicator). Skipped via an
  *     explicit return when the test account has no availability
  *     requests in its activity history.
- *   - Wire-shape snapshot assertion (T1 disposition; #442). Snapshot
- *     committed at `wire-snapshots/AvailabilityRequest.snapshot.json`.
+ *   - **`matcherQuestions` (#585)** — the live-wire authority on the
+ *     INFERRED `job.questions { options suggestedAnswer { answer } }`
+ *     selection embedded under the AR's job (the shared #584 matcher
+ *     seam). Asserts the universal `ApplicationQuestion` shape on every
+ *     entry and the mechanically-derived `inputType` (`dropdown` iff
+ *     `options` non-empty). Empty array is a valid state (job with no
+ *     matcher questions). Schema/contract rule TRIGGERED by this
+ *     selection-set change; this is its satisfying live test.
+ *   - Wire-shape snapshot assertion (T1 disposition; #442 + #585). Snapshot
+ *     committed at `wire-snapshots/AvailabilityRequest.snapshot.json`;
+ *     the #585 selection extends it with the matcher-questions sub-shape.
  *
  * Read-only — no side effects.
  *
@@ -170,9 +179,37 @@ describe("applications availability-request show (live mobile-gateway, #442)", (
         "updatedAt",
         "answeredAt",
         "job",
+        // #585 — matcher questions key MUST be present regardless of
+        // whether the AR's job carries any (empty array otherwise).
+        "matcherQuestions",
       ]) {
         expect(key in detail).toBe(true);
       }
+
+      // #585 — matcherQuestions is always an array; each entry (when the
+      // AR's job carries matcher questions) MUST carry the universal
+      // ApplicationQuestion shape, including the choice metadata
+      // (`options` / `suggestedAnswer` / `inputType`) needed to build a
+      // valid `matcherAnswers` payload for the accept path. This is the
+      // live-wire authority on the INFERRED `options` + `suggestedAnswer`
+      // selection embedded under `job.questions` (schema/contract rule).
+      const matcherQuestions = detail["matcherQuestions"];
+      expect(Array.isArray(matcherQuestions)).toBe(true);
+      for (const q of matcherQuestions as Array<Record<string, unknown>>) {
+        expect(typeof q["identifier"]).toBe("string");
+        expect(typeof q["prompt"]).toBe("string");
+        expect(q["type"]).toBe("matcher");
+        expect(typeof q["isMandatory"]).toBe("boolean");
+        expect(Array.isArray(q["options"])).toBe(true);
+        for (const opt of q["options"] as unknown[]) expect(typeof opt).toBe("string");
+        expect(q["suggestedAnswer"] === null || typeof q["suggestedAnswer"] === "string").toBe(true);
+        // inputType is mechanically derived from options-presence (#584).
+        const opts = q["options"] as unknown[];
+        expect(q["inputType"]).toBe(opts.length > 0 ? "dropdown" : "free-text");
+      }
+      process.stdout.write(
+        `[64-applications-availability-request-show] AR ${id} carries ${String((matcherQuestions as unknown[]).length)} matcher question(s).\n`,
+      );
 
       // #539 — shape assertions for the INFERRED fields when populated.
       // `requestedHourlyRate` (Money | null): non-null shape is

@@ -1,0 +1,135 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-24T17:04:01.398Z",
+  "operationName": "AvailabilityRequest",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "answeredAt": {
+        "kind": "string"
+      },
+      "comment": {
+        "kind": "string"
+      },
+      "createdAt": {
+        "kind": "string"
+      },
+      "fixedRate": {
+        "kind": "object",
+        "fields": {
+          "decimal": {
+            "kind": "string"
+          },
+          "verbose": {
+            "kind": "string"
+          }
+        }
+      },
+      "id": {
+        "kind": "string"
+      },
+      "job": {
+        "kind": "object",
+        "fields": {
+          "client": {
+            "kind": "object",
+            "fields": {
+              "fullName": {
+                "kind": "null"
+              },
+              "id": {
+                "kind": "string"
+              }
+            }
+          },
+          "id": {
+            "kind": "string"
+          },
+          "title": {
+            "kind": "string"
+          },
+          "url": {
+            "kind": "string"
+          }
+        }
+      },
+      "kind": {
+        "kind": "string"
+      },
+      "matcherQuestions": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "identifier": {
+              "kind": "string"
+            },
+            "inputType": {
+              "kind": "string"
+            },
+            "isMandatory": {
+              "kind": "boolean"
+            },
+            "options": {
+              "kind": "array",
+              "item": {
+                "kind": "unknown"
+              }
+            },
+            "prompt": {
+              "kind": "string"
+            },
+            "suggestedAnswer": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "recruiter": {
+        "kind": "object",
+        "fields": {
+          "firstName": {
+            "kind": "string"
+          },
+          "fullName": {
+            "kind": "string"
+          },
+          "lastName": {
+            "kind": "string"
+          }
+        }
+      },
+      "rejectReason": {
+        "kind": "null"
+      },
+      "requestedHourlyRate": {
+        "kind": "object",
+        "fields": {
+          "decimal": {
+            "kind": "string"
+          },
+          "verbose": {
+            "kind": "string"
+          }
+        }
+      },
+      "status": {
+        "kind": "string"
+      },
+      "talentComment": {
+        "kind": "string"
+      },
+      "updatedAt": {
+        "kind": "string"
+      }
+    }
+  }
+}

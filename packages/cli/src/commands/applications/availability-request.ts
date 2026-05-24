@@ -70,6 +70,11 @@ export async function runApplicationsAvailabilityRequestShow(id: string, output:
  *       URL:    <url>
  *       Client: <fullName>
  *
+ *     Matcher questions                           // #585; omitted if none
+ *       [<identifier>] <prompt>  (required|optional, dropdown|free-text)
+ *         Options:   <opt> | <opt> | …            // dropdown only
+ *         Suggested: <suggestedAnswer>            // omitted if null
+ *
  * Per-line null guards keep the header concise when the wire returns a
  * sparse availability request.
  */
@@ -125,6 +130,23 @@ export function formatAvailabilityRequestDetail(item: applications.AvailabilityR
     if (item.job.url !== null && item.job.url !== "") lines.push(`  URL:    ${item.job.url}`);
     if (item.job.client?.fullName != null && item.job.client.fullName !== "") {
       lines.push(`  Client: ${item.job.client.fullName}`);
+    }
+  }
+
+  // #585 — matcher questions to answer when accepting this IR. Surfaces
+  // identifier + prompt + the choice metadata (options / suggestedAnswer /
+  // inputType) so the operator can build a `--matcher-answer` payload (or
+  // an MCP `matcherAnswers` array) without dropping to raw GraphQL.
+  if (item.matcherQuestions.length > 0) {
+    lines.push("");
+    lines.push("Matcher questions");
+    for (const q of item.matcherQuestions) {
+      const required = q.isMandatory ? "required" : "optional";
+      lines.push(`  [${q.identifier}] ${q.prompt}  (${required}, ${q.inputType})`);
+      if (q.options.length > 0) lines.push(`    Options:   ${q.options.join(" | ")}`);
+      if (q.suggestedAnswer !== null && q.suggestedAnswer !== "") {
+        lines.push(`    Suggested: ${q.suggestedAnswer}`);
+      }
     }
   }
 

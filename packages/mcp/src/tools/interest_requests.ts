@@ -302,15 +302,19 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
         "  - `matcherAnswers` (optional): array of matcher-question answers.",
         "    Each item is `{ id: string, answer: string }` per the recovered",
         "    `JobPositionAnswerInput` shape (#438 Stage-2). `id` references a",
-        "    `matcherQuestions[].identifier` from `ttctl_applications_show <activityId>`.",
-        "    Validated against `z.array(JobPositionAnswerInputSchema().strict())` —",
-        "    extra unknown keys reject with a field-path error.",
+        "    `matcherQuestions[].identifier` from",
+        "    `ttctl_applications_availability_request_show <id>` (#585 — pass this same",
+        "    `id`). That tool surfaces each matcher question's `options`, `inputType`,",
+        "    `suggestedAnswer`, and `isMandatory`, so you can build a valid dropdown answer",
+        "    without raw GraphQL. Validated against `z.array(JobPositionAnswerInputSchema().strict())`",
+        "    — extra unknown keys reject with a field-path error.",
         "  - `expertiseAnswers` (optional): array of expertise-question answers.",
         "    Each item is `{ questionId: string, other: string|null, subjectId: string|null }`",
         "    per the recovered `JobExpertiseAnswerInput` shape. Note the asymmetric",
         "    id-field name vs matcher: `questionId` here, `id` for matcher.",
         "    `questionId` references an `expertiseQuestions[].identifier` from",
-        "    `ttctl_applications_show <activityId>`.",
+        "    `ttctl_jobs_apply_questions <jobId>` (use the `job.id` from",
+        "    `ttctl_applications_availability_request_show`).",
         "  - `pitchData` (optional): a `PitchInput` object — see the recovered",
         "    `PitchInputSchema` for the field surface (arrays of typed `PitchItem*Input`",
         "    plus the opaque `mentorship` position).",
@@ -352,13 +356,13 @@ function registerInterestRequestsAcceptTool(server: McpServer, ctx: ToolRegistra
           .array(applications.JobPositionAnswerInputSchema().strict())
           .optional()
           .describe(
-            "Optional matcher-questions answers. Array of `{ id: string, answer: string }` objects (`JobPositionAnswerInput[]`); `id` references `matcherQuestions[].identifier` from `ttctl_applications_show <activityId>`. Forwarded as the wire's `matcherQuestionsAnswers` variable. Validated against the recovered Zod shape per #438 — extra keys reject.",
+            "Optional matcher-questions answers. Array of `{ id: string, answer: string }` objects (`JobPositionAnswerInput[]`); `id` references `matcherQuestions[].identifier` from `ttctl_applications_availability_request_show <id>` (#585 — the same AR id). Forwarded as the wire's `matcherQuestionsAnswers` variable. Validated against the recovered Zod shape per #438 — extra keys reject.",
           ),
         expertiseAnswers: z
           .array(applications.JobExpertiseAnswerInputSchema().strict())
           .optional()
           .describe(
-            "Optional expertise-questions answers. Array of `{ questionId: string, other: string|null, subjectId: string|null }` objects (`JobExpertiseAnswerInput[]`); `questionId` references `expertiseQuestions[].identifier` from `ttctl_applications_show <activityId>`. Forwarded as the wire's `expertiseQuestionsAnswers` variable. Validated against the recovered Zod shape per #438.",
+            "Optional expertise-questions answers. Array of `{ questionId: string, other: string|null, subjectId: string|null }` objects (`JobExpertiseAnswerInput[]`); `questionId` references `expertiseQuestions[].identifier` from `ttctl_jobs_apply_questions <jobId>` (the `job.id` from `ttctl_applications_availability_request_show`). Forwarded as the wire's `expertiseQuestionsAnswers` variable. Validated against the recovered Zod shape per #438.",
           ),
         pitchData: applications
           .PitchInputSchema()
