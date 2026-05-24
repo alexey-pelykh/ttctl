@@ -85,6 +85,10 @@ export function buildProfileEmploymentCommand(): Command {
       "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation. A discovery command is tracked in #596; until then, read an existing row's geography id or set it once via the Toptal web UI.",
     )
     .option(
+      "--engagement-id <id>",
+      "link this entry to a Toptal engagement — a TalentEngagement catalog id (e.g. VjEtVGFsZW50RW5nYWdlbWVudC03). Discover ids via `ttctl engagements list` (each row's engagementId). The read echo is the row's engagement.id; the toptalRelated read-state stays server-determined (#402). See #587.",
+    )
+    .option(
       "--no-employer",
       "custom (non-catalog) workplace: send the free-text --company with employerId:null and skip the employer-autocomplete catalog (cannot be combined with --employer-id; requires either --website or --no-website per the #484 CREATE-side anchor contract)",
     )
@@ -127,6 +131,10 @@ export function buildProfileEmploymentCommand(): Command {
     .option(
       "--primary-geography-id <id>",
       "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation (which flags rows missing geography); omit to preserve the current value. A discovery command is tracked in #596; until then, read an existing row's geography id or set it once via the Toptal web UI.",
+    )
+    .option(
+      "--engagement-id <id>",
+      "link this entry to a Toptal engagement — a TalentEngagement catalog id (e.g. VjEtVGFsZW50RW5nYWdlbWVudC03). Discover ids via `ttctl engagements list` (each row's engagementId); omit to preserve the current linkage. The read echo is the row's engagement.id; the toptalRelated read-state stays server-determined (#402). See #587.",
     )
     .addOption(
       new Option("-o, --output <format>", "output format")
@@ -227,6 +235,8 @@ interface AddOptions {
   skillId?: string[];
   // Country catalog id supplied via `--primary-geography-id` (#586).
   primaryGeographyId?: string;
+  // TalentEngagement catalog id supplied via `--engagement-id` (#587).
+  engagementId?: string;
   output: OutputFormat;
 }
 
@@ -245,6 +255,8 @@ interface UpdateOptions {
   skillId?: string[];
   // Country catalog id supplied via `--primary-geography-id` (#586).
   primaryGeographyId?: string;
+  // TalentEngagement catalog id supplied via `--engagement-id` (#587).
+  engagementId?: string;
   output: OutputFormat;
 }
 
@@ -314,6 +326,12 @@ async function runAdd(options: AddOptions): Promise<void> {
   // the CreateEmployment wire via core's `...wireFields` spread.
   if (options.primaryGeographyId !== undefined) {
     fields.primaryGeographyId = options.primaryGeographyId;
+  }
+
+  // #587: Toptal engagement linkage — a TalentEngagement catalog id.
+  // Threaded onto the CreateEmployment wire via core's `...wireFields` spread.
+  if (options.engagementId !== undefined) {
+    fields.engagementId = options.engagementId;
   }
 
   const token = await loadAuthTokenOrExit("profile employment add", options.output);
@@ -415,6 +433,13 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   // When omitted, the read-current+merge preserves the row's current value.
   if (options.primaryGeographyId !== undefined) {
     fields.primaryGeographyId = options.primaryGeographyId;
+  }
+  // #587: Toptal engagement linkage — a TalentEngagement catalog id. Setting
+  // it counts toward the "at least one field flag" check below; landed on the
+  // UpdateEmployment wire via `buildUpdateEmploymentInput`'s `...fields`.
+  // When omitted, the read-current+merge preserves the row's current linkage.
+  if (options.engagementId !== undefined) {
+    fields.engagementId = options.engagementId;
   }
 
   if (Object.keys(fields).length === 0) {

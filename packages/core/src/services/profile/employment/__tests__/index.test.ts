@@ -833,6 +833,9 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.noWebsite).toBe(EMP_1.noWebsite);
     expect(merged.companyWebsite).toBe(EMP_1.companyWebsite);
     expect(merged).not.toHaveProperty("primaryGeographyId");
+    // #587 — EMP_1_MAPPED.engagement is null, so the merge does not echo
+    // an engagementId (omitting keeps an unlinked row unlinked).
+    expect(merged).not.toHaveProperty("engagementId");
     expect(merged).not.toHaveProperty("reportingTo");
     expect(merged.position).toBe("Lead");
     expect(merged.toptalRelated).toBe(EMP_1.toptalRelated);
@@ -925,7 +928,7 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.position).toBe("Lead");
   });
 
-  it("injects employerId, primaryGeographyId, reportingTo when current row has them", () => {
+  it("injects employerId, engagementId, primaryGeographyId, reportingTo when current row has them", () => {
     const merged = buildUpdateEmploymentInput(
       fromMapped({
         ...EMP_2_MAPPED,
@@ -936,9 +939,22 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     );
     expect(merged.employerId).toBe("V1-Employer-99");
     expect(merged.primaryGeographyId).toBe("V1-Geo-1");
+    // #587 — EMP_2_MAPPED.engagement is { id: "V1-TalentEngagement-7" };
+    // the merge echoes the nested id back as the scalar engagementId so a
+    // partial update preserves the linkage.
+    expect(merged.engagementId).toBe("V1-TalentEngagement-7");
     expect(merged.reportingTo).toBe("VP Engineering");
     expect(merged.industryIds).toEqual(["V1-Industry-1"]);
     expect(merged.skills).toEqual([{ id: "V1-Skill-1", name: "TypeScript" }]);
+  });
+
+  it("#587 caller-supplied engagementId overrides the current-derived echo", () => {
+    // Replace-on-supply: when the caller passes engagementId, it wins over
+    // the current row's linkage via the `{ ...merged, ...fields }` spread.
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_2_MAPPED), {
+      engagementId: "V1-TalentEngagement-99",
+    });
+    expect(merged.engagementId).toBe("V1-TalentEngagement-99");
   });
 
   it("#508 echoes the (noWebsite, companyWebsite) anchor pair from current when current.employerId is null", () => {
