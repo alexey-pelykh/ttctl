@@ -87,8 +87,28 @@ const PRE_APPLY_DATA_FIXTURE: applications.PreApplyData = {
 };
 
 const APPLICATION_QUESTIONS_FIXTURE: applications.ApplicationQuestions = {
-  matcherQuestions: [{ identifier: "MQ-1", prompt: "Have you done X?", type: "matcher", isMandatory: true }],
-  expertiseQuestions: [{ identifier: "EQ-1", prompt: "TypeScript", type: "expertise", isMandatory: true }],
+  matcherQuestions: [
+    {
+      identifier: "MQ-1",
+      prompt: "Have you done X?",
+      type: "matcher",
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    },
+  ],
+  expertiseQuestions: [
+    {
+      identifier: "EQ-1",
+      prompt: "TypeScript",
+      type: "expertise",
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    },
+  ],
 };
 
 const RATE_INSIGHT_FIXTURE: applications.RateInsight = {

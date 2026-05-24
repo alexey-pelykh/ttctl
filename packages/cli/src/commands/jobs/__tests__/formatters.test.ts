@@ -375,10 +375,36 @@ describe("formatInterestEntity", () => {
 describe("formatQuestionsSections (#437)", () => {
   const QUESTIONS_FIXTURE: applications.ApplicationQuestions = {
     matcherQuestions: [
-      { identifier: "MQ-1", prompt: "Years of TS?", type: "matcher", isMandatory: true },
-      { identifier: "MQ-2", prompt: "Remote-only?", type: "matcher", isMandatory: false },
+      {
+        identifier: "MQ-1",
+        prompt: "Years of TS?",
+        type: "matcher",
+        isMandatory: true,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
+      {
+        identifier: "MQ-2",
+        prompt: "Remote-only?",
+        type: "matcher",
+        isMandatory: false,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
     ],
-    expertiseQuestions: [{ identifier: "EQ-1", prompt: "React", type: "expertise", isMandatory: true }],
+    expertiseQuestions: [
+      {
+        identifier: "EQ-1",
+        prompt: "React",
+        type: "expertise",
+        isMandatory: true,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
+    ],
   };
 
   it("renders both section headers with the inventory count", () => {
@@ -412,7 +438,17 @@ describe("formatQuestionsSections (#437)", () => {
     // formatter must not append a stray space after the colon.
     const output = formatQuestionsSections({
       matcher: [],
-      expertise: [{ identifier: "EQ-bare", prompt: "", type: "expertise", isMandatory: true }],
+      expertise: [
+        {
+          identifier: "EQ-bare",
+          prompt: "",
+          type: "expertise",
+          isMandatory: true,
+          options: [],
+          suggestedAnswer: null,
+          inputType: "free-text",
+        },
+      ],
     });
     expect(output).toContain("• EQ-bare:");
     // Negative check: no trailing space (`":"` + `" "` + empty prompt).

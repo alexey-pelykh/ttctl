@@ -32,6 +32,14 @@
  *     flag exists at the surface level (which would mean callers must
  *     attempt the apply and surface the wire's rejection to surface
  *     "you must answer this").
+ *   - **#584 choice metadata** — `applyQuestions` now selects
+ *     `options` + `suggestedAnswer { answer }` on matcher questions and
+ *     projects an `inputType` (dropdown / free-text) discriminator. The
+ *     happy path asserts the universal shape on every entry (proving the
+ *     live wire ACCEPTS the new [INFERRED] selection set per the
+ *     schema/contract rule); a second test scans the eligible-jobs pool
+ *     for a real dropdown question and asserts the options /
+ *     suggestedAnswer round-trip when one is found.
  *
  * **Wire-shape snapshots** (T1 per `docs/wire-validation-routing.md`):
  * captured on the happy path; committed on first run with
@@ -76,6 +84,38 @@ async function pickEligibleJobId(cli: CliClient): Promise<string | null> {
   }
   const first = listed.items[0];
   return first?.id ?? null;
+}
+
+/**
+ * Resolve up to `limit` eligible job ids — used by the #584 scan that
+ * hunts for a job carrying a choice-style (dropdown) matcher question.
+ */
+async function listEligibleJobIds(cli: CliClient, limit: number): Promise<string[]> {
+  const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+  expect(listResult.exitCode).toBe(0);
+  const listed = JSON.parse(listResult.stdout) as { items?: Array<{ id?: string }> };
+  if (!Array.isArray(listed.items)) return [];
+  return listed.items
+    .map((i) => i.id)
+    .filter((id): id is string => typeof id === "string")
+    .slice(0, limit);
+}
+
+/**
+ * Assert the universal #584 question shape on a single entry: `options`
+ * is always an array, `suggestedAnswer` is string-or-null, `inputType` is
+ * the closed union, and — critically — `inputType` is the MECHANICAL
+ * function of options-presence the service contract promises.
+ */
+function assertQuestionShape(q: applications.ApplicationQuestion): void {
+  expect(typeof q.identifier).toBe("string");
+  expect(typeof q.prompt).toBe("string");
+  expect(Array.isArray(q.options)).toBe(true);
+  for (const opt of q.options) expect(typeof opt).toBe("string");
+  expect(q.suggestedAnswer === null || typeof q.suggestedAnswer === "string").toBe(true);
+  expect(["dropdown", "free-text"]).toContain(q.inputType);
+  // Discriminator invariant: options-presence ⇔ dropdown.
+  expect(q.inputType).toBe(q.options.length > 0 ? "dropdown" : "free-text");
 }
 
 describe("jobs apply pre-apply read suite (live mobile-gateway)", () => {
@@ -139,23 +179,20 @@ describe("jobs apply pre-apply read suite (live mobile-gateway)", () => {
       const token = loadSandboxBearer(sandboxConfigPath);
       const questions = await applications.applyQuestions(token, jobId);
       // Both inventories are arrays (possibly empty for jobs that
-      // don't require custom questions). Each entry has at least the
-      // `identifier` and `prompt` fields the service projects.
+      // don't require custom questions). Each entry carries the full
+      // #584 shape: identifier, prompt, options, suggestedAnswer,
+      // inputType (verified by assertQuestionShape). The mere fact this
+      // call returns (no GraphQL error) is the schema/contract proof
+      // that the live wire accepts the #584 `options` +
+      // `suggestedAnswer { answer }` selection-set additions.
       expect(Array.isArray(questions.matcherQuestions)).toBe(true);
       expect(Array.isArray(questions.expertiseQuestions)).toBe(true);
-      for (const q of questions.matcherQuestions) {
-        expect(typeof q.identifier).toBe("string");
-        expect(typeof q.prompt).toBe("string");
-      }
-      for (const q of questions.expertiseQuestions) {
-        expect(typeof q.identifier).toBe("string");
-        expect(typeof q.prompt).toBe("string");
-      }
-      // The wire-shape snapshot is the empirical record of whether a
-      // `required` / `mandatory` flag is present on each entry
-      // (design open Q2). If the snapshot shows it, the service can
-      // surface it in the projection; if not, the surface stays
-      // "wire is the authority on rejection".
+      for (const q of questions.matcherQuestions) assertQuestionShape(q);
+      for (const q of questions.expertiseQuestions) assertQuestionShape(q);
+      // The wire-shape snapshot is the empirical record of the per-entry
+      // shape including the #584 options / suggestedAnswer / inputType
+      // fields (T1 per docs/wire-validation-routing.md). Captured on the
+      // first TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1 run.
       expect(() =>
         assertWireShapeStable({
           operationName: "JobApplicationQuestions",
@@ -164,6 +201,53 @@ describe("jobs apply pre-apply read suite (live mobile-gateway)", () => {
           response: questions,
         }),
       ).not.toThrow();
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "applyQuestions surfaces options + suggestedAnswer + dropdown discriminator on a choice-style matcher question (#584)",
+    async () => {
+      // Scan the eligible-jobs pool for a job carrying at least one
+      // dropdown matcher question (non-empty options). The #584 reporter
+      // observed a timezone-overlap dropdown; whether THIS account has
+      // such a job is account-state-dependent, so we scan a bounded
+      // window and skip gracefully (with a stderr note) if none is found
+      // — the universal-shape assertion above already proves the wire
+      // accepts the new selection set.
+      const token = loadSandboxBearer(sandboxConfigPath);
+      const jobIds = await listEligibleJobIds(cli, 15);
+      if (jobIds.length === 0) {
+        process.stderr.write("warning: no eligible jobs in test account — #584 dropdown-scan skipped\n");
+        return;
+      }
+      let dropdown: applications.ApplicationQuestion | null = null;
+      for (const jobId of jobIds) {
+        const questions = await applications.applyQuestions(token, jobId);
+        for (const q of questions.matcherQuestions) assertQuestionShape(q);
+        const hit = questions.matcherQuestions.find((q) => q.inputType === "dropdown");
+        if (hit !== undefined) {
+          dropdown = hit;
+          break;
+        }
+      }
+      if (dropdown === null) {
+        process.stderr.write(
+          `warning: no dropdown (choice-style) matcher question found across ${jobIds.length.toString()} eligible jobs — ` +
+            "#584 dropdown-shape assertion skipped (wire-acceptance of the selection set is covered by the happy-path test)\n",
+        );
+        return;
+      }
+      // A real dropdown question: options non-empty, inputType dropdown,
+      // suggestedAnswer (if present) is one of the options.
+      expect(dropdown.options.length).toBeGreaterThan(0);
+      expect(dropdown.inputType).toBe("dropdown");
+      if (dropdown.suggestedAnswer !== null) {
+        expect(dropdown.options).toContain(dropdown.suggestedAnswer);
+      }
+      process.stderr.write(
+        `#584 dropdown found: "${dropdown.prompt}" options=${JSON.stringify(dropdown.options)} ` +
+          `suggestedAnswer=${JSON.stringify(dropdown.suggestedAnswer)}\n`,
+      );
     },
   );
 

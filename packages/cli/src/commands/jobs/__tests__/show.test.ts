@@ -82,11 +82,45 @@ const JOB_DETAIL_FIXTURE: jobs.JobDetail = {
 
 const QUESTIONS_FIXTURE: applications.ApplicationQuestions = {
   matcherQuestions: [
-    { identifier: "MQ-1", prompt: "Years of TS?", type: "matcher", isMandatory: true },
-    { identifier: "MQ-2", prompt: "Remote-only?", type: "matcher", isMandatory: false },
-    { identifier: "MQ-3", prompt: "Available now?", type: "matcher", isMandatory: true },
+    {
+      identifier: "MQ-1",
+      prompt: "Years of TS?",
+      type: "matcher",
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    },
+    {
+      identifier: "MQ-2",
+      prompt: "Remote-only?",
+      type: "matcher",
+      isMandatory: false,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    },
+    {
+      identifier: "MQ-3",
+      prompt: "Available now?",
+      type: "matcher",
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    },
   ],
-  expertiseQuestions: [{ identifier: "EQ-1", prompt: "React", type: "expertise", isMandatory: true }],
+  expertiseQuestions: [
+    {
+      identifier: "EQ-1",
+      prompt: "React",
+      type: "expertise",
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text",
+    },
+  ],
 };
 
 const EMPTY_QUESTIONS_FIXTURE: applications.ApplicationQuestions = {

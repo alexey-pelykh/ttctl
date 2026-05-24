@@ -1429,7 +1429,15 @@ describe("applications.applyData (#424)", () => {
 
 function questionsFixture(
   opts: {
-    matcher?: { id: string; question: string; isRequired: boolean | null }[];
+    matcher?: {
+      id: string;
+      question: string;
+      isRequired: boolean | null;
+      // #584 — optional so pre-#584 call sites stay valid; the spread
+      // below carries them onto the wire fixture when present.
+      options?: (string | null)[] | null;
+      suggestedAnswer?: { answer?: string | null } | null;
+    }[];
     expertise?: {
       id: string;
       subject: { __typename: "Industry" | "Skill" | string; id?: string; name?: string } | null;
@@ -1456,7 +1464,7 @@ function questionsFixture(
 }
 
 describe("applications.applyQuestions (#424)", () => {
-  it("projects matcher + expertise questions in the four-field shape", async () => {
+  it("projects matcher + expertise questions in the public shape (free-text defaults)", async () => {
     reply({
       body: questionsFixture({
         matcher: [
@@ -1470,14 +1478,117 @@ describe("applications.applyQuestions (#424)", () => {
       }),
     });
     const out = await applyQuestions(TOKEN, JOB_ID);
+    // Matcher questions with no `options` on the wire project as
+    // free-text: empty options, null suggestedAnswer, inputType free-text.
     expect(out.matcherQuestions).toEqual([
-      { identifier: "m1", prompt: "How many years of experience?", type: "matcher", isMandatory: true },
-      { identifier: "m2", prompt: "Are you a citizen?", type: "matcher", isMandatory: false },
+      {
+        identifier: "m1",
+        prompt: "How many years of experience?",
+        type: "matcher",
+        isMandatory: true,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
+      {
+        identifier: "m2",
+        prompt: "Are you a citizen?",
+        type: "matcher",
+        isMandatory: false,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
     ]);
+    // Expertise questions always carry the matcher-scoped choice metadata
+    // at neutral defaults (#584).
     expect(out.expertiseQuestions).toEqual([
-      { identifier: "e1", prompt: "FinTech", type: "expertise", isMandatory: true },
-      { identifier: "e2", prompt: "TypeScript", type: "expertise", isMandatory: true },
+      {
+        identifier: "e1",
+        prompt: "FinTech",
+        type: "expertise",
+        isMandatory: true,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
+      {
+        identifier: "e2",
+        prompt: "TypeScript",
+        type: "expertise",
+        isMandatory: true,
+        options: [],
+        suggestedAnswer: null,
+        inputType: "free-text",
+      },
     ]);
+  });
+
+  it("projects a choice-style (dropdown) matcher question with options + suggestedAnswer + inputType (#584)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [
+          {
+            id: "m1",
+            question: "How many hours of overlap can you provide during their workday?",
+            isRequired: true,
+            options: ["No overlap", "1-2 hours", "2-4 hours", "4-6 hours", "More than 6 hours", "Other"],
+            suggestedAnswer: { answer: "More than 6 hours" },
+          },
+        ],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions).toEqual([
+      {
+        identifier: "m1",
+        prompt: "How many hours of overlap can you provide during their workday?",
+        type: "matcher",
+        isMandatory: true,
+        options: ["No overlap", "1-2 hours", "2-4 hours", "4-6 hours", "More than 6 hours", "Other"],
+        suggestedAnswer: "More than 6 hours",
+        inputType: "dropdown",
+      },
+    ]);
+  });
+
+  it("derives inputType=dropdown iff options are present; free-text otherwise (#584)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [
+          { id: "drop", question: "Pick one", isRequired: true, options: ["A", "B"] },
+          { id: "free", question: "Describe", isRequired: true, options: [] },
+        ],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions[0]?.inputType).toBe("dropdown");
+    expect(out.matcherQuestions[1]?.inputType).toBe("free-text");
+  });
+
+  it("projects suggestedAnswer:null when the wire omits it or its answer (#584)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [
+          { id: "no-sa", question: "Q1", isRequired: true, options: ["A"] },
+          { id: "null-sa", question: "Q2", isRequired: true, options: ["A"], suggestedAnswer: null },
+          { id: "empty-sa", question: "Q3", isRequired: true, options: ["A"], suggestedAnswer: { answer: null } },
+        ],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions.map((q) => q.suggestedAnswer)).toEqual([null, null, null]);
+  });
+
+  it("filters null / non-string entries out of the options list (defensive, #584)", async () => {
+    reply({
+      body: questionsFixture({
+        matcher: [{ id: "m1", question: "Q", isRequired: true, options: ["A", null, "B"] }],
+      }),
+    });
+    const out = await applyQuestions(TOKEN, JOB_ID);
+    expect(out.matcherQuestions[0]?.options).toEqual(["A", "B"]);
+    expect(out.matcherQuestions[0]?.inputType).toBe("dropdown");
   });
 
   it("returns empty arrays when the job has no matcher or expertise questions (REQ-Q1 empty-path)", async () => {
