@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { Command, Option } from "commander";
 import type { Command as CommanderCommand } from "commander";
 
-import { ConfigError, setDiagnosticLogger } from "@ttctl/core";
+import { ConfigError, readPackageVersion, setDiagnosticLogger } from "@ttctl/core";
 import type { DiagnosticLevel } from "@ttctl/core";
 
 import { buildApplicationsCommand } from "./commands/applications/index.js";
@@ -105,7 +105,17 @@ export function buildProgram(): Command {
   program
     .name("ttctl")
     .description("Unofficial CLI for the Toptal Talent platform — personal-productivity tool")
-    .version("0.0.0")
+    // Read the version at runtime from this package's own `package.json`
+    // rather than a hardcoded literal the release pipeline never rewrites
+    // (#582). `readPackageVersion(import.meta.url)` resolves the adjacent
+    // `../package.json` relative to THIS module's own location — landing on
+    // `@ttctl/cli/package.json` from both `dist/program.js` (published) and
+    // `src/program.ts` (tsc/vitest). The release workflow stamps every
+    // package's `package.json`, so `@ttctl/cli` reports the correct version
+    // with zero workflow changes; the umbrella `ttctl` binary calls
+    // `buildProgram()` from `@ttctl/cli`, inheriting the same stamped value,
+    // so the two agree. Unstamped dev checkouts honestly report `0.0.0`.
+    .version(readPackageVersion(import.meta.url))
     .addOption(new Option("--config <path>", "path to YAML config (overrides TTCTL_CONFIG_FILE and ~/.ttctl.yaml)"))
     .addOption(new Option("--json", "shortcut for --output=json (mutually exclusive with --output, -o, --yaml)"))
     .addOption(new Option("--yaml", "shortcut for --output=yaml (mutually exclusive with --output, -o, --json)"))
