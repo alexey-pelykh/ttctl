@@ -59,8 +59,9 @@ export function buildProfileBasicCommand(): Command {
       .option("--bio <text>", 'long-form bio (inline text, "-" for stdin, or "@path" to read from file)')
       .option("--headline <text>", 'short tagline (inline text, "-" for stdin, or "@path" to read from file)')
       .option(
-        "--twitter <handle>",
-        'twitter / X handle without leading "@" or URL prefix (e.g. "alexey_pelykh"). Pass "" to clear.',
+        "--twitter <value>",
+        'twitter / X handle or profile URL — "alexey_pelykh", "@alexey_pelykh", or ' +
+          '"https://x.com/alexey_pelykh" all work (normalised to the bare handle). Pass "" to clear.',
       )
       .option("--edit", "open $EDITOR to compose the bio interactively (cannot be combined with --bio)")
       .addOption(

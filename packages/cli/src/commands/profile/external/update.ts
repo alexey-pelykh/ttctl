@@ -19,12 +19,17 @@ const OPERATION = "profile.external.update";
  * is not in the underlying `UpdateExternalProfilesInput` schema (the
  * portfolio URL is a server-determined read via `getPublicProfileUrl`).
  * The flags exposed here match the schema's settable external-profile
- * URLs: linkedin / github / website / behance / dribbble. `--twitter`
- * was removed in #526 — the live server rejects `twitter` on
- * `ExternalProfilesInput` (the entire batch fails transactionally
- * when twitter is co-supplied with valid fields); the read-side
- * (`ttctl profile external show`) continues to surface `twitter`
- * because the `Profile` entity still exposes it.
+ * URLs: linkedin / github / website / behance / dribbble. `--twitter` is
+ * accepted but NOT settable here — the live server rejects `twitter` on
+ * `ExternalProfilesInput` (the entire batch fails transactionally when
+ * twitter is co-supplied with valid fields). Supplying `--twitter` short-
+ * circuits to an actionable `VALIDATION_ERROR` redirect pointing at
+ * `ttctl profile basic update --twitter` (#526 reopen — better than
+ * commander's bare "unknown option" or a silent drop), surfaced BEFORE
+ * auth I/O and reusing `profile.external.TWITTER_NOT_EXTERNAL_MESSAGE` so
+ * the wording matches the core guard and the MCP tool. The read-side
+ * (`ttctl profile external show`) continues to surface `twitter` because
+ * the `Profile` entity still exposes it.
  */
 export async function runProfileExternalUpdate(options: {
   linkedin?: string;
@@ -32,8 +37,25 @@ export async function runProfileExternalUpdate(options: {
   website?: string;
   behance?: string;
   dribbble?: string;
+  twitter?: string;
   output: OutputFormat;
 }): Promise<void> {
+  // #526: twitter is not settable here. Surface the actionable redirect
+  // (the shared `TWITTER_NOT_EXTERNAL_MESSAGE` wording, so CLI / MCP / core
+  // stay in lockstep) BEFORE auth I/O — matching the empty-input guard's
+  // pre-auth ordering, and so a not-signed-in user learns where twitter
+  // lives without first being asked to authenticate. The core
+  // `profile.external.update` guard remains the authoritative gate for
+  // programmatic callers.
+  if (options.twitter !== undefined) {
+    emitErrorAndExit({
+      operation: OPERATION,
+      format: options.output,
+      errors: [{ code: "VALIDATION_ERROR", message: profile.external.TWITTER_NOT_EXTERNAL_MESSAGE }],
+      prettySummary: `${COMMAND_LABEL} failed (VALIDATION_ERROR): ${profile.external.TWITTER_NOT_EXTERNAL_MESSAGE}`,
+    });
+  }
+
   const changes: profile.external.ExternalProfilesUpdate = {};
   if (options.linkedin !== undefined) changes.linkedin = options.linkedin;
   if (options.github !== undefined) changes.github = options.github;

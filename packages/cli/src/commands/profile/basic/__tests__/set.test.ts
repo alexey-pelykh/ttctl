@@ -400,4 +400,44 @@ describe("runProfileBasicUpdate dry-run integration (#52)", () => {
     const args = MOCKED_SET.mock.calls[0];
     expect(args?.[1]).toEqual({ twitter: "" });
   });
+
+  it("forwards a --twitter URL to profile.basic.set() VERBATIM (normalisation is core's job, not the CLI's) (#526)", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "ttctl-twitter-url-"));
+    const configPath = join(tmpDir, ".ttctl.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "auth:",
+        '  credentials: "op://Personal/ttctl"',
+        '  token: "user_0123456789abcdef0123456789abcdef0123456789abcdef"',
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    process.env["TTCTL_CONFIG_FILE"] = configPath;
+
+    MOCKED_SET.mockResolvedValueOnce({
+      kind: "applied",
+      result: {
+        profile: { id: "p1", about: "current", quote: "current", twitter: "alexey_pelykh" },
+        notice: null,
+      },
+    });
+
+    captureStdout();
+    captureStderr();
+
+    // The CLI must NOT normalise the URL itself — it forwards the raw flag
+    // value and `profile.basic.set()` (core) reduces it to the bare handle.
+    // This pins the layering so a future change can't accidentally add a
+    // second normalisation pass at the CLI (which would double-process and
+    // risk diverging from the core contract).
+    await runProfileBasicUpdate({ twitter: "https://x.com/alexey_pelykh", output: "json" });
+
+    expect(MOCKED_SET).toHaveBeenCalledTimes(1);
+    const args = MOCKED_SET.mock.calls[0];
+    expect(args?.[1]).toEqual({ twitter: "https://x.com/alexey_pelykh" });
+  });
 });

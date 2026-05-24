@@ -52,14 +52,20 @@ export function buildProfileExternalCommand(): Command {
     .command("update")
     .description(
       "Update external profile URLs (linkedin, github, website, behance, dribbble). " +
-        "Twitter / X is no longer settable: the live server rejects `twitter` on the " +
-        "`ExternalProfilesInput` type as of #526 — see `external show` to read it.",
+        "Twitter / X is set via `ttctl profile basic update --twitter` (not here): the live " +
+        "server rejects `twitter` on the `ExternalProfilesInput` type as of #526. Passing " +
+        "`--twitter` here returns a hint pointing you to the basic command; `external show` reads it.",
     )
     .option("--linkedin <url>", "LinkedIn profile URL")
     .option("--github <url>", "GitHub profile URL")
     .option("--website <url>", "Personal website URL")
     .option("--behance <url>", "Behance profile URL")
     .option("--dribbble <url>", "Dribbble profile URL")
+    .option(
+      "--twitter <value>",
+      "NOT settable here — set twitter via `ttctl profile basic update --twitter` (#526). " +
+        "Supplying this returns an actionable redirect rather than silently dropping it.",
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -72,6 +78,7 @@ export function buildProfileExternalCommand(): Command {
         website?: string;
         behance?: string;
         dribbble?: string;
+        twitter?: string;
         output: OutputFormat;
       }) => {
         await runProfileExternalUpdate(options);

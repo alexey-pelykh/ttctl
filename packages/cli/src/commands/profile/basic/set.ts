@@ -28,8 +28,9 @@ import { truncate } from "./show.js";
  *   - editor (`--edit`, opens `$EDITOR` on the bio buffer)
  *
  * `--twitter` does NOT participate in the free-text surface — it's a
- * short bare-handle string (e.g. `alexey_pelykh`), passed verbatim
- * without leading `@` or URL prefix per the live wire shape (#535).
+ * short value passed straight to `profile.basic.set`, which normalises a
+ * URL or leading-`@` form down to the bare handle the live wire shape
+ * stores (#526; e.g. `https://x.com/alexey_pelykh` → `alexey_pelykh`).
  * An empty string (`--twitter ""`) is the explicit "clear it" intent.
  *
  * Free-text resolution happens BEFORE auth/token I/O — input mistakes
@@ -84,9 +85,10 @@ export async function runProfileBasicUpdate(options: {
     throw err;
   }
 
-  // Twitter is a short bare-handle string — no stdin / @file / editor
-  // modes. Pass it verbatim (including the empty string, which is the
-  // documented "clear it" intent per ProfileUpdate's contract).
+  // Twitter is a short value — no stdin / @file / editor modes. Pass it
+  // straight through (including the empty string, which is the documented
+  // "clear it" intent per ProfileUpdate's contract); `profile.basic.set`
+  // normalises a URL or leading-`@` form to the bare handle (#526).
   const twitter = options.twitter;
 
   if (bio === undefined && headline === undefined && twitter === undefined) {

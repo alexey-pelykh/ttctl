@@ -726,11 +726,18 @@ const UPDATE_BASIC_INFO_MUTATION = `mutation UPDATE_BASIC_INFO($input: UpdateBas
  * one is supplied — `set()` rejects an empty object with a
  * `VALIDATION_ERROR`.
  *
- * `twitter` accepts the **bare handle string** (e.g. `"alexey_pelykh"`) —
- * NOT a URL, NOT a leading `@`. The live wire shape (curl evidence in
- * #535) shows the field is sent as `"twitter": "alexey_pelykh"`. An empty
- * string clears the field; `null` is also accepted and clears the field
- * (the wire schema permits both representations of "absent").
+ * `twitter` accepts EITHER a bare handle (`"alexey_pelykh"`) OR a full
+ * profile URL (`"https://x.com/alexey_pelykh"`, `"https://twitter.com/…"`,
+ * with or without a leading `@`); {@link set} runs it through
+ * {@link normalizeTwitterHandle} and stores the **bare handle** the live
+ * wire shape expects (curl evidence in #535: the field is sent as
+ * `"twitter": "alexey_pelykh"`, NOT a URL — an in-input asymmetry vs the
+ * sibling `linkedin`/`github`/`website` URL fields on the same input).
+ * Normalising in core (#526) fixes the reopened regression where a URL
+ * was forwarded verbatim and stored as a broken "handle". An empty string
+ * clears the field; `null` is also accepted and clears the field (both
+ * survive normalisation untouched — the wire schema permits both
+ * representations of "absent").
  *
  * Why `twitter` lives on this `basic` write-path and NOT on
  * `external.update`: per #526, the `UpdateExternalProfilesInput` rejects
@@ -742,6 +749,56 @@ export interface ProfileUpdate {
   bio?: string;
   headline?: string;
   twitter?: string | null;
+}
+
+/**
+ * Normalise a user-supplied twitter/X value to the bare handle that
+ * Toptal's `Profile.twitter` field stores (#526).
+ *
+ * The live `UPDATE_BASIC_INFO` wire shape expects a BARE HANDLE (e.g.
+ * `alexey_pelykh`) — NOT a URL — even though the sibling
+ * `linkedin`/`github`/`website` fields on the SAME input are full URLs (an
+ * in-input asymmetry confirmed by the #526 live capture). Callers (and
+ * ttctl's own pre-#526 docs) naturally pass a URL (`https://x.com/<handle>`);
+ * forwarding it verbatim stored a URL where a handle was expected and the
+ * field rendered broken. This normaliser accepts any of:
+ *
+ *   - bare handle:         `alexey_pelykh`                          → `alexey_pelykh`
+ *   - leading-`@` handle:  `@alexey_pelykh`                         → `alexey_pelykh`
+ *   - x.com URL:           `https://x.com/alexey_pelykh`            → `alexey_pelykh`
+ *   - twitter.com URL:     `https://twitter.com/alexey_pelykh`      → `alexey_pelykh`
+ *   - www / http / sub.:   `http://www.twitter.com/alexey_pelykh/`  → `alexey_pelykh`
+ *   - URL with query/hash: `https://x.com/alexey_pelykh?s=20`       → `alexey_pelykh`
+ *
+ * Clear-intent values are preserved verbatim: `""` and `null` both mean
+ * "clear the field" per {@link ProfileUpdate} and survive untouched.
+ *
+ * Leading/trailing whitespace is trimmed. A value that does not parse as a
+ * recognised twitter/X URL is treated as an already-bare handle (after
+ * stripping a single leading `@`) — unknown shapes are NOT rejected because
+ * Toptal itself is the only authority on handle validity, and over-eager
+ * client validation would block legitimate handles.
+ *
+ * Exported so the value contract is directly unit-testable and documented;
+ * {@link set} applies it on BOTH the apply (merge) path and the dry-run
+ * preview path so previews reflect exactly what the live mutation sends.
+ */
+export function normalizeTwitterHandle(value: string | null): string | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+
+  // Recognised twitter/X URL → first path segment is the handle. Optional
+  // scheme, optional `www.`/`mobile.`/other subdomains, `twitter.com` or
+  // `x.com` host, an optional legacy `#!/` hashbang, an optional leading
+  // `@`, then the handle up to the next `/`, `?`, `#`, or whitespace.
+  const urlMatch = /^(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:twitter|x)\.com\/(?:#!\/)?@?([^/?#\s]+)/i.exec(trimmed);
+  if (urlMatch?.[1] !== undefined && urlMatch[1].length > 0) {
+    return urlMatch[1];
+  }
+
+  // Not a recognised URL — treat as a bare handle, stripping one leading `@`.
+  return trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
 }
 
 /**
@@ -781,8 +838,10 @@ export interface ProfileUpdate {
  * and #526 explicitly chose to keep them there rather than migrating to
  * this surface. `twitter` is the only one of the six that landed here,
  * because it's the only one the `external` write-input rejects. The
- * basic-info merge passes `twitter` verbatim; the field is sent on every
- * UPDATE_BASIC_INFO call (read-merge preserves the current value when
+ * basic-info merge runs user-supplied `twitter` through
+ * {@link normalizeTwitterHandle} (URL / leading-`@` / bare → bare handle)
+ * before sending it; the field is sent on every UPDATE_BASIC_INFO call
+ * (read-merge preserves the current value — already a bare handle — when
  * the user doesn't supply a new one).
  */
 interface UpdateBasicInfoInput {
@@ -969,10 +1028,14 @@ export type SetOutcome = SetOutcomeApplied | SetOutcomePreview;
  * use case (profile updates are infrequent; the read is plain HTTPS
  * against the talent-profile surface).
  *
- * `twitter` plays the same merge role: when the caller doesn't supply
- * it, the current persisted value (read via `getBasicInfo`) is sent
- * verbatim. The wire schema accepts either a bare-handle string or
- * `null`; both shapes survive the merge.
+ * `twitter` plays the same merge role with one extra step: a
+ * user-supplied value is first run through {@link normalizeTwitterHandle}
+ * (URL / leading-`@` / bare → bare handle) so a URL is never stored as a
+ * broken "handle" (#526); when the caller doesn't supply it, the current
+ * persisted value (read via `getBasicInfo`, already a bare handle) is sent
+ * unchanged. The wire schema accepts either a bare-handle string or
+ * `null`; both shapes survive the merge (`""` / `null` clear-intents are
+ * preserved by the normaliser untouched).
  *
  * Dry-run path (issue #52, extended for #393): when invoked with
  * `options.dryRun === true`, the preview is built WITHOUT firing any
@@ -1050,7 +1113,10 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
         countryId: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         citizenshipId: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         phoneNumber: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
-        twitter: changes.twitter !== undefined ? changes.twitter : DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        twitter:
+          changes.twitter !== undefined
+            ? normalizeTwitterHandle(changes.twitter)
+            : DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         languageIds: [],
         softwareSkills: [],
       },
@@ -1092,7 +1158,7 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
     countryId: current.countryId,
     citizenshipId: current.citizenshipId,
     phoneNumber: current.phoneNumber,
-    twitter: changes.twitter !== undefined ? changes.twitter : current.twitter,
+    twitter: changes.twitter !== undefined ? normalizeTwitterHandle(changes.twitter) : current.twitter,
     languageIds: current.languages.map((l) => l.id),
     softwareSkills: current.softwareSkills.map((s) => ({ id: s.id, name: s.name })),
   };

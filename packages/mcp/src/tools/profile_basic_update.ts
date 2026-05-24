@@ -78,6 +78,7 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
         "  - \"Change my Toptal headline to 'CTO at AcmeCo'.\"",
         '  - "Set my profile bio and headline."',
         '  - "Set my twitter handle to alexey_pelykh."',
+        '  - "Set my twitter to https://x.com/alexey_pelykh." (a URL is accepted; ttctl stores the bare handle)',
         '  - "Clear my twitter handle." (call with `twitter: ""` or `twitter: null`)',
         '  - "Show me what would be sent if I changed my bio to X."',
       ].join("\n"),
@@ -98,7 +99,7 @@ export function registerProfileBasicUpdateTool(server: McpServer, ctx: ToolRegis
           .union([z.string(), z.null()])
           .optional()
           .describe(
-            'Twitter / X handle as a bare string (e.g. `alexey_pelykh`). No leading `@`, no URL prefix. Maps 1:1 to GraphQL `Profile.twitter`. Optional. Pass `""` or `null` to clear the field; omit the parameter to leave the existing value unchanged.',
+            'Twitter / X handle or profile URL. Accepts a bare handle (`alexey_pelykh`), a leading-`@` handle (`@alexey_pelykh`), or a full URL (`https://x.com/alexey_pelykh`, `https://twitter.com/…`) — ttctl normalises any of these to the bare handle Toptal stores on `Profile.twitter` (#526). Optional. Pass `""` or `null` to clear the field; omit the parameter to leave the existing value unchanged.',
           ),
         dryRun: z
           .boolean()

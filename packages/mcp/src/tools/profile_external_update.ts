@@ -52,7 +52,7 @@ export function registerProfileExternalUpdateTool(server: McpServer, ctx: ToolRe
       description: [
         "Set one or more external profile URLs (LinkedIn, GitHub, website, Behance, Dribbble) on the signed-in talent's profile. At least one field must be provided.",
         "",
-        "Twitter / X is no longer settable here — the live server rejects `twitter` on the `ExternalProfilesInput` type (#526). The read-side `ttctl_profile_external_show` still surfaces it.",
+        "Twitter / X is NOT settable here — set it via `ttctl_profile_basic_update` (which accepts a URL OR a bare handle). The live server rejects `twitter` on the `ExternalProfilesInput` type (#526); supplying `twitter` to this tool returns a VALIDATION_ERROR redirect (it is not silently dropped). The read-side `ttctl_profile_external_show` still surfaces the stored value.",
         "",
         "Example user prompts that should map to this tool:",
         '  - "Update my LinkedIn URL to https://linkedin.com/in/janedoe."',
@@ -65,12 +65,30 @@ export function registerProfileExternalUpdateTool(server: McpServer, ctx: ToolRe
         website: z.url().optional().describe("Personal website URL"),
         behance: z.url().optional().describe("Behance profile URL"),
         dribbble: z.url().optional().describe("Dribbble profile URL"),
+        twitter: z
+          .union([z.string(), z.null()])
+          .optional()
+          .describe(
+            'NOT settable here — set twitter via `ttctl_profile_basic_update` (#526). Declared so a supplied value returns an actionable redirect instead of being silently stripped; any value (including `""` / `null`) triggers the redirect.',
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
     async (input) => {
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
+
+      // #526: twitter is not settable here. Reject with the shared
+      // actionable redirect BEFORE the dry-run branch or any apply call —
+      // so the value is neither silently dropped nor surfaced in a
+      // misleading dry-run preview. The wording matches the core guard
+      // (`profile.external.update`) and the CLI surface.
+      if (input.twitter !== undefined) {
+        return domainErrorResponse(
+          TOOL_NAME,
+          new profile.external.ProfileError("VALIDATION_ERROR", profile.external.TWITTER_NOT_EXTERNAL_MESSAGE),
+        );
+      }
 
       const changes: profile.external.ExternalProfilesUpdate = {};
       if (input.linkedin !== undefined) changes.linkedin = input.linkedin;
