@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -241,6 +242,22 @@ describe("program --config flag", () => {
 describe("program help and metadata", () => {
   beforeEach(() => {
     resetCliConfigPath();
+  });
+
+  it("reports the @ttctl/cli package.json version, not a hardcoded literal (#582)", () => {
+    // Independently re-read the CLI package's own package.json (two levels
+    // up from src/__tests__/), then assert the Commander program reports
+    // exactly that. buildProgram() wires
+    // `.version(readPackageVersion(import.meta.url))`, which resolves the
+    // same manifest from src/program.ts (→ ../package.json). This guards
+    // against a re-hardcoded literal: at a stamped release build the
+    // manifest carries the real version while a reverted `.version("0.0.0")`
+    // literal would not, diverging this assertion.
+    const cliPackageJsonPath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+    const { version: manifestVersion } = JSON.parse(readFileSync(cliPackageJsonPath, "utf-8")) as { version: string };
+    expect(manifestVersion.length).toBeGreaterThan(0);
+    const program = buildProgram();
+    expect(program.version()).toBe(manifestVersion);
   });
 
   it("registers --config <path> as a global option visible in help text", () => {
