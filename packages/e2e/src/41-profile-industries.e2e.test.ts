@@ -14,6 +14,18 @@
  *
  * Coverage strategy:
  *
+ *   - **`list()` document validation (#583 regression guard)** — an
+ *     UNCONDITIONAL `industries.list` call (no seeding). The rc.9
+ *     read-surface expansion (#553) selected the five `IndustryProfile`
+ *     curation sub-fields as connections (`{ nodes { id } }`); they are
+ *     plain lists of `IndustryProfileItem` (no `nodes` field), so the
+ *     live API rejected the whole document at the validation layer and
+ *     `industries list` was fully broken. Because every seed-dependent
+ *     subtest below skips on this account (test-account-state issue),
+ *     this unconditional guard is the only one that actually exercises
+ *     `list()` live — empty result is acceptable (assert shape, not
+ *     non-empty data).
+ *
  *   - **`createIndustryProfile` + `listIndustryProfiles` +
  *     `updateIndustryProfile` + `removeIndustryProfile` round-trip**
  *     with a catalog-resolved title (the first match for "Software"
@@ -172,6 +184,47 @@ describe("profile industries (live talent-profile, #321 wire-fix coverage)", () 
     sandboxConfigPath = session.sandboxConfigPath;
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
+
+  // ---------------------------------------------------------------------
+  // #583 regression guard — UNCONDITIONAL `list()` document validation.
+  //
+  // Every other live subtest in this file is gated behind a successful
+  // `add` (seed), which the maintainer's account CANNOT do
+  // (auto-memory `project_test_account_industries_disabled` → "This
+  // action is not allowed" → graceful skip). So `list()` was never
+  // exercised live — which is exactly how #583 slipped through: the rc.9
+  // read-surface expansion (#553) selected the five `IndustryProfile`
+  // curation sub-fields as connections (`{ nodes { id } }`), but they are
+  // plain lists of `IndustryProfileItem` (which has no `nodes` field).
+  // The live API rejects the whole document at the GraphQL VALIDATION
+  // layer — BEFORE the resolver runs and REGARDLESS of whether the
+  // profile owns any industry rows.
+  //
+  // This subtest calls `list()` directly with NO seeding. Pre-fix it
+  // threw `GRAPHQL_ERROR: Field 'nodes' doesn't exist on type
+  // 'IndustryProfileItem'`; post-fix it validates and returns an array
+  // (empty on this account — which is acceptable: the assertion is
+  // "document validated + correct field shape", NOT "non-empty data").
+  // It is the one assertion that actually catches #583, and because it
+  // shares `INDUSTRY_PROFILE_FRAGMENT` with `show()`, a valid `list()`
+  // document implies a valid `show()` fragment too.
+  // ---------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)(
+    "list() document validates against the live API and returns an array (empty allowed) — #583 regression guard",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+
+      // Must NOT throw GRAPHQL_ERROR. An empty array is the legitimate
+      // "account has zero industry profiles" return.
+      const rows = await profile.industries.list(token);
+      expect(Array.isArray(rows)).toBe(true);
+
+      // Whatever rows the live API returns (often [] on this account),
+      // every one must carry the projected curation arrays — the part
+      // the rc.9 regression broke.
+      for (const row of rows) expectCurationFieldsShape(row);
+    },
+  );
 
   it.skipIf(!e2eEnabled)(
     "createIndustryProfile + listIndustryProfiles + updateIndustryProfile + removeIndustryProfile round-trip",
