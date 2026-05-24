@@ -128,6 +128,17 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
               "profile recommendation. A catalog-lookup command for discovering ids is tracked in #596; until then, read " +
               "an existing row's `primaryGeography.id` (via `ttctl_profile_employment_list`) or set it once via the Toptal web UI.",
           ),
+        engagementId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Link this entry to a Toptal engagement — a `TalentEngagement` catalog id (e.g. `VjEtVGFsZW50RW5nYWdlbWVudC03`). " +
+              "Live-verified to persist on the create path (#587). " +
+              "Discover ids via `ttctl_engagements_list` (each row's `engagementId`). The read echo is the row's " +
+              "`engagement.id` (via `ttctl_profile_employment_list`). Linking is the structured half of the Toptal-engagement " +
+              "association; the `toptalRelated` read-state stays server-determined (#402). See #587.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -194,6 +205,12 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       // `...wireFields` spread, and onto the live CreateEmployment wire.
       if (input.primaryGeographyId !== undefined) {
         fields.primaryGeographyId = input.primaryGeographyId;
+      }
+      // #587: Toptal engagement linkage (TalentEngagement catalog id).
+      // Flows into the dry-run preview's `employment` object via core's
+      // `...wireFields` spread, and onto the live CreateEmployment wire.
+      if (input.engagementId !== undefined) {
+        fields.engagementId = input.engagementId;
       }
 
       // Per-#395: dry-run path is delegated to the core service so the
@@ -303,6 +320,18 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
               "preserves the row's existing geography. A catalog-lookup command for discovering ids is tracked in #596; " +
               "until then, read an existing row's `primaryGeography.id` or set it once via the Toptal web UI.",
           ),
+        engagementId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Link this entry to a Toptal engagement — a `TalentEngagement` catalog id (e.g. `VjEtVGFsZW50RW5nYWdlbWVudC03`). " +
+              "Live-verified to persist on the update path (#587). " +
+              "Discover ids via `ttctl_engagements_list` (each row's `engagementId`). When omitted, the read-current+merge " +
+              "preserves the row's existing linkage. The read echo is the row's `engagement.id`. Linking is the structured " +
+              "half of the Toptal-engagement association; the `toptalRelated` read-state stays server-determined (#402). " +
+              "See #587.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -364,6 +393,12 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       // appears in the dry-run preview's `employment` object via `...fields`
       // below. When omitted, the merge preserves the row's current geography.
       if (input.primaryGeographyId !== undefined) fields.primaryGeographyId = input.primaryGeographyId;
+      // #587: Toptal engagement linkage (TalentEngagement catalog id). Lands
+      // on the wire via `buildUpdateEmploymentInput`'s `...fields` spread
+      // (apply path) and appears in the dry-run preview's `employment` object
+      // via `...fields` below. When omitted, the merge preserves the row's
+      // current linkage (the `current.engagement` echo branch in core).
+      if (input.engagementId !== undefined) fields.engagementId = input.engagementId;
 
       // #492 — server-side 50-250 char/item gate fires on EITHER path
       // (apply or dryRun). The apply path routes through

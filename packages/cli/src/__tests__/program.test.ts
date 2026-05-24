@@ -330,6 +330,28 @@ describe("program help and metadata", () => {
     expect(geoOpt).toBeDefined();
     expect(geoOpt?.flags).toContain("<id>");
   });
+
+  it("`profile employment add` exposes `--engagement-id <id>` (#587)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const employment = profile?.commands.find((c) => c.name() === "employment");
+    const add = employment?.commands.find((c) => c.name() === "add");
+    expect(add).toBeDefined();
+    const engOpt = add?.options.find((o) => o.long === "--engagement-id");
+    expect(engOpt).toBeDefined();
+    expect(engOpt?.flags).toContain("<id>");
+  });
+
+  it("`profile employment update` exposes `--engagement-id <id>` (#587)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const employment = profile?.commands.find((c) => c.name() === "employment");
+    const update = employment?.commands.find((c) => c.name() === "update");
+    expect(update).toBeDefined();
+    const engOpt = update?.options.find((o) => o.long === "--engagement-id");
+    expect(engOpt).toBeDefined();
+    expect(engOpt?.flags).toContain("<id>");
+  });
 });
 
 /**

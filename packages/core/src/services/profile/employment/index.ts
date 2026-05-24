@@ -137,11 +137,13 @@ export interface Employment {
  * The CLI exposes a curated subset: `--company`, `--role` (→ position),
  * `--from`, `--to`, `--current`, `--description` (→ experienceItems —
  * single-paragraph today; multi-paragraph splits on blank lines),
- * `--industry-id`, `--skill-id`, and `--primary-geography-id` (#586 —
- * the role's primary geography; live-verified to persist on both the
- * create and update paths). The remaining fields (engagementId,
- * managementExperience, reportingTo, …) are exposed at the type level
- * so future leaves can grow without churning callers.
+ * `--industry-id`, `--skill-id`, `--primary-geography-id` (#586 — the
+ * role's primary geography; live-verified to persist on both the create
+ * and update paths), and `--engagement-id` (#587 — the Toptal
+ * engagement linkage; live-verified to persist on both the create and
+ * update paths). The remaining fields (managementExperience,
+ * reportingTo, …) are exposed at the type level so future leaves can
+ * grow without churning callers.
  *
  * `employerId` is the server-side catalog identifier for the employer
  * record (e.g. "V1-Employer-1234"). `add()` requires EITHER an explicit
@@ -177,6 +179,29 @@ export interface EmploymentFields {
   showViaToptal?: boolean;
   toptalRelated?: boolean;
   industryIds?: string[];
+  /**
+   * Link this employment row to a Toptal **engagement**, as a
+   * `TalentEngagement` catalog id (base64 `V1-TalentEngagement-<n>`).
+   * Discover ids via `engagements.list()` — each list row's
+   * `engagementId` field is exactly this value. Surfaced on
+   * the CLI (`--engagement-id`) and MCP (`engagementId`) write paths in
+   * #587; live-verified to accept + persist on BOTH `CreateEmployment`
+   * and `UpdateEmployment` (round-trip in
+   * `72-profile-employment-engagement.e2e.test.ts`). The
+   * read echo is {@link Employment.engagement} (the nested `{ id }`
+   * object, not the scalar write-input name) — the same field the
+   * `employment_show` / `_list` surfaces have returned since #554.
+   *
+   * Relationship to {@link toptalRelated} (#402 / #587): the Toptal web
+   * UI gates the "Is this experience related to a Toptal engagement?"
+   * toggle on an engagement selection — setting `toptalRelated: true`
+   * without a linkage leaves the row in the UI's "incomplete" state,
+   * and `toptalRelated` reads back server-determined. Supplying
+   * `engagementId` is the linkage half; the server owns the
+   * `toptalRelated` read-state regardless (per #402). The surfaces
+   * expose set-only (non-null) while the type permits `null`.
+   */
+  engagementId?: string | null;
   /**
    * The role's primary geography, as a Toptal **Country** catalog id
    * (base64 `V1-Country-<n>` — e.g. `VjEtQ291bnRyeS0yMzQ` = United States,
@@ -1001,9 +1026,9 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
   // caller omits these, the wire layer accepts the partial input but
   // the Rails apply path rejects it. Inject from the current row so
   // user-supplied fields can still override. Optional pass-throughs
-  // (employerId / primaryGeographyId / reportingTo) are only set when
-  // the current row has a non-null value — sending an explicit null
-  // would change the row's state, which would defeat "merge".
+  // (employerId / engagementId / primaryGeographyId / reportingTo) are
+  // only set when the current row has a non-null value — sending an
+  // explicit null would change the row's state, which would defeat "merge".
   //
   const merged: EmploymentFields = {
     // Wire-required non-null (GraphQL `Expected value to not be null`):
@@ -1051,6 +1076,16 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
   merged.managementExperience = current.managementExperience;
   if (current.primaryGeography !== null) {
     merged.primaryGeographyId = current.primaryGeography.id;
+  }
+  // #587 — echo the engagement linkage from current so a partial update
+  // preserves it. Mirrors the primaryGeography echo above: the read shape
+  // surfaces the nested `engagement { id }` (#554) while the write input
+  // is the scalar `engagementId`. Only set when the row is actually
+  // linked — omitting it (engagement === null) keeps an unlinked row
+  // unlinked, and sending an explicit null is unnecessary on the
+  // already-null case.
+  if (current.engagement !== null) {
+    merged.engagementId = current.engagement.id;
   }
   if (typeof current.reportingTo === "string") {
     merged.reportingTo = current.reportingTo;
