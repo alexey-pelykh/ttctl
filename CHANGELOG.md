@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.9] - 2026-05-24
+
 ### Added
 
 - **`profile.employment.list` / `profile.employment.show`: hydrate the
@@ -143,6 +145,1111 @@ profile portfolio update`; the empty-fields error message now
       cases asserting `--skill-id` is registered on both update
       subcommands.
 
+- **`profile.portfolio.show` / `profile.portfolio.list`: expose
+  `engagement` (link to `TalentEngagement`) on the `PortfolioItem` read
+  shape (#552).** Extends the shared `PORTFOLIO_NODE_SELECTION` with the
+  `engagement { id }` reference — the link from a portfolio item to the
+  underlying `TalentEngagement` the project was delivered through —
+  surfaced on every read and mutation response. Completes the read
+  surface: with this, every structured sub-field of the empirical
+  `Portfolio` fragment is now projected (building on #548 details, #549
+  files, #550 kpis, #551 quotes on the same selection). The wire shape was
+  **INFERRED** (`PortfolioItem.engagement` is `Unknown` in synth SDL at
+  `research/graphql/talent_profile/schema.graphql:374`) and verified by a
+  live elimination probe (2026-05-24, maintainer's profile, 32 items): a
+  SINGLE nullable object reference (NOT a list / connection —
+  `engagement { nodes }` errors "Field 'nodes' doesn't exist on type
+  'TalentEngagement'"); 26 of 32 items returned `null`, 6 populated; the
+  `id` is the relay global id (e.g. `V1-TalentEngagement-238005`). A
+  sibling `plainId` (Int) was probe-confirmed accepted but deliberately
+  excluded — it is not in the empirical fragment Toptal's own web client
+  uses, and the cross-reference use case keys on the relay id.
+  - **Service surface**: new `PortfolioItemEngagement { id: string }` type
+    and `engagement: PortfolioItemEngagement | null` field on
+    `PortfolioItem`, projected via `projectEngagement(node["engagement"])`
+    inside `mapPortfolioNode` in
+    `packages/core/src/services/profile/portfolio/index.ts`. Defensive
+    projection: a missing / `null` / non-object wire value, or an object
+    without a string `id`, projects to `null` — silently absent rather
+    than a fabricated shape.
+  - **CLI surface**: `ttctl profile portfolio list -o pretty` —
+    `renderPortfolioItem` in
+    `packages/cli/src/commands/profile/portfolio/list.ts` gains a
+    single-line discovery hint
+    `Engagement: <id> (TalentEngagement — see \`ttctl engagements list\`)`,
+skipped when `engagement`is`null`(the common case). ID-space note
+(correcting the issue's guessed hint): this id is a`TalentEngagement.id`, which equals `EngagementListItem.engagementId`on the engagements surface — so the hint points at`ttctl engagements
+    list`(match the`engagementId`column), NOT`engagements show <id>`(which consumes a`jobActivityItem.id` and would NOT_FOUND on this id).
+  - **MCP surface**: `ttctl_profile_portfolio_list` — `engagement`
+    surfaces naturally via `successResponse(items)` JSON serialization; the
+    payload snapshot (`packages/mcp/src/tools/__tests__/__snapshots__/payload-snapshots.test.ts.snap`)
+    is updated. No tool count change (field-exposure on an existing tool).
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/portfolio/index.ts`, INFERRED wire
+    shape. Live probe transcript captured; dedicated E2E in
+    `packages/e2e/src/36-profile-portfolio.e2e.test.ts` (pure-behavior
+    `it()` title, `#552` in a Provenance comment per the council-ratified
+    test-naming convention; gated by `TTCTL_E2E=1`) creates a sentinel and
+    asserts `engagement === null` on create, `null`-or-non-array-object on
+    every list item, and `typeof engagement.id === "string"` on every
+    populated reference — the populated branch RUNS on this account (6 of
+    32 items linked).
+  - **Track 1 vs Track 2**: **T1** (wire-shape snapshot) —
+    `getPortfolioItems` / `createPortfolioItem` are in the talent_profile
+    untrusted catalog (gappy synth SDL). The new `engagement` selection
+    rides the shared `PORTFOLIO_NODE_SELECTION`; the snapshot at
+    `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+    was re-seeded with `engagement: { … }` (structure-only nullable
+    object) in a follow-up scoped-E2E commit (the #552 subprocess lacked
+    desktop 1Password auth; orchestrator handoff completed it).
+  - **Doc surface**: TRIGGERED — `profile.portfolio.show` /
+    `profile.portfolio.list` (CLI pretty `Engagement:` discovery-hint line;
+    MCP tool JSON envelope carries `engagement`).
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged (read-side field projection; no new export, no new
+    write-input field, no `e2e-covers:` markers added).
+
+- **`profile.portfolio.show` / `profile.portfolio.list`: expose `quotes`
+  (talent-authored client testimonials) on the `PortfolioItem` read shape
+  (#551).** Extends the shared `PORTFOLIO_NODE_SELECTION` with a
+  direct-list selection
+  `quotes { id text clientName clientRole company }` — talent-authored
+  client / stakeholder testimonials for the project — surfaced on every
+  read and mutation response (building on #548 details, #549 files, #550
+  kpis on the same selection). The wire shape was **INFERRED**
+  (`PortfolioItem.quotes` is `Unknown` in synth SDL at
+  `research/graphql/talent_profile/schema.graphql:389`) and verified by a
+  live elimination probe (2026-05-23): a DIRECT list (NOT a connection —
+  `quotes { nodes }` errors "Field 'nodes' doesn't exist on type
+  'PortfolioItemQuote'"); element type `PortfolioItemQuote`; the empirical
+  field set `{id, text, clientName, clientRole, company}` accepted, while
+  the issue's guessed `{quote, attribution, role}` were ALL rejected as
+  undefined; empty case returns `[]` (NOT `null`) — all 32 probed items
+  were empty, so populated sub-field scalar types remain INFERRED.
+  - **Service surface**: new
+    `PortfolioItemQuote { id: string, text|clientName|clientRole|company:
+string | null }` type and `quotes: PortfolioItemQuote[]` field,
+    projected via `projectQuotes(node["quotes"])` inside `mapPortfolioNode`
+    in `packages/core/src/services/profile/portfolio/index.ts`. Defensive
+    projection: non-array wire input → `[]`; per-node missing or non-string
+    `id` → dropped (siblings preserved).
+  - **CLI surface**: `ttctl profile portfolio list -o pretty` —
+    `renderQuotesSummary` (in
+    `packages/cli/src/commands/profile/portfolio/list.ts`) emits a per-item
+    `Quotes (N quotes):` block, one row per quote
+    (`- "<text>" — <attribution>`, where the attribution interleaves
+    `clientName`, `clientRole`, and `company` as `<name>, <role> @
+<company>`). `(unset)` placeholder for null/empty text; the attribution
+    suffix is dropped when no client fields are present. Skip-if-empty.
+  - **MCP surface**: `ttctl_profile_portfolio_list` — `quotes` surfaces
+    naturally via `successResponse(items)` JSON serialization; the payload
+    snapshot is updated. No tool count change.
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/portfolio/index.ts`, INFERRED wire
+    shape. Live probe transcript captured; dedicated E2E in
+    `packages/e2e/src/36-profile-portfolio.e2e.test.ts` (gated by
+    `TTCTL_E2E=1`) adds a sentinel and asserts
+    `Array.isArray(sentinel.quotes)` + per-field types on any populated
+    quote (skipped with a stderr info note when the account has none — the
+    typical case at probe time). A follow-up scoped-E2E commit applied the
+    council-ratified test-targeting convention (stripped the
+    `(#551 INFERRED → verified)` marker from the `it()` title; provenance
+    moved to a comment) and seeded the `createPortfolioItem` snapshot with
+    `quotes: []`.
+  - **Track 1 vs Track 2**: **T1** (wire-shape snapshot) —
+    `getPortfolioItems` / `createPortfolioItem` are in the talent_profile
+    untrusted catalog; the new `quotes` selection rides the shared
+    `PORTFOLIO_NODE_SELECTION`. Snapshot at
+    `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+    re-seeded with `quotes: []` in the follow-up commit (the feature
+    subprocess lacked desktop 1Password auth).
+  - **Doc surface**: TRIGGERED — `profile.portfolio.show` /
+    `profile.portfolio.list` (CLI pretty `Quotes (N):` block; MCP tool JSON
+    envelope carries `quotes`).
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged (read-side projection; no new export, no new write-input
+    field, no `e2e-covers:` markers added).
+
+- **`profile.portfolio.show` / `profile.portfolio.list`: expose `kpis`
+  (talent-authored project KPIs) on the `PortfolioItem` read shape
+  (#550).** Extends the shared `PORTFOLIO_NODE_SELECTION` with a
+  direct-list selection `kpis { id value description }` — talent-authored
+  quantified outcomes for the project (e.g.
+  `{ value: "40%", description: "page load reduction" }`) — surfaced on
+  every read and mutation response (building on #548 details and #549 files
+  on the same selection). The wire shape was **INFERRED**
+  (`PortfolioItem.kpis` is `Unknown` in synth SDL at
+  `research/graphql/talent_profile/schema.graphql:386`) and verified by a
+  live elimination probe (2026-05-23): a DIRECT list (NOT a connection —
+  `kpis { nodes }` errors "Field 'nodes' doesn't exist on type
+  'PortfolioItemKpi'"); element type `PortfolioItemKpi` with exactly the
+  three fields `{id, value, description}` (`label` / `name` / `unit`
+  rejected as undefined); empty case returns `[]` (NOT `null`) — all 32
+  probed items were empty, so populated sub-field scalar types remain
+  INFERRED.
+  - **Service surface**: new
+    `PortfolioItemKpi { id: string, value: string | null,
+description: string | null }` type and `kpis: PortfolioItemKpi[]`
+    field, projected via `projectKpis(node["kpis"])` inside
+    `mapPortfolioNode` in
+    `packages/core/src/services/profile/portfolio/index.ts`. Defensive
+    projection: non-array wire input → `[]`; per-node missing or non-string
+    `id` → dropped (siblings preserved).
+  - **CLI surface**: `ttctl profile portfolio list -o pretty` —
+    `renderKpisSummary` (in
+    `packages/cli/src/commands/profile/portfolio/list.ts`) emits a per-item
+    `KPIs (N KPIs):` block, one row per KPI (`- <value>: <description>`).
+    `(unset)` placeholder for null/empty `value` or `description` so the
+    structural presence of a KPI entry stays visible even when only
+    partially filled. Skip-if-empty.
+  - **MCP surface**: `ttctl_profile_portfolio_list` — `kpis` surfaces
+    naturally via `successResponse(items)` JSON serialization; the payload
+    snapshot is updated. No tool count change.
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/portfolio/index.ts`, INFERRED wire
+    shape. The `kpis` selection rides the shared `PORTFOLIO_NODE_SELECTION`,
+    so live wire-acceptance is exercised by the existing
+    `createPortfolioItem` snapshot E2E (snapshot now includes `kpis: []`);
+    a dedicated subtest in
+    `packages/e2e/src/36-profile-portfolio.e2e.test.ts` adds a sentinel and
+    asserts `Array.isArray(sentinel.kpis)` + per-field types on any
+    populated KPI (skipped with a stderr info note when none — the typical
+    case). Live round-trip transcript captured in the commit message
+    (sentinel created, `kpis: []` verified, 0 of 33 items populated,
+    sentinel removed).
+  - **Track 1 vs Track 2**: **T1** (wire-shape snapshot) —
+    `getPortfolioItems` / `createPortfolioItem` are in the talent_profile
+    untrusted catalog; the new `kpis` selection rides the shared
+    `PORTFOLIO_NODE_SELECTION`. Snapshot at
+    `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json`
+    re-seeded with `kpis: []` in this commit.
+  - **Doc surface**: TRIGGERED — `profile.portfolio.show` /
+    `profile.portfolio.list` (CLI pretty `KPIs (N):` block; MCP tool JSON
+    envelope carries `kpis`).
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged (read-side projection; no new export, no new write-input
+    field, no `e2e-covers:` markers added).
+
+- **`profile.portfolio.show` / `profile.portfolio.list`: expose `files`
+  (`PortfolioItemFileConnection` — attachments) on the `PortfolioItem`
+  read shape (#549).** Extends the shared `PORTFOLIO_NODE_SELECTION` with
+  an inline-fragment selection for the two `PortfolioItemFile`
+  connection-node variants (Pdf / Image) the talent-profile wire serves,
+  surfaced through `PortfolioItem.files` on every read and mutation
+  response. Read-side counterpart to the write-side `uploadPortfolioFile`
+  mutation. The wire shape was **INFERRED** — the synthesized SDL at
+  `research/graphql/talent_profile/schema.graphql:403` collapses
+  `PortfolioItemFileConnection { nodes }` to a single concrete node type
+  (`PortfolioItemFilePdf`), but the empirical talent-profile fragments
+  project the nodes as a union via inline fragments; the fragments are the
+  authority. Inline-fragment selection + `__typename` discriminator +
+  defensive `projectFiles()` mapper close the gap (mirrors the #548
+  `details` union treatment on the same selection).
+  - **Service surface**: new
+    `PortfolioItemFile = PortfolioFilePdf | PortfolioFileImage`
+    discriminated union (`kind: "pdf" | "image"`, flattened from the
+    connection) and `files: PortfolioItemFile[]` field, projected via
+    `projectFiles()` / `projectFile()` inside `mapPortfolioNode` in
+    `packages/core/src/services/profile/portfolio/index.ts`. Defensive
+    projection: null/missing connection or non-array nodes → `[]`; per-node
+    unknown/missing `__typename` or non-string `id` → dropped (siblings
+    preserved).
+  - **CLI surface**: `ttctl profile portfolio list -o pretty` — a per-item
+    `Files (N):` block in
+    `packages/cli/src/commands/profile/portfolio/list.ts`, one row per file
+    (`- PDF: <fileUrl>` / `- Image: <url>`) with an optional ` — <title>`
+    suffix and `(no url)` fallback. Skip-if-empty.
+  - **MCP surface**: `ttctl_profile_portfolio_list` — `files` surfaces
+    naturally via `successResponse(items)` JSON serialization; the payload
+    snapshot is updated. No tool count change.
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/portfolio/index.ts`, INFERRED wire
+    shape for the union projection. The `files` selection rides the shared
+    `PORTFOLIO_NODE_SELECTION`, so its live wire-acceptance is exercised by
+    the existing `createPortfolioItem` snapshot E2E; the snapshot at
+    `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json` was
+    re-seeded in this commit. (No new subtest added to
+    `36-profile-portfolio.e2e.test.ts`.)
+  - **Track 1 vs Track 2**: **T1** (wire-shape snapshot) —
+    `getPortfolioItems` / `createPortfolioItem` are in the talent_profile
+    untrusted catalog; the new `files` selection rides the shared
+    `PORTFOLIO_NODE_SELECTION`. `assertWireShapeStable` catches
+    `__typename` drift on the next E2E run.
+  - **Doc surface**: TRIGGERED — `profile.portfolio.show` /
+    `profile.portfolio.list` (CLI pretty `Files (N):` block; MCP tool JSON
+    envelope carries `files`).
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged (read-side projection; no new export, no new write-input
+    field, no `e2e-covers:` markers added).
+
+- **`profile.portfolio.show` / `profile.portfolio.list`: expose `details`
+  (`PortfolioItemImageBlock` body) on the `PortfolioItem` read shape
+  (#548).** Extends the shared `PORTFOLIO_NODE_SELECTION` with
+  inline-fragment selection for the four `PortfolioItemDetails` union
+  variants (Image / Text / Video / Gallery) the talent-profile wire
+  serves, surfaced through `PortfolioItem.details` on every read and
+  mutation response. The wire shape was **INFERRED** — the synthesized SDL
+  at `research/graphql/talent_profile/schema.graphql:380` collapses
+  `details` to a single concrete type (`PortfolioItemImageBlock`), but the
+  captured `getProfileData.graphql:237-244` and the `Portfolio.graphql`
+  fragment use inline fragments across four concrete types; the live wire
+  is the authority. Inline-fragment selection + `__typename` discriminator
+  - defensive `projectDetails()` mapper close the gap.
+  * **Service surface**: new `PortfolioItemDetails` discriminated union
+    (`kind: "image" | "text" | "video" | "gallery"`; variant interfaces
+    `PortfolioImageBlock` / `PortfolioTextBlock` / `PortfolioVideoBlock` /
+    `PortfolioGalleryBlock` with `PortfolioGalleryItem`) and
+    `details: PortfolioItemDetails | null` field, projected via
+    `projectDetails()` inside `mapPortfolioNode` in
+    `packages/core/src/services/profile/portfolio/index.ts`. Defensive
+    projection: unknown `__typename` (forward-compat for new server
+    variants), missing `__typename`, non-string `id`, or non-object input
+    → `null` — silently absent rather than fabricated.
+  * **CLI surface**: `ttctl profile portfolio list -o pretty` — a per-item
+    one-line `Details:` summary in
+    `packages/cli/src/commands/profile/portfolio/list.ts`
+    (`Details: Image: <url>` / `Details: Text (rich body)` /
+    `Details: Video: <url>` / `Details: Gallery (N items)`), with an
+    optional ` — <title>` suffix. Skip-if-null.
+  * **MCP surface**: `ttctl_profile_portfolio_list` — `details` surfaces
+    naturally via `successResponse(items)` JSON serialization; the payload
+    snapshot is updated. No tool count change.
+  * **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/portfolio/index.ts`, INFERRED wire
+    shape for the union projection. Live E2E exists for the
+    `add → verify → remove` round-trip; the post-create snapshot at
+    `packages/e2e/src/wire-snapshots/createPortfolioItem.snapshot.json` was
+    re-seeded in this commit.
+  * **Track 1 vs Track 2**: **T1** (wire-shape snapshot) —
+    `getPortfolioItems` / `createPortfolioItem` are in the talent_profile
+    untrusted catalog; the new `details` selection rides the shared
+    `PORTFOLIO_NODE_SELECTION`. `assertWireShapeStable` catches
+    `__typename` drift on the next E2E run.
+  * **Doc surface**: TRIGGERED — `profile.portfolio.show` /
+    `profile.portfolio.list` (CLI pretty `Details:` line; MCP tool JSON
+    envelope carries `details`).
+  * **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged (read-side projection; no new export, no new write-input
+    field, no `e2e-covers:` markers added).
+
+- **`profile.certifications.list` / `profile.certifications.show`: expose
+  `Certification.skills` (per-cert skill links, #558).** Surfaces the
+  talent's self-attested skill links per certification. The wire returns
+  `skills` as a nested connection (`skills { nodes { id name } }`); a new
+  `mapCertificationNode` flattener projects it to `SkillRef[]` (mirrors
+  `mapEmploymentNode`). The field is read-only (not on
+  `CertificationInput`). Companion to #557 (`Certification.status`).
+  - **Service surface**: adds `skills: { id; name }[]` to the
+    `Certification` interface and `skills { nodes { id name } }` to
+    `CERTIFICATION_FRAGMENT`; new `mapCertificationNode` in
+    `packages/core/src/services/profile/certifications/index.ts` applied
+    on the `list` / `add` / `update` read paths (the per-node `ListResponse`
+    / `MutationPayload` types loosen to `Record<string, unknown>` and map
+    through the projection). Defensive guards: skill nodes lacking string
+    `id` / `name` are dropped; an absent connection defaults to `[]`.
+  - **CLI surface**: `ttctl profile certifications` — `formatCertificationText`
+    gains a conditional `skills: <comma-joined>` line, `formatCertificationTable`
+    gains a `skills` row, `formatCertificationListText` gains a column
+    between `status` and `id`, and `formatCertificationListTable` gains a
+    `Skills` column. A new `formatSkillsList` helper renders the comma-joined
+    names or an em-dash sentinel when empty. All in
+    `packages/cli/src/commands/profile/certifications/index.ts`.
+  - **MCP surface**: `ttctl_profile_certifications_list` /
+    `ttctl_profile_certifications_show` return the row verbatim — no
+    formatter change (the MCP payload snapshot is updated to carry the
+    nested `skills` array). No tool count change.
+  - **Schema/contract rule**: TRIGGERED + INFERRED. Touches
+    `packages/core/src/services/profile/certifications/index.ts` and adds a
+    new `Unknown`-typed selection to `GET_CERTIFICATION` (a talent-profile
+    op). E2E at `packages/e2e/src/69-profile-certifications.e2e.test.ts`
+    extended with per-row `skills` shape assertions. **Caveat**: the live
+    E2E run could not complete in the authoring subprocess (1Password
+    `op item get` authorization timeout — no interactive auth); the snapshot
+    `skills` shape is predicted from the live-confirmed `Employment.skills`
+    sibling and requires a maintainer
+    `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` regen to confirm against the
+    live wire.
+  - **Track 1 vs Track 2**: T1 — `GET_CERTIFICATION` has no generated
+    operation type. Snapshot at
+    `packages/e2e/src/wire-snapshots/GET_CERTIFICATION.snapshot.json`
+    extended with the `skills` array shape.
+  - **Doc surface**: TRIGGERED (touches
+    `packages/core/src/services/profile/certifications/**` and the JSDoc on
+    the `Certification` interface).
+  - **Gates**: write-read symmetry N/A (read-only field, not on
+    `CertificationInput`); `// e2e-covers: GET_CERTIFICATION` directive
+    present. Surface / E2E-coverage gates unchanged.
+
+- **`profile.certifications.list` / `profile.certifications.show`: expose
+  `Certification.status` (verification / expiry state, #557).** Surfaces
+  Toptal's per-certification verification / expiry state. Typed
+  `string | null` because the synthesized SDL types it `Unknown`; the
+  concrete enum members surface verbatim from the wire (likely
+  `valid` / `expired` / `pending-verification` per the upstream fragment).
+  Read-only (not on `CertificationInput`).
+  - **Service surface**: adds `status: string | null` to the
+    `Certification` interface and `status` to `CERTIFICATION_FRAGMENT` in
+    `packages/core/src/services/profile/certifications/index.ts`.
+  - **CLI surface**: `ttctl profile certifications` — `formatCertificationText`
+    gains a conditional `status: <value>` line, `formatCertificationTable`
+    gains a `status` row, `formatCertificationListText` gains a tab-separated
+    column before the `id`, and `formatCertificationListTable` gains a
+    `Status` column (em-dash sentinel when `null`).
+  - **MCP surface**: `ttctl_profile_certifications_list` /
+    `ttctl_profile_certifications_show` return the row verbatim — no
+    formatter change. No tool count change.
+  - **Schema/contract rule**: TRIGGERED + INFERRED. Touches
+    `packages/core/src/services/profile/certifications/index.ts` and adds a
+    new `Unknown`-typed selection to `GET_CERTIFICATION`. Live wire confirmed
+    via the new `packages/e2e/src/69-profile-certifications.e2e.test.ts`
+    (`status` surfaces as `string | null`; enum-member enumeration is
+    invisible to T1 per the wire-snapshots redaction policy, accepted
+    trade-off).
+  - **Track 1 vs Track 2**: T1 — `GET_CERTIFICATION` has no generated
+    operation type. Snapshot committed at
+    `packages/e2e/src/wire-snapshots/GET_CERTIFICATION.snapshot.json`.
+  - **Doc surface**: TRIGGERED (touches
+    `packages/core/src/services/profile/certifications/**`).
+  - **Gates**: write-read symmetry N/A (read-only field). Side effect:
+    `turbo.json`'s `test:e2e` `passThroughEnv` list gains
+    `TTCTL_UPDATE_WIRE_SNAPSHOTS` so the documented snapshot-capture
+    workflow propagates the flag through Turbo (was previously silently
+    dropped).
+
+- **`profile.education.list` / `profile.education.show`: expose
+  `Education.skills` (per-degree skill links, #556).** Surfaces the talent's
+  self-attested skill links per education record ("learned Python during my
+  CS degree"). A 2026-05-23 live wire probe confirmed the connection shape
+  `skills { nodes { id name } }` (same as `Employment.skills` /
+  `Certification.skills`); ttctl flattens it to `SkillRef[]` via a new
+  `mapEducationNode`. Read-only (not on `EducationInput`).
+  - **Service surface**: adds `skills: { id; name }[]` to the `Education`
+    interface and `skills { nodes { id name } }` to `EDUCATION_FRAGMENT`;
+    new `mapEducationNode` (mirrors `mapCertificationNode` /
+    `mapEmploymentNode`) in
+    `packages/core/src/services/profile/education/index.ts` applied on the
+    `list` / `add` / `update` read paths, with the same defensive guards
+    (drop non-string skill `id` / `name`; default absent connection to `[]`).
+  - **CLI surface**: `ttctl profile education` — `formatEducationText` gains
+    a conditional `skills: <comma-joined>` line, `formatEducationTable` gains
+    a `skills` row, `formatEducationListText` gains a column before the `id`,
+    and `formatEducationListTable` gains a `Skills` column. New
+    `formatSkillsList` helper (em-dash when empty) in
+    `packages/cli/src/commands/profile/education/index.ts`.
+  - **MCP surface**: `ttctl_profile_education_list` /
+    `ttctl_profile_education_show` return the row verbatim — no MCP tool
+    source change (only the MCP payload snapshot updated). No tool count
+    change.
+  - **Schema/contract rule**: TRIGGERED + INFERRED. Touches
+    `packages/core/src/services/profile/education/index.ts` and adds a new
+    `Unknown`-typed selection to `GET_EDUCATION`. NEW live E2E at
+    `packages/e2e/src/70-profile-education-skills.e2e.test.ts`; the
+    2026-05-23 introspection-by-rejection probe confirmed the
+    `skills { nodes [{ id, name }] }` response shape against the maintainer's
+    live session.
+  - **Track 1 vs Track 2**: T1 — `GET_EDUCATION` has no generated operation
+    type. Snapshot at
+    `packages/e2e/src/wire-snapshots/GET_EDUCATION.snapshot.json`.
+  - **Doc surface**: TRIGGERED (touches
+    `packages/core/src/services/profile/education/**`).
+  - **Gates**: write-read symmetry N/A (read-only field);
+    `// e2e-covers: GET_EDUCATION` directive present. Surface / E2E-coverage
+    gates unchanged.
+
+- **`applications.show` / `applications.list`: expose
+  `TalentJobActivityItem.mostRelevantApplication` (id-only pointer)
+  (#547).** Extends the embedded `TalentJobActivityItem` sub-selection in
+  both the `JobActivityItems` (list) and `JobActivityItem` (show) ops with
+  `mostRelevantApplication { id }` — the platform-blessed pointer at the
+  `AvailabilityRequest` that matters most for an activity row (the closest
+  historical fit when a row has multiple ARs). Reverses the field's prior
+  "intentionally elided" status and corrects the stale "union" note — the
+  field is a single, nullable `AvailabilityRequest`. Projected id-only: a
+  presence-indicator pointer like `jobApplication` / `interview`, NOT a
+  re-projection of the full AR shape (the row's own `availabilityRequest`
+  already carries that). `null` when the row has no associated AR.
+  - **Service surface**: new public non-optional field
+    `JobActivityItem.mostRelevantApplication: { id: string } | null` in
+    `packages/core/src/services/applications/index.ts`. Projected via a
+    new `projectMostRelevantApplication` helper (defensive null /
+    non-string-id guard, mirrors `projectFixedRate`), wired into both
+    `projectActivityItem` and `projectActivityItemDetail`. The wire shape
+    is selected as `mostRelevantApplication { __typename id }` in both
+    `JOB_ACTIVITY_LIST_QUERY` and `JOB_ACTIVITY_ITEM_QUERY`; the wire
+    interface field is typed optional defensively so trimmed/older
+    fixtures collapse `undefined` to `null`.
+  - **CLI surface**: `ttctl applications show` — `formatApplicationDetail`
+    in `packages/cli/src/commands/applications/show.ts` renders a
+    `Most relevant application: <id>` deep-link hint (mirrors the
+    `Interview: <id>` discovery hint). The list TABLE is intentionally
+    unchanged (compact scan view); the field flows through `--json` /
+    `--yaml` via the service projection (matches #539's list-level
+    JSON/YAML-only exposure).
+  - **MCP surface**: `ttctl_applications_show` + `ttctl_applications_list`
+    descriptions (`packages/mcp/src/tools/applications.ts`) document the
+    field and its chain into
+    `ttctl_applications_availability_request_show`. Response passthrough —
+    the field flows through automatically. (No tool-count delta — the MCP
+    fixtures gain `mostRelevantApplication: null` but no registration/count
+    assertion changes.)
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/applications/**`. The CI
+    `schema-contract-disposition` gate does NOT fire (its trigger set is
+    `auth.ts` + `services/profile/**`); the rule is declared per its
+    broader spirit. The field is well-typed in the synth SDL (no INFERRED
+    risk). E2E presence-assertions added to
+    `packages/e2e/src/15-applications-list.e2e.test.ts` +
+    `packages/e2e/src/16-applications-show.e2e.test.ts` (key present and
+    `{ id }`-shaped when non-null, null tolerated per single-AR rows).
+    Live E2E not run in the authoring subprocess (no credentials) — must
+    run locally with `TTCTL_E2E=1` before merge.
+  - **Track 1 vs Track 2**: T1 (wire-shape snapshot) — `JobActivityItem` /
+    `JobActivityItems` are in `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`. No
+    `<OpName>.snapshot.json` for either at commit time (same posture as
+    #530/#539); snapshot capture is a separate `TTCTL_E2E=1
+TTCTL_UPDATE_WIRE_SNAPSHOTS=1` task requiring a real AR id.
+  - **Doc surface**: content updated (CLI show renderer + MCP tool
+    descriptions). The CI doc-surface attestation gate does NOT fire —
+    `services/applications/**` is outside its tracked path set.
+  - **Gates**: surface coverage / write-read symmetry unchanged. No
+    `// e2e-covers:` markers added in this commit.
+- **`engagements.show` / `jobs.show`: expose `Client` context (`city`,
+  `countryName`, `foundingYear`, `industry`, `isEnterprise`, `teamSize`)
+  (#546).** Surfaces six previously-trimmed `Client` context fields by
+  extending the `client { ... }` sub-selection on `ENGAGEMENT_SHOW_QUERY`
+  and `JOB_SHOW_QUERY`. `engagements show` previously selected the
+  identity-only `client { __typename id fullName }`, so all six are new
+  there; `jobs show` already exposed five, so only `foundingYear` is added
+  on that surface. All six are well-typed in the synth SDL (`type Client`
+  scalars + `teamSize: TeamSize!` selected as `{ value }`), so there is no
+  INFERRED-shape component. `Client.crunchbase / facebook / linkedin /
+twitter / website` are `Unknown`-typed in the synth SDL and explicitly
+  out of scope.
+  - **Service surface**: in
+    `packages/core/src/services/engagements/index.ts`, `EngagementDetail.job`
+    is widened via `Omit<EngagementJobRef, "client"> & { client: {...} }`
+    so the detail path carries the six context fields (`id`, `fullName`,
+    `city`, `countryName`, `foundingYear`, `industry`, `isEnterprise`,
+    `teamSize { value }`) while the list path (`EngagementJobRef.client`)
+    stays the identity-only `{ id, fullName }` shape — list responses never
+    select the wider set, so widening the shared ref would be type-unsafe.
+    In `packages/core/src/services/jobs/index.ts`, `JobDetail.client` and
+    the wire `JobDetailEntity.client` gain `foundingYear` (`String?` — the
+    server stores it as text, e.g. `"2005"`); the projection passes the
+    client struct through, so the new field flows automatically.
+  - **CLI surface**: `ttctl engagements show` —
+    `formatEngagementDetail` in
+    `packages/cli/src/commands/engagements/show.ts` gains a `Client`
+    section (`formatClientSection`) rendering name / Industry / Location
+    (city, countryName) / Founded / Team size / Enterprise, mirroring the
+    existing `jobs show` Client section minus the Website / LinkedIn lines
+    (those `Client` fields are `Unknown`-typed and not selected on the
+    engagement surface). The prior inline `Client:` line in the Job block
+    is removed in favor of the new section. `ttctl jobs show`
+    (`packages/cli/src/commands/jobs/show.ts`) gains the single `Founded:`
+    line in its existing Client block.
+  - **MCP surface**: no change — the `show` tools pass the projected item
+    through, so the widened client surfaces automatically (no tool-count
+    delta).
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/engagements/**` +
+    `packages/core/src/services/jobs/**`. All six fields are well-typed
+    (no INFERRED-shape component), but the file-path trigger still fires,
+    so E2E presence-assertions are added to
+    `packages/e2e/src/19-engagements-show.e2e.test.ts` +
+    `packages/e2e/src/24-jobs.e2e.test.ts` (unconditional client-context
+    key presence + conditional populated `countryName` / `industry`,
+    skip-on-sparse pattern). Live E2E not run in the authoring subprocess
+    (no credentials) — must run locally with `TTCTL_E2E=1` before merge.
+  - **Track 1 vs Track 2**: T1 (wire-shape snapshot) for both ops
+    (`JobActivityItem`, `JobShow`). `assertWireShapeStable` calls added to
+    both e2e files; the companion test-only commit (#546 seed) committed
+    the structure-only manifests
+    `packages/e2e/src/wire-snapshots/JobActivityItem.snapshot.json` and
+    `packages/e2e/src/wire-snapshots/JobShow.snapshot.json` from a
+    canonical `TTCTL_E2E=1` run (no PII values).
+  - **Doc surface**: content updated (CLI renderer changes; MCP
+    passthrough). The CI doc-surface attestation gate does NOT fire —
+    `services/engagements/**` and `services/jobs/**` are outside its
+    tracked path set.
+  - **Gates**: surface coverage / write-read symmetry unchanged.
+- **`engagements.show` / `jobs.show`: expose `TalentJob` counterparty
+  identity (`contacts` + `pointsOfContact`) (#545).** Surfaces the two
+  previously-trimmed `TalentJob` counterparty-identity fields on both
+  surfaces by extending `ENGAGEMENT_SHOW_QUERY` and `JOB_SHOW_QUERY`:
+  `contacts: [CompanyRepresentative]!` (the client-side hiring-manager
+  contacts — `id email fullName phoneNumber position timeZone`) and
+  `pointsOfContact: PointsOfContact!` (the Toptal-side recruiter
+  points-of-contact — `current` / `handoff`, both `Recruiter`-shaped, plus
+  `kind`). The `Recruiter` / `PointsOfContact` selection mirrors the
+  live-verified, `TTCTL_E2E=1`-gated `timesheet.show` `recruiterData` /
+  `pointOfContactData` fragments; `PointsOfContact.handoff` and
+  `Recruiter.vacation` are `Unknown` scalars in the synth SDL but proven on
+  the wire there.
+  - **Service surface**: five new public per-service types —
+    `ContactTimeZone`, `RecruiterContactFields`, `Recruiter`,
+    `PointsOfContact`, `CompanyRepresentative` — duplicated across
+    `packages/core/src/services/engagements/index.ts` and
+    `packages/core/src/services/jobs/index.ts` per the per-service type
+    convention (cf. `FixedRate`), with cross-ref comments. Surfaced on
+    `EngagementDetail.job` (`contacts: CompanyRepresentative[]`,
+    `pointsOfContact: PointsOfContact | null`) and the analogous fields on
+    `JobDetail`. Projections (`projectRecruiter`, `projectPointsOfContact`,
+    `projectContacts`) defensively coalesce every nullable hop, drop wire
+    `__typename`, and null-filter the `[CompanyRepresentative]!`-nullable-item
+    contacts list (the applications #539 `RecruiterRef` idiom). Engagements
+    uses named GraphQL fragments (`timeZoneFields`, `contactFieldsData`,
+    `recruiterData`, `pointOfContactData` — the `engagementBreakData`
+    precedent); jobs inlines the recruiter shape (no-fragment idiom).
+    `timeZone` selects the `{ location, name, value }` superset; the CLI
+    label prefers `name`, falling back to `location` then `value`.
+  - **CLI surface**: `ttctl engagements show`
+    (`packages/cli/src/commands/engagements/show.ts`) and `ttctl jobs show`
+    (`packages/cli/src/commands/jobs/show.ts`) each gain a `Contacts`
+    section (`formatContactsSection`) and a `Points of Contact` section
+    (`formatPointsOfContactSection` + `formatRecruiterLines` +
+    `contactTimeZoneLabel`), grouped after the Job/Client block.
+  - **MCP surface**: `ttctl_engagements_show`
+    (`packages/mcp/src/tools/engagements.ts`) and `ttctl_jobs_show`
+    (`packages/mcp/src/tools/jobs.ts`) descriptions document the new
+    `job.contacts` / `job.pointsOfContact.current` / `.handoff` fields;
+    full response passthrough (no tool-count delta).
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/engagements/**` +
+    `packages/core/src/services/jobs/**`; the new selection re-uses the
+    INFERRED `handoff` / `vacation` `Unknown`-scalar shape. E2E
+    presence-assertions added to
+    `packages/e2e/src/19-engagements-show.e2e.test.ts` +
+    `packages/e2e/src/24-jobs.e2e.test.ts` (unconditional `contacts` /
+    `pointsOfContact` key presence + conditional populated `fullName`,
+    skip-on-sparse pattern). Live E2E not run in the authoring subprocess
+    (no credentials; the engagements op further blocked by account-scoped
+    HTTP 400) — must run locally with `TTCTL_E2E=1` before merge.
+  - **Track 1 vs Track 2**: T1 (wire-shape snapshot) for both ops
+    (`JobActivityItem`, `JobShow`) — both in
+    `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`. No `<OpName>.snapshot.json`
+    exists at commit time (these ops used presence-assertions, never
+    `assertWireShapeStable`); seeding deferred to a live `TTCTL_E2E=1
+TTCTL_UPDATE_WIRE_SNAPSHOTS=1` capture (same posture as #530 / #539).
+  - **Doc surface**: content updated (CLI + MCP renderer updates + the
+    five new core interfaces). The CI doc-surface attestation gate does NOT
+    fire — these services are outside its tracked path set.
+  - **Gates**: `// e2e-covers: JobActivityItem` and `// e2e-covers:
+JobShow` directives added to the two e2e files. Surface coverage /
+    write-read symmetry unchanged.
+- **`applications`: expose `talentComment` + `requestedHourlyRate` +
+  `rejectReason` + `recruiter` on availability requests (#539).** Extends
+  the read-side `AvailabilityRequest` query AND the embedded
+  `availabilityRequest { ... }` sub-selections in `JobActivityItems` /
+  `JobActivityItem` (all in `services/applications/index.ts`) to surface
+  four previously-trimmed first-party fields: `talentComment` (String! —
+  the talent's own response free-text), `requestedHourlyRate` (Money! — the
+  rate the talent posted in response), `rejectReason` (`Unknown` opaque
+  scalar — the decline-reason `key`, treated as `string | null`), and
+  `recruiter { firstName lastName fullName }` (recruiter contact identity).
+  - **Service surface**: in
+    `packages/core/src/services/applications/index.ts`, two new public
+    types — `RecruiterRef` (`firstName` / `lastName` / `fullName`, all
+    nullable; `firstName` / `lastName` are INFERRED-present-on-wire, the
+    synth SDL declares only `fullName: String!` on `Recruiter`) and
+    `AvailabilityRequestEmbed` (`id`, `talentComment`,
+    `requestedHourlyRate`, `rejectReason`, `recruiter`). The activity-row
+    `JobActivityItem.availabilityRequest` is widened from the prior
+    `{ id }` presence indicator to `AvailabilityRequestEmbed | null`
+    (backwards-compatible — existing `.id` consumers keep working) via the
+    new `projectAvailabilityRequestEmbed` helper, wired into both
+    `projectActivityItem` and `projectActivityItemDetail`. The standalone
+    `AvailabilityRequestDetail` gains the same four fields, projected by
+    `projectAvailabilityRequestDetail` from the extended
+    `AVAILABILITY_REQUEST_QUERY`. Both projections share defensive
+    partial-Money + nullable-recruiter guards.
+  - **CLI surface**: `ttctl applications availability-request show`
+    (`packages/cli/src/commands/applications/availability-request.ts`) —
+    `formatAvailabilityRequestDetail` renders a `Recruiter` section
+    (`formatRecruiterName`), a `Talent rate:` line, a `Talent comment`
+    block, and a `Reject reason:` line. `ttctl applications show`
+    (`packages/cli/src/commands/applications/show.ts`) —
+    `formatApplicationDetail` surfaces the same embedded-AR fields
+    (`Recruiter` / `Talent rate` / `Talent comment` / `Reject reason`)
+    under the `Availability request:` line via `formatEmbedRecruiterName`.
+  - **MCP surface**: `ttctl_applications_availability_request_show` and
+    `ttctl_applications_show` descriptions
+    (`packages/mcp/src/tools/applications.ts`) document the new fields.
+    `ttctl_interest_requests_list`
+    (`packages/mcp/src/tools/interest_requests.ts`) lifts `recruiter` into
+    the `InterestRequestRow` (new `recruiter: RecruiterRef | null` field,
+    sourced from `availabilityRequest?.recruiter ?? null`) for
+    decline-draft personalisation; `projectRow`'s input type widens to
+    `AvailabilityRequestEmbed`. Response passthrough; no tool-count delta.
+  - **Schema/contract rule**: TRIGGERED — new INFERRED fields
+    (`rejectReason` + `recruiter`) on hand-authored ops under
+    `packages/core/src/services/applications/**`. The CI
+    `schema-contract-disposition` gate does NOT fire (its trigger set is
+    `auth.ts` + `services/profile/**`); declared per its broader spirit.
+    E2E coverage extended:
+    `packages/e2e/src/64-applications-availability-request-show.e2e.test.ts`
+    asserts the four new keys + shapes;
+    `packages/e2e/src/15-applications-list.e2e.test.ts` /
+    `packages/e2e/src/16-applications-show.e2e.test.ts` assert the
+    embedded-AR projection keys;
+    `packages/e2e/src/49-applications-reject.e2e.test.ts` round-trips a
+    known `talentComment` through the read surface. Live E2E not run in the
+    authoring subprocess (no credentials) — must run locally with
+    `TTCTL_E2E=1` before merge.
+  - **Track 1 vs Track 2**: T1 (wire-shape snapshot) for all three ops
+    (`AvailabilityRequest`, `JobActivityItems`, `JobActivityItem`) per
+    `docs/wire-validation-routing.md` — all in
+    `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS`. No `<OpName>.snapshot.json` exists
+    at commit time (same posture as #530); capture is a separate
+    `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` task requiring a real AR id.
+  - **Doc surface**: content updated (CLI + MCP renderer updates +
+    `AvailabilityRequestDetail` / `AvailabilityRequestEmbed` /
+    `RecruiterRef` interfaces). The CI doc-surface attestation gate does
+    NOT fire — `services/applications/**` is outside its tracked path set.
+  - **Gates**: surface coverage / write-read symmetry unchanged. No
+    `// e2e-covers:` markers added in this commit.
+
+- **`profile.industries.show` / `profile.industries.list`: expose the
+  five curated cross-reference arrays (`employments`, `educations`,
+  `certifications`, `portfolioItems`, `highlights`) on the
+  `IndustryProfile` read shape (#553).** Previously `IndustryProfile`
+  surfaced only the four identity columns (`id`, `title`, `about`,
+  `domainArea`) and left the relational fields as raw `unknown`.
+  Per-industry curation is the entire point of having industry
+  profiles, so the read was decorative without them. Extends
+  `INDUSTRY_PROFILE_FRAGMENT` with each curation cross-reference as a
+  connection-shape sub-selection (`{ nodes { id } }`) and projects them
+  into flat `IndustryCurationRef[]` arrays (bare `{ id }`) so callers
+  can chase any of them via the matching per-resource `show` (e.g.
+  `employments[].id` → `profile.employment.show(id)`,
+  `portfolioItems[].id` → `profile.portfolio.show(id)`). The connection
+  shape is INFERRED — the synthesized SDL types every `IndustryProfile`
+  column as `Scalars['Unknown']['output']`, so the wrapping is
+  extrapolated from `AddProfileIndustryConnections`, which already
+  selects `profile.{portfolioItems,employments} { nodes { id } }` in the
+  same file. A new `projectCurationRefs` helper walks each sub-field
+  defensively (null / non-object / `nodes` non-array → `[]`; per-node
+  non-string `id` → filtered out) so a per-account / per-feature-flag
+  shape mismatch surfaces silently-absent curation rather than a
+  fabricated array; a server rejection of the selection still throws
+  loudly via `ensureNoTopLevelErrors` at the document-validation layer.
+  The asymmetry vs the top-level `nodes` check in `list()` (which throws
+  on non-array) is intentional: top-level structure is verified,
+  sub-field projection is best-effort.
+  - **Service surface**: `IndustryProfile` interface in
+    `packages/core/src/services/profile/industries/index.ts` gains the
+    five `IndustryCurationRef[]` fields (plus the new `IndustryCurationRef`
+    interface); `list()` and `show()` now route the raw row through
+    `projectIndustryProfile` (new `RawIndustryProfile` wire-shape type
+    feeding `projectCurationRefs` per sub-field).
+  - **CLI surface**: `ttctl profile industries show` /
+    `ttctl profile industries list` in
+    `packages/cli/src/commands/profile/industries/index.ts`.
+    `formatIndustryText` (pretty) appends an indented curation block
+    (`  <kind> (<count>): <id1>, <id2>`) emitting only populated kinds
+    (empty curation suppresses the section). `formatIndustryTable`
+    (key/value) gains five rows rendered as `N: id1, id2` (or `0` when
+    empty) via a `formatRefsCell` helper. `formatIndustryListTable`
+    gains a `Nemp/Nedu/Ncert/Npf/Nhl` summary column.
+  - **MCP surface**: no new tool and no tool-count change —
+    `ttctl_profile_industries_show` / `ttctl_profile_industries_list`
+    already existed and the new fields flow through verbatim via
+    `jsonSuccess(row)` interface serialization (the
+    `profile_industries` payload snapshot in
+    `packages/mcp/src/tools/__tests__/__snapshots__/payload-snapshots.test.ts.snap`
+    was updated to carry the five empty arrays).
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/industries/index.ts` (file-path
+    trigger) and extends the `IndustryProfile` selection set with five
+    INFERRED sub-fields. E2E at
+    `packages/e2e/src/41-profile-industries.e2e.test.ts` adds an
+    `expectCurationFieldsShape` assertion on the post-add read-back and
+    on every `list()` / `show()` snapshot path (asserting the
+    post-projection flat `{ id }[]` shape, plus `toEqual([])` for the
+    brand-new-industry empty case). The existing graceful-skip behavior
+    is preserved when the test account hits the documented
+    `"This action is not allowed"` USER_ERROR (auto-memory
+    `project_test_account_industries_disabled`).
+  - **Track 1 vs Track 2**: T1 (wire-shape snapshot) — the
+    `IndustryProfile` columns are `Scalars['Unknown']` in synth SDL, so
+    no generated type exists. The post-projection shape is captured by
+    the existing snapshot infrastructure at
+    `41-profile-industries.e2e.test.ts` (`assertWireShapeStable` over
+    `ListIndustryProfiles` / `GetIndustryProfile`); the snapshot lands
+    once a seedable account exercises the path. No `.snapshot.json` file
+    is committed in this change.
+  - **Doc surface**: TRIGGERED — `profile.industries.show` /
+    `profile.industries.list` CLI text + table renderers and the MCP
+    tool surface.
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged (read-only field exposure; the ops were already covered).
+
+- **`profile.basic.set`: add the writable `twitter` field via
+  `UpdateBasicInfoInput` (#535).** Post-#526, TTCtl had NO write path
+  for `Profile.twitter`: `external.update` dropped it (the server
+  rejects `twitter` on `UpdateExternalProfilesInput`) and `basic.set`
+  intentionally excluded it. Per the live curl evidence in #535,
+  `UPDATE_BASIC_INFO` does accept `profile.twitter` as a **bare handle
+  string** (no leading `@`, no URL prefix — e.g. `"alexey_pelykh"`) and
+  the response selection set echoes it back. This makes `basic.set` the
+  canonical write surface for `twitter` — the only one of the six social
+  URLs the talent_profile basic-info input accepts — while
+  `linkedin / github / website / behance / dribbble` stay owned by
+  `external.update`. An empty string or `null` is the explicit "clear
+  it" intent (the wire schema permits both representations of absent);
+  `undefined` preserves the current value through the read-merge.
+  - **Service surface**: `packages/core/src/services/profile/basic/index.ts`
+    — `ProfileUpdate.twitter?: string | null`, `BasicInfo.twitter:
+string | null` (read projection required by the read-merge
+    contract), and `UpdateProfileResult.profile.twitter`. The
+    `GET_BASIC_INFO` selection set picks up `twitter`, the
+    `UPDATE_BASIC_INFO` mutation selection set echoes it, and
+    `UpdateBasicInfoProfileInput.twitter` carries it on the apply path.
+    `set()` validation now requires `bio` OR `headline` OR `twitter`;
+    the merge mirrors the bio/headline semantics
+    (`changes.twitter !== undefined ? changes.twitter : current.twitter`);
+    the dry-run preview adds `twitter` to the placeholder-or-supplied
+    set.
+  - **CLI surface**: `ttctl profile basic update` gains `--twitter
+<handle>` (bare handle, `""` to clear) in
+    `packages/cli/src/commands/profile/basic/index.ts` +
+    `set.ts`. `--twitter` does NOT participate in the free-text
+    (stdin / `@file` / `--edit`) surface — it is passed verbatim. The
+    empty-fields validation message and hint now list `--twitter`, and
+    `formatUpdatePrettyEntity` renders a `twitter:` line alongside
+    bio/headline.
+  - **MCP surface**: no new tool and no tool-count change —
+    `ttctl_profile_basic_update` gains `twitter: z.union([z.string(),
+z.null()]).optional()` on its `inputSchema` (pass-through to
+    `changes.twitter`; `null`/empty propagate) in
+    `packages/mcp/src/tools/profile_basic_update.ts`, plus tool
+    title/description/example-prompts.
+  - **Schema/contract rule**: TRIGGERED — touches
+    `packages/core/src/services/profile/basic/index.ts` (file-path
+    trigger) and modifies the live wire shape of `UPDATE_BASIC_INFO`
+    (adds `twitter` to both the input and the response selection set).
+    Satisfied via a new gated E2E subtest in
+    `packages/e2e/src/44-profile-basic.e2e.test.ts`: round-trips
+    `set({ twitter })` → asserts the mutation echo, then `getBasicInfo`
+    AND `external.show` both surface the sentinel, then restores the
+    original handle in `finally` (non-destructive). A `USER_ERROR`
+    skip-returns (test-account-state gate, not a wire regression — a
+    wrong shape would fail earlier with `GRAPHQL_ERROR`).
+  - **Track 1 vs Track 2**: T1 — same disposition as the parent
+    `UPDATE_BASIC_INFO` op (untrusted catalog, no generated type). The
+    committed snapshot at
+    `packages/e2e/src/wire-snapshots/UPDATE_BASIC_INFO.snapshot.json` is
+    updated to include `twitter: { kind: "string" }` in the profile
+    echo.
+  - **Doc surface**: TRIGGERED —
+    `packages/core/src/services/profile/basic/**` is an explicit
+    doc-surface attestation trigger; the MCP and CLI descriptions are
+    updated to name `basic update` as the canonical write path for
+    `twitter`.
+  - **Gates**: surface coverage / E2E coverage unchanged; write-read
+    symmetry satisfied — the new `twitter` input field is echoed back on
+    `UpdateProfileResult.profile.twitter` and on `BasicInfo.twitter`.
+
+- **`profile specializations apply`: `ApplyForSpecialization` mutation
+  (CLI + MCP) (#467).** Extends the specializations read leaf with the
+  destructive write side — submits the talent's application to an
+  additional specialization track (Marketplace, Expert Crowd, etc.) via
+  the gateway-portal `ApplyForSpecialization` mutation
+  (`specialization(id:).apply(input: {})`). Both surfaces enforce the
+  ADR-009 (ttctl) `profile-capability` per-domain consent vocabulary —
+  the consent gate fires BEFORE the wire call AND before the dry-run
+  preview. There is no withdraw mutation on the wire, which is why the
+  operation is classified destructive.
+  - **Service surface**: `profile.specializations.apply(token,
+specializationId, consent, options?)` in
+    `packages/core/src/services/profile/specializations/index.ts`. Wraps
+    the hand-authored `ApplyForSpecialization` mutation
+    (`mutation ApplyForSpecialization($specializationId: ID!) {
+specialization(id: $specializationId) { apply(input: {}) { success
+notice errors { code key message } } } }`), routed through
+    `callGatewayShared` against the `mobile-gateway` surface
+    (`stockTransport`). `ensureDestructiveConsent("ApplyForSpecialization",
+"profile-capability", …)` runs as defense-in-depth at the service
+    layer; `payload.errors[]` maps to `USER_ERROR`, a missing payload to
+    `UNKNOWN`, and `success: false` to a `USER_ERROR`.
+  - **CLI surface**: `ttctl profile specializations apply
+<specializationId> --consent-profile-capability` —
+    `packages/cli/src/commands/profile/specializations/apply.ts` +
+    `index.ts`. `--consent-profile-capability` is REQUIRED; `--dry-run`
+    previews the wire payload without issuing the mutation.
+  - **MCP surface**: `ttctl_profile_specializations_apply` —
+    `packages/mcp/src/tools/profile_specializations_apply.ts`. Tool
+    count **120 → 121** across the three MCP gate tests
+    (`registration.test.ts`, `tools.test.ts`, `dryrun-smoke.test.ts`).
+    The tool requires `profileCapabilityConsentIssued: z.literal(true)`
+    on input and carries the `destructiveHint: true` annotation.
+  - **Schema/contract rule**: TRIGGERED — new hand-authored mutation
+    under `packages/core/src/services/profile/`. Satisfied via
+    `packages/e2e/src/68-profile-specializations-apply.e2e.test.ts`
+    (`// e2e-covers: ApplyForSpecialization`): always-on dry-run-preview,
+    consent-missing-refusal (asserts `CONSENT_REQUIRED` with NO wire
+    call), and negative-path tests, plus a gated DESTRUCTIVE positive
+    path opt-in via `TTCTL_E2E_APPLY_SPECIALIZATION=<id>` that captures
+    the snapshot.
+  - **Track 1 vs Track 2**: T1 — `ApplyForSpecialization` is in
+    `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` (no generated type), so T1 is
+    mechanically forced per ADR-006. The snapshot at
+    `packages/e2e/src/wire-snapshots/ApplyForSpecialization.snapshot.json`
+    is captured on the first gated positive-path run with
+    `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` (not committed in this change).
+    `docs/wire-validation-routing.md` gains an `ApplyForSpecialization`
+    T1 row; the `mobile-gateway` summary updates 46→47 (active) and the
+    total 106→107.
+  - **Doc surface**: not touched as an attestation trigger — the change
+    is below the explicit doc-surface scope
+    (`packages/core/src/auth/**` / `profile/basic/**`); the
+    `profile/specializations/**` directory is outside it.
+  - **Gates**: write-read symmetry — `apply` is not in the static
+    `check-write-read-symmetry.ts` verb regex, verified behaviorally
+    instead: the gated E2E positive path cross-checks via `show()`
+    (`operations.apply.callable` flips to `false` post-apply). Surface
+    coverage / E2E coverage satisfied (the new op is `e2e-covers`-marked
+    and registered on both CLI and MCP).
+
+- **`profile specializations show`: `GetTalentSpecializations` read
+  (CLI + MCP) (#466).** Read-only viewer-scoped wrapper around the
+  gateway-portal `GetTalentSpecializations` query so the talent can
+  enumerate the specialization badges (Core, Marketplace, Expert Crowd,
+  etc.) shown on the public profile. Lands the new
+  `profile.specializations.*` sub-namespace. Viewer-scoped with no
+  input — the wire op takes no variables; an empty list is a legitimate
+  state for fresh accounts.
+  - **Service surface**: `profile.specializations.show(token) →
+Specialization[]` in
+    `packages/core/src/services/profile/specializations/index.ts`
+    (registered as `export * as specializations` in
+    `packages/core/src/services/profile/index.ts`). Hand-authored
+    `GetTalentSpecializations` query
+    (`viewer { id specializations { id title ...TalentSpecialization } }` - `TalentSpecialization` fragment selecting `slug`, `title`,
+    `description`, `logoUrl`, `applicationStatus`, `eligibleJobsCount`,
+    `applicationCompletedAt`, `operations { apply { callable messages } }`)
+    routed through `callGatewayShared` with `requireViewer: true`
+    against the `mobile-gateway` surface. Selection is verbatim from the
+    captured op document (no trim needed); `viewer.id` is preserved for
+    `requireViewer` parity and `specialization.id` so callers can
+    round-trip a known id through `ApplyForSpecialization`.
+  - **CLI surface**: `ttctl profile specializations show` with `-o
+pretty | json | yaml` —
+    `packages/cli/src/commands/profile/specializations/show.ts` +
+    `index.ts` (wired into the profile tree in
+    `packages/cli/src/commands/profile/index.ts`). Pretty mode renders a
+    per-row labelled block (or an explanatory empty-state line); the
+    table emits `slug` / `title` / `status` / `applicationCompletedAt` /
+    `eligibleJobsCount` / `apply.callable` columns.
+  - **MCP surface**: `ttctl_profile_specializations_show` —
+    `packages/mcp/src/tools/profile_specializations_show.ts`. Tool count
+    **118 → 119** across the three MCP gate tests
+    (`registration.test.ts`, `tools.test.ts`, `dryrun-smoke.test.ts`).
+  - **Schema/contract rule**: TRIGGERED — new hand-authored
+    gateway-portal op under `packages/core/src/services/profile/`. E2E at
+    `packages/e2e/src/66-profile-specializations-show.e2e.test.ts`
+    (`// e2e-covers: GetTalentSpecializations`): the json-shape, pretty,
+    and snapshot subtests skip-return with a stderr note when the
+    account has no specializations (no row-shape to assert).
+  - **Track 1 vs Track 2**: T1 — `GetTalentSpecializations` is in
+    `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`; no generated operation type
+    exists, so T1 is mechanically forced per ADR-006. The snapshot at
+    `packages/e2e/src/wire-snapshots/GetTalentSpecializations.snapshot.json`
+    is pinned via `assertWireShapeStable` once captured on a populated
+    `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run (not committed in
+    this change). `docs/wire-validation-routing.md` gains a
+    `GetTalentSpecializations` T1 row; the `mobile-gateway` summary
+    totals update 45→46 / 89→90 / 105→106.
+  - **Doc surface**: not touched as an attestation trigger — the new
+    `profile/specializations/**` directory is below the explicit
+    doc-surface scope (`auth/**` / `profile/basic/**`).
+  - **Gates**: surface coverage / E2E coverage satisfied (op is
+    `e2e-covers`-marked and registered on both CLI and MCP); write-read
+    symmetry N/A (read-only).
+
+- **`profile industries add-connections`: `AddProfileIndustryConnections`
+  Pattern-6 helper (CLI + MCP) (#465).** Pattern-6 connection helper
+  that links a catalog industry to one or more profile rows (employment
+  and/or portfolio items). Wire shape recovered from the portal-bundle
+  decompile: input is `{ profileId, industriesConnections: [{
+industryId, profileItems }] }`, where `industryId` is the **catalog
+  `Industry` id** (NOT the `IndustryProfile` row id the issue body
+  suggested) and `profileItems` is a mixed array of
+  `V1-Employment-<n>` / `V1-PortfolioItem-<n>` ids. Wired through the
+  ADR-009 (ttctl) `profile-capability` consent gate (it writes
+  recruiter-visible industry tags onto profile rows).
+  - **Service surface**: `profile.industries.addConnections(...)` in
+    `packages/core/src/services/profile/industries/index.ts`. Wraps the
+    hand-authored `AddProfileIndustryConnections` mutation (input
+    `AddProfileIndustryConnectionsInput!`), routed via `stockTransport`
+    against the `mobile-gateway` surface. New `IndustryConnectionLink`
+    (`{ industryId, profileItems: string[] }`),
+    `AddIndustryConnectionsConsent`, `IndustryConnectionsProfileNode`,
+    and `AddIndustryConnectionsResult` interfaces;
+    `ensureDestructiveConsent(…, "profile-capability", input)` runs at
+    the service layer. The wire shape is flagged INFERRED — UNVERIFIED
+    in the service JSDoc.
+  - **CLI surface**: `ttctl profile industries add-connections
+--industry-id <id> [--employment-id <id> …] [--portfolio-item-id
+<id> …] --consent-profile-capability` in
+    `packages/cli/src/commands/profile/industries/index.ts`.
+    `--employment-id` / `--portfolio-item-id` are repeatable
+    (commander option-collector → array); a VALIDATION_ERROR fires when
+    neither is supplied.
+  - **MCP surface**: `ttctl_profile_industries_add_connections` —
+    `packages/mcp/src/tools/profile/industries.ts`. Tool count **119 →
+    120** across the three MCP gate tests (`registration.test.ts`,
+    `tools.test.ts`, `dryrun-smoke.test.ts`). Requires
+    `profileCapabilityConsentIssued: z.literal(true)` and carries
+    `destructiveHint: true`.
+  - **Schema/contract rule**: TRIGGERED — new hand-authored mutation
+    under `packages/core/src/services/profile/`. Satisfied via
+    `packages/e2e/src/67-profile-industries-add-connections.e2e.test.ts`
+    (`// e2e-covers: AddProfileIndustryConnections`): consent-gate
+    refusal (asserts `CONSENT_REQUIRED`), empty-links validation
+    refusal, and a live round-trip that re-links an existing industry
+    edge and snapshots the response.
+  - **Track 1 vs Track 2**: T1 — gateway-portal untrusted op (no
+    generated type). The snapshot at
+    `packages/e2e/src/wire-snapshots/AddProfileIndustryConnections.snapshot.json`
+    is captured on the first authorized run with
+    `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` (not committed in this change). No
+    `docs/wire-validation-routing.md` change accompanies this commit.
+  - **Doc surface**: not touched as an attestation trigger — the change
+    is below the explicit doc-surface scope (`auth/**` /
+    `profile/basic/**`).
+  - **Gates**: surface coverage satisfied (new op registered on both CLI
+    and MCP); E2E coverage satisfied via the `e2e-covers` marker.
+
+### Changed
+
+- **`profile skills add` — transparent autocomplete resolution
+  (#405).** When `name` is passed without `--skill-id` (CLI) or
+  `skillId` (MCP), `profile.skills.add` now fires
+  `GET_SKILLS_FOR_AUTOCOMPLETE` and applies the resolution policy:
+  a single exact name match (case-insensitive, trimmed) auto-binds
+  to that catalog `Skill`; ≥2 exact matches surface a
+  `VALIDATION_ERROR` listing the duplicates with `--skill-id` nudge;
+  0 exact matches fall back to custom-skill creation (the pre-#405
+  behavior — `skillSet.id` is omitted and the server creates a
+  non-catalog `Skill` from the free-text `name`). Mirrors the
+  `employment.add` `--company` → `employerId` flow from #395 so the
+  cross-domain UX stays uniform.
+  - **Dry-run network behavior**: dry-run + explicit `skillId` stays
+    zero-network. Dry-run WITHOUT `skillId` now fires
+    `extractProfileId` + `skillsAutocomplete` so the preview's wire
+    shape carries the resolved `skillSet.id` (or omits it for the
+    custom-skill fallback) — matching what the live mutation would
+    transmit. The `ADD_PROFILE_SKILL_SET` mutation transport is
+    never fired in dry-run.
+  - **Schema/contract rule**: NOT triggered as a new wire-shape —
+    `ADD_PROFILE_SKILL_SET` and `GET_SKILLS_FOR_AUTOCOMPLETE` are
+    already covered by the existing #396 capture +
+    `47-profile-skills-add.e2e.test.ts` E2E. The resolution logic
+    is client-side; no new op or input field. The existing custom-
+    skill E2E continues to exercise the 0-match fallback (its
+    `TEST_SKILL_NAME = ttctl-e2e-skill-${Date.now()}` is unique by
+    construction).
+  - **Track 1 disposition**: unchanged — T1 snapshots for
+    `ADD_PROFILE_SKILL_SET` continue to apply.
+  - **Surface coverage / write-read symmetry / E2E coverage gates**:
+    unchanged. `skillId` remains write-only-annotated; the resolved
+    binding echoes via `skill.id` / `skill.name` on the read side.
+
+- **`profile.portfolio.update`: document the 200-character `description`
+  minimum (#543).** The `ttctl_profile_portfolio_update` MCP tool's
+  `description` field and the `ttctl profile portfolio update
+--description` CLI flag now name the Toptal 200-character server-side
+  minimum, quoting the verbatim rejection (`description is too short
+(minimum is 200 characters)`) so MCP clients and CLI users learn the
+  constraint up-front instead of discovering it via a post-submit
+  validation error. Doc-only: no new GraphQL op, no wire-shape change, no
+  behavior change. Mirrors the #542 / #492 precedents.
+  - **Surfaces updated**:
+    - `packages/mcp/src/tools/profile/portfolio.ts` — the
+      `ttctl_profile_portfolio_update` `description` field's `.describe()`
+      text gains the verbatim rejection and the 200-char minimum.
+    - `packages/cli/src/commands/profile/portfolio/index.ts` — the
+      `--description` flag help gains `Minimum 200 characters (#543)`.
+    - `packages/mcp/src/tools/__tests__/profile_portfolio.test.ts` — adds
+      a regression test asserting the registered tool's `description` field
+      describe text contains `"200"` and `"minimum"`.
+  - **Schema/contract rule**: NOT triggered — doc-only. No file under
+    `packages/core/src/services/profile/**` is touched; no new GraphQL op,
+    no wire-format change, no inferred contract.
+  - **Doc surface**: TRIGGERED — the MCP tool description and the CLI flag
+    help are the user-facing surfaces being corrected.
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged.
+
+- **`profile.portfolio.highlight`: document the Toptal 3-item highlight cap
+  (#542).** The `ttctl_profile_portfolio_highlight` MCP tool and the
+  `ttctl profile portfolio highlight` CLI command now document the Toptal
+  3-item cap on highlighted portfolio items — naming the generic
+  `USER_ERROR` returned on the 4th highlight (`Something went wrong. Please
+try again later.`) and the remedy (clear an existing highlight with
+  `--off` / `highlight: false` first), and pointing MCP clients at
+  `ttctl_profile_portfolio_list` for pre-flight. Doc-only: no new GraphQL
+  op, no wire-shape change, no behavior change. Mirrors the #492 precedent.
+  - **Surfaces updated**:
+    - `packages/mcp/src/tools/profile/portfolio.ts` — the
+      `ttctl_profile_portfolio_highlight` tool description gains the cap,
+      the verbatim USER_ERROR, the remedy, and the `_list` pointer.
+    - `packages/cli/src/commands/profile/portfolio/index.ts` — the
+      `highlight` command description gains the cap and `--off` remedy.
+    - `packages/mcp/src/tools/__tests__/profile_portfolio.test.ts` (NEW) —
+      adds a regression test asserting the tool description contains `"3"`,
+      matches `/cap|limit/`, and points at `ttctl_profile_portfolio_list`.
+  - **Schema/contract rule**: NOT triggered — doc-only. No file under
+    `packages/core/src/services/profile/**` is touched; no new GraphQL op,
+    no wire-format change, no inferred contract.
+  - **Doc surface**: TRIGGERED — the MCP tool description and the CLI
+    command description are the user-facing surfaces being corrected.
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged.
+
+- **`profile.employment.add` / `profile.employment.update`: validate
+  `experienceItems` length (50–250 chars/item) client-side (#492).** The
+  Toptal `talent_profile/graphql` server enforces a 50–250 char/item rule on
+  `employment.experienceItems` and rejects out-of-range paragraphs with
+  `USER_ERROR: Each item must have at least 50 and less than 250 characters`.
+  Pre-#492 the dryRun preview accepted any length, so an agentic / batch
+  caller drafting a description got false confidence — dryRun returned `ok`,
+  the live call rejected. This change refuses out-of-range input client-side
+  on both the apply and dryRun paths, so the dryRun preview is now a
+  trustworthy pre-flight gate.
+  - **Service surface**: new exported `validateExperienceItems(items)` helper
+    (bounds `EXPERIENCE_ITEM_MIN_CHARS = 50` / `EXPERIENCE_ITEM_MAX_CHARS = 250`)
+    that throws `ProfileError(VALIDATION_ERROR)` on the first offender, naming
+    its index, length, and a truncated preview. Called early in `add()` and in
+    `buildUpdateEmploymentInput()` in
+    `packages/core/src/services/profile/employment/index.ts`. Caller-supplied
+    input only — read-current echo paths intentionally skip the gate (legacy
+    data may sit outside the bounds); empty arrays pass silently.
+  - **CLI surface**: `ttctl profile employment add` — the `--description`
+    help text now states the 50–250 char/item constraint
+    (`packages/cli/src/commands/profile/employment/index.ts`).
+  - **MCP surface**: `ttctl_profile_employment_update` calls
+    `profile.employment.validateExperienceItems(...)` before its dryRun branch
+    (the MCP dryRun does NOT route through `buildUpdateEmploymentInput`, so the
+    core check would not otherwise fire there); both the `add` and `update`
+    `description` schema `describe()` strings surface the 50–250 constraint
+    (`packages/mcp/src/tools/profile/employment.ts`). No tool count change.
+  - **Schema/contract rule**: NOT triggered. The diff touches a file under
+    `packages/core/src/services/profile/**` (the file-path trigger), but the
+    change is a purely client-side validation gate — no wire-format change, no
+    new GraphQL operation, no inferred contract introduced. The existing
+    `UpdateEmployment` snapshot and live-capture inputs remain the
+    authoritative wire contract. (Mirrors the #488 disposition: file-path
+    trigger present, but no wire change → rule not triggered.)
+  - **Track 1 vs Track 2**: unchanged — no new op; `UpdateEmployment` remains
+    on T1.
+  - **Doc surface**: TRIGGERED (touches
+    `packages/core/src/services/profile/employment/**` plus the MCP and CLI
+    description text).
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged.
+
 ### Fixed
 
 - **`profile.external.update`: drop unwritable `twitter` from input
@@ -230,43 +1337,6 @@ $input of type UpdateExternalProfilesInput! was provided invalid value
     verify (twitter dropped from the writable surface); the gate
     continues to pass for the remaining five.
 
-### Changed
-
-- **`profile skills add` — transparent autocomplete resolution
-  (#405).** When `name` is passed without `--skill-id` (CLI) or
-  `skillId` (MCP), `profile.skills.add` now fires
-  `GET_SKILLS_FOR_AUTOCOMPLETE` and applies the resolution policy:
-  a single exact name match (case-insensitive, trimmed) auto-binds
-  to that catalog `Skill`; ≥2 exact matches surface a
-  `VALIDATION_ERROR` listing the duplicates with `--skill-id` nudge;
-  0 exact matches fall back to custom-skill creation (the pre-#405
-  behavior — `skillSet.id` is omitted and the server creates a
-  non-catalog `Skill` from the free-text `name`). Mirrors the
-  `employment.add` `--company` → `employerId` flow from #395 so the
-  cross-domain UX stays uniform.
-  - **Dry-run network behavior**: dry-run + explicit `skillId` stays
-    zero-network. Dry-run WITHOUT `skillId` now fires
-    `extractProfileId` + `skillsAutocomplete` so the preview's wire
-    shape carries the resolved `skillSet.id` (or omits it for the
-    custom-skill fallback) — matching what the live mutation would
-    transmit. The `ADD_PROFILE_SKILL_SET` mutation transport is
-    never fired in dry-run.
-  - **Schema/contract rule**: NOT triggered as a new wire-shape —
-    `ADD_PROFILE_SKILL_SET` and `GET_SKILLS_FOR_AUTOCOMPLETE` are
-    already covered by the existing #396 capture +
-    `47-profile-skills-add.e2e.test.ts` E2E. The resolution logic
-    is client-side; no new op or input field. The existing custom-
-    skill E2E continues to exercise the 0-match fallback (its
-    `TEST_SKILL_NAME = ttctl-e2e-skill-${Date.now()}` is unique by
-    construction).
-  - **Track 1 disposition**: unchanged — T1 snapshots for
-    `ADD_PROFILE_SKILL_SET` continue to apply.
-  - **Surface coverage / write-read symmetry / E2E coverage gates**:
-    unchanged. `skillId` remains write-only-annotated; the resolved
-    binding echoes via `skill.id` / `skill.name` on the read side.
-
-### Fixed
-
 - **`profile.employment.update`: correct misleading `publicationPermit`
   documentation (#488).** Reporter (rc.7 MCP) observed two anomalies:
   (1) supplying `publicationPermit: true` on an entry currently at
@@ -321,6 +1391,170 @@ $input of type UpdateExternalProfilesInput! was provided invalid value
     `packages/mcp/src/tools/profile/employment.ts` and sibling Portfolio
     tool descriptions — the documentation is the user-facing surface
     being corrected. No code-path behavior changed.
+
+- **`profile.employment.add` / `profile.employment.update`: document
+  client-side year-normalization of `YYYY-MM-DD` date inputs (#527).** The
+  MCP and CLI surfaces accept ISO-8601 (`YYYY-MM-DD`) and year-only (`YYYY`)
+  per the `dateInput` regex, but the Toptal `EmploymentInput.startDate` /
+  `.endDate` wire fields are typed `Int` (year-only) per
+  `research/captures/web/inputs/UpdateEmploymentInput.json` and the
+  `GET_WORK_EXPERIENCE.snapshot.json` wire-shape snapshot. ttctl extracts
+  `parseDateInput(...).year` client-side before populating the payload,
+  silently dropping month/day — so `from: "2024-10-15"` behaves identically
+  to `from: "2024"` with no way to discover that from the tool surface alone.
+  Documentation-only correction across all three surfaces; no wire/operation
+  change, no behavior change, no test change.
+  - **Service surface**: `packages/core/src/services/profile/employment/index.ts`
+    — the `Employment` JSDoc gains a **Date-precision contract (#527)** block
+    citing both the capture file and the wire-shape snapshot; per-field
+    comments added on `EmploymentFields.startDate` / `.endDate` for direct
+    core consumers.
+  - **CLI surface**: `ttctl profile employment add` / `update` — module JSDoc
+    carries the wire-evidence + normalization contract; the `--from` / `--to`
+    option strings on both subcommands now reference #527
+    (`packages/cli/src/commands/profile/employment/index.ts`).
+  - **MCP surface**: `packages/mcp/src/tools/profile/employment.ts` — the
+    `add` and `update` tool descriptions and the `from` / `to` per-field
+    `describe()` strings document the year-normalization contract. No tool
+    count change.
+  - **Schema/contract rule**: NOT triggered. Touches a file under
+    `packages/core/src/services/profile/**` (the file-path trigger), but
+    comment/description-only — no wire-format change, no new GraphQL op, no
+    inferred contract introduced.
+  - **Track 1 vs Track 2**: unchanged — no new op; `UpdateEmployment` remains
+    on T1.
+  - **Doc surface**: TRIGGERED (touches
+    `packages/core/src/services/profile/employment/**` and the MCP / CLI tool
+    descriptions — the documentation is the user-facing surface being
+    corrected).
+  - **Gates**: surface coverage / write-read symmetry / E2E coverage
+    unchanged.
+
+- **`jobs` / `applications`: wrap `offeredHourlyRate` in an inline fragment
+  on `AvailabilityRequestFixedMetadata` (#530).** Toptal split
+  `AvailabilityRequestMetadata` into a polymorphic supertype;
+  `offeredHourlyRate` now lives only on the
+  `AvailabilityRequestFixedMetadata` variant. The hand-authored selections
+  in `JOB_ACTIVITY_LIST_QUERY`, `JOB_ACTIVITY_ITEM_QUERY`, `JOBS_LIST_QUERY`,
+  and `JOB_SHOW_QUERY` selected `offeredHourlyRate` directly under
+  `metadata`, which the gateway now rejects with HTTP 400
+  (`GRAPHQL_VALIDATION_FAILED`) — breaking `ttctl jobs list / show`,
+  `ttctl applications list / stats`, and any consumer of the two
+  `JobActivity*` operations. The fix wraps the rate selection in
+  `... on AvailabilityRequestFixedMetadata`, mirroring the pre-existing
+  fixes in `GET_AVAILABILITY_REQUEST_KIND_QUERY` and
+  `AVAILABILITY_REQUEST_QUERY`, and adds `__typename` selections for the
+  `AvailabilityRequestFlexibleMetadata` and
+  `MarketplaceAvailabilityRequestFlexibleMetadata` variants for
+  forward-compatible variant discrimination.
+  - **Service surface**: selection-set change to four pre-existing ops
+    across `packages/core/src/services/applications/index.ts` (`JobActivityItems`
+    / `JobActivityItem`) and `packages/core/src/services/jobs/index.ts`
+    (`JobsList` / `JobShow`). The wire-side TS interfaces
+    `AvailabilityRequestWireEntity` (applications) and `ActivityItemRateWire`
+    (jobs) mark `__typename` and `offeredHourlyRate` optional/nullable.
+    `projectFixedRate` in both services short-circuits to `null` when the AR
+    resolves to a non-Fixed variant (the rate is absent on the wire there) —
+    otherwise the first non-Fixed row would crash. The AR presence indicator
+    still rides through; only the rate goes `null`. The engagements service
+    is confirmed unaffected — its `JobActivityItems` / `JobActivityItem`
+    bodies do not select `availabilityRequest.metadata.offeredHourlyRate`.
+  - **CLI / MCP surface**: no renderer or tool changes — selection-set and
+    wire-projection fix only.
+  - **Schema/contract rule**: NOT triggered — the diff touches no file
+    under `packages/core/src/auth.ts` or
+    `packages/core/src/services/profile/**`, and introduces no new
+    hand-authored GraphQL operation; it only modifies the SELECTION SET of
+    four pre-existing ops to match the upstream schema split. The
+    inline-fragment fix pattern is already empirically validated by the
+    pre-existing E2E coverage for `GET_AVAILABILITY_REQUEST_KIND_QUERY` and
+    `AVAILABILITY_REQUEST_QUERY` (same selection shape, same `mobile-gateway`
+    surface). Six new unit tests (3 per service) cover the Flexible and
+    MarketplaceFlexible variants on the list and show paths.
+  - **Track 1 vs Track 2**: T1 for all four affected ops (`JobsList`,
+    `JobShow`, `JobActivityItems`, `JobActivityItem`) per
+    `docs/wire-validation-routing.md` — all in
+    `GATEWAY_MOBILE_KNOWN_UNTRUSTED_OPS` (no generated Zod schema, gappy
+    synth SDL). No `<OpName>.snapshot.json` exists at commit time; capture
+    is a separate `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` task, out of
+    scope for this production-unblock fix.
+  - **Doc surface**: not triggered (no touch to
+    `packages/core/src/auth/**` or `packages/core/src/services/profile/**`).
+  - **Gates**: surface coverage / write-read symmetry / e2e coverage
+    unchanged.
+
+- **`profile.basic.set`: document the SMS-consent account-state
+  precondition for `UPDATE_BASIC_INFO` (no issue; refs #536).** The
+  Toptal `UPDATE_BASIC_INFO` mutation has an account-state precondition
+  that is NOT visible on the wire input: the talent must have agreed to
+  "receive text messages for important notifications" in account
+  settings (talent.toptal.com → notifications). When that consent is
+  disabled the mutation does not go through, and the failure is hard to
+  diagnose without prior knowledge of the gate. Tier 1 (docs-only): the
+  precise wire failure mode has NOT been empirically captured, so a
+  dedicated domain error code (Tier 2) is deferred until a captured
+  failure response is available — today the failure surfaces via
+  whichever `ProfileError` branch catches it (most likely `USER_ERROR`
+  or `GRAPHQL_ERROR`). No code behavior change. TTCtl deliberately does
+  NOT expose `UpdateSmsNotificationsSettings` (README § Out of scope),
+  so the only remediation is a one-time web-UI toggle by the user.
+  - **Surfaces updated**:
+    - `packages/core/src/services/profile/basic/index.ts` — JSDoc on
+      `set()` documents the precondition + the deferral rationale +
+      cross-ref to README § Out of scope.
+    - `packages/cli/src/commands/profile/basic/index.ts` —
+      `.addHelpText("after", …)` on `ttctl profile basic update`
+      surfaces the precondition.
+    - `packages/cli/src/commands/profile/basic/set.ts` — action-handler
+      JSDoc reference.
+    - `packages/mcp/src/tools/profile_basic_update.ts` — precondition
+      note in the `ttctl_profile_basic_update` tool description so
+      MCP-side agents instruct the user to re-enable SMS consent in the
+      web UI on failure (we cannot toggle it for them).
+  - **Schema/contract rule**: NOT triggered. Touches files under
+    `packages/core/src/services/profile/**` (the file-path trigger), but
+    comment / help-text only — no wire format change, no new GraphQL op,
+    no inferred contract introduced.
+  - **Track 1 vs Track 2**: T1 (unchanged) — `UPDATE_BASIC_INFO` remains
+    on the wire-shape-snapshot track; this change introduces no new op.
+  - **Doc surface**: TRIGGERED — touches
+    `packages/core/src/services/profile/basic/**` and the MCP / CLI
+    descriptions; the documentation is the user-facing surface being
+    corrected. No code-path behavior changed.
+
+### Removed
+
+- **`ttctl_profile_reviews_submit_for_review` MCP tool — removed (#544).**
+  The tool was a UX trap: exposed on the MCP surface, but every call
+  returned the GraphQL error `SubmitForReviewInput isn't a defined input
+type (on $input)` because its input shape was INFERRED-UNVERIFIED (#91,
+  wontfix). Investigation per #544 further established the tool is
+  unnecessary — Toptal profile edits for the flows TTCtl exercises land
+  live immediately; no "submit for review" gate applies to the normal
+  editing flow. Removed from the MCP surface (the cleanest of the #544
+  resolution options).
+  - **Surfaces updated**:
+    - Deleted `packages/mcp/src/tools/profile_reviews_submit_for_review.ts`
+      and its import + registration call from `packages/mcp/src/tools/index.ts`.
+    - MCP tool inventory tests (`registration.test.ts`, `tools.test.ts`,
+      `dryrun-smoke.test.ts`) updated 121 → 120 tools.
+    - `docs/security/mcp-leakage-threat-model.md` — `profile.reviews`
+      section header (4 → 3 tools); the row for the deleted tool removed.
+  - **Intentionally untouched**: the `ttctl profile reviews
+submit-for-review` CLI command (explicit user-typed invocation is not a
+    UX trap), the `packages/core/src/services/profile/reviews/index.ts` core
+    service (still invoked by the CLI command — the surface-coverage gate now
+    reports it as CLI-only, a Class C informational row that does not fail the
+    gate), and the `codegen.config.ts` / `docs/wire-validation-routing.md` /
+    ADR-009 / e2e references to the underlying wire op, which remain in place.
+  - **Schema/contract rule**: NOT triggered — this removes a broken tool; it
+    does not introduce a new GraphQL operation or new wire contract.
+  - **Doc surface**: not applicable — no files under
+    `packages/core/src/services/profile/**`, `packages/core/src/auth/**`, or
+    the exact-paths set were modified.
+  - **Gates**: surface coverage now reports `profile.reviews.submitForReview`
+    as CLI-only (Class C informational); write-read symmetry / E2E coverage
+    unchanged.
 
 ## [v0.1.0-rc.8] - 2026-05-22
 
