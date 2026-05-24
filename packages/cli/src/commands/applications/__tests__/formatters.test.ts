@@ -695,6 +695,9 @@ describe("formatAvailabilityRequestDetail (#442)", () => {
         url: "https://www.toptal.com/jobs/job-1",
         client: { id: "cli-1", fullName: "Acme Inc." },
       },
+      // #585 — matcher questions; default empty (per-test overrides
+      // exercise the populated branches).
+      matcherQuestions: [],
       ...overrides,
     };
   }
@@ -874,6 +877,58 @@ describe("formatAvailabilityRequestDetail (#442)", () => {
     expect(out).toContain("Talent comment");
     expect(out).toContain("Reject reason: scope_mismatch");
     expect(out).not.toContain("Talent rate:");
+  });
+
+  // ---------------------------------------------------------------------
+  // #585 — matcher questions section
+  // ---------------------------------------------------------------------
+
+  it("renders a dropdown matcher question with options + suggested answer (#585)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        matcherQuestions: [
+          {
+            identifier: "MQ-1",
+            prompt: "How many hours of timezone overlap can you offer?",
+            type: "matcher",
+            isMandatory: true,
+            options: ["Less than 2 hours", "2 to 6 hours", "More than 6 hours"],
+            suggestedAnswer: "More than 6 hours",
+            inputType: "dropdown",
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("Matcher questions");
+    expect(out).toContain("[MQ-1] How many hours of timezone overlap can you offer?  (required, dropdown)");
+    expect(out).toContain("Options:   Less than 2 hours | 2 to 6 hours | More than 6 hours");
+    expect(out).toContain("Suggested: More than 6 hours");
+  });
+
+  it("renders a free-text matcher question without Options/Suggested lines (#585)", () => {
+    const out = formatAvailabilityRequestDetail(
+      makeDetail({
+        matcherQuestions: [
+          {
+            identifier: "MQ-2",
+            prompt: "Anything else to share?",
+            type: "matcher",
+            isMandatory: false,
+            options: [],
+            suggestedAnswer: null,
+            inputType: "free-text",
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("[MQ-2] Anything else to share?  (optional, free-text)");
+    expect(out).not.toContain("Options:");
+    expect(out).not.toContain("Suggested:");
+  });
+
+  it("omits the Matcher questions section when there are none (#585)", () => {
+    const out = formatAvailabilityRequestDetail(makeDetail());
+    expect(out).not.toContain("Matcher questions");
   });
 });
 

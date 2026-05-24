@@ -4291,12 +4291,22 @@ export const interviews = {
 // `Unknown`-typed positions (`jobApplyState.operations.apply.errors`).
 // Same posture as #439's `Interview`: inline a trimmed selection that
 // touches only the well-typed fields the CLI / MCP renders, and trim
-// `job` to the {@link ApplicationJobRef} shape. The captured doc is the
-// authoritative wire shape; the selection is the projection contract.
-// The `AvailabilityRequest` schema fields `jobExpertiseAnswers`
+// `job` to the {@link ApplicationJobRef} shape PLUS the matcher
+// `questions(hideExpertiseQuestion: true)` selection added in #585 (the
+// shared #584 {@link MATCHER_QUESTION_SELECTION} fragment-string — see
+// {@link AvailabilityRequestDetail.matcherQuestions}). The captured doc
+// is the authoritative wire shape; the selection is the projection
+// contract. The `AvailabilityRequest` schema fields `jobExpertiseAnswers`
 // (`[Unknown]!`) and `rejectReason` (`Unknown`) are deliberately NOT
 // selected — `Unknown`-typed gap regions per
 // `../research/graphql/gateway/schema.graphql`.
+//
+// **Schema/contract rule (#585)**: embedding `job.questions { options
+// suggestedAnswer { answer } ... }` is a selection-set change adding the
+// INFERRED `options` / `suggestedAnswer` fields (same provenance as #584,
+// absent from the synthesized `JobPositionQuestion`). The op stays T1; the
+// live `64-applications-availability-request-show.e2e.test.ts` run is the
+// wire authority on the matcher-questions sub-shape.
 //
 // **Issue-body deviation**: issue #442 mentions a "requested
 // availability window" — no such field exists on the captured
@@ -4407,6 +4417,42 @@ export interface AvailabilityRequestDetail {
   answeredAt: string | null;
   /** The job the availability request is for. */
   job: ApplicationJobRef | null;
+  /**
+   * Matcher questions the recruiter attached to this Interest Request
+   * (#585), projected to the SAME {@link ApplicationQuestion} shape the
+   * `applications.applyQuestions()` matcher path surfaces (#584) — each
+   * entry carries `identifier`, `prompt`, `isMandatory`, plus the choice
+   * metadata (`options` / `suggestedAnswer` / `inputType`) needed to
+   * build a valid `matcherAnswers` payload for
+   * `applications.confirm()` (the IR-accept write path).
+   *
+   * Lifted from the AR's `job.questions(hideExpertiseQuestion: true)`
+   * via the IDENTICAL #584 reuse seam ({@link MATCHER_QUESTION_SELECTION}
+   * fragment-string + {@link MatcherQuestionWire} wire type +
+   * {@link projectMatcherQuestion} mapper) — NOT a re-derived shape. This
+   * closes the IR-accept workflow gap (#585): fetch the AR by id → read
+   * `matcherQuestions` (+ their `options`) → call `confirm()` with
+   * `matcherQuestionsAnswers`, all keyed off the SAME AvailabilityRequest
+   * id, no cross-referencing the job-apply tooling and no raw GraphQL.
+   *
+   * Empty array `[]` when the AR's job carries no matcher questions, or
+   * the AR has no associated job. `type` is always `"matcher"` for these
+   * entries; `inputType` is `"dropdown"` iff `options` is non-empty,
+   * `"free-text"` otherwise (mechanically derived per #584).
+   *
+   * **Scope**: matcher questions only. Expertise questions are answered
+   * via profile-item selections (`expertiseQuestionsAnswers`), not an
+   * enumerable choice list at this surface, and carry no dropdown
+   * options — deliberately out of #585 scope (see {@link ApplicationQuestion}
+   * JSDoc on the options-cascade note).
+   *
+   * **`options` / `suggestedAnswer` are [INFERRED — UNVERIFIED]** — same
+   * provenance as #584 (absent from the synthesized `JobPositionQuestion`;
+   * recovered from a manual GraphQL query). The live `*.e2e.test.ts`
+   * (gated by `TTCTL_E2E=1`) is the wire authority per the schema/contract
+   * rule.
+   */
+  matcherQuestions: ApplicationQuestion[];
 }
 
 // ---------------------------------------------------------------------
@@ -4432,6 +4478,17 @@ interface WireAvailabilityRequestJob {
   title?: string | null;
   url?: string | null;
   client?: { id: string; fullName?: string | null } | null;
+  /**
+   * Matcher questions on the job (#585). Selected via the shared
+   * {@link MATCHER_QUESTION_SELECTION} fragment-string under
+   * `job.questions(hideExpertiseQuestion: true)` — the SAME selection the
+   * #584 `JobApplicationQuestions` op uses. Reuses {@link MatcherQuestionWire}
+   * verbatim (the #584 wire type) so the projection stays a single
+   * contract. Optional + nullable-item-list defensively: a job with no
+   * matcher questions returns `[]`/`null`, and a trimmed selection (or a
+   * pre-#585 captured fixture) elides the field entirely.
+   */
+  questions?: (MatcherQuestionWire | null)[] | null;
 }
 
 interface WireAvailabilityRequestRecruiter {
@@ -4526,6 +4583,9 @@ const AVAILABILITY_REQUEST_QUERY = `query AvailabilityRequest($id: ID!) {
         title
         url
         client { __typename id fullName }
+        questions(hideExpertiseQuestion: true) {
+          ${MATCHER_QUESTION_SELECTION}
+        }
       }
     }
   }
@@ -4551,6 +4611,14 @@ function projectAvailabilityRequestDetail(w: WireAvailabilityRequest): Availabil
           lastName: recruiterWire.lastName ?? null,
           fullName: recruiterWire.fullName ?? null,
         };
+  // #585 — project the AR's job matcher questions via the SAME #584 seam
+  // the `applyQuestions` matcher path uses (filter list-entry nulls, then
+  // {@link projectMatcherQuestion}). Absent / null `questions` ⇒ `[]`,
+  // matching the empty-state contract on
+  // {@link AvailabilityRequestDetail.matcherQuestions}.
+  const matcherQuestions: ApplicationQuestion[] = (w.job?.questions ?? [])
+    .filter((q): q is MatcherQuestionWire => q !== null)
+    .map(projectMatcherQuestion);
   return {
     id: w.id,
     status: (w.jirStatus?.value ?? null) as AvailabilityRequestStatus | null,
@@ -4573,6 +4641,7 @@ function projectAvailabilityRequestDetail(w: WireAvailabilityRequest): Availabil
             url: w.job.url ?? null,
             client: w.job.client == null ? null : { id: w.job.client.id, fullName: w.job.client.fullName ?? null },
           },
+    matcherQuestions,
   };
 }
 
