@@ -136,10 +136,12 @@ export interface Employment {
  *
  * The CLI exposes a curated subset: `--company`, `--role` (→ position),
  * `--from`, `--to`, `--current`, `--description` (→ experienceItems —
- * single-paragraph today; multi-paragraph splits on blank lines). Other
- * fields (employerId, engagementId, industryIds, managementExperience,
- * primaryGeographyId, reportingTo, skills, …) are exposed at the type
- * level so future leaves can grow without churning callers.
+ * single-paragraph today; multi-paragraph splits on blank lines),
+ * `--industry-id`, `--skill-id`, and `--primary-geography-id` (#586 —
+ * the role's primary geography; live-verified to persist on both the
+ * create and update paths). The remaining fields (engagementId,
+ * managementExperience, reportingTo, …) are exposed at the type level
+ * so future leaves can grow without churning callers.
  *
  * `employerId` is the server-side catalog identifier for the employer
  * record (e.g. "V1-Employer-1234"). `add()` requires EITHER an explicit
@@ -175,6 +177,20 @@ export interface EmploymentFields {
   showViaToptal?: boolean;
   toptalRelated?: boolean;
   industryIds?: string[];
+  /**
+   * The role's primary geography, as a Toptal **Country** catalog id
+   * (base64 `V1-Country-<n>` — e.g. `VjEtQ291bnRyeS0yMzQ` = United States,
+   * sourced from the `getCountries` query). Surfaced on the CLI
+   * (`--primary-geography-id`) and MCP (`primaryGeographyId`) write paths
+   * in #586; live-verified to accept + persist on BOTH `CreateEmployment`
+   * and `UpdateEmployment` (round-trip in
+   * `71-profile-employment-primary-geography.e2e.test.ts`). Setting it
+   * satisfies the `EmploymentsMissingData` profile recommendation. The
+   * read echo is {@link Employment.primaryGeography} (the nested
+   * `{ id, code, name }` object, not the scalar write-input name). A
+   * catalog-lookup command for discovering ids is tracked in #596; the
+   * surfaces expose set-only (non-null) while the type permits `null`.
+   */
   primaryGeographyId?: string | null;
   reportingTo?: string | null;
   /**

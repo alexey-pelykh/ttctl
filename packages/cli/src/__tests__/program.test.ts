@@ -308,6 +308,28 @@ describe("program help and metadata", () => {
     expect(skillOpt).toBeDefined();
     expect(skillOpt?.flags).toContain("<id>");
   });
+
+  it("`profile employment add` exposes `--primary-geography-id <id>` (#586)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const employment = profile?.commands.find((c) => c.name() === "employment");
+    const add = employment?.commands.find((c) => c.name() === "add");
+    expect(add).toBeDefined();
+    const geoOpt = add?.options.find((o) => o.long === "--primary-geography-id");
+    expect(geoOpt).toBeDefined();
+    expect(geoOpt?.flags).toContain("<id>");
+  });
+
+  it("`profile employment update` exposes `--primary-geography-id <id>` (#586)", () => {
+    const program = buildProgram();
+    const profile = program.commands.find((c) => c.name() === "profile");
+    const employment = profile?.commands.find((c) => c.name() === "employment");
+    const update = employment?.commands.find((c) => c.name() === "update");
+    expect(update).toBeDefined();
+    const geoOpt = update?.options.find((o) => o.long === "--primary-geography-id");
+    expect(geoOpt).toBeDefined();
+    expect(geoOpt?.flags).toContain("<id>");
+  });
 });
 
 /**

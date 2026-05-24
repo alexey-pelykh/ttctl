@@ -81,6 +81,10 @@ export function buildProfileEmploymentCommand(): Command {
       (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
     )
     .option(
+      "--primary-geography-id <id>",
+      "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation. A discovery command is tracked in #596; until then, read an existing row's geography id or set it once via the Toptal web UI.",
+    )
+    .option(
       "--no-employer",
       "custom (non-catalog) workplace: send the free-text --company with employerId:null and skip the employer-autocomplete catalog (cannot be combined with --employer-id; requires either --website or --no-website per the #484 CREATE-side anchor contract)",
     )
@@ -119,6 +123,10 @@ export function buildProfileEmploymentCommand(): Command {
       "--skill-id <id>",
       "catalog Skill id (repeatable; when supplied, replaces the entry's skill set — omit to preserve). Discover via `ttctl profile skills list`. The Toptal server rejects an empty skill set on update — supply at least one id when using this flag.",
       (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
+    .option(
+      "--primary-geography-id <id>",
+      "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation (which flags rows missing geography); omit to preserve the current value. A discovery command is tracked in #596; until then, read an existing row's geography id or set it once via the Toptal web UI.",
     )
     .addOption(
       new Option("-o, --output <format>", "output format")
@@ -217,6 +225,8 @@ interface AddOptions {
   employer: boolean;
   // Catalog skill ids supplied via `--skill-id` (repeatable, #484).
   skillId?: string[];
+  // Country catalog id supplied via `--primary-geography-id` (#586).
+  primaryGeographyId?: string;
   output: OutputFormat;
 }
 
@@ -233,6 +243,8 @@ interface UpdateOptions {
   industryId?: string[];
   // Catalog skill ids supplied via `--skill-id` (repeatable, #541).
   skillId?: string[];
+  // Country catalog id supplied via `--primary-geography-id` (#586).
+  primaryGeographyId?: string;
   output: OutputFormat;
 }
 
@@ -296,6 +308,12 @@ async function runAdd(options: AddOptions): Promise<void> {
   // Employer record — passing skills there is optional.
   if (options.skillId !== undefined && options.skillId.length > 0) {
     fields.skills = options.skillId.map((id) => ({ id, name: "" }));
+  }
+
+  // #586: primary geography — a Toptal Country catalog id. Threaded onto
+  // the CreateEmployment wire via core's `...wireFields` spread.
+  if (options.primaryGeographyId !== undefined) {
+    fields.primaryGeographyId = options.primaryGeographyId;
   }
 
   const token = await loadAuthTokenOrExit("profile employment add", options.output);
@@ -390,6 +408,13 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   // accepts an empty display name when only the id is meaningful.
   if (options.skillId !== undefined && options.skillId.length > 0) {
     fields.skills = options.skillId.map((id) => ({ id, name: "" }));
+  }
+  // #586: primary geography — a Toptal Country catalog id. Setting it
+  // counts toward the "at least one field flag" check below; landed on the
+  // UpdateEmployment wire via `buildUpdateEmploymentInput`'s `...fields`.
+  // When omitted, the read-current+merge preserves the row's current value.
+  if (options.primaryGeographyId !== undefined) {
+    fields.primaryGeographyId = options.primaryGeographyId;
   }
 
   if (Object.keys(fields).length === 0) {

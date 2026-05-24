@@ -118,6 +118,16 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
               "Each paragraph must be 50-250 characters — the Toptal server rejects out-of-range items with USER_ERROR (#492). " +
               "ttctl validates client-side before EITHER apply or dryRun, so the dryRun preview is a trustworthy pre-flight gate.",
           ),
+        primaryGeographyId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The role's primary geography — a Toptal Country catalog id (e.g. `VjEtQ291bnRyeS0yMzQ` = United States). " +
+              "Live-verified to persist on the create path (#586). Setting it satisfies the `EmploymentsMissingData` " +
+              "profile recommendation. A catalog-lookup command for discovering ids is tracked in #596; until then, read " +
+              "an existing row's `primaryGeography.id` (via `ttctl_profile_employment_list`) or set it once via the Toptal web UI.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -178,6 +188,12 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       // the `name` field is optional and passed verbatim when supplied.
       if (input.skills !== undefined) {
         fields.skills = input.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));
+      }
+      // #586: the role's primary geography (Country catalog id). Flows
+      // into the dry-run preview's `employment` object via core's
+      // `...wireFields` spread, and onto the live CreateEmployment wire.
+      if (input.primaryGeographyId !== undefined) {
+        fields.primaryGeographyId = input.primaryGeographyId;
       }
 
       // Per-#395: dry-run path is delegated to the core service so the
@@ -276,6 +292,17 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .describe(
             "Whether this entry is a Toptal-related engagement. Server-determined (#402 discovery 2026-05-20): the wire accepts any boolean input, but the server applies business logic (likely keyed on employer affiliation) and may override the supplied value on read. The override THROUGHPUT works (client → wire); the persisted state is server-determined regardless of caller input.",
           ),
+        primaryGeographyId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The role's primary geography — a Toptal Country catalog id (e.g. `VjEtQ291bnRyeS0yMzQ` = United States). " +
+              "Live-verified to persist on the update path (#586). Setting it satisfies the `EmploymentsMissingData` " +
+              "profile recommendation, which flags existing rows missing geography. When omitted, the read-current+merge " +
+              "preserves the row's existing geography. A catalog-lookup command for discovering ids is tracked in #596; " +
+              "until then, read an existing row's `primaryGeography.id` or set it once via the Toptal web UI.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -332,6 +359,11 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       if (input.publicationPermit !== undefined) fields.publicationPermit = input.publicationPermit;
       if (input.showViaToptal !== undefined) fields.showViaToptal = input.showViaToptal;
       if (input.toptalRelated !== undefined) fields.toptalRelated = input.toptalRelated;
+      // #586: primary geography (Country catalog id). Lands on the wire via
+      // `buildUpdateEmploymentInput`'s `...fields` spread (apply path) and
+      // appears in the dry-run preview's `employment` object via `...fields`
+      // below. When omitted, the merge preserves the row's current geography.
+      if (input.primaryGeographyId !== undefined) fields.primaryGeographyId = input.primaryGeographyId;
 
       // #492 — server-side 50-250 char/item gate fires on EITHER path
       // (apply or dryRun). The apply path routes through
