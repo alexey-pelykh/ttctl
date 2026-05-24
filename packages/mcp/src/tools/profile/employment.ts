@@ -414,34 +414,49 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       }
 
       if (input.dryRun === true) {
-        // Dry-run preview shows the full merged shape — the wire-required
-        // fields the apply path injects from current state appear as
+        // Dry-run preview shows the full merged shape — the fields the apply
+        // path injects UNCONDITIONALLY from current state appear as
         // placeholders, plus user-supplied overrides verbatim. Mirrors
         // `basic.set`'s `DRY_RUN_PROFILE_ID_PLACEHOLDER` posture —
         // preserves the zero-transport-in-dry-run invariant (#165 / #379)
         // while honoring #394's AC that the preview shows the full merged
         // input. A real read is intentionally NOT issued here.
         //
-        // Field set mirrors `buildUpdateEmploymentInput` in
-        // `services/profile/employment/index.ts`: GraphQL-required-non-null
-        // (5: experienceItems, position, skills, showViaToptal, startDate
-        // — `position` added #407) + Rails `.blank?` gates (company,
-        // publicationPermit) + catalog refs (employerId, industryIds —
-        // both injected conditionally on current state in the apply path).
-        // The optional catalog refs (primaryGeographyId, reportingTo)
-        // appear in the preview only when the current row has them; here
-        // we surface them as placeholders so the preview is non-misleading
-        // about the potential shape.
+        // Field set mirrors the UNCONDITIONAL echoes in
+        // `buildUpdateEmploymentInput` (`services/profile/employment/index.ts`),
+        // in the same order for traceability: GraphQL-required-non-null
+        // (experienceItems, position, skills, showViaToptal, startDate —
+        // `position` added #407) + the force-echoed nullable `endDate` (#487
+        // three-state merge: omission is treated as null-set, NOT preservation,
+        // so the apply path ALWAYS sends it) + the unconditionally-echoed
+        // `toptalRelated` (#508) and `managementExperience` + Rails `.blank?`
+        // gates (company, publicationPermit) + catalog refs (employerId,
+        // industryIds). `endDate` / `toptalRelated` / `managementExperience`
+        // were added to this list in #589 — pre-#589 a caller could not confirm
+        // from the preview that an omitted field (notably a current role's
+        // `endDate: null` "Present" status) is preserved rather than dropped.
+        //
+        // CONDITIONALLY-echoed fields are intentionally NOT placeholders: the
+        // apply path echoes primaryGeographyId / engagementId / reportingTo (and
+        // the noWebsite/companyWebsite anchor pair) only when the current row
+        // carries them. The zero-transport preview cannot read the row's state,
+        // so these surface ONLY when the caller supplies them (via `...fields`)
+        // — matching the #586 / #587 "WITHOUT it → omitted" absence tests.
+        // `employerId` is the one pragmatic exception, listed as the dominant
+        // catalog-employer case.
         const previewEmployment: Record<string, unknown> = {
           experienceItems: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           position: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           skills: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           showViaToptal: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+          toptalRelated: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           startDate: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+          endDate: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           company: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           publicationPermit: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           employerId: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           industryIds: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+          managementExperience: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
           ...fields,
         };
         return dryRunResponse(
