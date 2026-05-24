@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-24T06:03:19.873Z",
+  "capturedAt": "2026-05-24T06:41:22.034Z",
   "operationName": "createPortfolioItem",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -23,6 +23,17 @@
         },
         "details": {
           "kind": "null"
+        },
+        "engagement": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              }
+            }
+          }
         },
         "files": {
           "kind": "array",
