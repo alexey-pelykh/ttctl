@@ -98,45 +98,42 @@ describe("profile education list (live talent-profile, INFERRED wire shape, #556
   // Pure read — GET_EDUCATION wire shape (schema/contract core)
   // -----------------------------------------------------------------
 
-  it.skipIf(!e2eEnabled)(
-    "list returns rows with every documented field, including skills: SkillRef[] (#556)",
-    async () => {
-      const token = loadSandboxBearer(sandboxConfigPath);
-      const rows = await profile.education.list(token);
+  it.skipIf(!e2eEnabled)("list returns rows with every documented field, including skills: SkillRef[]", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const rows = await profile.education.list(token);
 
-      if (rows.length === 0) {
-        process.stderr.write(
-          "[70-profile-education-skills] account has zero education rows — per-row " +
-            "field-shape assertions skipped (the wire-shape snapshot subtest still runs " +
-            "and covers the response envelope shape).\n",
-        );
-        return;
-      }
+    if (rows.length === 0) {
+      process.stderr.write(
+        "[70-profile-education-skills] account has zero education rows — per-row " +
+          "field-shape assertions skipped (the wire-shape snapshot subtest still runs " +
+          "and covers the response envelope shape).\n",
+      );
+      return;
+    }
 
-      for (const e of rows) {
-        expect(typeof e.id).toBe("string");
-        expect(e.id.length).toBeGreaterThan(0);
-        expect(typeof e.institution).toBe("string");
-        expect(typeof e.degree).toBe("string");
-        expect(typeof e.fieldOfStudy === "string" || e.fieldOfStudy === null).toBe(true);
-        expect(typeof e.location === "string" || e.location === null).toBe(true);
-        expect(typeof e.title === "string" || e.title === null).toBe(true);
-        expect(typeof e.yearFrom === "number" || e.yearFrom === null).toBe(true);
-        expect(typeof e.yearTo === "number" || e.yearTo === null).toBe(true);
-        expect(typeof e.highlight).toBe("boolean");
-        // #556 — skills surfaces as SkillRef[] post-mapping. The wire
-        // returns `skills { nodes [{ id, name }] }`; `mapEducationNode`
-        // flattens it. Empty arrays are valid (education has no skill links).
-        expect(Array.isArray(e.skills)).toBe(true);
-        for (const s of e.skills) {
-          expect(typeof s.id).toBe("string");
-          expect(s.id.length).toBeGreaterThan(0);
-          expect(typeof s.name).toBe("string");
-          expect(s.name.length).toBeGreaterThan(0);
-        }
+    for (const e of rows) {
+      expect(typeof e.id).toBe("string");
+      expect(e.id.length).toBeGreaterThan(0);
+      expect(typeof e.institution).toBe("string");
+      expect(typeof e.degree).toBe("string");
+      expect(typeof e.fieldOfStudy === "string" || e.fieldOfStudy === null).toBe(true);
+      expect(typeof e.location === "string" || e.location === null).toBe(true);
+      expect(typeof e.title === "string" || e.title === null).toBe(true);
+      expect(typeof e.yearFrom === "number" || e.yearFrom === null).toBe(true);
+      expect(typeof e.yearTo === "number" || e.yearTo === null).toBe(true);
+      expect(typeof e.highlight).toBe("boolean");
+      // #556 — skills surfaces as SkillRef[] post-mapping. The wire
+      // returns `skills { nodes [{ id, name }] }`; `mapEducationNode`
+      // flattens it. Empty arrays are valid (education has no skill links).
+      expect(Array.isArray(e.skills)).toBe(true);
+      for (const s of e.skills) {
+        expect(typeof s.id).toBe("string");
+        expect(s.id.length).toBeGreaterThan(0);
+        expect(typeof s.name).toBe("string");
+        expect(s.name.length).toBeGreaterThan(0);
       }
-    },
-  );
+    }
+  });
 
   // -----------------------------------------------------------------
   // T1 wire-shape snapshot

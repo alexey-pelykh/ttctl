@@ -100,7 +100,7 @@ interface ConfirmPreviewEnvelope {
   updated?: unknown;
 }
 
-describe("applications confirm with questions (live mobile-gateway)", () => {
+describe("applications confirm with questions (live mobile-gateway, #411, #428)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 
@@ -116,7 +116,7 @@ describe("applications confirm with questions (live mobile-gateway)", () => {
   // ---------------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "regression #411: `applications confirm <ar> --rate --kind` WITHOUT --answers-file emits the pre-#428 envelope shape",
+    "`applications confirm <ar> --rate --kind` WITHOUT --answers-file emits the pre-answers-file envelope shape",
     async () => {
       const result = await cli.run([
         "--dry-run",

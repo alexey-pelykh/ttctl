@@ -68,7 +68,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("profile resume (live talent-profile, INFERRED wire shape)", () => {
+describe("profile resume (live talent-profile, INFERRED wire shape, #318)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
@@ -78,7 +78,7 @@ describe("profile resume (live talent-profile, INFERRED wire shape)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "cancelResumeUpload accepts a profileId-bearing input and the server reaches the application error layer (#318)",
+    "cancelResumeUpload accepts a profileId-bearing input and the server reaches the application error layer",
     async () => {
       const result = await cli.run(["profile", "resume", "cancel-upload", "-o", "json"]);
       // Against a quiescent state (no in-flight upload), the live

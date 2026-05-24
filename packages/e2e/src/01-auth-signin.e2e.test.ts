@@ -41,7 +41,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("auth signin + profile (live Toptal, shared session)", () => {
+describe("auth signin + profile (live Toptal, shared session, #66, #129)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
@@ -85,7 +85,7 @@ describe("auth signin + profile (live Toptal, shared session)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "profile show: returns parseable JSON with the merged mobile-gateway + talent-profile envelope (#66, #129)",
+    "profile show: returns parseable JSON with the merged mobile-gateway + talent-profile envelope",
     async () => {
       const result = await cli.run(["profile", "show", "-o", "json"]);
       expect(result.exitCode).toBe(0);

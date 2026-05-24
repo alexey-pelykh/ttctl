@@ -50,7 +50,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("payments payouts (live mobile-gateway)", () => {
+describe("payments payouts (live mobile-gateway, #373)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 
@@ -221,7 +221,7 @@ describe("payments payouts (live mobile-gateway)", () => {
   // `packages/e2e/src/wire-snapshots/Payments.snapshot.json`; first
   // authenticated run with `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` captures it.
   // -------------------------------------------------------------------
-  it.skipIf(!e2eEnabled)("Payments wire shape matches snapshot (#373 — projected list)", async () => {
+  it.skipIf(!e2eEnabled)("Payments wire shape matches snapshot (projected list)", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
     const response = await payments.payouts.list(token, { page: 1, perPage: 5 });
     if (response.items.length === 0) {

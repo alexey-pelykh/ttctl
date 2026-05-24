@@ -233,7 +233,7 @@ describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wir
   // -------------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "UPDATE_BASIC_INFO wire shape is stable (T1 snapshot, post-#393 full-replacement)",
+    "UPDATE_BASIC_INFO wire shape is stable (T1 snapshot, full-replacement)",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
       const before = await profile.basic.getBasicInfo(token);

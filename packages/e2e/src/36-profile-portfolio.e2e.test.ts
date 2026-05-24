@@ -433,115 +433,113 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
     },
   );
 
-  it.skipIf(!e2eEnabled)(
-    "createPortfolioItem + portfolio list expose kpis as a typed array (#550 INFERRED → verified)",
-    async () => {
-      // Schema/contract validation rule (CLAUDE.md): `kpis` is `Unknown`
-      // in the synthesized SDL — its wire shape is INFERRED. This test
-      // is the load-bearing live verification that:
-      //   - `kpis { id value description }` is the accepted projection
-      //     (the query parses + returns 200 OK; a wrong shape would
-      //     return a GraphQL error on the field selector);
-      //   - `kpis` is a direct list (NOT a connection) — captured as
-      //     `Array.isArray(items[i].kpis)` rather than
-      //     `items[i].kpis.nodes`;
-      //   - newly-created portfolio items return `kpis: []` (empty
-      //     array, not null);
-      //   - populated kpi entries (when present in the maintainer's
-      //     account) carry `{id, value, description}` per the
-      //     `PortfolioItemKpi` element type the probe surfaced.
-      //
-      // Probe context (2026-05-23): maintainer's test account had 32
-      // portfolio items, all with empty `kpis: []` — populated-shape
-      // sub-field types stay INFERRED in this snapshot. The wire-shape
-      // snapshot in `createPortfolioItem.snapshot.json` captures the
-      // empty-case shape; when a populated KPI appears (sentinel +
-      // future write surface, OR an existing account-state item), this
-      // test's `withKpis` branch performs the per-field type assertion.
-      const sentinelTitle = `e2e-sentinel-kpis-${Date.now().toString()}`;
-      const addResult = await cli.run([
-        "profile",
-        "portfolio",
-        "add",
-        "--title",
-        sentinelTitle,
-        "--industry-id",
-        SOFTWARE_INDUSTRY_ID,
-        "-o",
-        "json",
-      ]);
-      expect(addResult.exitCode).toBe(0);
-      const addPayload = JSON.parse(addResult.stdout) as {
-        ok?: boolean;
-        created?: PortfolioItemShape[];
+  it.skipIf(!e2eEnabled)("createPortfolioItem + portfolio list expose kpis as a typed array", async () => {
+    // Provenance: #550 — kpis wire-shape verification (INFERRED → verified live).
+    // Schema/contract validation rule (CLAUDE.md): `kpis` is `Unknown`
+    // in the synthesized SDL — its wire shape is INFERRED. This test
+    // is the load-bearing live verification that:
+    //   - `kpis { id value description }` is the accepted projection
+    //     (the query parses + returns 200 OK; a wrong shape would
+    //     return a GraphQL error on the field selector);
+    //   - `kpis` is a direct list (NOT a connection) — captured as
+    //     `Array.isArray(items[i].kpis)` rather than
+    //     `items[i].kpis.nodes`;
+    //   - newly-created portfolio items return `kpis: []` (empty
+    //     array, not null);
+    //   - populated kpi entries (when present in the maintainer's
+    //     account) carry `{id, value, description}` per the
+    //     `PortfolioItemKpi` element type the probe surfaced.
+    //
+    // Probe context (2026-05-23): maintainer's test account had 32
+    // portfolio items, all with empty `kpis: []` — populated-shape
+    // sub-field types stay INFERRED in this snapshot. The wire-shape
+    // snapshot in `createPortfolioItem.snapshot.json` captures the
+    // empty-case shape; when a populated KPI appears (sentinel +
+    // future write surface, OR an existing account-state item), this
+    // test's `withKpis` branch performs the per-field type assertion.
+    const sentinelTitle = `e2e-sentinel-kpis-${Date.now().toString()}`;
+    const addResult = await cli.run([
+      "profile",
+      "portfolio",
+      "add",
+      "--title",
+      sentinelTitle,
+      "--industry-id",
+      SOFTWARE_INDUSTRY_ID,
+      "-o",
+      "json",
+    ]);
+    expect(addResult.exitCode).toBe(0);
+    const addPayload = JSON.parse(addResult.stdout) as {
+      ok?: boolean;
+      created?: PortfolioItemShape[];
+    };
+    expect(addPayload.ok).toBe(true);
+    const created = addPayload.created ?? [];
+    const sentinelId = created.find((it) => it.title === sentinelTitle)?.id;
+    expect(typeof sentinelId).toBe("string");
+    if (sentinelId === undefined) return;
+
+    try {
+      // The freshly-created sentinel MUST have `kpis: []` — the wire
+      // returns an empty array for items without KPIs (NOT null, NOT
+      // missing). The mapper would not surface a kpis field at all
+      // if the wire shape were unparseable, so an Array.isArray
+      // assertion is enough to verify both the wire-shape acceptance
+      // and the projection.
+      const sentinel = created.find((it) => it.id === sentinelId);
+      expect(sentinel?.kpis).toBeDefined();
+      expect(Array.isArray(sentinel?.kpis)).toBe(true);
+      expect(sentinel?.kpis).toEqual([]);
+
+      // Inspect the full list — any portfolio item that DOES carry
+      // populated KPIs lets us assert the per-field shape on a live
+      // wire payload. The maintainer's account at probe time had no
+      // populated KPIs (32 items, all `[]`); when this changes, the
+      // assertion picks up the populated shape automatically.
+      const listResult = await cli.run(["profile", "portfolio", "list", "-o", "json"]);
+      expect(listResult.exitCode).toBe(0);
+      const listPayload = JSON.parse(listResult.stdout) as {
+        version?: string;
+        items?: PortfolioItemShape[];
       };
-      expect(addPayload.ok).toBe(true);
-      const created = addPayload.created ?? [];
-      const sentinelId = created.find((it) => it.title === sentinelTitle)?.id;
-      expect(typeof sentinelId).toBe("string");
-      if (sentinelId === undefined) return;
-
-      try {
-        // The freshly-created sentinel MUST have `kpis: []` — the wire
-        // returns an empty array for items without KPIs (NOT null, NOT
-        // missing). The mapper would not surface a kpis field at all
-        // if the wire shape were unparseable, so an Array.isArray
-        // assertion is enough to verify both the wire-shape acceptance
-        // and the projection.
-        const sentinel = created.find((it) => it.id === sentinelId);
-        expect(sentinel?.kpis).toBeDefined();
-        expect(Array.isArray(sentinel?.kpis)).toBe(true);
-        expect(sentinel?.kpis).toEqual([]);
-
-        // Inspect the full list — any portfolio item that DOES carry
-        // populated KPIs lets us assert the per-field shape on a live
-        // wire payload. The maintainer's account at probe time had no
-        // populated KPIs (32 items, all `[]`); when this changes, the
-        // assertion picks up the populated shape automatically.
-        const listResult = await cli.run(["profile", "portfolio", "list", "-o", "json"]);
-        expect(listResult.exitCode).toBe(0);
-        const listPayload = JSON.parse(listResult.stdout) as {
-          version?: string;
-          items?: PortfolioItemShape[];
-        };
-        const allItems = listPayload.items ?? [];
-        // Every item in the list must have an Array-typed `kpis` field
-        // — the wire shape is `kpis: [PortfolioItemKpi!]!` (non-null
-        // list of non-null elements per the empirical schema), so the
-        // projection MUST surface an array for every entry.
-        for (const it of allItems) {
-          expect(Array.isArray(it.kpis)).toBe(true);
-        }
-
-        const withKpis = allItems.filter((it) => Array.isArray(it.kpis) && it.kpis.length > 0);
-        if (withKpis.length > 0) {
-          // Per-field shape assertion for any populated KPI — locks
-          // the {id: string, value?: string|null, description?: string|null}
-          // contract live. Skipped when no populated KPIs are present
-          // on the maintainer's account (the typical case at probe
-          // time); the empty-case shape is gated by the wire-shape
-          // snapshot below.
-          const allKpis = withKpis.flatMap((it) => it.kpis ?? []);
-          for (const kpi of allKpis) {
-            expect(typeof kpi.id).toBe("string");
-            if (kpi.value !== null && kpi.value !== undefined) {
-              expect(typeof kpi.value).toBe("string");
-            }
-            if (kpi.description !== null && kpi.description !== undefined) {
-              expect(typeof kpi.description).toBe("string");
-            }
-          }
-        } else {
-          process.stderr.write(
-            "info: no portfolio items with populated KPIs on this account — populated-shape sub-field assertion skipped (empty-case shape verified via wire-shape snapshot)\n",
-          );
-        }
-      } finally {
-        const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
-        expect(cleanup.exitCode).toBe(0);
+      const allItems = listPayload.items ?? [];
+      // Every item in the list must have an Array-typed `kpis` field
+      // — the wire shape is `kpis: [PortfolioItemKpi!]!` (non-null
+      // list of non-null elements per the empirical schema), so the
+      // projection MUST surface an array for every entry.
+      for (const it of allItems) {
+        expect(Array.isArray(it.kpis)).toBe(true);
       }
-    },
-  );
+
+      const withKpis = allItems.filter((it) => Array.isArray(it.kpis) && it.kpis.length > 0);
+      if (withKpis.length > 0) {
+        // Per-field shape assertion for any populated KPI — locks
+        // the {id: string, value?: string|null, description?: string|null}
+        // contract live. Skipped when no populated KPIs are present
+        // on the maintainer's account (the typical case at probe
+        // time); the empty-case shape is gated by the wire-shape
+        // snapshot below.
+        const allKpis = withKpis.flatMap((it) => it.kpis ?? []);
+        for (const kpi of allKpis) {
+          expect(typeof kpi.id).toBe("string");
+          if (kpi.value !== null && kpi.value !== undefined) {
+            expect(typeof kpi.value).toBe("string");
+          }
+          if (kpi.description !== null && kpi.description !== undefined) {
+            expect(typeof kpi.description).toBe("string");
+          }
+        }
+      } else {
+        process.stderr.write(
+          "info: no portfolio items with populated KPIs on this account — populated-shape sub-field assertion skipped (empty-case shape verified via wire-shape snapshot)\n",
+        );
+      }
+    } finally {
+      const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
+      expect(cleanup.exitCode).toBe(0);
+    }
+  });
 
   it.skipIf(!e2eEnabled)("createPortfolioItem + portfolio list expose quotes as a typed array", async () => {
     // Provenance: #551 — quotes wire-shape verification (INFERRED → verified live).

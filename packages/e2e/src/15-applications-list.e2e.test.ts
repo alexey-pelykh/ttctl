@@ -32,7 +32,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("applications list (live mobile-gateway)", () => {
+describe("applications list (live mobile-gateway, #377, #410, #539, #547)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
@@ -175,37 +175,34 @@ describe("applications list (live mobile-gateway)", () => {
     };
   }
 
-  it.skipIf(!e2eEnabled)(
-    "applications list --per-page 5 surfaces offset-style pageInfo and limits items (#377)",
-    async () => {
-      const result = await cli.run(["applications", "list", "--page", "1", "--per-page", "5", "-o", "json"]);
-      expect(result.exitCode).toBe(0);
-      const payload = JSON.parse(result.stdout) as ListEnvelope;
-      expect(payload.version).toBe("1.0");
-      expect(Array.isArray(payload.items)).toBe(true);
+  it.skipIf(!e2eEnabled)("applications list --per-page 5 surfaces offset-style pageInfo and limits items", async () => {
+    const result = await cli.run(["applications", "list", "--page", "1", "--per-page", "5", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as ListEnvelope;
+    expect(payload.version).toBe("1.0");
+    expect(Array.isArray(payload.items)).toBe(true);
 
-      // Server may return fewer than --per-page items if the test
-      // account has < 5 activity rows total. In either case items must
-      // not exceed perPage.
-      if (Array.isArray(payload.items)) {
-        expect(payload.items.length).toBeLessThanOrEqual(5);
-      }
+    // Server may return fewer than --per-page items if the test
+    // account has < 5 activity rows total. In either case items must
+    // not exceed perPage.
+    if (Array.isArray(payload.items)) {
+      expect(payload.items.length).toBeLessThanOrEqual(5);
+    }
 
-      // pageInfo MUST be present when --page/--per-page were passed —
-      // even if the result set is empty, the envelope reflects the
-      // request.
-      expect(payload.pageInfo).toBeDefined();
-      expect(payload.pageInfo?.currentPage).toBe(1);
-      expect(payload.pageInfo?.perPage).toBe(5);
-      // totalPages and hasNextPage derived from totalCount; both
-      // present as the server always returns totalCount.
-      expect(typeof payload.pageInfo?.totalPages).toBe("number");
-      expect(typeof payload.pageInfo?.hasNextPage).toBe("boolean");
-    },
-  );
+    // pageInfo MUST be present when --page/--per-page were passed —
+    // even if the result set is empty, the envelope reflects the
+    // request.
+    expect(payload.pageInfo).toBeDefined();
+    expect(payload.pageInfo?.currentPage).toBe(1);
+    expect(payload.pageInfo?.perPage).toBe(5);
+    // totalPages and hasNextPage derived from totalCount; both
+    // present as the server always returns totalCount.
+    expect(typeof payload.pageInfo?.totalPages).toBe("number");
+    expect(typeof payload.pageInfo?.hasNextPage).toBe("boolean");
+  });
 
   it.skipIf(!e2eEnabled)(
-    "applications list --page 1 vs --page 2 returns DIFFERENT entities (server honors page variable; #377)",
+    "applications list --page 1 vs --page 2 returns DIFFERENT entities (server honors page variable)",
     async () => {
       // Use the default sort; jobActivityList's default ordering
       // (`lastUpdatedAt` desc) is stable enough across consecutive
@@ -250,7 +247,7 @@ describe("applications list (live mobile-gateway)", () => {
     },
   );
 
-  it.skipIf(!e2eEnabled)("applications list pretty footer renders 'Page X of Y' when paginated (#377)", async () => {
+  it.skipIf(!e2eEnabled)("applications list pretty footer renders 'Page X of Y' when paginated", async () => {
     const result = await cli.run(["applications", "list", "--page", "1", "--per-page", "5"]);
     expect(result.exitCode).toBe(0);
     // Pretty output: the table is followed by the footer line.
@@ -285,7 +282,7 @@ describe("applications list (live mobile-gateway)", () => {
   //     with both as strings.
   // -------------------------------------------------------------------
 
-  it.skipIf(!e2eEnabled)("applications list projects fixedRate on every row (Money | null shape, #410)", async () => {
+  it.skipIf(!e2eEnabled)("applications list projects fixedRate on every row (Money | null shape)", async () => {
     const result = await cli.run(["applications", "list", "-o", "json"]);
     expect(result.exitCode).toBe(0);
     const payload = JSON.parse(result.stdout) as {
@@ -307,7 +304,7 @@ describe("applications list (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "applications list --status-group ON_RECRUITER_REVIEW carries fixedRate on IR rows (#410)",
+    "applications list --status-group ON_RECRUITER_REVIEW carries fixedRate on IR rows",
     async () => {
       const result = await cli.run(["applications", "list", "--status-group", "ON_RECRUITER_REVIEW", "-o", "json"]);
       expect(result.exitCode).toBe(0);
@@ -357,7 +354,7 @@ describe("applications list (live mobile-gateway)", () => {
   // -------------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "applications list ON_RECRUITER_REVIEW rows carry the embedded AR projection keys (#539)",
+    "applications list ON_RECRUITER_REVIEW rows carry the embedded AR projection keys",
     async () => {
       const result = await cli.run(["applications", "list", "--status-group", "ON_RECRUITER_REVIEW", "-o", "json"]);
       expect(result.exitCode).toBe(0);
@@ -412,7 +409,7 @@ describe("applications list (live mobile-gateway)", () => {
   // -------------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "applications list projects mostRelevantApplication on every row (id-only | null, #547)",
+    "applications list projects mostRelevantApplication on every row (id-only | null)",
     async () => {
       const result = await cli.run(["applications", "list", "-o", "json"]);
       expect(result.exitCode).toBe(0);

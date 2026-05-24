@@ -106,7 +106,7 @@ describe("profile employment update — endDate preservation regression (#487)",
     sandboxConfigPath = getSharedSession().sandboxConfigPath;
   });
 
-  it.skipIf(!e2eEnabled)("endDate survives a partial update on a closed role (#487 regression)", async () => {
+  it.skipIf(!e2eEnabled)("endDate survives a partial update on a closed role (regression)", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
     const ts = Date.now().toString();
     const sentinelCompany = `e2e-487-sentinel-${ts}`;

@@ -47,7 +47,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("engagements list (live mobile-gateway)", () => {
+describe("engagements list (live mobile-gateway, #375)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
@@ -139,7 +139,7 @@ describe("engagements list (live mobile-gateway)", () => {
   // `eligibleJobs` / `JobsList` sibling).
   // -------------------------------------------------------------------
 
-  it.skipIf(!e2eEnabled)("accepts --page / --per-page and surfaces pageInfo (#375)", async () => {
+  it.skipIf(!e2eEnabled)("accepts --page / --per-page and surfaces pageInfo", async () => {
     // `--status all` to maximize available rows on accounts with mixed history.
     const result = await cli.run([
       "engagements",
@@ -182,7 +182,7 @@ describe("engagements list (live mobile-gateway)", () => {
     }
   });
 
-  it.skipIf(!e2eEnabled)("page 2 does not overlap page 1 on row ids when totalCount > perPage (#375)", async () => {
+  it.skipIf(!e2eEnabled)("page 2 does not overlap page 1 on row ids when totalCount > perPage", async () => {
     const p1 = await cli.run([
       "engagements",
       "list",
