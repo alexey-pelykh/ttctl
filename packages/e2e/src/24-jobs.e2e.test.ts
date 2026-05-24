@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// e2e-covers: JobShow
+// e2e-covers: JobShow, JobsList
 
 /**
  * E2E coverage for `ttctl jobs` (#148).
@@ -70,7 +70,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("jobs (live mobile-gateway, #138, #166, #183, #410, #545, #546)", () => {
+describe("jobs (live mobile-gateway, #138, #166, #183, #410, #530, #545, #546)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 
@@ -260,6 +260,35 @@ describe("jobs (live mobile-gateway, #138, #166, #183, #410, #545, #546)", () =>
     expect(() =>
       assertWireShapeStable({
         operationName: "JobShow",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------
+  // Track 1 — JobsList wire-shape snapshot diff (#530)
+  //
+  // `JobsList` is classified Track 1 in `docs/wire-validation-routing.md`.
+  // PR #562 fixed the polymorphic-supertype `metadata` selection (wrapping
+  // `offeredHourlyRate` in `... on AvailabilityRequestFixedMetadata` after
+  // Toptal split `AvailabilityRequestMetadata`) but deferred the snapshot
+  // capture; this test closes that deferred T1 gap. The live `jobs.list`
+  // call is itself the proof the wrapped selection is accepted — the
+  // pre-fix naive selection 400'd (`GRAPHQL_VALIDATION_FAILED`), so a
+  // successful return means the fix holds on the live wire.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("JobsList wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await jobs.list(token);
+    if (response.items.length === 0) {
+      process.stderr.write("warning: no eligible jobs in test account — JobsList wire-shape snapshot skipped\n");
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "JobsList",
         surface: "mobile-gateway",
         transport: "stock",
         response,

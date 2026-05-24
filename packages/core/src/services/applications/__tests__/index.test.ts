@@ -417,13 +417,17 @@ describe("applications.list", () => {
     });
   });
 
-  // ----- mostRelevantApplication projection (#547) --------------------
-  // `mostRelevantApplication { id }` is the platform's id-only pointer at
-  // the AvailabilityRequest that matters most for the row. The projection
-  // is presence-indicator-only (like jobApplication / interview), with a
-  // defensive null coercion for the wire-elided / id-missing cases.
+  // ----- mostRelevantApplication projection (#547, polymorphic #530) ---
+  // `mostRelevantApplication` is the platform's id-only pointer at the
+  // application that matters most for the row. Toptal split its SDL type
+  // into a polymorphic supertype (members `AvailabilityRequest` |
+  // `JobApplication`), so the query selects `id` per member via inline
+  // fragments (#530); both members collapse to the same `{ id }` wire
+  // shape. The projection is presence-indicator-only (like jobApplication
+  // / interview) and member-agnostic, with a defensive null coercion for
+  // the wire-elided / id-missing cases.
 
-  it("projects mostRelevantApplication (id-only) from the wire (#547)", async () => {
+  it("projects mostRelevantApplication (id-only) from an AvailabilityRequest member (#547, #530)", async () => {
     const rowWithMra = {
       ...ITEM_FIXTURE,
       mostRelevantApplication: { __typename: "AvailabilityRequest", id: "ar-relevant" },
@@ -433,6 +437,22 @@ describe("applications.list", () => {
     });
     const res = await list(TOKEN);
     expect(res.items[0]?.mostRelevantApplication).toEqual({ id: "ar-relevant" });
+  });
+
+  it("projects mostRelevantApplication (id-only) from a JobApplication member (#530)", async () => {
+    // Polymorphic supertype split (#530): the wire row may carry the
+    // `JobApplication` member instead of `AvailabilityRequest`. The inline-
+    // fragment selection collapses both members to `{ id }`; the projection
+    // is member-agnostic.
+    const rowWithJaMra = {
+      ...ITEM_FIXTURE,
+      mostRelevantApplication: { __typename: "JobApplication", id: "ja-relevant" },
+    };
+    reply({
+      body: { data: { viewer: { id: "v1", jobActivityList: { entities: [rowWithJaMra], totalCount: 1 } } } },
+    });
+    const res = await list(TOKEN);
+    expect(res.items[0]?.mostRelevantApplication).toEqual({ id: "ja-relevant" });
   });
 
   it("projects mostRelevantApplication=null when the wire elides it (#547)", async () => {

@@ -1,0 +1,207 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-24T14:37:40.569Z",
+  "operationName": "JobActivityItems",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "items": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "availabilityRequest": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "id": {
+                    "kind": "string"
+                  },
+                  "recruiter": {
+                    "kind": "object",
+                    "fields": {
+                      "firstName": {
+                        "kind": "string"
+                      },
+                      "fullName": {
+                        "kind": "string"
+                      },
+                      "lastName": {
+                        "kind": "string"
+                      }
+                    }
+                  },
+                  "rejectReason": {
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
+                  },
+                  "requestedHourlyRate": {
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "object",
+                      "fields": {
+                        "decimal": {
+                          "kind": "string"
+                        },
+                        "verbose": {
+                          "kind": "string"
+                        }
+                      }
+                    }
+                  },
+                  "talentComment": {
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "engagement": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "id": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "fixedRate": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "decimal": {
+                    "kind": "string"
+                  },
+                  "verbose": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "id": {
+              "kind": "string"
+            },
+            "interview": {
+              "kind": "null"
+            },
+            "job": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "client": {
+                  "kind": "object",
+                  "fields": {
+                    "__typename": {
+                      "kind": "string"
+                    },
+                    "fullName": {
+                      "kind": "nullable",
+                      "inner": {
+                        "kind": "string"
+                      }
+                    },
+                    "id": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "title": {
+                  "kind": "string"
+                },
+                "url": {
+                  "kind": "string"
+                }
+              }
+            },
+            "jobApplication": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "id": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "lastUpdatedAt": {
+              "kind": "string"
+            },
+            "mostRelevantApplication": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "id": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "statusColor": {
+              "kind": "string"
+            },
+            "statusGroupV2": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "value": {
+                  "kind": "string"
+                },
+                "verbose": {
+                  "kind": "string"
+                }
+              }
+            },
+            "statusV2": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "value": {
+                  "kind": "string"
+                },
+                "verbose": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "page": {
+        "kind": "number"
+      },
+      "perPage": {
+        "kind": "number"
+      },
+      "totalCount": {
+        "kind": "number"
+      }
+    }
+  }
+}

@@ -572,19 +572,25 @@ export interface JobActivityItem {
   availabilityRequest: AvailabilityRequestEmbed | null;
   interview: { id: string } | null;
   /**
-   * Platform-blessed "this is the AR that matters" pointer (#547) —
-   * `TalentJobActivityItem.mostRelevantApplication: AvailabilityRequest`
-   * (well-typed, nullable, in the synthesized SDL). For a row with
-   * multiple historical ARs (job re-opened, multiple negotiation rounds)
-   * this is the platform's pick of the closest historical fit — the AR
-   * consumers deep-link into for context via
+   * Platform-blessed "this is the application that matters" pointer
+   * (#547). Originally `mostRelevantApplication: AvailabilityRequest` in
+   * the synthesized SDL; Toptal has since split it into a polymorphic
+   * supertype whose members include `AvailabilityRequest` and
+   * `JobApplication`, so a bare `id` selection 400s (#530 — mirrors the
+   * earlier `metadata` polymorphic split fixed in #562). The query selects
+   * `id` per concrete member via inline fragments
+   * (`... on AvailabilityRequest { id } ... on JobApplication { id }`),
+   * which collapse to the same `{ id }` wire shape. For a row with
+   * multiple historical applications (job re-opened, multiple negotiation
+   * rounds) this is the platform's pick of the closest historical fit —
+   * the one consumers deep-link into via
    * `applications.availabilityRequests.show(<id>)`.
    *
    * Projected id-only — a presence-indicator pointer like
    * {@link jobApplication} / {@link interview}, NOT a re-projection of the
-   * full AR shape (the row's own {@link availabilityRequest} already
-   * carries that when the relevant AR is this row's AR). `null` when the
-   * row has no associated AR.
+   * full shape (the row's own {@link availabilityRequest} already carries
+   * that when the relevant application is this row's AR). `null` when the
+   * row has no associated application.
    */
   mostRelevantApplication: { id: string } | null;
   fixedRate: FixedRate | null;
@@ -732,7 +738,7 @@ const JOB_ACTIVITY_LIST_QUERY = `query JobActivityItems($keywords: [String!], $o
             ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
           }
         }
-        mostRelevantApplication { __typename id }
+        mostRelevantApplication { __typename ... on AvailabilityRequest { id } ... on JobApplication { id } }
         interview { __typename id }
       }
       totalCount
@@ -798,7 +804,7 @@ const JOB_ACTIVITY_ITEM_QUERY = `query JobActivityItem($id: ID!) {
           ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
         }
       }
-      mostRelevantApplication { __typename id }
+      mostRelevantApplication { __typename ... on AvailabilityRequest { id } ... on JobApplication { id } }
       interview { __typename id }
     }
   }
@@ -876,11 +882,15 @@ interface JobActivityItemWireEntity {
   availabilityRequest: AvailabilityRequestWireEntity | null;
   interview: { id: string } | null;
   /**
-   * `mostRelevantApplication { id }` (#547). Always selected, so the wire
-   * returns it as `null` (no associated AR) or an id-bearing object.
-   * Optional-typed defensively (older fixtures / a trimmed selection may
-   * elide it); {@link projectMostRelevantApplication} collapses
-   * `undefined` to `null`.
+   * `mostRelevantApplication` (#547) — selected via inline fragments per
+   * the polymorphic-supertype split (`... on AvailabilityRequest { id }
+   * ... on JobApplication { id }`, #530), which collapse to a single
+   * `{ id }` wire shape regardless of the concrete member. Always
+   * selected, so the wire returns it as `null` (no associated
+   * application) or an id-bearing object. Optional-typed defensively
+   * (older fixtures / a trimmed selection may elide it);
+   * {@link projectMostRelevantApplication} collapses `undefined` to
+   * `null`.
    */
   mostRelevantApplication?: { id: string } | null;
 }
@@ -1003,11 +1013,13 @@ function projectAvailabilityRequestEmbed(ar: AvailabilityRequestWireEntity | nul
 }
 
 /**
- * Project the wire's `mostRelevantApplication { id }` selection (#547)
- * into the public id-only pointer on {@link JobActivityItem}. Returns
- * `null` when the row has no associated AR (the field is `AvailabilityRequest`
- * — nullable — on `TalentJobActivityItem`; absent / null on rows with no
- * AR). Id-only by design: the field is a deep-link pointer into
+ * Project the wire's `mostRelevantApplication` selection (#547) into the
+ * public id-only pointer on {@link JobActivityItem}. The field is a
+ * polymorphic supertype (members `AvailabilityRequest` | `JobApplication`,
+ * nullable) selected via inline fragments that collapse to a single
+ * `{ id }` shape (#530), so this projection is member-agnostic. Returns
+ * `null` when the row has no associated application (absent / null wire
+ * value). Id-only by design: the field is a deep-link pointer into
  * `applications.availabilityRequests.show(<id>)`, NOT a place to
  * re-project the full AR shape (which {@link projectAvailabilityRequestEmbed}
  * already covers for the row's own AR). Defensively guards against an

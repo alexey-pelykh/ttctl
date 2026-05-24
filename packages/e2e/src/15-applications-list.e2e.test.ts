@@ -23,21 +23,40 @@
  * SKIPPED in CI.
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
-import { applications as applicationsLib } from "@ttctl/core";
+import { ConfigLoadSchema, applications as applicationsLib } from "@ttctl/core";
+import { parse as parseYaml } from "yaml";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
+import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("applications list (live mobile-gateway, #377, #410, #539, #547)", () => {
+/**
+ * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
+ * Mirrors the pattern from `24-jobs.e2e.test.ts:63-71`.
+ */
+function loadSandboxBearer(sandboxConfigPath: string): string {
+  const raw = readFileSync(sandboxConfigPath, "utf8");
+  const parsed: unknown = parseYaml(raw);
+  const validated = ConfigLoadSchema.parse(parsed);
+  if (validated.auth.token === undefined || validated.auth.token === "") {
+    throw new Error(`No auth.token in sandbox config at ${sandboxConfigPath}`);
+  }
+  return validated.auth.token;
+}
+
+describe("applications list (live mobile-gateway, #377, #410, #530, #539, #547)", () => {
   let cli: CliClient;
+  let sandboxConfigPath: string;
 
   beforeAll(() => {
     if (!e2eEnabled) return;
-    const { sandboxConfigPath } = getSharedSession();
+    const session = getSharedSession();
+    sandboxConfigPath = session.sandboxConfigPath;
     cli = getCliClient({ configPath: sandboxConfigPath });
   });
 
@@ -429,4 +448,40 @@ describe("applications list (live mobile-gateway, #377, #410, #539, #547)", () =
       }
     },
   );
+
+  // -------------------------------------------------------------------
+  // Track 1 — JobActivityItems wire-shape snapshot diff (#530)
+  //
+  // `JobActivityItems` is classified Track 1 in
+  // `docs/wire-validation-routing.md`. PR #562 fixed the polymorphic
+  // `metadata` selection on this applications projection (wrapping
+  // `offeredHourlyRate` in `... on AvailabilityRequestFixedMetadata` after
+  // Toptal split `AvailabilityRequestMetadata`) but deferred the snapshot
+  // capture; this test closes that deferred T1 gap. The applications
+  // `list` projection is the metadata-bearing exercise of the
+  // `JobActivityItems` op — the engagements projection of the same op name
+  // does not select `availabilityRequest`, so this is the authoritative
+  // snapshot site. The live `applications.list` call is itself the proof
+  // the wrapped selection is accepted — the pre-fix naive selection 400'd
+  // (`GRAPHQL_VALIDATION_FAILED`), so a successful return means the fix
+  // holds on the live wire.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("JobActivityItems wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await applicationsLib.list(token);
+    if (response.items.length === 0) {
+      process.stderr.write(
+        "warning: no activity rows in test account — JobActivityItems wire-shape snapshot skipped\n",
+      );
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "JobActivityItems",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
 });
