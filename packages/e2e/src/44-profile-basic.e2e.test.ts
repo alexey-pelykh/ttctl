@@ -324,24 +324,30 @@ describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wir
   );
 
   // -------------------------------------------------------------------
-  // #535 — Twitter round-trip via basic.set (basic-owned write surface)
+  // #535 / #526 — Twitter round-trip via basic.set (basic-owned write)
   // -------------------------------------------------------------------
   //
-  // Per CLAUDE.md § Schema/contract validation rule: this is a NEW write
-  // path (basic.set({twitter}) was not previously supported), the input
-  // shape is inferred from the live curl evidence in #535, and the
+  // Per CLAUDE.md § Schema/contract validation rule: `basic.set({twitter})`
+  // writes the inferred `UpdateBasicInfoInput.profile.twitter` field, the
   // implementing change touches `packages/core/src/services/profile/basic/
-  // index.ts` — the rule triggers. This subtest exercises the live wire
-  // contract: set → server → read-back → original-restore.
+  // index.ts`, and this is a MUTATION — the rule triggers. This subtest is
+  // the live wire authority for the #526 normalisation contract.
   //
-  // Non-destructive: the test captures the user's current twitter handle,
-  // applies a sentinel, asserts persistence on both basic.show AND
-  // external.show (twitter is read-visible on both surfaces — the AC says
-  // "verify external.show continues to echo it"), and restores the
-  // original in `finally`.
+  // #526 WIRE TRUTH (authoritative, from a live UPDATE_BASIC_INFO capture):
+  // `twitter` is a BARE HANDLE on the wire (e.g. `alexey_pelykh`), NOT a
+  // URL — unlike the sibling linkedin/github/website fields on the same
+  // input. Callers naturally pass a URL; pre-#526 it was stored verbatim
+  // and the field rendered broken. `normalizeTwitterHandle` (in core) fixes
+  // this. This subtest proves it END-TO-END against the live API for BOTH
+  // input shapes: a URL input AND a bare-handle input must each persist as
+  // the SAME normalised bare handle, visible on basic.show AND external.show.
+  //
+  // Non-destructive: captures the user's current twitter handle up-front,
+  // runs both round-trips, and restores the original in `finally` (even on
+  // assertion failure).
 
   it.skipIf(!e2eEnabled)(
-    "round-trips basic.set({twitter}) against live UPDATE_BASIC_INFO and the value persists on both basic.show and external.show",
+    "round-trips basic.set({twitter}) with BOTH a URL and a bare-handle input — each normalises to the bare handle and persists on basic.show + external.show (#526)",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
 
@@ -370,57 +376,77 @@ describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wir
 
       const originalTwitter = before.twitter;
       const ts = Date.now().toString();
-      // Sentinel handle: short, alphanumeric+underscore (matches Twitter's
-      // handle constraint), suffixed with a timestamp so concurrent E2E
-      // runs don't collide. Keep ≤15 chars to fit Twitter's max length —
-      // the server doesn't enforce that limit on its end (handles are free
-      // text on the talent_profile API), but the sentinel should be a
-      // realistic value.
-      const sentinelTwitter = `tt_${ts.slice(-10)}`;
+      // Two distinct sentinel handles: short, alphanumeric+underscore
+      // (matches Twitter's handle constraint), suffixed with a timestamp so
+      // concurrent E2E runs don't collide, ≤15 chars. The URL case feeds a
+      // full https://x.com/<handle> URL; the bare case feeds the handle
+      // directly. Both must end up stored as the SAME bare-handle shape.
+      const urlHandle = `ttu_${ts.slice(-8)}`;
+      const bareHandle = `ttb_${ts.slice(-8)}`;
+      const urlInput = `https://x.com/${urlHandle}`;
 
-      try {
-        const outcome = await profile.basic.set(token, { twitter: sentinelTwitter });
-
+      /**
+       * Apply `twitter: input` and assert the live API normalises +
+       * persists it to `expectedHandle` on the mutation echo, basic.show,
+       * AND external.show. Returns `false` if a USER_ERROR business gate
+       * fired (caller skips the rest with a warning).
+       */
+      const roundTrip = async (input: string, expectedHandle: string, label: string): Promise<boolean> => {
+        const outcome = await profile.basic.set(token, { twitter: input });
         expect(outcome.kind).toBe("applied");
-        if (outcome.kind !== "applied") return;
+        if (outcome.kind !== "applied") return false;
 
-        // The mutation response echoes the merged value verbatim.
-        expect(outcome.result.profile.twitter).toBe(sentinelTwitter);
+        // The mutation response echoes the NORMALISED bare handle — proof
+        // that what the server stored is the handle, not the URL we sent.
+        expect(outcome.result.profile.twitter, `${label}: mutation echo`).toBe(expectedHandle);
 
-        // basic.show persistence gate — twitter must be readable here
-        // post-#535 (the field was added to GET_BASIC_INFO's selection set).
+        // basic.show persistence gate.
         const afterBasic = await profile.basic.getBasicInfo(token);
-        expect(afterBasic.twitter).toBe(sentinelTwitter);
-        // Sanity check: the OTHER fields are unchanged — the merge
-        // contract preserves user-unsupplied scalars.
+        expect(afterBasic.twitter, `${label}: basic.show`).toBe(expectedHandle);
+        // Sanity: the merge preserved user-unsupplied scalars.
         expect(afterBasic.bio).toBe(before.bio);
         expect(afterBasic.headline).toBe(before.headline);
 
-        // AC: "verify external.show continues to echo it" — twitter is
-        // read-visible on both surfaces; the basic write must NOT break
-        // the external echo. The external.show payload exposes twitter
-        // on `ExternalProfiles.twitter`.
+        // external.show echo gate — twitter is read-visible on both
+        // surfaces; the basic write must not break the external echo.
         const afterExternal = await profile.external.show(token);
-        expect(afterExternal.twitter).toBe(sentinelTwitter);
+        expect(afterExternal.twitter, `${label}: external.show`).toBe(expectedHandle);
+
+        // Positive confirmation that the live normalisation assertions
+        // ACTUALLY ran (vs an early skip on a USER_ERROR / missing-field
+        // gate, both of which print a `warning:` line and `return` before
+        // here). Records the exact input → stored-handle mapping observed
+        // against the live API, so the PR transcript is unambiguous.
+        process.stderr.write(
+          `ok: [44-profile-basic #526] ${label} — sent ${JSON.stringify(input)}; live API stored + ` +
+            `echoed bare handle ${JSON.stringify(expectedHandle)} (mutation echo + basic.show + external.show all matched).\n`,
+        );
+        return true;
+      };
+
+      try {
+        // 1) URL input → stored as the bare handle (#526 core fix).
+        if (!(await roundTrip(urlInput, urlHandle, "URL input"))) return;
+        // 2) Bare-handle input → stored unchanged (normalisation no-op).
+        if (!(await roundTrip(bareHandle, bareHandle, "bare-handle input"))) return;
       } catch (err) {
         if (errorCode(err) === "USER_ERROR") {
           process.stderr.write(
             `warning: [44-profile-basic] twitter round-trip — talent-profile rejected the sentinel write with ` +
-              `a USER_ERROR business gate (test-account-state issue, NOT a #535 wire-shape regression — a wrong ` +
+              `a USER_ERROR business gate (test-account-state issue, NOT a #526 wire-shape regression — a wrong ` +
               `input shape fails earlier with GRAPHQL_ERROR). Subtest skipped.\n`,
           );
           return;
         }
         // GRAPHQL_ERROR / NETWORK_ERROR / UNKNOWN — propagate. A
-        // GRAPHQL_ERROR here would mean #535 mis-inferred the wire shape
+        // GRAPHQL_ERROR here would mean the wire shape was mis-inferred
         // (e.g. `twitter` is not actually settable on UpdateBasicInfoInput).
         throw err;
       } finally {
         // Restore the original twitter handle so the user's profile is
-        // unchanged at end of test. We can restore to null (set's
-        // `twitter: null` is the documented "clear it" intent), but only
-        // if originalTwitter was null. Otherwise restore to the original
-        // string verbatim.
+        // unchanged at end of test. `twitter: null` is the documented
+        // "clear it" intent when the original was null; otherwise restore
+        // the original string verbatim (already a bare handle).
         try {
           await profile.basic.set(token, { twitter: originalTwitter });
         } catch (restoreErr) {
@@ -431,7 +457,7 @@ describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wir
         }
       }
     },
-    // Three live mutations + two live reads; give it room over the default 5s.
-    45_000,
+    // Two round-trips (2 mutations + 4 reads) + restore; well over 5s.
+    60_000,
   );
 });

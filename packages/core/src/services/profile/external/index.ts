@@ -191,7 +191,7 @@ function coerceString(value: unknown): string | null {
  * are optional; the caller is responsible for passing at least one or the
  * service will reject with `VALIDATION_ERROR`.
  *
- * **`twitter` is deliberately absent from the write input** (#526). The live
+ * **`twitter` is NOT writable via this surface** (#526). The live
  * `talent-profile` server rejects `twitter` on `ExternalProfilesInput` with
  * `"Variable $input of type UpdateExternalProfilesInput! was provided
  * invalid value for profile.twitter (Field is not defined on
@@ -202,9 +202,13 @@ function coerceString(value: unknown): string | null {
  * dropped server-side but the `Profile`-entity `twitter` read field
  * survives for backward compatibility, which is why
  * {@link ExternalProfiles} (read) + {@link UpdateExternalProfilesResult}
- * (echo) still surface it. Twitter is no longer settable via this leaf;
- * the user can update it via the web portal if Toptal's UI still exposes
- * it. The previous claim in `research/notes/10-mutation-input-patterns.md`
+ * (echo) still surface it. The field is accepted on THIS input type only
+ * so {@link update} can return an actionable redirect to `basic.set`
+ * (which DOES write `Profile.twitter`, accepting a URL or a bare handle —
+ * see {@link TWITTER_NOT_EXTERNAL_MESSAGE}) instead of silently dropping
+ * it (#526 reopen). `twitter` never reaches the wire input
+ * ({@link UpdateExternalProfilesInput} stays a strict 5-field surface).
+ * The previous claim in `research/notes/10-mutation-input-patterns.md`
  * § Social (and `05-talent-profile-api.md` line 191) was INFERRED from
  * selection-set presence — that inference is now contradicted by live
  * wire evidence and was load-bearing on the wrong assumption that led to
@@ -227,7 +231,40 @@ export interface ExternalProfilesUpdate {
   website?: string;
   behance?: string;
   dribbble?: string;
+  /**
+   * Twitter / X is NOT writable via this surface (#526) — the live server
+   * rejects it on `ExternalProfilesInput`. This field is accepted on the
+   * input type ONLY so {@link update} can return an actionable redirect to
+   * `basic.set` ({@link TWITTER_NOT_EXTERNAL_MESSAGE}) instead of silently
+   * dropping it (the failure mode when a surface omits twitter from its
+   * schema and the value is stripped before reaching the service).
+   * Supplying ANY value — including `""` or `null` — throws
+   * `VALIDATION_ERROR`. The wire input
+   * ({@link UpdateExternalProfilesInput}) stays a strict 5-field surface;
+   * `twitter` never reaches the network.
+   */
+  twitter?: string | null;
 }
+
+/**
+ * Actionable redirect surfaced when a caller supplies `twitter` to
+ * {@link update}. Twitter is settable ONLY on the basic-info write surface
+ * (#526 / #535) — the live `talent-profile` server rejects `twitter` on
+ * `ExternalProfilesInput` (and the whole batch fails transactionally when
+ * it is co-supplied with valid fields). Rather than silently drop the
+ * field, {@link update} throws a `VALIDATION_ERROR` carrying this message
+ * so the caller is told exactly where twitter lives and that a URL OR a
+ * bare handle is accepted there.
+ *
+ * Exported so the CLI / MCP surfaces can reuse the identical wording when
+ * they short-circuit before reaching the apply path (e.g. the MCP dry-run
+ * branch, which builds its preview locally without calling {@link update}).
+ */
+export const TWITTER_NOT_EXTERNAL_MESSAGE =
+  "twitter is not settable via external profiles — it lives on the basic-info surface. " +
+  "Use `basic.set({ twitter })` (CLI: `ttctl profile basic update --twitter <url-or-handle>`; " +
+  "MCP: `ttctl_profile_basic_update`). A full URL (https://x.com/<handle>) or a bare handle is " +
+  "accepted there; ttctl normalises it to the bare handle Toptal stores.";
 
 /**
  * Server-confirmed result of {@link update}. Mirrors the response selection
@@ -335,6 +372,11 @@ interface UpdateExternalProfilesPayload {
  * Profile entity.
  *
  * Errors:
+ *   - `ProfileError("VALIDATION_ERROR")` when `twitter` is supplied (any
+ *     value, including `""` / `null`) — carries {@link TWITTER_NOT_EXTERNAL_MESSAGE}
+ *     redirecting the caller to `basic.set` (#526). Checked FIRST, before
+ *     the empty-input guard, so a `{ twitter }`-only call gets the redirect
+ *     rather than the generic "at least one of …" message.
  *   - `ProfileError("VALIDATION_ERROR")` when no fields are supplied
  *   - `ProfileError("USER_ERROR")` when the server rejects an individual
  *     field (e.g. malformed URL)
@@ -342,6 +384,17 @@ interface UpdateExternalProfilesPayload {
  *     propagate verbatim
  */
 export async function update(token: string, changes: ExternalProfilesUpdate): Promise<UpdateExternalProfilesResult> {
+  // #526: twitter is not writable here. Reject with an actionable redirect
+  // to basic.set BEFORE the empty-input guard and before any transport, so
+  // a caller who supplies twitter (alone or alongside valid URLs) is told
+  // where it lives rather than silently losing it. Rejecting the whole call
+  // (rather than dropping twitter and writing the rest) is also the safe
+  // behaviour given the server's transactional-failure history when twitter
+  // is co-supplied — see ExternalProfilesUpdate.twitter.
+  if (changes.twitter !== undefined) {
+    throw new ProfileError("VALIDATION_ERROR", TWITTER_NOT_EXTERNAL_MESSAGE);
+  }
+
   const fields: UpdateExternalProfilesInput["profile"] = {};
   if (changes.linkedin !== undefined) fields.linkedin = changes.linkedin;
   if (changes.github !== undefined) fields.github = changes.github;

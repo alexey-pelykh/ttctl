@@ -16,7 +16,7 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { ProfileError, getBasicInfo, set, show } from "../index.js";
+import { ProfileError, getBasicInfo, normalizeTwitterHandle, set, show } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
@@ -652,6 +652,32 @@ describe("set", () => {
     expect(variables.input.profile["twitter"]).toBeNull();
   });
 
+  it("normalizes a twitter URL to the bare handle before sending (#526 regression)", async () => {
+    // #526 ROOT CAUSE: callers naturally pass a URL; pre-#526 set() forwarded
+    // it verbatim, so the server stored a URL where a bare handle was
+    // expected and the field rendered broken. The merge MUST send the bare
+    // handle the live wire shape stores.
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
+
+    await set(TOKEN, { twitter: "https://x.com/alexey_pelykh" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile["twitter"]).toBe("alexey_pelykh");
+  });
+
+  it("normalizes a leading-@ twitter handle to the bare handle before sending", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
+
+    await set(TOKEN, { twitter: "@alexey_pelykh" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile["twitter"]).toBe("alexey_pelykh");
+  });
+
   it("returns the updated bio/headline/twitter values from the server's confirmation payload", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
@@ -955,7 +981,7 @@ describe("set", () => {
     expect(variables.input.profile["softwareSkills"]).toEqual([]);
   });
 
-  it("dry-run preview echoes user-supplied twitter verbatim (apply-path parity)", async () => {
+  it("dry-run preview echoes a bare-handle twitter (normalisation is a no-op; apply-path parity)", async () => {
     const outcome = await set(TOKEN, { twitter: "alexey_pelykh" }, { dryRun: true });
 
     expect(outcome.kind).toBe("preview");
@@ -965,6 +991,18 @@ describe("set", () => {
     // bio/headline weren't supplied → placeholder.
     expect(variables.input.profile["about"]).toBe("<preserved from current profile state>");
     expect(variables.input.profile["quote"]).toBe("<preserved from current profile state>");
+  });
+
+  it("dry-run preview normalizes a twitter URL to the bare handle (#526; preview = what the live call sends)", async () => {
+    // The dry-run preview must reflect the SAME normalisation the apply
+    // path applies, so a consumer previewing a URL sees the bare handle
+    // that the live UPDATE_BASIC_INFO will actually transmit.
+    const outcome = await set(TOKEN, { twitter: "https://twitter.com/alexey_pelykh" }, { dryRun: true });
+
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    const variables = outcome.preview.variables as { input: { profile: Record<string, unknown> } };
+    expect(variables.input.profile["twitter"]).toBe("alexey_pelykh");
   });
 
   it("dry-run preview substitutes the profileId placeholder (would be resolved at send-time)", async () => {
@@ -1479,5 +1517,89 @@ describe("getBasicInfo", () => {
       code: "NO_VIEWER",
     });
     expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+});
+
+// =======================================================================
+// normalizeTwitterHandle (#526) — URL / @ / bare → bare handle
+// =======================================================================
+//
+// Pure function; no transport. The live UPDATE_BASIC_INFO wire shape
+// stores a BARE HANDLE, but callers naturally pass a URL — pre-#526 the
+// URL was forwarded verbatim and the field rendered broken. This suite
+// pins the normalisation contract directly (set()'s merge + dry-run paths
+// both call it; see the `set` block above for the integration coverage).
+
+describe("normalizeTwitterHandle", () => {
+  it("passes a bare handle through unchanged", () => {
+    expect(normalizeTwitterHandle("alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("strips a single leading @ from a bare handle", () => {
+    expect(normalizeTwitterHandle("@alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("extracts the handle from an https://x.com URL", () => {
+    expect(normalizeTwitterHandle("https://x.com/alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("extracts the handle from an https://twitter.com URL", () => {
+    expect(normalizeTwitterHandle("https://twitter.com/alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("handles http scheme, www. subdomain, and a trailing slash", () => {
+    expect(normalizeTwitterHandle("http://www.twitter.com/alexey_pelykh/")).toBe("alexey_pelykh");
+  });
+
+  it("handles a mobile. subdomain", () => {
+    expect(normalizeTwitterHandle("https://mobile.twitter.com/alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("drops a query string after the handle", () => {
+    expect(normalizeTwitterHandle("https://x.com/alexey_pelykh?s=20")).toBe("alexey_pelykh");
+  });
+
+  it("drops a fragment after the handle", () => {
+    expect(normalizeTwitterHandle("https://x.com/alexey_pelykh#bio")).toBe("alexey_pelykh");
+  });
+
+  it("extracts from a scheme-less x.com URL", () => {
+    expect(normalizeTwitterHandle("x.com/alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("extracts from a legacy #!/ hashbang URL", () => {
+    expect(normalizeTwitterHandle("https://twitter.com/#!/alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("strips a leading @ inside a URL path (twitter.com/@handle)", () => {
+    expect(normalizeTwitterHandle("https://x.com/@alexey_pelykh")).toBe("alexey_pelykh");
+  });
+
+  it("is case-insensitive on the host but preserves the handle's case", () => {
+    expect(normalizeTwitterHandle("HTTPS://X.COM/Alexey_Pelykh")).toBe("Alexey_Pelykh");
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(normalizeTwitterHandle("  alexey_pelykh  ")).toBe("alexey_pelykh");
+    expect(normalizeTwitterHandle("  https://x.com/alexey_pelykh  ")).toBe("alexey_pelykh");
+  });
+
+  it("preserves the empty string as the clear-intent (does NOT treat as a URL)", () => {
+    expect(normalizeTwitterHandle("")).toBe("");
+    expect(normalizeTwitterHandle("   ")).toBe("");
+  });
+
+  it("preserves null as the clear-intent", () => {
+    expect(normalizeTwitterHandle(null)).toBeNull();
+  });
+
+  it("passes an unrecognised shape through verbatim (Toptal is the handle-validity authority)", () => {
+    // A value that is neither a recognised x.com/twitter.com URL nor an
+    // @-handle is treated as an already-bare handle. We do NOT reject
+    // unknown shapes — over-eager client validation would block legitimate
+    // handles. A non-twitter URL is intentionally left intact (we only
+    // strip the handle out of KNOWN twitter/X hosts).
+    expect(normalizeTwitterHandle("some_unusual.handle")).toBe("some_unusual.handle");
+    expect(normalizeTwitterHandle("https://example.com/alexey_pelykh")).toBe("https://example.com/alexey_pelykh");
   });
 });

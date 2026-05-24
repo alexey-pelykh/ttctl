@@ -86,6 +86,44 @@ describe("update", () => {
     expect(mockedImpersonated).not.toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------
+  // #526 — twitter is NOT settable here; supplying it returns an
+  // actionable redirect to basic.set instead of a silent drop.
+  // -------------------------------------------------------------------
+
+  it("rejects a twitter value with VALIDATION_ERROR + a redirect to basic.set, no transport fired (#526)", async () => {
+    await expect(update(TOKEN, { twitter: "alexey_pelykh" })).rejects.toMatchObject({
+      name: "ProfileError",
+      code: "VALIDATION_ERROR",
+      // The message names where twitter lives (basic.set / basic update).
+      message: expect.stringMatching(/basic\.set|basic update/i),
+    });
+    // Rejected BEFORE any network — neither the profileId resolver (stock)
+    // nor the mutation (impersonated) is called.
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("rejects twitter regardless of value — null and empty string also redirect (#526)", async () => {
+    await expect(update(TOKEN, { twitter: null })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(update(TOKEN, { twitter: "" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("rejects the WHOLE call when twitter is co-supplied with valid URLs (no partial write) (#526)", async () => {
+    // The server's transactional-failure history means a twitter+linkedin
+    // batch would lose everything anyway; ttctl rejects up-front so the
+    // user moves twitter to basic.set and re-runs the valid fields here.
+    // Crucially: linkedin is NOT written (no transport fires).
+    await expect(update(TOKEN, { linkedin: "https://linkedin.com/in/ada", twitter: "@ada" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/basic\.set|basic update/i),
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
   it("fetches the profileId via stock then issues UpdateExternalProfiles via impersonated", async () => {
     mockProfileIdResolver();
     replyImpersonated({

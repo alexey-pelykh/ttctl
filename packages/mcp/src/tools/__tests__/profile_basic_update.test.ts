@@ -246,6 +246,28 @@ describe("ttctl_profile_basic_update MCP tool — dry-run integration (#10 close
     expect(MOCKED_SET.mock.calls[0]?.[1]).toEqual({ twitter: "alexey_pelykh" });
   });
 
+  it("forwards a twitter URL verbatim to set() — normalisation is core's job, not the MCP layer's (#526)", async () => {
+    const ctx = buildTokenSuccessCtx();
+    registerProfileBasicUpdateTool(server, ctx);
+    MOCKED_SET.mockResolvedValueOnce({
+      kind: "applied",
+      result: {
+        profile: { id: "p1", about: "current", quote: "current", twitter: "alexey_pelykh" },
+        notice: null,
+      },
+    });
+
+    const handler = getToolHandler(server, TOOL_NAME);
+    await handler({ twitter: "https://x.com/alexey_pelykh" }, {});
+
+    expect(MOCKED_SET).toHaveBeenCalledTimes(1);
+    // The MCP tool is a thin pass-through: it forwards the raw URL and
+    // `profile.basic.set` normalises it to the bare handle (verified in
+    // core's unit tests). A regression that double-normalised or mangled
+    // the value here would surface as a mismatch.
+    expect(MOCKED_SET.mock.calls[0]?.[1]).toEqual({ twitter: "https://x.com/alexey_pelykh" });
+  });
+
   it("forwards `twitter: null` (the explicit clear intent) verbatim", async () => {
     const ctx = buildTokenSuccessCtx();
     registerProfileBasicUpdateTool(server, ctx);

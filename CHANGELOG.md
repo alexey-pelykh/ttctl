@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`profile.basic.set`: normalize the `twitter` value to the bare handle
+  Toptal stores, accepting a full URL or a bare handle (#526).** The
+  `UpdateBasicInfoInput` wire field is a **bare handle** (`alexey_pelykh`),
+  not a URL — unlike the `linkedin` / `github` / `website` fields on the
+  same input, which are full URLs (an in-input asymmetry). Callers
+  naturally passed a profile URL (`https://x.com/<handle>`), which the
+  server then stored verbatim as the "handle", and the field rendered
+  broken on the public profile. `set()` now runs the supplied value
+  through the new exported `normalizeTwitterHandle()` on BOTH the apply
+  (merge) path and the dry-run preview: `https://x.com/<h>`,
+  `https://twitter.com/<h>` (with optional scheme, `www.` / `mobile.`
+  subdomains, legacy `#!/` hashbang, query / fragment, and a leading
+  `@`) all reduce to the bare handle; a bare handle passes through
+  unchanged; unrecognised shapes (e.g. `https://example.com/<h>`) pass
+  through verbatim so Toptal — the only authority on handle validity —
+  decides. Empty-string and `null` clear semantics are preserved
+  (`""` → `""`, `null` → `null`). Wire-shape disposition: Schema/contract
+  rule **triggered** (`UPDATE_BASIC_INFO` mutation; only the VALUE sent
+  is normalized, the input/selection shape is unchanged); **Track 1**
+  (existing `packages/e2e/src/wire-snapshots/UPDATE_BASIC_INFO.snapshot.json`,
+  no shape change). Validated live (`TTCTL_E2E=1`) by round-tripping both
+  a URL input and a bare-handle input through `basic.set` and asserting
+  both persist as the normalized bare handle on the mutation echo,
+  `basic.show`, and `external_show`.
+  - **`profile.external.update`: reject a supplied `twitter` with an
+    actionable redirect instead of silently dropping it.** `twitter` is
+    NOT part of the external-profiles wire input (the 5 settable fields
+    stay `linkedin` / `github` / `website` / `behance` / `dribbble`);
+    previously the public `ExternalProfilesUpdate` type omitted it, so a
+    supplied value was silently lost at every surface. `update()` now
+    accepts `twitter` on its input type and throws a `VALIDATION_ERROR`
+    carrying the shared `TWITTER_NOT_EXTERNAL_MESSAGE` — pointing the
+    caller at `basic.set` (CLI `ttctl profile basic update --twitter`,
+    MCP `ttctl_profile_basic_update`). The redirect fires before any
+    transport call (and, on MCP, before the dry-run preview branch).
+  - **CLI / MCP doc reconciliation**: `ttctl profile basic update
+--twitter` help and the `ttctl_profile_basic_update` MCP field
+    description now say the value accepts a URL or a bare handle and is
+    normalized. `ttctl profile external update` regains a `--twitter`
+    flag (and the MCP tool a `twitter` schema field) purely so the value
+    reaches the redirect rather than being rejected as an unknown
+    option / stripped by Zod.
+
 ## [v0.1.0-rc.9] - 2026-05-24
 
 ### Added
