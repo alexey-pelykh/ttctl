@@ -1003,6 +1003,119 @@ describe("portfolio.list", () => {
     expect(items[0]?.quotes).toEqual([]);
     expect(items[1]?.quotes).toEqual([]);
   });
+
+  // Provenance: #552 — `engagement` link to the underlying TalentEngagement.
+  // Wire shape verified by live elimination probe 2026-05-24:
+  // `engagement { id }` (single nullable object ref of type
+  // `TalentEngagement`, NOT a connection — `engagement { nodes }` errors
+  // "Field 'nodes' doesn't exist on type 'TalentEngagement'"; 26/32 items
+  // null, 6 populated `{ id }`).
+  it("selects engagement as a single object reference with id (not a connection)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({ body: { data: { profile: { id: "p1", portfolioItems: { nodes: [] } } } } });
+
+    await list(TOKEN);
+
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const query = call.body.query;
+    // engagement is a single object reference, NOT a connection — the live
+    // probe confirmed `engagement { nodes }` errors "Field 'nodes' doesn't
+    // exist on type 'TalentEngagement'". The selection must be the direct
+    // `{ id }` shape.
+    expect(query).toMatch(/engagement\s*\{\s*id\s*\}/);
+    expect(query).not.toMatch(/engagement\s*\{\s*nodes\s*\{/);
+  });
+
+  it("projects engagement=null when the wire returns null engagement (item not linked)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", portfolioItems: { nodes: [{ ...PORTFOLIO_NODE, engagement: null }] } } } },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.engagement).toBeNull();
+  });
+
+  it("projects engagement=null when the wire omits the engagement field", async () => {
+    stubProfileId("p1");
+    // PORTFOLIO_NODE has no `engagement` key — the projector must default
+    // a missing field to null rather than throw or surface undefined.
+    replyImpersonated({ body: { data: { profile: { id: "p1", portfolioItems: { nodes: [PORTFOLIO_NODE] } } } } });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.engagement).toBeNull();
+  });
+
+  it("projects a populated engagement preserving the TalentEngagement id", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [{ ...PORTFOLIO_NODE, engagement: { id: "V1-TalentEngagement-238005" } }],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.engagement).toEqual({ id: "V1-TalentEngagement-238005" });
+  });
+
+  it("projects engagement=null when the wire object has a missing or non-string id (defensive)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                { ...PORTFOLIO_NODE, engagement: { id: 42 } },
+                { ...PORTFOLIO_NODE, id: "pi2", engagement: { notId: "x" } },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.engagement).toBeNull();
+    expect(items[1]?.engagement).toBeNull();
+  });
+
+  it("projects engagement=null when the wire returns a non-object engagement (defensive)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          profile: {
+            id: "p1",
+            portfolioItems: {
+              nodes: [
+                { ...PORTFOLIO_NODE, engagement: "string-not-object" },
+                { ...PORTFOLIO_NODE, id: "pi2", engagement: ["array-not-object"] },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const items = await list(TOKEN);
+
+    expect(items[0]?.engagement).toBeNull();
+    // An array IS typeof "object" — guard must still reject it (no string id).
+    expect(items[1]?.engagement).toBeNull();
+  });
 });
 
 describe("portfolio.add", () => {

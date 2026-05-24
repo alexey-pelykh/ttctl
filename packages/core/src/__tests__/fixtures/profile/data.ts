@@ -111,6 +111,7 @@ export const PORTFOLIO_DISTRIBUTED_LEDGER: PortfolioItem = {
   files: [],
   kpis: [],
   quotes: [],
+  engagement: null,
 };
 
 export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
@@ -136,6 +137,7 @@ export const PORTFOLIO_EHR_GATEWAY: PortfolioItem = {
   files: [],
   kpis: [],
   quotes: [],
+  engagement: null,
 };
 
 export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
@@ -161,6 +163,7 @@ export const PORTFOLIO_OBSERVABILITY: PortfolioItem = {
   files: [],
   kpis: [],
   quotes: [],
+  engagement: null,
 };
 
 // -----------------------------------------------------------------------
