@@ -383,7 +383,8 @@ describe("ttctl_interest_requests_accept — handler", () => {
     expect(parsed.preview.operationName).toBe("ConfirmAvailabilityRequest");
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     // The MCP layer always threads dryRun:true into the service so the
-    // service-layer dry-run path can compose placeholders correctly.
+    // service-layer dry-run path can resolve the concrete rate/kind (#593)
+    // and surface them in the preview.
     expect(confirmSpy.mock.calls[0]?.[3]).toMatchObject({ dryRun: true });
   });
 

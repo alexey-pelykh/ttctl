@@ -2405,10 +2405,18 @@ async function resolveConfirmDefaults(
  *   `MUTATION_ERROR("requestedHourlyRate is required for FLEXIBLE/MARKETPLACE_FLEXIBLE
  *   ARs — pass an explicit rate")`.
  *
- * Dry-run path (`options.dryRun === true`): skips the pre-fetch
- * entirely and emits a {@link DryRunPreview} with placeholder strings
- * for any fields that would have been resolved live. Matches the
- * `availability.workingHours.set` skipped-prefetch pattern.
+ * Dry-run path (`options.dryRun === true`): performs the SAME read-only
+ * resolution as the apply path (the `GetAvailabilityRequestKind`
+ * pre-fetch) when `kind` / `requestedHourlyRate` are omitted, then emits
+ * a {@link DryRunPreview} carrying the CONCRETE resolved values — so an
+ * irreversible accept is fully verifiable before commit (#593). The
+ * irreversible `ConfirmAvailabilityRequest` mutation is NEVER issued
+ * under dry-run; only the read-only resolution runs. When the caller
+ * supplies BOTH `kind` and `requestedHourlyRate` explicitly, no
+ * resolution is needed and dry-run stays zero-transport. Surfacing the
+ * resolution under dry-run also catches a failing rate-resolution path
+ * (an unknown id, or a #530-style metadata wire-break) in PREVIEW
+ * rather than on the irreversible commit.
  *
  * Bad-id behavior (per project auto-memory `project_toptal_wire_quirks.md`):
  * mutations against bad ids return HTTP 500. The service does NOT
@@ -2425,37 +2433,13 @@ export async function confirm(
   input: ConfirmInput = {},
   options: DryRunOptions = {},
 ): Promise<ConfirmOutcome> {
-  if (options.dryRun === true) {
-    // Skip the pre-fetch entirely (zero transport calls under dry-run)
-    // and emit a preview with placeholders for unresolved fields. The
-    // wire SHAPE (operation + variable types + nullness) is verbatim;
-    // only the resolved values differ.
-    const previewVariables: Record<string, unknown> = {
-      id,
-      comment: input.comment ?? null,
-      matcherQuestionsAnswers: input.matcherQuestionsAnswers ?? null,
-      expertiseQuestionsAnswers: input.expertiseQuestionsAnswers ?? null,
-      requestedHourlyRate: input.requestedHourlyRate ?? "<resolved at apply time>",
-      pitchInput: input.pitchInput ?? null,
-      kind: input.kind ?? "<resolved at apply time>",
-    };
-    return {
-      kind: "preview",
-      preview: buildDryRunPreview({
-        surface: "mobile-gateway",
-        authToken: token,
-        body: {
-          operationName: "ConfirmAvailabilityRequest",
-          query: CONFIRM_AVAILABILITY_REQUEST_MUTATION,
-          variables: previewVariables,
-        },
-      }),
-    };
-  }
-
-  // Resolve kind + defaultRate if either is missing. Pre-fetch is
-  // skipped when both are supplied — fewer round-trips for advanced
-  // callers.
+  // Resolve kind + defaultRate if either is missing — identically for
+  // dry-run and apply, so the dry-run preview reflects the EXACT wire
+  // request the apply path would send (#593). The resolution is a single
+  // READ-ONLY `GetAvailabilityRequestKind` query; the irreversible
+  // `ConfirmAvailabilityRequest` mutation is issued only on the apply
+  // path below. When both are supplied, the pre-fetch is skipped — fewer
+  // round-trips for advanced callers, and dry-run stays zero-transport.
   let kind = input.kind;
   let requestedHourlyRate = input.requestedHourlyRate;
   if (kind === undefined || requestedHourlyRate === undefined) {
@@ -2487,6 +2471,25 @@ export async function confirm(
     pitchInput: input.pitchInput ?? null,
     kind,
   };
+
+  if (options.dryRun === true) {
+    // Preview the EXACT wire request the apply path would send — the
+    // resolution above has already filled `kind` / `requestedHourlyRate`
+    // with the concrete values (#593). The irreversible mutation is
+    // NEVER issued under dry-run; only the read-only resolution ran.
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "ConfirmAvailabilityRequest",
+          query: CONFIRM_AVAILABILITY_REQUEST_MUTATION,
+          variables,
+        },
+      }),
+    };
+  }
 
   const data = await callGatewayNoViewer<ConfirmAvailabilityRequestResponse>(
     token,

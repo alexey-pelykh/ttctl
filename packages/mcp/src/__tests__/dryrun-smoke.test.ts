@@ -145,7 +145,13 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_engagements_stats: {},
   // interest_requests (4 — #371 list + #411 accept/reject/reject_reasons)
   ttctl_interest_requests_list: {},
-  ttctl_interest_requests_accept: { id: "ar_123" },
+  // rate + kind keep the dry-run path zero-transport for the smoke test.
+  // Per #593, dry-run without an explicit rate/kind now fires the
+  // GetAvailabilityRequestKind resolution query (so the preview shows the
+  // concrete rate/kind instead of placeholders), which is sentinel-rejected
+  // by this test's transport mock. The resolve-on-omit path is exercised in
+  // the core service's unit tests + the e2e read-only resolve case.
+  ttctl_interest_requests_accept: { id: "ar_123", rate: "80.00", kind: "FIXED" },
   ttctl_interest_requests_reject: { id: "ar_123", reason: "rate_too_low" },
   ttctl_interest_requests_reject_reasons: {},
   // jobs (17 — 13 base + 4 apply-funnel #436)
