@@ -48,12 +48,16 @@ function replyStock(...responses: MockResponse[]): void {
 
 /**
  * Wire-shape fixture for `IndustryProfile` mocks. Identity columns plus
- * the five curation sub-fields in their Connection shape
- * (`{ nodes: [{ id }] }`) — extracted on the wire side before
- * `projectIndustryProfile` normalises them to flat `IndustryCurationRef[]`
- * on the surface. The empty `nodes: []` arrays here reflect the
- * default "no curation" case so existing tests that don't care about
- * curation continue to compare cleanly against the projected output.
+ * the five curation sub-fields as PLAIN LISTS (`[{ id }]`) — projected
+ * by `projectIndustryProfile` into flat `IndustryCurationRef[]` on the
+ * surface. The empty `[]` arrays here reflect the default "no curation"
+ * case so existing tests that don't care about curation continue to
+ * compare cleanly against the projected output.
+ *
+ * (#583: the sub-fields are plain lists, NOT `{ nodes: [...] }`
+ * connections — the connection shape was the rc.9 regression. The
+ * top-level `industryProfiles { nodes }` IS a connection — see
+ * {@link listBody}.)
  *
  * Tests that need to exercise populated curation supply their own
  * inline wire bodies (see `describe("show curation projection")`).
@@ -63,11 +67,11 @@ const IND_1_WIRE = {
   title: "Healthcare",
   about: null,
   domainArea: "Backend",
-  employments: { nodes: [] },
-  educations: { nodes: [] },
-  certifications: { nodes: [] },
-  portfolioItems: { nodes: [] },
-  highlights: { nodes: [] },
+  employments: [],
+  educations: [],
+  certifications: [],
+  portfolioItems: [],
+  highlights: [],
 };
 
 const IND_2_WIRE = {
@@ -75,17 +79,17 @@ const IND_2_WIRE = {
   title: "Finance",
   about: null,
   domainArea: "Frontend",
-  employments: { nodes: [] },
-  educations: { nodes: [] },
-  certifications: { nodes: [] },
-  portfolioItems: { nodes: [] },
-  highlights: { nodes: [] },
+  employments: [],
+  educations: [],
+  certifications: [],
+  portfolioItems: [],
+  highlights: [],
 };
 
 /**
  * Surface-shape (post-projection) expected values. Identity columns
  * mirror the wire fixture; the five curation sub-fields collapse to
- * empty arrays (the wire fixtures all carry `nodes: []`).
+ * empty arrays (the wire fixtures all carry empty plain lists `[]`).
  */
 const IND_1 = {
   id: "V1-IndustryProfile-1",
@@ -200,19 +204,17 @@ describe("show", () => {
 });
 
 describe("show curation projection (#553)", () => {
-  it("projects connection-shape sub-fields into flat ref arrays", async () => {
+  it("projects plain-list sub-fields into flat ref arrays", async () => {
     replyImpersonated({
       body: {
         data: {
           node: {
             ...IND_1_WIRE,
-            employments: {
-              nodes: [{ id: "V1-Employment-E1" }, { id: "V1-Employment-E2" }],
-            },
-            educations: { nodes: [{ id: "V1-Education-D1" }] },
-            certifications: { nodes: [{ id: "V1-Certification-C1" }] },
-            portfolioItems: { nodes: [{ id: "V1-PortfolioItem-PF1" }] },
-            highlights: { nodes: [{ id: "V1-Employment-E1" }] },
+            employments: [{ id: "V1-Employment-E1" }, { id: "V1-Employment-E2" }],
+            educations: [{ id: "V1-Education-D1" }],
+            certifications: [{ id: "V1-Certification-C1" }],
+            portfolioItems: [{ id: "V1-PortfolioItem-PF1" }],
+            highlights: [{ id: "V1-Employment-E1" }],
           },
         },
       },
@@ -225,17 +227,17 @@ describe("show curation projection (#553)", () => {
     expect(i.highlights).toEqual([{ id: "V1-Employment-E1" }]);
   });
 
-  it("collapses null sub-field (entire field missing on wire) to empty array", async () => {
+  it("collapses absent / malformed sub-fields to empty array", async () => {
     replyImpersonated({
       body: {
         data: {
           node: {
             ...IND_1_WIRE,
-            employments: null,
-            educations: undefined,
-            certifications: { nodes: null },
-            portfolioItems: { nodes: "not-an-array" as unknown as null },
-            highlights: { nodes: [] },
+            employments: null, // field null on wire
+            educations: undefined, // field absent on wire
+            certifications: {}, // non-array object — shape mismatch (e.g. stale `{ nodes }`)
+            portfolioItems: "not-an-array" as unknown as null, // non-array primitive
+            highlights: [], // legitimate empty list
           },
         },
       },
@@ -254,15 +256,13 @@ describe("show curation projection (#553)", () => {
         data: {
           node: {
             ...IND_1_WIRE,
-            employments: {
-              nodes: [
-                { id: "V1-Employment-E1" },
-                null,
-                { id: 42 }, // non-string id
-                { id: "" }, // empty id
-                { id: "V1-Employment-E2" },
-              ],
-            },
+            employments: [
+              { id: "V1-Employment-E1" },
+              null,
+              { id: 42 }, // non-string id
+              { id: "" }, // empty id
+              { id: "V1-Employment-E2" },
+            ],
           },
         },
       },
@@ -275,7 +275,7 @@ describe("show curation projection (#553)", () => {
     replyStock({ body: VIEWER_OK });
     const wireRow = {
       ...IND_1_WIRE,
-      portfolioItems: { nodes: [{ id: "V1-PortfolioItem-PF7" }] },
+      portfolioItems: [{ id: "V1-PortfolioItem-PF7" }],
     };
     replyImpersonated({ body: listBody([wireRow]) });
     const rows = await list(TOKEN);

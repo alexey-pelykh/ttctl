@@ -16,20 +16,21 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  * `educations`, `certifications`, `portfolioItems`, `highlights`) that
  * encode the user's per-industry curation. Per-industry curation is
  * the entire point of having industry profiles — without these arrays
- * the read is decorative. Each cross-reference is a bare `{ id }`
- * pointing back into the matching per-resource service:
+ * the read is decorative. Each cross-reference surfaces the bare `{ id }`
+ * of a curation row (an `IndustryProfileItem`).
  *
- *   - `employments[].id` → `profile.employment.show(id)`
- *   - `educations[].id` → `profile.education.show(id)`
- *   - `certifications[].id` → `profile.certifications.show(id)`
- *   - `portfolioItems[].id` → `profile.portfolio.show(id)`
- *   - `highlights[].id` → highlighted entity's per-resource show (kind
- *     not yet surfaced; future expansion if/when the wire surfaces it)
+ * NOTE: the surfaced `id` is the `IndustryProfileItem`'s own id. The
+ * captured fragment
+ * (`research/graphql/talent_profile/fragments/IndustryProfile.graphql`)
+ * shows each row also carries `profileItemId` — the foreign key into the
+ * matching per-resource `show()` (e.g. `profile.employment.show`) — plus
+ * `position`; neither is surfaced yet (see #583 for the follow-up).
  *
- * The IDs are projected from a connection-shape sub-field
- * (`{ nodes: [{ id }] }`) — see {@link projectCurationRefs} for the
- * defensive parse. Missing or shape-mismatched sub-fields collapse to
- * `[]` (graceful degradation — silently absent curation, not a wire
+ * The IDs are projected from a plain-list sub-field (`[{ id }]`, NOT a
+ * `{ nodes: [...] }` connection — see {@link projectCurationRefs} and
+ * #583 for the rc.9 regression that wrongly inferred the connection
+ * shape). Missing or shape-mismatched sub-fields collapse to `[]`
+ * (graceful degradation — silently absent curation, not a wire
  * regression). The fragment itself is the contract: if the server
  * rejects the selection (`Field 'X' doesn't exist on type
  * 'IndustryProfile'`), `ensureNoTopLevelErrors` throws and the failure
@@ -49,9 +50,11 @@ export interface IndustryProfile {
 
 /**
  * Cross-reference to a profile row curated under this industry. Bare
- * `{ id }` shape — chase the matching per-resource `show()` for full
- * detail. Issued per #553 to surface the IDs that
- * `addProfileIndustryConnections` (and its UI siblings) wire up.
+ * `{ id }` shape — the `IndustryProfileItem` curation-row id. (The wire
+ * also carries `profileItemId` — the foreign key for the per-resource
+ * `show()` — and `position`; neither is surfaced yet, see #583.) Issued
+ * per #553 to surface the IDs that `addProfileIndustryConnections` (and
+ * its UI siblings) wire up.
  */
 export interface IndustryCurationRef {
   id: string;
@@ -82,40 +85,46 @@ export interface IndustryCatalogEntry {
 
 /**
  * `IndustryProfile` fragment selection set. Identity columns plus the
- * five curation cross-references introduced in #553. The five
- * connection-shape sub-fields (`{ nodes { id } }`) are INFERRED — the
- * synthesized SDL types every IndustryProfile column as `Maybe<Scalars
- * ['Unknown']['output']>` (gappy schema region per `research/notes/11`),
- * so the only authority for the wire is the live API. The connection
- * shape is extrapolated from `addProfileIndustryConnections` which
- * already selects `profile.{portfolioItems,employments} { nodes { id, … } }`
- * — see this file's `ADD_PROFILE_INDUSTRY_CONNECTIONS_MUTATION` and the
- * captured portal document at
- * `research/graphql/gateway/operations/portal/AddProfileIndustryConnections.graphql`.
- * Wire-shape mismatches throw `GRAPHQL_ERROR` at the document-validation
- * layer (before the resolver runs), so a wrong shape surfaces loudly
- * rather than silently.
+ * five curation cross-references (#553). Each sub-field is a PLAIN LIST
+ * of `IndustryProfileItem` rows (`field { id }`) — verified against the
+ * captured Android fragment at
+ * `research/graphql/talent_profile/fragments/IndustryProfile.graphql`
+ * (which selects `{ id profileItemId position }` on the four item kinds
+ * and `{ id headline description }` on highlights; ttctl selects only
+ * `id`, sufficient for the {@link IndustryCurationRef} surface).
+ *
+ * REGRESSION HISTORY (#583): #553 originally selected these as
+ * connection-shape sub-fields (`field { nodes { id } }`), extrapolating
+ * from `addProfileIndustryConnections`'s Profile-level
+ * `{portfolioItems,employments} { nodes }` — which ARE connections.
+ * `IndustryProfile`'s sub-fields are NOT: `IndustryProfileItem` has no
+ * `nodes` field, so the live API rejected the entire document at the
+ * validation layer (`Field 'nodes' doesn't exist on type
+ * 'IndustryProfileItem'`) and `industries list` was fully broken in
+ * rc.9. Document-validation failures surface loudly (before the resolver
+ * runs), so a wrong shape is caught immediately.
  *
  * **T1 wire-shape snapshot disposition** (per `docs/wire-validation-routing.md`):
  * the post-projection `IndustryProfile` shape is captured by the
- * existing snapshot infrastructure at
+ * snapshot infrastructure at
  * `packages/e2e/src/41-profile-industries.e2e.test.ts` (assertWireShapeStable
  * over `ListIndustryProfiles` / `GetIndustryProfile`). The maintainer's
  * test account cannot seed IndustryProfile rows
  * (auto-memory `project_test_account_industries_disabled`), so the
- * round-trip + snapshot capture gracefully skip — when/if a seedable
- * account exercises the path, the snapshot lands.
+ * seed-gated round-trip + snapshot capture skip gracefully; the
+ * unconditional `list()` document-validation subtest (#583) still
+ * exercises the document shape against the live API on an empty profile.
  */
 const INDUSTRY_PROFILE_FRAGMENT = `fragment IndustryProfile on IndustryProfile {
   id
   title
   about
   domainArea
-  employments { nodes { id } }
-  educations { nodes { id } }
-  certifications { nodes { id } }
-  portfolioItems { nodes { id } }
-  highlights { nodes { id } }
+  employments { id }
+  educations { id }
+  certifications { id }
+  portfolioItems { id }
+  highlights { id }
 }`;
 
 const GET_INDUSTRY_PROFILE_QUERY = `query GetIndustryProfile($id: ID!) {
@@ -204,11 +213,11 @@ ${INDUSTRY_PROFILE_FRAGMENT}`;
  * Wire-shape baseline for a raw `IndustryProfile` row before
  * projection. Identity columns are typed as the surface contract
  * promises; the five curation sub-fields are typed `unknown` because
- * the synthesized SDL types them as `Scalars['Unknown']['output']` and
- * the connection shape (`{ nodes: [{ id }] }`) is INFERRED. The
- * `projectIndustryProfile` helper walks each sub-field defensively
- * (graceful on null / missing / shape-mismatched payloads) and emits
- * the surface `IndustryProfile`.
+ * the synthesized SDL types them as `Scalars['Unknown']['output']` —
+ * the plain-list shape (`[{ id }]`) is verified against the captured
+ * fragment (#583). The `projectIndustryProfile` helper walks each
+ * sub-field defensively (graceful on null / missing / shape-mismatched
+ * payloads) and emits the surface `IndustryProfile`.
  */
 interface RawIndustryProfile {
   id: string;
@@ -253,33 +262,30 @@ interface ListResponse {
 }
 
 /**
- * Project a connection-shape sub-field (`{ nodes: [{ id }] }`) into a
- * flat array of `IndustryCurationRef`. Defensive against the three
- * documented degradation modes:
+ * Project a plain-list curation sub-field (`[{ id }]`) into a flat array
+ * of `IndustryCurationRef`. Defensive against the documented degradation
+ * modes:
  *
- *   - `raw == null` (sub-field absent or null on the wire) → `[]`
- *   - `raw.nodes` missing / null / non-array → `[]`
- *   - per-node `id` missing / non-string → row filtered out
+ *   - `raw` not an array (sub-field absent / null / shape-mismatched) → `[]`
+ *   - per-node not an object / null → row skipped
+ *   - per-node `id` missing / non-string / empty → row skipped
  *
  * The reason for the graceful degradation (rather than throwing) is
- * that the IndustryProfile sub-field shape is INFERRED — the
- * synthesized SDL types these as `Scalars['Unknown']['output']` and the
- * Connection wrapping is extrapolated from
- * `addProfileIndustryConnections`. A wrong shape from the server is
- * possible (per-account / per-feature-flag), and silently surfacing
- * `[]` lets the rest of the read still succeed while a follow-up E2E
- * (issue body acknowledges the test-account-state constraint) catches
- * the actual wire layout. The asymmetry vs the top-level `nodes` check
- * in `list()` (which throws on non-array) is intentional: top-level
- * structure is verified, sub-field projection is best-effort.
+ * that the IndustryProfile sub-field shape is INFERRED — the synthesized
+ * SDL types these as `Scalars['Unknown']['output']`. Silently surfacing
+ * `[]` lets the rest of the read still succeed while the live E2E
+ * catches the actual wire layout. The asymmetry vs the top-level `nodes`
+ * check in `list()` (which throws on non-array) is intentional:
+ * top-level structure is verified, sub-field projection is best-effort.
+ *
+ * NOTE (#583): the sub-fields are plain lists, NOT `{ nodes: [...] }`
+ * connections — #553's connection inference was the rc.9 regression that
+ * broke `industries list` until corrected here.
  */
 function projectCurationRefs(raw: unknown): IndustryCurationRef[] {
-  if (raw === null || raw === undefined) return [];
-  if (typeof raw !== "object") return [];
-  const nodes = (raw as { nodes?: unknown }).nodes;
-  if (!Array.isArray(nodes)) return [];
+  if (!Array.isArray(raw)) return [];
   const result: IndustryCurationRef[] = [];
-  for (const n of nodes) {
+  for (const n of raw) {
     if (n === null || typeof n !== "object") continue;
     const id = (n as { id?: unknown }).id;
     if (typeof id === "string" && id.length > 0) result.push({ id });
