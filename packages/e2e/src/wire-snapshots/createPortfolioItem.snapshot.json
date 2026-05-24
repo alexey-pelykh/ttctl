@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-23T20:18:00.000Z",
+  "capturedAt": "2026-05-24T06:03:19.873Z",
   "operationName": "createPortfolioItem",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -67,6 +67,12 @@
         },
         "publicationPermit": {
           "kind": "boolean"
+        },
+        "quotes": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
         },
         "showViaToptal": {
           "kind": "boolean"

@@ -538,118 +538,116 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
     },
   );
 
-  it.skipIf(!e2eEnabled)(
-    "createPortfolioItem + portfolio list expose quotes as a typed array (#551 INFERRED → verified)",
-    async () => {
-      // Schema/contract validation rule (CLAUDE.md): `quotes` is `Unknown`
-      // in the synthesized SDL — its wire shape is INFERRED. This test is
-      // the load-bearing live verification that:
-      //   - `quotes { id text clientName clientRole company }` is the
-      //     accepted projection (the query parses + returns 200 OK; a
-      //     wrong shape would return a GraphQL error on the field
-      //     selector — the issue's guessed `{quote, attribution, role}`
-      //     were rejected by the live probe, the empirical fragment names
-      //     accepted);
-      //   - `quotes` is a direct list (NOT a connection) — captured as
-      //     `Array.isArray(items[i].quotes)` rather than
-      //     `items[i].quotes.nodes` (the probe confirmed `quotes { nodes }`
-      //     errors "Field 'nodes' doesn't exist on type
-      //     'PortfolioItemQuote'");
-      //   - newly-created portfolio items return `quotes: []` (empty
-      //     array, not null);
-      //   - populated quote entries (when present in the maintainer's
-      //     account) carry `{id, text, clientName, clientRole, company}`
-      //     per the `PortfolioItemQuote` element type the probe surfaced.
-      //
-      // Probe context (2026-05-23): maintainer's test account had 32
-      // portfolio items, all with empty `quotes: []` — populated-shape
-      // sub-field types stay INFERRED in this snapshot. The wire-shape
-      // snapshot in `createPortfolioItem.snapshot.json` captures the
-      // empty-case shape; when a populated quote appears (an existing
-      // account-state item), this test's `withQuotes` branch performs the
-      // per-field type assertion.
-      const sentinelTitle = `e2e-sentinel-quotes-${Date.now().toString()}`;
-      const addResult = await cli.run([
-        "profile",
-        "portfolio",
-        "add",
-        "--title",
-        sentinelTitle,
-        "--industry-id",
-        SOFTWARE_INDUSTRY_ID,
-        "-o",
-        "json",
-      ]);
-      expect(addResult.exitCode).toBe(0);
-      const addPayload = JSON.parse(addResult.stdout) as {
-        ok?: boolean;
-        created?: PortfolioItemShape[];
+  it.skipIf(!e2eEnabled)("createPortfolioItem + portfolio list expose quotes as a typed array", async () => {
+    // Provenance: #551 — quotes wire-shape verification (INFERRED → verified live).
+    // Schema/contract validation rule (CLAUDE.md): `quotes` is `Unknown`
+    // in the synthesized SDL — its wire shape is INFERRED. This test is
+    // the load-bearing live verification that:
+    //   - `quotes { id text clientName clientRole company }` is the
+    //     accepted projection (the query parses + returns 200 OK; a
+    //     wrong shape would return a GraphQL error on the field
+    //     selector — the issue's guessed `{quote, attribution, role}`
+    //     were rejected by the live probe, the empirical fragment names
+    //     accepted);
+    //   - `quotes` is a direct list (NOT a connection) — captured as
+    //     `Array.isArray(items[i].quotes)` rather than
+    //     `items[i].quotes.nodes` (the probe confirmed `quotes { nodes }`
+    //     errors "Field 'nodes' doesn't exist on type
+    //     'PortfolioItemQuote'");
+    //   - newly-created portfolio items return `quotes: []` (empty
+    //     array, not null);
+    //   - populated quote entries (when present in the maintainer's
+    //     account) carry `{id, text, clientName, clientRole, company}`
+    //     per the `PortfolioItemQuote` element type the probe surfaced.
+    //
+    // Probe context (2026-05-23): maintainer's test account had 32
+    // portfolio items, all with empty `quotes: []` — populated-shape
+    // sub-field types stay INFERRED in this snapshot. The wire-shape
+    // snapshot in `createPortfolioItem.snapshot.json` captures the
+    // empty-case shape; when a populated quote appears (an existing
+    // account-state item), this test's `withQuotes` branch performs the
+    // per-field type assertion.
+    const sentinelTitle = `e2e-sentinel-quotes-${Date.now().toString()}`;
+    const addResult = await cli.run([
+      "profile",
+      "portfolio",
+      "add",
+      "--title",
+      sentinelTitle,
+      "--industry-id",
+      SOFTWARE_INDUSTRY_ID,
+      "-o",
+      "json",
+    ]);
+    expect(addResult.exitCode).toBe(0);
+    const addPayload = JSON.parse(addResult.stdout) as {
+      ok?: boolean;
+      created?: PortfolioItemShape[];
+    };
+    expect(addPayload.ok).toBe(true);
+    const created = addPayload.created ?? [];
+    const sentinelId = created.find((it) => it.title === sentinelTitle)?.id;
+    expect(typeof sentinelId).toBe("string");
+    if (sentinelId === undefined) return;
+
+    try {
+      // The freshly-created sentinel MUST have `quotes: []` — the wire
+      // returns an empty array for items without testimonials (NOT null,
+      // NOT missing). The mapper would not surface a quotes field at all
+      // if the wire shape were unparseable, so an Array.isArray
+      // assertion is enough to verify both the wire-shape acceptance and
+      // the projection.
+      const sentinel = created.find((it) => it.id === sentinelId);
+      expect(sentinel?.quotes).toBeDefined();
+      expect(Array.isArray(sentinel?.quotes)).toBe(true);
+      expect(sentinel?.quotes).toEqual([]);
+
+      // Inspect the full list — any portfolio item that DOES carry
+      // populated quotes lets us assert the per-field shape on a live
+      // wire payload. The maintainer's account at probe time had no
+      // populated quotes (32 items, all `[]`); when this changes, the
+      // assertion picks up the populated shape automatically.
+      const listResult = await cli.run(["profile", "portfolio", "list", "-o", "json"]);
+      expect(listResult.exitCode).toBe(0);
+      const listPayload = JSON.parse(listResult.stdout) as {
+        version?: string;
+        items?: PortfolioItemShape[];
       };
-      expect(addPayload.ok).toBe(true);
-      const created = addPayload.created ?? [];
-      const sentinelId = created.find((it) => it.title === sentinelTitle)?.id;
-      expect(typeof sentinelId).toBe("string");
-      if (sentinelId === undefined) return;
+      const allItems = listPayload.items ?? [];
+      // Every item in the list must have an Array-typed `quotes` field
+      // — the wire shape is `quotes: [PortfolioItemQuote!]!` (non-null
+      // list of non-null elements per the empirical schema), so the
+      // projection MUST surface an array for every entry.
+      for (const it of allItems) {
+        expect(Array.isArray(it.quotes)).toBe(true);
+      }
 
-      try {
-        // The freshly-created sentinel MUST have `quotes: []` — the wire
-        // returns an empty array for items without testimonials (NOT null,
-        // NOT missing). The mapper would not surface a quotes field at all
-        // if the wire shape were unparseable, so an Array.isArray
-        // assertion is enough to verify both the wire-shape acceptance and
-        // the projection.
-        const sentinel = created.find((it) => it.id === sentinelId);
-        expect(sentinel?.quotes).toBeDefined();
-        expect(Array.isArray(sentinel?.quotes)).toBe(true);
-        expect(sentinel?.quotes).toEqual([]);
-
-        // Inspect the full list — any portfolio item that DOES carry
-        // populated quotes lets us assert the per-field shape on a live
-        // wire payload. The maintainer's account at probe time had no
-        // populated quotes (32 items, all `[]`); when this changes, the
-        // assertion picks up the populated shape automatically.
-        const listResult = await cli.run(["profile", "portfolio", "list", "-o", "json"]);
-        expect(listResult.exitCode).toBe(0);
-        const listPayload = JSON.parse(listResult.stdout) as {
-          version?: string;
-          items?: PortfolioItemShape[];
-        };
-        const allItems = listPayload.items ?? [];
-        // Every item in the list must have an Array-typed `quotes` field
-        // — the wire shape is `quotes: [PortfolioItemQuote!]!` (non-null
-        // list of non-null elements per the empirical schema), so the
-        // projection MUST surface an array for every entry.
-        for (const it of allItems) {
-          expect(Array.isArray(it.quotes)).toBe(true);
-        }
-
-        const withQuotes = allItems.filter((it) => Array.isArray(it.quotes) && it.quotes.length > 0);
-        if (withQuotes.length > 0) {
-          // Per-field shape assertion for any populated quote — locks the
-          // {id: string, text/clientName/clientRole/company: string|null}
-          // contract live. Skipped when no populated quotes are present on
-          // the maintainer's account (the typical case at probe time); the
-          // empty-case shape is gated by the wire-shape snapshot below.
-          const allQuotes = withQuotes.flatMap((it) => it.quotes ?? []);
-          for (const quote of allQuotes) {
-            expect(typeof quote.id).toBe("string");
-            for (const field of [quote.text, quote.clientName, quote.clientRole, quote.company]) {
-              if (field !== null && field !== undefined) {
-                expect(typeof field).toBe("string");
-              }
+      const withQuotes = allItems.filter((it) => Array.isArray(it.quotes) && it.quotes.length > 0);
+      if (withQuotes.length > 0) {
+        // Per-field shape assertion for any populated quote — locks the
+        // {id: string, text/clientName/clientRole/company: string|null}
+        // contract live. Skipped when no populated quotes are present on
+        // the maintainer's account (the typical case at probe time); the
+        // empty-case shape is gated by the wire-shape snapshot below.
+        const allQuotes = withQuotes.flatMap((it) => it.quotes ?? []);
+        for (const quote of allQuotes) {
+          expect(typeof quote.id).toBe("string");
+          for (const field of [quote.text, quote.clientName, quote.clientRole, quote.company]) {
+            if (field !== null && field !== undefined) {
+              expect(typeof field).toBe("string");
             }
           }
-        } else {
-          process.stderr.write(
-            "info: no portfolio items with populated quotes on this account — populated-shape sub-field assertion skipped (empty-case shape verified via wire-shape snapshot)\n",
-          );
         }
-      } finally {
-        const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
-        expect(cleanup.exitCode).toBe(0);
+      } else {
+        process.stderr.write(
+          "info: no portfolio items with populated quotes on this account — populated-shape sub-field assertion skipped (empty-case shape verified via wire-shape snapshot)\n",
+        );
       }
-    },
-  );
+    } finally {
+      const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
+      expect(cleanup.exitCode).toBe(0);
+    }
+  });
 
   it.skipIf(!e2eEnabled)("createPortfolioItem response wire shape matches snapshot (T1 disposition)", async () => {
     // Schema/contract validation rule corollary: `createPortfolioItem`
