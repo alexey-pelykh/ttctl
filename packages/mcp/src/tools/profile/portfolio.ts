@@ -133,7 +133,12 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
       inputSchema: {
         id: z.string().describe("Id of the portfolio item to update"),
         title: z.string().optional().describe("Portfolio item title"),
-        description: z.string().optional().describe("Long-form description of the item"),
+        description: z
+          .string()
+          .optional()
+          .describe(
+            'Long-form description of the item. Minimum 200 characters — the server rejects a shorter value ("description is too short (minimum is 200 characters)") (#543).',
+          ),
         link: z.string().optional().describe("Primary URL for the item"),
         websiteUrl: z.string().optional().describe("Public website URL associated with the item"),
         accomplishment: z.string().optional().describe("Short accomplishment summary"),

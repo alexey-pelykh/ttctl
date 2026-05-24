@@ -56,3 +56,34 @@ describe("ttctl_profile_portfolio_highlight description", () => {
     expect(tool.description).toContain("ttctl_profile_portfolio_list");
   });
 });
+
+/**
+ * #543 — `ttctl_profile_portfolio_update`'s `description` field has a
+ * 200-character server-side minimum (`description is too short (minimum
+ * is 200 characters)`) that the tool surface did not relay. The
+ * constraint is field-scoped (not tool-level like the #542 cap), so this
+ * asserts against the `description` field's `.describe()` text on the
+ * registered tool's input schema. Mirrors the #492 precedent (upstream
+ * constraint documented in the schema describe string).
+ */
+describe("ttctl_profile_portfolio_update description field", () => {
+  it("documents the 200-character minimum on `description` (#543)", () => {
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    registerPortfolioTools(server, buildStubCtx());
+    const internal = server as unknown as {
+      _registeredTools: Record<
+        string,
+        { inputSchema?: { shape?: Record<string, { description?: string } | undefined> } } | undefined
+      >;
+    };
+    const tool = internal._registeredTools["ttctl_profile_portfolio_update"];
+    expect(tool).toBeDefined();
+    const descField = tool?.inputSchema?.shape?.["description"];
+    expect(descField).toBeDefined();
+    // Names the numeric minimum and frames it as a minimum so an MCP
+    // client can pre-flight instead of learning it from the server's
+    // "description is too short" rejection.
+    expect(descField?.description).toContain("200");
+    expect(descField?.description?.toLowerCase()).toContain("minimum");
+  });
+});
