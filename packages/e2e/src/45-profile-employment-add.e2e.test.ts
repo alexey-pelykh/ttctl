@@ -739,7 +739,7 @@ describe("profile employment #484/#508 custom workplace WITHOUT website add() li
   // succeeded on; the test restores the original position afterwards
   // so the row state is unchanged.
   it.skipIf(!e2eEnabled)(
-    "#508 update({position}) succeeds against the pre-existing noEmployer row on the account (anchor-pair echo via buildUpdateEmploymentInput)",
+    "update({position}) succeeds against the pre-existing noEmployer row on the account (anchor-pair echo via buildUpdateEmploymentInput)",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
       const rows = await profile.employment.list(token);

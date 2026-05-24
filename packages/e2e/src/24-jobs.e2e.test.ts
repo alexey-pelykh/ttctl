@@ -70,7 +70,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("jobs (live mobile-gateway)", () => {
+describe("jobs (live mobile-gateway, #138, #166, #183, #410, #545, #546)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 
@@ -121,7 +121,7 @@ describe("jobs (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "jobs show projects fixedRate (Money | null) from activityItem.availabilityRequest.metadata (#410)",
+    "jobs show projects fixedRate (Money | null) from activityItem.availabilityRequest.metadata",
     async () => {
       const listResult = await cli.run(["jobs", "list", "-o", "json"]);
       expect(listResult.exitCode).toBe(0);
@@ -146,7 +146,7 @@ describe("jobs (live mobile-gateway)", () => {
     },
   );
 
-  it.skipIf(!e2eEnabled)("jobs show projects counterparty identity: contacts + pointsOfContact (#545)", async () => {
+  it.skipIf(!e2eEnabled)("jobs show projects counterparty identity: contacts + pointsOfContact", async () => {
     const listResult = await cli.run(["jobs", "list", "-o", "json"]);
     expect(listResult.exitCode).toBe(0);
     const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
@@ -185,7 +185,7 @@ describe("jobs (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "jobs show projects client context: foundingYear (added) + countryName / industry / city / isEnterprise / teamSize populate (#546)",
+    "jobs show projects client context: foundingYear (added) + countryName / industry / city / isEnterprise / teamSize populate",
     async () => {
       const listResult = await cli.run(["jobs", "list", "-o", "json"]);
       expect(listResult.exitCode).toBe(0);
@@ -245,7 +245,7 @@ describe("jobs (live mobile-gateway)", () => {
   // first run with `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` writes
   // the snapshot.
   // -------------------------------------------------------------------
-  it.skipIf(!e2eEnabled)("JobShow wire shape matches snapshot (Track 1; #546)", async () => {
+  it.skipIf(!e2eEnabled)("JobShow wire shape matches snapshot (Track 1)", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
 
     const listResult = await cli.run(["jobs", "list", "-o", "json"]);
@@ -343,7 +343,7 @@ describe("jobs (live mobile-gateway)", () => {
     expect(payload.errors?.[0]?.code).toBe("NOT_FOUND");
   });
 
-  it.skipIf(!e2eEnabled)("jobs show returns NOT_FOUND for a malformed id (#166)", async () => {
+  it.skipIf(!e2eEnabled)("jobs show returns NOT_FOUND for a malformed id", async () => {
     // Wrong-format ID — the live API rejects with `Invalid ID` BEFORE
     // performing lookup. This case originally bypassed the regex
     // and surfaced as `GRAPHQL_ERROR`; #166 collapsed it to `NOT_FOUND`.
@@ -518,7 +518,7 @@ describe("jobs (live mobile-gateway)", () => {
     };
   }
 
-  it.skipIf(!e2eEnabled)("jobs list --per-page 5 surfaces offset-style pageInfo and limits items (#138)", async () => {
+  it.skipIf(!e2eEnabled)("jobs list --per-page 5 surfaces offset-style pageInfo and limits items", async () => {
     const result = await cli.run(["jobs", "list", "--page", "1", "--per-page", "5", "-o", "json"]);
     expect(result.exitCode).toBe(0);
     const payload = JSON.parse(result.stdout) as ListEnvelope;
@@ -545,7 +545,7 @@ describe("jobs (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "jobs list with --page 1 vs --page 2 returns DIFFERENT entities (server honors page variable; #138)",
+    "jobs list with --page 1 vs --page 2 returns DIFFERENT entities (server honors page variable)",
     async () => {
       // Use the default sort; eligibleJobs' default surface is stable
       // enough across consecutive paged fetches for the "at least one
@@ -592,7 +592,7 @@ describe("jobs (live mobile-gateway)", () => {
     },
   );
 
-  it.skipIf(!e2eEnabled)("jobs list pretty footer renders 'Page X of Y' when paginated (#138)", async () => {
+  it.skipIf(!e2eEnabled)("jobs list pretty footer renders 'Page X of Y' when paginated", async () => {
     const result = await cli.run(["jobs", "list", "--page", "1", "--per-page", "5"]);
     expect(result.exitCode).toBe(0);
     // Pretty output: the table is followed by the footer line.
@@ -607,7 +607,7 @@ describe("jobs (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "--page on a non-paginated leaf (`engagements list`) fails with Commander's unknown-option error (#183)",
+    "--page on a non-paginated leaf (`engagements list`) fails with Commander's unknown-option error",
     async () => {
       // Per #183, pagination flags are declared PER paginating leaf.
       // Post-#377 the applications leaf accepts --page / --per-page;

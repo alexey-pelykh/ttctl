@@ -97,7 +97,7 @@ describe("profile certifications list (live talent-profile, INFERRED wire shape,
   // -----------------------------------------------------------------
 
   it.skipIf(!e2eEnabled)(
-    "list returns rows with every documented field, including status: string|null (#557) and skills: SkillRef[] (#558)",
+    "list returns rows with every documented field, including status: string|null and skills: SkillRef[]",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
       const rows = await profile.certifications.list(token);

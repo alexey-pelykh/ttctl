@@ -47,7 +47,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("engagements show (live mobile-gateway)", () => {
+describe("engagements show (live mobile-gateway, #546)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 
@@ -125,7 +125,7 @@ describe("engagements show (live mobile-gateway)", () => {
   });
 
   it.skipIf(!e2eEnabled)(
-    "engagements show projects client context: city/countryName/foundingYear/industry/isEnterprise/teamSize (#546)",
+    "engagements show projects client context: city/countryName/foundingYear/industry/isEnterprise/teamSize",
     async () => {
       const listResult = await cli.run(["engagements", "list", "--status", "all", "-o", "json"]);
       expect(listResult.exitCode).toBe(0);
@@ -195,7 +195,7 @@ describe("engagements show (live mobile-gateway)", () => {
   // `packages/e2e/src/wire-snapshots/`; the first run with
   // `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` writes the snapshot.
   // -------------------------------------------------------------------
-  it.skipIf(!e2eEnabled)("JobActivityItem wire shape matches snapshot (Track 1; #546)", async () => {
+  it.skipIf(!e2eEnabled)("JobActivityItem wire shape matches snapshot (Track 1)", async () => {
     const token = loadSandboxBearer(sandboxConfigPath);
 
     const listResult = await cli.run(["engagements", "list", "--status", "all", "-o", "json"]);

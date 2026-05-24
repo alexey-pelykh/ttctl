@@ -90,7 +90,7 @@ function formatYmd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-describe("engagements breaks (live mobile-gateway)", () => {
+describe("engagements breaks (live mobile-gateway, #155)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
@@ -342,7 +342,7 @@ describe("engagements breaks (live mobile-gateway)", () => {
   // the run.
   // -------------------------------------------------------------------
   it.skipIf(!e2eEnabled)(
-    "round-trips breaks add → reschedule → remove and verifies the new window is reflected (#155)",
+    "round-trips breaks add → reschedule → remove and verifies the new window is reflected",
     async () => {
       // Step 1: find an active engagement.
       const listResult = await cli.run(["engagements", "list", "--status", "active", "-o", "json"]);
@@ -455,7 +455,7 @@ describe("engagements breaks (live mobile-gateway)", () => {
   );
 
   it.skipIf(!e2eEnabled)(
-    "engagements breaks reschedule --dry-run emits the dry-run envelope without server side effects (#155)",
+    "engagements breaks reschedule --dry-run emits the dry-run envelope without server side effects",
     async () => {
       // Use a synthetic break id — no live break is needed since the
       // mutation is never sent on dry-run.
