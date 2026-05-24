@@ -1,0 +1,123 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-24T14:37:51.042Z",
+  "operationName": "JobsList",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "items": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "client": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "fullName": {
+                  "kind": "null"
+                },
+                "id": {
+                  "kind": "string"
+                }
+              }
+            },
+            "commitment": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "slug": {
+                  "kind": "string"
+                }
+              }
+            },
+            "expectedHours": {
+              "kind": "number"
+            },
+            "fixedRate": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "decimal": {
+                    "kind": "string"
+                  },
+                  "verbose": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "id": {
+              "kind": "string"
+            },
+            "maxRate": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "number"
+              }
+            },
+            "notInterested": {
+              "kind": "boolean"
+            },
+            "postedWhen": {
+              "kind": "string"
+            },
+            "saved": {
+              "kind": "boolean"
+            },
+            "specialization": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "title": {
+                  "kind": "string"
+                }
+              }
+            },
+            "startDate": {
+              "kind": "string"
+            },
+            "title": {
+              "kind": "string"
+            },
+            "url": {
+              "kind": "string"
+            },
+            "viewed": {
+              "kind": "boolean"
+            },
+            "workType": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "slug": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "page": {
+        "kind": "number"
+      },
+      "perPage": {
+        "kind": "number"
+      },
+      "totalCount": {
+        "kind": "number"
+      }
+    }
+  }
+}
