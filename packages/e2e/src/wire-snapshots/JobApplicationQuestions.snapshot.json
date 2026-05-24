@@ -1,0 +1,53 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-24T12:29:02.215Z",
+  "operationName": "JobApplicationQuestions",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "expertiseQuestions": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "matcherQuestions": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "identifier": {
+              "kind": "string"
+            },
+            "inputType": {
+              "kind": "string"
+            },
+            "isMandatory": {
+              "kind": "boolean"
+            },
+            "options": {
+              "kind": "array",
+              "item": {
+                "kind": "unknown"
+              }
+            },
+            "prompt": {
+              "kind": "string"
+            },
+            "suggestedAnswer": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "type": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

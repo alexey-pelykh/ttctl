@@ -56,7 +56,7 @@ export type JobsShowDetailWithQuestions = jobs.JobDetail & { questions: JobsShow
  * Issue #437: when `opts.withQuestions === true`, additionally invokes
  * `applications.applyQuestions(token, id)` in parallel with the existing
  * `jobs.show()` fetch (Promise.all so both round-trips overlap), then
- * merges the four-field {@link applications.ApplicationQuestion}
+ * merges the {@link applications.ApplicationQuestion}
  * inventories under a top-level `questions` field. Pretty output gains
  * the Matcher Questions / Expertise Questions sections (rendered even
  * when the inventory is empty — the section header surfaces the zero

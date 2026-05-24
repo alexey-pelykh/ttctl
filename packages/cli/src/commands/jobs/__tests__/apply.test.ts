@@ -148,11 +148,45 @@ const PRE_APPLY_DATA_FIXTURE = {
 
 const APPLY_QUESTIONS_FIXTURE = {
   matcherQuestions: [
-    { identifier: "MQ-1", prompt: "Are you available?", type: "matcher" as const, isMandatory: true },
-    { identifier: "MQ-2", prompt: "Years of experience?", type: "matcher" as const, isMandatory: false },
-    { identifier: "MQ-3", prompt: "Notice period?", type: "matcher" as const, isMandatory: false },
+    {
+      identifier: "MQ-1",
+      prompt: "Are you available?",
+      type: "matcher" as const,
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text" as const,
+    },
+    {
+      identifier: "MQ-2",
+      prompt: "Years of experience?",
+      type: "matcher" as const,
+      isMandatory: false,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text" as const,
+    },
+    {
+      identifier: "MQ-3",
+      prompt: "Notice period?",
+      type: "matcher" as const,
+      isMandatory: false,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text" as const,
+    },
   ],
-  expertiseQuestions: [{ identifier: "EQ-1", prompt: "TypeScript", type: "expertise" as const, isMandatory: true }],
+  expertiseQuestions: [
+    {
+      identifier: "EQ-1",
+      prompt: "TypeScript",
+      type: "expertise" as const,
+      isMandatory: true,
+      options: [],
+      suggestedAnswer: null,
+      inputType: "free-text" as const,
+    },
+  ],
 };
 
 const SIMILAR_ANSWERS_FIXTURE = [

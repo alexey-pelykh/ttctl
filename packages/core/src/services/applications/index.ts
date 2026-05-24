@@ -1392,8 +1392,11 @@ export interface PreApplyData {
 }
 
 /**
- * One question on the apply form (#424). The four-field shape is
- * uniform across matcher and expertise variants per REQ-Q1:
+ * One question on the apply form (#424, #584). The shape is uniform
+ * across matcher and expertise variants per REQ-Q1; the choice-metadata
+ * fields (`options` / `suggestedAnswer` / `inputType`, added in #584) are
+ * meaningfully populated for matcher questions only and carry neutral
+ * defaults for expertise questions (documented per-field below).
  *
  *   - `identifier` — the wire `id` field (`JobPositionQuestion.id` /
  *     `JobExpertiseQuestion.id`). Threaded into the apply-mutation
@@ -1407,7 +1410,9 @@ export interface PreApplyData {
  *     the `subject.name` (`Industry.name` or `Skill.name`) — expertise
  *     questions ask "which of your profile items demonstrates this
  *     skill / industry?", so the subject's name IS the prompt the
- *     user sees.
+ *     user sees. (Note: the public field is `prompt`, NOT `body` — a
+ *     prior `ttctl_jobs_apply_questions` docstring drifted to `body`;
+ *     reconciled in #584.)
  *   - `type` — TTCtl-side discriminant `"matcher" | "expertise"`,
  *     making each question self-describing if consumers flatten the
  *     two arrays (e.g., #426's answers-file template builder).
@@ -1424,12 +1429,45 @@ export interface PreApplyData {
  *     them"). Documented inference; #445 live E2E is the wire
  *     authority and may refine this projection if real data surfaces
  *     a more nuanced mandatory-ness signal.
+ *   - `options` — allowed values for a choice-style (dropdown) matcher
+ *     question (#584). The wire's `JobPositionQuestion.options` scalar
+ *     list, projected to a clean `string[]` (nulls / non-strings
+ *     filtered). EMPTY for free-text matcher questions and for ALL
+ *     expertise questions — expertise answers are profile-item
+ *     selections (`subject.connections`), not an enumerable choice list
+ *     at this surface, so the option cascade is intentionally not
+ *     projected here (see #585 for the interest-request-accept reuse).
+ *   - `suggestedAnswer` — the recruiter-preselected value the Toptal
+ *     portal renders for a dropdown matcher question (#584). The wire's
+ *     `JobPositionQuestion.suggestedAnswer { answer }`, lifted to the
+ *     bare string. `null` when absent (free-text questions, dropdowns
+ *     with no preselection) and always `null` for expertise questions.
+ *   - `inputType` — input-mode discriminator derived MECHANICALLY from
+ *     options-presence (#584): `"dropdown"` iff `options.length > 0`,
+ *     else `"free-text"`. Lets a caller build a valid `matcherAnswers`
+ *     entry without guessing the input mode (`options`-presence cleanly
+ *     discriminates per the issue). Expertise questions always project
+ *     `"free-text"` here (no enumerable options at this surface — the
+ *     value is a faithful function of the empty `options`, NOT a claim
+ *     that expertise answers are free text; their real answer mechanism
+ *     is `expertiseQuestionsAnswers`).
+ *
+ * **`options` / `suggestedAnswer` are [INFERRED — UNVERIFIED]**: neither
+ * field is in the synthesized schema (`JobPositionQuestion` declares only
+ * `id` / `question`), and the captured op selects `suggestedAnswer
+ * { __typename }` without `answer`. The selection-set expansion is
+ * recovered from #584's manual GraphQL query; the live `*.e2e.test.ts`
+ * (gated by `TTCTL_E2E=1`) is the wire authority per the schema/contract
+ * rule.
  */
 export interface ApplicationQuestion {
   identifier: string;
   prompt: string;
   type: "matcher" | "expertise";
   isMandatory: boolean;
+  options: string[];
+  suggestedAnswer: string | null;
+  inputType: "dropdown" | "free-text";
 }
 
 /**
@@ -1437,8 +1475,9 @@ export interface ApplicationQuestion {
  * Mirrors the captured `JobApplicationQuestions` operation's two
  * parallel selections — `viewer.job.questions(hideExpertiseQuestion:
  * true)` for matcher questions, `viewer.job.expertiseQuestions` for
- * expertise — projecting each entry to the four-field
- * {@link ApplicationQuestion} shape. Empty arrays surface verbatim
+ * expertise — projecting each entry to the {@link ApplicationQuestion}
+ * shape (including the #584 choice-metadata fields `options` /
+ * `suggestedAnswer` / `inputType`). Empty arrays surface verbatim
  * when the job has no questions of that kind.
  */
 export interface ApplicationQuestions {
@@ -1568,6 +1607,24 @@ const JOB_APPLY_DATA_QUERY = `query JobApplyData($jobId: ID!) {
   }
 }`;
 
+// Reusable matcher-question selection (#584). Extracted as a named
+// fragment-string so the interest-request-accept path (#585) can embed
+// the IDENTICAL field set without duplicating the projection contract —
+// the DEPENDENCY NOTE's "shared selection fragment + mapper" requirement.
+// `options` + `suggestedAnswer { answer }` are the #584 additions: both
+// are [INFERRED] (absent from the synthesized `JobPositionQuestion`,
+// which declares only `id` / `question`; the captured op selected
+// `suggestedAnswer { __typename }` with no `answer`). The live E2E is the
+// wire authority per the schema/contract rule. Pair this string with the
+// {@link projectMatcherQuestion} mapper + {@link MatcherQuestionWire}
+// wire type — the three together are the single reuse seam for #585.
+const MATCHER_QUESTION_SELECTION = `__typename
+        id
+        question
+        isRequired
+        options
+        suggestedAnswer { __typename answer }`;
+
 const JOB_APPLICATION_QUESTIONS_QUERY = `query JobApplicationQuestions($jobId: ID!) {
   viewer {
     __typename
@@ -1576,10 +1633,7 @@ const JOB_APPLICATION_QUESTIONS_QUERY = `query JobApplicationQuestions($jobId: I
       __typename
       id
       questions(hideExpertiseQuestion: true) {
-        __typename
-        id
-        question
-        isRequired
+        ${MATCHER_QUESTION_SELECTION}
       }
       expertiseQuestions {
         __typename
@@ -1673,6 +1727,15 @@ interface MatcherQuestionWire {
   id: string;
   question: string;
   isRequired: boolean | null;
+  // #584 additions — [INFERRED]. `options` is the dropdown's allowed
+  // values (scalar list, selected bare in #584's manual query); typed
+  // as nullable-item list defensively since the wire-list nullability is
+  // unverified. `suggestedAnswer` is an object with an `answer` field
+  // (the captured op proved `suggestedAnswer` is an object by selecting
+  // `{ __typename }`; the `answer` sub-field is the #584 inference).
+  // Optional on the wire shape so pre-#584 fixtures still project.
+  options?: (string | null)[] | null;
+  suggestedAnswer?: { answer?: string | null } | null;
 }
 
 interface ExpertiseQuestionSubjectWire {
@@ -1741,12 +1804,34 @@ function projectApplyErrors(errors: (ApplyErrorWire | null)[] | null | undefined
   return errors.filter((e): e is ApplyErrorWire => e !== null).map((e) => ({ code: e.code, message: e.message }));
 }
 
+/**
+ * Project the wire `options` scalar list into a clean `string[]` (#584),
+ * dropping null / non-string entries defensively (the wire-list item
+ * nullability is unverified [INFERRED]). Absent / null list → `[]`.
+ */
+function projectQuestionOptions(options: (string | null)[] | null | undefined): string[] {
+  if (options == null) return [];
+  return options.filter((o): o is string => typeof o === "string");
+}
+
+/**
+ * Project a wire matcher question into the public {@link ApplicationQuestion}
+ * shape (#424, #584). The single mapper for the matcher-question contract —
+ * reused by #585's interest-request-accept path alongside
+ * {@link MATCHER_QUESTION_SELECTION} + {@link MatcherQuestionWire}.
+ * `inputType` is derived MECHANICALLY from options-presence so it stays a
+ * faithful function of the projected `options`.
+ */
 function projectMatcherQuestion(wire: MatcherQuestionWire): ApplicationQuestion {
+  const options = projectQuestionOptions(wire.options);
   return {
     identifier: wire.id,
     prompt: wire.question,
     type: "matcher",
     isMandatory: wire.isRequired ?? false,
+    options,
+    suggestedAnswer: wire.suggestedAnswer?.answer ?? null,
+    inputType: options.length > 0 ? "dropdown" : "free-text",
   };
 }
 
@@ -1767,6 +1852,14 @@ function projectExpertiseQuestion(wire: ExpertiseQuestionWire): ApplicationQuest
     // {@link ApplicationQuestion.isMandatory} JSDoc for the
     // grounded inference + the #445 wire-authority follow-up.
     isMandatory: true,
+    // #584 choice-metadata fields are matcher-scoped. Expertise answers
+    // are profile-item selections (`subject.connections`), not an
+    // enumerable choice list at this surface, so neutral defaults apply:
+    // empty options ⇒ `inputType: "free-text"` by the same mechanical
+    // rule as matcher questions. See {@link ApplicationQuestion} JSDoc.
+    options: [],
+    suggestedAnswer: null,
+    inputType: "free-text",
   };
 }
 
@@ -1880,11 +1973,13 @@ export async function applyData(token: string, jobId: string): Promise<PreApplyD
 }
 
 /**
- * Pre-apply matcher + expertise questions inventory for a job (#424).
- * Wraps `JobApplicationQuestions($jobId)`; trims the captured
- * operation's `subject.possibleAnswers` cascades — the four-field
- * {@link ApplicationQuestion} shape is the public projection per
- * #424 AC.
+ * Pre-apply matcher + expertise questions inventory for a job (#424,
+ * #584). Wraps `JobApplicationQuestions($jobId)`; trims the captured
+ * operation's expertise `subject.possibleAnswers` cascades — the
+ * {@link ApplicationQuestion} shape is the public projection. Matcher
+ * questions additionally surface the #584 choice metadata (`options` /
+ * `suggestedAnswer` / `inputType`) so a caller can answer a dropdown
+ * matcher question without dropping to raw GraphQL.
  *
  * The two arrays surface verbatim presence: empty when the job has
  * no questions of that kind. Order is server-supplied; no
