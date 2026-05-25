@@ -715,6 +715,7 @@ describe("update", () => {
           skills: [],
           showViaToptal: EMP_1.showViaToptal,
           toptalRelated: EMP_1.toptalRelated,
+          highlight: EMP_1.highlight,
           startDate: EMP_1.startDate,
           endDate: EMP_1.endDate,
           company: EMP_1.company,
@@ -840,7 +841,7 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     expect(merged.position).toBe("Lead");
     expect(merged.toptalRelated).toBe(EMP_1.toptalRelated);
     expect(merged.managementExperience).toBeNull();
-    expect(merged).not.toHaveProperty("highlight");
+    expect(merged.highlight).toBe(EMP_1.highlight);
   });
 
   // -------------------------------------------------------------------
@@ -890,6 +891,23 @@ describe("buildUpdateEmploymentInput (#394 merge helper)", () => {
     const currentNullEnd = { ...EMP_1_MAPPED, endDate: null } as Employment;
     const merged = buildUpdateEmploymentInput(currentNullEnd, { position: "X" });
     expect(merged.endDate).toBeNull();
+  });
+
+  // #607 — highlight force-echo. Sibling to #487 / #604.
+
+  it("#607 preserves current.highlight=true when caller omits highlight", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_2_MAPPED), { position: "Lead" });
+    expect(merged.highlight).toBe(true);
+  });
+
+  it("#607 preserves current.highlight=false when caller omits highlight", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { position: "Lead" });
+    expect(merged.highlight).toBe(false);
+  });
+
+  it("#607 lets caller-supplied highlight override current.highlight", () => {
+    const merged = buildUpdateEmploymentInput(fromMapped(EMP_1_MAPPED), { highlight: true });
+    expect(merged.highlight).toBe(true);
   });
 
   it("lets user-supplied required-non-null fields override the current-derived defaults", () => {
