@@ -1555,6 +1555,10 @@ export interface PhotoUploadInput {
 
 const DEFAULT_PHOTO_CONTENT_TYPE = "image/jpeg";
 const DEFAULT_PHOTO_FILENAME = "photo.jpg";
+// merge-complete-exempt: cropX — capture's flat shape (cropX/Y/W/H) diverges from live wire (cropped.x/y/width/height); ttctl tracks live.
+// merge-complete-exempt: cropY — see cropX exemption.
+// merge-complete-exempt: cropW — see cropX exemption.
+// merge-complete-exempt: cropH — see cropX exemption.
 const DEFAULT_PHOTO_TRANSFORMATION: PhotoTransformationInput = {
   cropped: { x: 0, y: 0, width: 0, height: 0 },
 };
