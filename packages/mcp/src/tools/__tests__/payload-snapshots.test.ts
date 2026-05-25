@@ -194,6 +194,13 @@ describe("MCP profile_basic_show — payload snapshots", () => {
     citizenshipId: "country_ua",
     phoneNumber: "+380 50 000 0000",
     twitter: "testuser",
+    // #604 — social URLs + skype read-preserved by basic.set's merge.
+    linkedin: "https://www.linkedin.com/in/testuser",
+    github: "https://github.com/testuser",
+    website: "https://testuser.example",
+    behance: null,
+    dribbble: null,
+    skype: "testuser.skype",
     softwareSkills: [{ id: "ss_typescript", name: "TypeScript" }],
   };
 
@@ -215,6 +222,12 @@ describe("MCP profile_basic_show — payload snapshots", () => {
       citizenshipId: null,
       phoneNumber: null,
       twitter: null,
+      linkedin: null,
+      github: null,
+      website: null,
+      behance: null,
+      dribbble: null,
+      skype: null,
       softwareSkills: [],
     };
     expect(extractText(jsonResponse({ profile: PROFILE, basicInfo: emptyBasicInfo }))).toMatchSnapshot();

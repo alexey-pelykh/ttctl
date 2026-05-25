@@ -265,6 +265,12 @@ exports[`MCP profile_basic_show — payload snapshots > payload: BasicShowPayloa
     "citizenshipId": null,
     "phoneNumber": null,
     "twitter": null,
+    "linkedin": null,
+    "github": null,
+    "website": null,
+    "behance": null,
+    "dribbble": null,
+    "skype": null,
     "softwareSkills": []
   }
 }"
@@ -416,6 +422,12 @@ exports[`MCP profile_basic_show — payload snapshots > payload: full BasicShowP
     "citizenshipId": "country_ua",
     "phoneNumber": "+380 50 000 0000",
     "twitter": "testuser",
+    "linkedin": "https://www.linkedin.com/in/testuser",
+    "github": "https://github.com/testuser",
+    "website": "https://testuser.example",
+    "behance": null,
+    "dribbble": null,
+    "skype": "testuser.skype",
     "softwareSkills": [
       {
         "id": "ss_typescript",
