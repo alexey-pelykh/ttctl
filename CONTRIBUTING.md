@@ -31,7 +31,7 @@ You can add this automatically with `git commit -s`.
 ### Prerequisites
 
 - **Node.js** >= 22.19.0
-- **pnpm** 9.15.4
+- **pnpm** 11.2.2
 
 ### Setup
 
