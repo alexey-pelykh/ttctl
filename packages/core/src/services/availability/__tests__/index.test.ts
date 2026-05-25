@@ -213,25 +213,36 @@ describe("availability.workingHours.set", () => {
     const firstCall = mockedStock.mock.calls[0]?.[0];
     expect(firstCall?.body).toMatchObject({ operationName: "GetAvailability" });
 
-    // Second call: UpdateWorkingHours with the nested wire shape.
+    // Second call: UpdateWorkingHours with #608 merged shape.
     const mutationCall = mockedStock.mock.calls[1]?.[0];
     expect(mutationCall?.body).toMatchObject({
       operationName: "UpdateWorkingHours",
       variables: {
         input: {
           profileId: "prof-1",
-          profile: { workingTimeFrom: "10:00:00", workingTimeTo: "18:00:00" },
+          profile: {
+            timeZone: "Europe/Berlin",
+            workingTimeFrom: "10:00:00",
+            workingTimeTo: "18:00:00",
+            availableShiftRangeFrom: "07:00:00",
+            availableShiftRangeTo: "19:00:00",
+          },
         },
       },
     });
-    // Profile sub-object only includes the supplied fields.
     const profile =
       (
         (mutationCall?.body ?? {}) as {
           variables?: { input?: { profile?: Record<string, unknown> } };
         }
       ).variables?.input?.profile ?? {};
-    expect(Object.keys(profile).sort()).toEqual(["workingTimeFrom", "workingTimeTo"]);
+    expect(Object.keys(profile).sort()).toEqual([
+      "availableShiftRangeFrom",
+      "availableShiftRangeTo",
+      "timeZone",
+      "workingTimeFrom",
+      "workingTimeTo",
+    ]);
   });
 
   it("includes timeZone + flex range when supplied (inside the nested `profile` object)", async () => {
@@ -268,7 +279,126 @@ describe("availability.workingHours.set", () => {
           variables?: { input?: { profile?: Record<string, unknown> } };
         }
       ).variables?.input?.profile ?? {};
-    expect(Object.keys(profile).sort()).toEqual(["availableShiftRangeFrom", "availableShiftRangeTo", "timeZone"]);
+    expect(Object.keys(profile).sort()).toEqual([
+      "availableShiftRangeFrom",
+      "availableShiftRangeTo",
+      "timeZone",
+      "workingTimeFrom",
+      "workingTimeTo",
+    ]);
+  });
+
+  // #608 — sibling to #604/#605/#607.
+
+  it("#608 echoes unsent snap fields when caller supplies a partial input", async () => {
+    reply(
+      { body: { data: SNAPSHOT_FIXTURE } },
+      {
+        body: {
+          data: {
+            updateWorkingHours: {
+              __typename: "UpdateWorkingHoursPayload",
+              success: true,
+              notice: null,
+              errors: null,
+              profile: UPDATE_WH_PROFILE,
+            },
+          },
+        },
+      },
+    );
+    await workingHours.set(TOKEN, { workingTimeFrom: "08:00:00" });
+
+    const mutationCall = mockedStock.mock.calls[1]?.[0];
+    const profile =
+      (
+        (mutationCall?.body ?? {}) as {
+          variables?: { input?: { profile?: Record<string, string> } };
+        }
+      ).variables?.input?.profile ?? {};
+    expect(profile).toEqual({
+      timeZone: "Europe/Berlin",
+      workingTimeFrom: "08:00:00",
+      workingTimeTo: "17:00:00",
+      availableShiftRangeFrom: "07:00:00",
+      availableShiftRangeTo: "19:00:00",
+    });
+  });
+
+  it("#608 caller-supplied values override snap values", async () => {
+    reply(
+      { body: { data: SNAPSHOT_FIXTURE } },
+      {
+        body: {
+          data: {
+            updateWorkingHours: {
+              __typename: "UpdateWorkingHoursPayload",
+              success: true,
+              notice: null,
+              errors: null,
+              profile: UPDATE_WH_PROFILE,
+            },
+          },
+        },
+      },
+    );
+    await workingHours.set(TOKEN, { timeZone: "America/New_York", workingTimeFrom: "09:30:00" });
+
+    const mutationCall = mockedStock.mock.calls[1]?.[0];
+    const profile =
+      (
+        (mutationCall?.body ?? {}) as {
+          variables?: { input?: { profile?: Record<string, string> } };
+        }
+      ).variables?.input?.profile ?? {};
+    expect(profile.timeZone).toBe("America/New_York");
+    expect(profile.workingTimeFrom).toBe("09:30:00");
+  });
+
+  it("#608 omits null snap fields from the merge when caller does not supply them", async () => {
+    reply(
+      {
+        body: {
+          data: {
+            viewer: {
+              ...SNAPSHOT_FIXTURE.viewer,
+              viewerRole: {
+                ...SNAPSHOT_FIXTURE.viewer.viewerRole,
+                timeZone: null,
+                workingTimeFrom: null,
+                workingTimeTo: null,
+              },
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            updateWorkingHours: {
+              __typename: "UpdateWorkingHoursPayload",
+              success: true,
+              notice: null,
+              errors: null,
+              profile: UPDATE_WH_PROFILE,
+            },
+          },
+        },
+      },
+    );
+    await workingHours.set(TOKEN, { availableShiftRangeFrom: "08:00:00" });
+
+    const mutationCall = mockedStock.mock.calls[1]?.[0];
+    const profile =
+      (
+        (mutationCall?.body ?? {}) as {
+          variables?: { input?: { profile?: Record<string, string> } };
+        }
+      ).variables?.input?.profile ?? {};
+    expect(profile).toEqual({
+      availableShiftRangeFrom: "08:00:00",
+      availableShiftRangeTo: "19:00:00",
+    });
   });
 
   it("throws AvailabilityError(MUTATION_ERROR) on empty input, before the snapshot fetch", async () => {
