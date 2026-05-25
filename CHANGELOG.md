@@ -7,8 +7,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.10] - 2026-05-25
+
+### Added
+
+- **`interest_requests.accept` / availability-request show: surface
+  `matcherQuestions` (the screening questions, dropdown options, and
+  suggested answers) on the `AvailabilityRequestDetail` read shape
+  (#585).** Embeds `job.questions(hideExpertiseQuestion: true)` into the
+  `AvailabilityRequest` query, reusing #584's `MATCHER_QUESTION_SELECTION`
+  and `projectMatcherQuestion` seam verbatim (the same `ApplicationQuestion`
+  shape: `identifier`, `prompt`, `inputType`, `options`, `suggestedAnswer`,
+  `isMandatory`). Purely additive — `matcherQuestions` is a sibling
+  top-level field, leaving the shared `ApplicationJobRef` untouched; the CLI
+  gains a "Matcher questions" section and the MCP accept-tool docstrings
+  redirect off the broken `ttctl_applications_show` to the working AR-show
+  source. Wire-shape disposition: Schema/contract rule **triggered** — the
+  selection adds the **[INFERRED]** `options` and `suggestedAnswer { answer }`
+  sub-fields (same provenance as #584, absent from the synthesized
+  `JobPositionQuestion`); **Track 1** (new structure-only snapshot
+  `packages/e2e/src/wire-snapshots/AvailabilityRequest.snapshot.json`,
+  recording all 7 `ApplicationQuestion` fields). Validated live
+  (`TTCTL_E2E=1`) against a real availability request carrying 5 matcher
+  questions, asserting the per-entry shape resolves on the live wire.
+- **`profile.employment.add` / `profile.employment.update`: accept
+  `primaryGeographyId` as a write parameter (MCP `primaryGeographyId`, CLI
+  `--primary-geography-id <id>`) (#586).** `employment_list` already
+  surfaced `primaryGeography` on the read shape, but neither write path let
+  you set it. Wrapper-only change — core's `EmploymentFields` already
+  threaded the field and `Employment.primaryGeography` already echoed it;
+  this exposes it at both user-facing surfaces. Wire-shape disposition:
+  Schema/contract rule **triggered** (new INPUT field on the inferred
+  employment mutation input); **Track 1** (`CreateEmployment` /
+  `UpdateEmployment` remain T1 via the snapshots owned by the employment
+  e2e tests; the new input field is validated by the live round-trip, not
+  re-snapshotted). Validated live (`TTCTL_E2E=1`) by round-tripping the
+  field on create and update and re-assigning a second country, restoring
+  prior state in `finally`.
+- **`profile.employment.add` / `profile.employment.update`: accept
+  `engagementId` (the link to a Toptal `TalentEngagement`) as a write
+  parameter (MCP `engagementId`, CLI `--engagement-id <id>`) (#587).** The
+  sibling capability to #586's `primaryGeography`, using the identical
+  input/echo wrapper pattern. Wire-shape disposition: Schema/contract rule
+  **triggered** (new INPUT field on the inferred employment mutation
+  input); **Track 1** (`CreateEmployment` / `UpdateEmployment` remain T1;
+  the new input field is validated by the live round-trip, not
+  re-snapshotted). Validated live (`TTCTL_E2E=1`) by round-tripping
+  `engagementId` on both `CreateEmployment` and `UpdateEmployment` —
+  resolving the create-path uncertainty: it is a clean wrapper-only field
+  like #586. The `engagementId ↔ Employment` link is a pre-existing
+  warn-mode write-read-symmetry gap (the field predates the echo),
+  consistent with siblings `industryIds` / `primaryGeographyId` — not a
+  regression.
+- **`interest_requests.accept` dry-run: resolve the actual
+  `requestedHourlyRate` and `kind` in the preview instead of
+  `"<resolved at apply time>"` placeholders (#593).** Moves the existing
+  read-only `GetAvailabilityRequestKind` resolution ahead of the dry-run
+  branch, so the preview carries the exact variables the apply path would
+  send; resolution runs only when a value is omitted (both-supplied stays
+  zero-transport), the irreversible `ConfirmAvailabilityRequest` mutation is
+  never issued under dry-run, and resolution failures (unknown id,
+  FLEXIBLE-needs-rate) now surface in the preview rather than at apply time.
+  Core-only fix; MCP / CLI are pass-through and auto-improve. Wire-shape
+  disposition: Schema/contract rule **NOT triggered** — reuses the existing
+  `GetAvailabilityRequestKind` query (no new op or field); the only
+  behavioral change is that dry-run now performs the read-only resolution it
+  previously skipped. **Track**: no new op (existing
+  `ConfirmAvailabilityRequest` = T1, `GetAvailabilityRequestKind`
+  unchanged). Validated live (`TTCTL_E2E=1`) against a real pending FIXED
+  interest request, asserting the preview resolves `requestedHourlyRate` /
+  `kind` to real values (read-only — no mutation issued).
+
 ### Fixed
 
+- **`ttctl --version` now reports the real package version instead of the
+  hard-coded `0.0.0` (#582).** `packages/cli/src/program.ts` hard-coded
+  Commander's `.version("0.0.0")`; the release workflow stamps
+  `package.json` but not that string, so every published binary's
+  `--version` lied while npm metadata stayed correct. Replaced with
+  `.version(readPackageVersion(import.meta.url))` (the `@ttctl/core`
+  helper) so the umbrella `ttctl` and `@ttctl/cli` report the stamped
+  version with zero workflow change. Wire-shape disposition: Schema/contract
+  rule **NOT triggered** — CLI-only, no GraphQL operation. **Track**: N/A.
+- **`profile.industries.list` / `profile.industries.show`: drop the invalid
+  `nodes` wrapper on the `IndustryProfile` curation sub-fields (#583).** The
+  hand-authored `ListIndustryProfiles` / `GetIndustryProfile` selections
+  wrapped curation sub-fields in a `nodes { … }` connection shape the live
+  schema does not expose, risking a wire-shape mismatch. Selection corrected
+  to the flat shape; `IndustryCurationRef { id }` and all surfaces (CLI and
+  MCP) are otherwise unchanged. Wire-shape disposition: Schema/contract rule
+  **triggered** — field-selection change on existing GraphQL ops;
+  **Track 1** (`ListIndustryProfiles` / `GetIndustryProfile` are
+  schema-gappy per `docs/wire-validation-routing.md`). Validated live
+  (`TTCTL_E2E=1`): `ListIndustryProfiles`, `GetIndustryProfile`, and
+  `RemoveIndustryProfile` wire shapes match their snapshots against the live
+  API.
+- **`jobs.apply_questions`: surface dropdown `options`, `suggestedAnswer`,
+  and the question `inputType` that were previously dropped (#584).** The
+  `JobApplicationQuestions` selection projected only `id` / `question`, so
+  dropdown choices, the suggested answer, and the free-text-vs-dropdown
+  discriminator never reached the caller. Extends the selection and the
+  `projectMatcherQuestion` mapper to the full `ApplicationQuestion` shape.
+  Wire-shape disposition: Schema/contract rule **triggered** — `options` and
+  `suggestedAnswer { answer }` are **[INFERRED]** (the synthesized
+  `JobPositionQuestion` declares only `id` / `question`); **Track 1** (adds
+  the previously-uncaptured
+  `packages/e2e/src/wire-snapshots/JobApplicationQuestions.snapshot.json`).
+  Validated live (`TTCTL_E2E=1`) by asserting the universal shape on every
+  entry and round-tripping a real dropdown question's `options` /
+  `suggestedAnswer`. (Surfaced, out of scope: the sibling
+  `JobApplicationRateInsight` op returns HTTP 400 on the live wire today —
+  pre-existing, not addressed here.)
+- **`jobs.list` / `jobs.show` / job-activity: fix the HTTP 400 from an
+  unguarded `id` selection on the polymorphic `mostRelevantApplication`
+  (#530).** `mostRelevantApplication` resolves to a union
+  (`AvailabilityRequest | JobApplication`); selecting a bare `id` on the
+  union without inline fragments made the live API reject the whole query
+  with HTTP 400, breaking `jobs list` / `jobs show` and the job-activity
+  reads. Wrapped the selection in
+  `... on AvailabilityRequest { id } ... on JobApplication { id }` at both
+  sites and adjusted the `mostRelevantApplication` projection for the
+  polymorphic shape. Wire-shape disposition: Schema/contract rule
+  **triggered** — hand-authored query change; **Track 1** (captured the
+  previously-missing `JobsList.snapshot.json` and
+  `JobActivityItems.snapshot.json`). Validated live (`TTCTL_E2E=1`): the
+  corrected queries resolve HTTP 200 with the polymorphic
+  `mostRelevantApplication` shape against the live API.
+- **`profile.employment.update` dry-run: list `endDate` (and the other
+  merge-preserved fields) among the values resolved at send time (#589).**
+  The MCP update dry-run preview hand-maintained a placeholder list that had
+  drifted from the apply path's unconditional merge set — it showed 9 fields
+  but `buildUpdateEmploymentInput` echoes 11 from current state, omitting
+  `endDate`, `toptalRelated`, and `managementExperience`. Added the three
+  missing fields (in core-merge order) and corrected a stale comment.
+  MCP-only — core `update()` has no dry-run path; the preview is built
+  entirely in the MCP tool. Wire-shape disposition: Schema/contract rule
+  **NOT triggered** — offline dry-run, zero-transport, no wire op (the added
+  fields are already wire-validated via the apply path). **Track**: NEITHER.
 - **`profile.basic.set`: normalize the `twitter` value to the bare handle
   Toptal stores, accepting a full URL or a bare handle (#526).** The
   `UpdateBasicInfoInput` wire field is a **bare handle** (`alexey_pelykh`),
