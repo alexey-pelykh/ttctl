@@ -439,6 +439,13 @@ export interface ProfileSoftwareSkill {
  * the input omits it — see issue #393's repro). Callers that only want
  * the narrative bits (`bio` / `headline` / `languages`) continue to read
  * what they always did; the additional fields are additive.
+ *
+ * **Social-field expansion (#604, 2026-05-25)**: extended again with the
+ * five social URLs (`linkedin`, `github`, `website`, `behance`,
+ * `dribbble`) + `skype` for the same read-merge reason — the
+ * full-replacement input carries them, so `set()` must read them to avoid
+ * nulling them. These are echoed on the JSON / MCP read surface but NOT on
+ * the curated `pretty` / `table` `basic show` rendering.
  */
 export interface BasicInfo {
   /** Echoes the talent_profile-side `Profile.id` (matches `show()`'s `viewerRole.profileId`). */
@@ -472,6 +479,40 @@ export interface BasicInfo {
    * `UpdateExternalProfilesInput` does NOT accept `twitter` (#526).
    */
   twitter: string | null;
+  /**
+   * Social / external URLs the `Profile` entity carries
+   * (`linkedin / github / website / behance / dribbble`) plus the `skype`
+   * handle. `null` when unset.
+   *
+   * **Read-merge rationale (#604, 2026-05-25)**: these are surfaced here
+   * so `set()`'s full-replacement merge can preserve them. The live
+   * `UPDATE_BASIC_INFO` `profile` input carries all six (verified via the
+   * 2026-05-06 Save-action curl, `research/notes/10` § Captured exception);
+   * because the mutation is a full-replacement contract (#393), omitting
+   * them from the input NULLS them server-side — every bio/headline edit
+   * silently wiped the user's social links. Reading them here lets the
+   * merge echo the current value back, the same way `twitter` is preserved.
+   *
+   * **Write ownership is unchanged (#526)**: `linkedin / github / website /
+   * behance / dribbble` remain WRITEABLE only via `external.update`; `skype`
+   * is not writeable from any TTCtl surface today. `basic.set` does not
+   * accept them as inputs ({@link ProfileUpdate} stays `bio`/`headline`/
+   * `twitter`) — it only read-preserves them. They are echoed on the JSON /
+   * MCP read surface but intentionally NOT on the `pretty` / `table`
+   * `basic show` rendering (that stays curated; `external show` is the
+   * human-facing home for the URLs).
+   */
+  linkedin: string | null;
+  /** GitHub URL (`Profile.github`). See {@link BasicInfo.linkedin} for the read-merge / write-ownership semantics. `null` when unset. */
+  github: string | null;
+  /** Personal website URL (`Profile.website`). See {@link BasicInfo.linkedin}. `null` when unset. */
+  website: string | null;
+  /** Behance URL (`Profile.behance`). See {@link BasicInfo.linkedin}. `null` when unset. */
+  behance: string | null;
+  /** Dribbble URL (`Profile.dribbble`). See {@link BasicInfo.linkedin}. `null` when unset. */
+  dribbble: string | null;
+  /** Skype handle (`Profile.skype`). Not writeable from any TTCtl surface; read-preserved only. See {@link BasicInfo.linkedin}. `null` when unset. */
+  skype: string | null;
   /** User-declared software skills (free-form, distinct from the rated `Skill` catalog). Empty array when none. */
   softwareSkills: ProfileSoftwareSkill[];
 }
@@ -483,15 +524,21 @@ export interface BasicInfo {
  * we ask for the fields surfaced by {@link BasicInfo} — narrative
  * (`about`, `quote`), identity (`fullName`, `legalName`, `phoneNumber`),
  * location (`city`, `placeIdentity`, `country.id`, `citizenship.id`),
- * social (`twitter` — owned here per #535 because that's the only
- * surface that can WRITE it; the other social URLs remain owned by the
- * `external` sub-domain per #526), and collections (`languages.nodes`,
- * `softwareSkills.nodes`). We skip the `ProfileRecommendations`
- * fragment, the remaining social URLs (`linkedin / github / website /
- * behance / dribbble` — `external` sub-domain), `timeZone`, `skype`,
- * and the top-level `countries` / `languages` catalog payloads that the
- * canonical operation also fetches (autocomplete-tier, not needed for
- * read or merge-on-write).
+ * social (`twitter` — owned here per #535; and `linkedin / github /
+ * website / behance / dribbble / skype` — added for #604 so the
+ * full-replacement merge can preserve them, see below), and collections
+ * (`languages.nodes`, `softwareSkills.nodes`). We skip the
+ * `ProfileRecommendations` fragment, `timeZone`, and the top-level
+ * `countries` / `languages` catalog payloads that the canonical operation
+ * also fetches (autocomplete-tier, not needed for read or merge-on-write).
+ *
+ * **Social-URL scope expansion (#604)**: the five social URLs +
+ * `skype` were previously skipped here because `external.update` owns
+ * their WRITE path (#526). But `UPDATE_BASIC_INFO` is a full-replacement
+ * contract (#393) and its `profile` input carries all six (live curl,
+ * `research/notes/10` § Captured exception) — omitting them from the merge
+ * NULLED them on every bio/headline edit. They are now read so `set()` can
+ * echo them back. Write ownership is unchanged: still `external.update`.
  *
  * **Scope rationale (#393)**: this selection set covers the full set of
  * server-required non-null fields on `UpdateBasicInfoInput` (per the
@@ -516,6 +563,12 @@ const GET_BASIC_INFO_QUERY = `query GET_BASIC_INFO($profileId: ID!) {
     placeIdentity
     phoneNumber
     twitter
+    linkedin
+    github
+    website
+    behance
+    dribbble
+    skype
     country {
       id
     }
@@ -548,6 +601,12 @@ interface GetBasicInfoData {
     placeIdentity?: string | null;
     phoneNumber?: string | null;
     twitter?: string | null;
+    linkedin?: string | null;
+    github?: string | null;
+    website?: string | null;
+    behance?: string | null;
+    dribbble?: string | null;
+    skype?: string | null;
     country?: { id?: string | null } | null;
     citizenship?: { id?: string | null } | null;
     languages?: { nodes?: ({ id?: string | null; name?: string | null } | null)[] | null } | null;
@@ -653,6 +712,12 @@ export async function getBasicInfo(token: string): Promise<BasicInfo> {
     citizenshipId: typeof p.citizenship?.id === "string" && p.citizenship.id.length > 0 ? p.citizenship.id : null,
     phoneNumber: typeof p.phoneNumber === "string" ? p.phoneNumber : null,
     twitter: typeof p.twitter === "string" ? p.twitter : null,
+    linkedin: typeof p.linkedin === "string" ? p.linkedin : null,
+    github: typeof p.github === "string" ? p.github : null,
+    website: typeof p.website === "string" ? p.website : null,
+    behance: typeof p.behance === "string" ? p.behance : null,
+    dribbble: typeof p.dribbble === "string" ? p.dribbble : null,
+    skype: typeof p.skype === "string" ? p.skype : null,
     softwareSkills,
   };
 }
@@ -833,12 +898,20 @@ export function normalizeTwitterHandle(value: string | null): string | null {
  * `UpdateBasicInfoProfileInput` accepts it as a bare handle string and
  * persists it on `Profile.twitter` (read-visible on both `basic.show`
  * and `external.show`). The sibling social URLs
- * (`linkedin / github / website / behance / dribbble`) remain owned by
- * `external.update` — they ARE writeable via `UpdateExternalProfilesInput`,
- * and #526 explicitly chose to keep them there rather than migrating to
- * this surface. `twitter` is the only one of the six that landed here,
- * because it's the only one the `external` write-input rejects. The
- * basic-info merge runs user-supplied `twitter` through
+ * (`linkedin / github / website / behance / dribbble`) plus `skype`
+ * remain WRITE-owned by `external.update` — they ARE writeable via
+ * `UpdateExternalProfilesInput`, and #526 explicitly chose to keep them
+ * there rather than migrating to this surface. `twitter` is the only one
+ * the user can SET through `basic.set`, because it's the only one the
+ * `external` write-input rejects.
+ *
+ * **But all six are SENT on this input (#604)**: because `UPDATE_BASIC_INFO`
+ * is a full-replacement contract, the merge must echo every field the
+ * `profile` input carries — and the live input carries all six social
+ * fields + `skype`. They are read via {@link getBasicInfo} and preserved
+ * unchanged (the user cannot change them here; {@link ProfileUpdate} has
+ * no field for them). Sending them is preservation, not a new write path.
+ * The basic-info merge runs user-supplied `twitter` through
  * {@link normalizeTwitterHandle} (URL / leading-`@` / bare → bare handle)
  * before sending it; the field is sent on every UPDATE_BASIC_INFO call
  * (read-merge preserves the current value — already a bare handle — when
@@ -865,6 +938,12 @@ interface UpdateBasicInfoProfileInput {
   citizenshipId: string | null;
   phoneNumber: string | null;
   twitter: string | null;
+  linkedin: string | null;
+  github: string | null;
+  website: string | null;
+  behance: string | null;
+  dribbble: string | null;
+  skype: string | null;
   languageIds: string[];
   softwareSkills: UpdateBasicInfoSoftwareSkillRef[];
 }
@@ -957,9 +1036,11 @@ export const DRY_RUN_PROFILE_ID_PLACEHOLDER = "<resolved at send-time from sessi
  *
  * Applies to: `fullName`, `legalName`, `city`, `placeIdentity`,
  * `countryId`, `citizenshipId`, `phoneNumber`, `about`, `quote`,
- * `twitter` — any scalar field that the merge path reads from current
- * state when the user didn't supply it. (Fields the user DID supply
- * are echoed verbatim into the preview, same as the apply path.)
+ * `twitter`, and the read-preserved social fields `linkedin`, `github`,
+ * `website`, `behance`, `dribbble`, `skype` (#604) — any scalar field
+ * that the merge path reads from current state when the user didn't
+ * supply it. (Fields the user DID supply are echoed verbatim into the
+ * preview, same as the apply path.)
  *
  * `languageIds` and `softwareSkills` use a dedicated empty-array
  * placeholder (`[]`) — the absence of an array is more readable than a
@@ -1117,6 +1198,14 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
           changes.twitter !== undefined
             ? normalizeTwitterHandle(changes.twitter)
             : DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        // #604: read-merged social fields — never user-supplied via basic.set,
+        // so always the placeholder in the preview (apply-path echoes current).
+        linkedin: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        github: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        website: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        behance: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        dribbble: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
+        skype: DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER,
         languageIds: [],
         softwareSkills: [],
       },
@@ -1159,6 +1248,16 @@ export async function set(token: string, changes: ProfileUpdate, options: SetOpt
     citizenshipId: current.citizenshipId,
     phoneNumber: current.phoneNumber,
     twitter: changes.twitter !== undefined ? normalizeTwitterHandle(changes.twitter) : current.twitter,
+    // #604: preserve the social URLs + skype the full-replacement contract
+    // would otherwise NULL. These are NOT user-settable via basic.set (write
+    // ownership stays with external.update per #526) — the merge only echoes
+    // the current value back so a bio/headline edit stops wiping them.
+    linkedin: current.linkedin,
+    github: current.github,
+    website: current.website,
+    behance: current.behance,
+    dribbble: current.dribbble,
+    skype: current.skype,
     languageIds: current.languages.map((l) => l.id),
     softwareSkills: current.softwareSkills.map((s) => ({ id: s.id, name: s.name })),
   };

@@ -229,6 +229,134 @@ describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wir
   );
 
   // -------------------------------------------------------------------
+  // #604 — social URLs + skype preservation across a basic_update
+  // -------------------------------------------------------------------
+  //
+  // Mandatory per CLAUDE.md § Schema/contract validation rule. The fix
+  // for #604 extended the `UpdateBasicInfoProfileInput` and the merge
+  // path to carry `linkedin / github / website / behance / dribbble /
+  // skype`. The hypothesis (drawn from the 2026-05-06 live curl in
+  // `research/notes/10` § Captured exception): the input ACCEPTS these
+  // six and the full-replacement contract preserves them when present.
+  // Only the live API can prove either half.
+  //
+  // The test is intentionally robust to accounts where the user hasn't
+  // set any of the six — the assertion is `after.X === before.X`, so
+  // null === null passes. The bug is observable only on accounts WITH
+  // any of the six set, but the wire-shape acceptance is exercised on
+  // every run (sending the keys with null values must not be rejected).
+  //
+  // Skip conditions reuse the round-trip's pre-flight (missing required
+  // server-side fields would mask the social preservation behind a
+  // generic "Expected value to not be null" wire error).
+
+  it.skipIf(!e2eEnabled)(
+    "preserves social URLs + skype across a headline-only basic.set (#604 regression, full-replacement contract)",
+    async () => {
+      const token = loadSandboxBearer(sandboxConfigPath);
+
+      // Step 1: capture EVERY field we care about preservation for.
+      const before = await profile.basic.getBasicInfo(token);
+
+      // Same pre-flight as the round-trip subtest — without the required
+      // scalars the merge would null-out a different field and the test
+      // would fail on the wrong gate.
+      const requiredScalars: [string, string | null][] = [
+        ["fullName", before.fullName],
+        ["legalName", before.legalName],
+        ["city", before.city],
+        ["placeIdentity", before.placeIdentity],
+        ["countryId", before.countryId],
+        ["citizenshipId", before.citizenshipId],
+        ["phoneNumber", before.phoneNumber],
+      ];
+      const missing = requiredScalars.filter(([, v]) => v === null).map(([k]) => k);
+      if (missing.length > 0 || before.languages.length === 0) {
+        process.stderr.write(
+          `warning: [44-profile-basic] account is missing required server-side fields ` +
+            `(${[...missing, ...(before.languages.length === 0 ? ["languages"] : [])].join(", ")}) — ` +
+            `#604 social-preservation subtest skipped (cannot exercise without trashing user data).\n`,
+        );
+        return;
+      }
+
+      // Step 2: change ONLY headline. If the input now carries the six
+      // social fields read-merged from current, all six must survive.
+      const ts = Date.now().toString();
+      const sentinelHeadline = `e2e #604 social-preservation sentinel ${ts}`;
+      const originalHeadline = before.headline;
+
+      try {
+        const outcome = await profile.basic.set(token, { headline: sentinelHeadline });
+        expect(outcome.kind).toBe("applied");
+        if (outcome.kind !== "applied") return;
+
+        // Step 3: read back and assert each social field is UNCHANGED.
+        // null === null is acceptable: it proves the wire input accepted
+        // the field with a null value and the server didn't reject. A
+        // value-vs-null transition would be the pre-#604 bug (server
+        // nulled an omitted field) — caught even on accounts with one
+        // or two of the six set.
+        const after = await profile.basic.getBasicInfo(token);
+        expect(after.linkedin).toBe(before.linkedin);
+        expect(after.github).toBe(before.github);
+        expect(after.website).toBe(before.website);
+        expect(after.behance).toBe(before.behance);
+        expect(after.dribbble).toBe(before.dribbble);
+        expect(after.skype).toBe(before.skype);
+        // And the headline change itself must have applied (proves the
+        // set executed, not skipped by some upstream guard).
+        expect(after.headline).toBe(sentinelHeadline);
+
+        // Explicit success transcript line — matches the #526 convention in
+        // this file so a future skip vs full-run can be distinguished from
+        // verbose output alone (the #604 skip path emits a `warning:` line;
+        // a successful round-trip emits this `ok:` line).
+        const setCount = [
+          before.linkedin,
+          before.github,
+          before.website,
+          before.behance,
+          before.dribbble,
+          before.skype,
+        ].filter((v) => v !== null).length;
+        process.stderr.write(
+          `ok: [44-profile-basic #604] headline-only set() preserved all six social fields ` +
+            `(linkedin/github/website/behance/dribbble/skype) across the full-replacement contract; ` +
+            `${setCount.toString()}/6 of these were non-null on this account → values matched, nulls stayed null.\n`,
+        );
+      } catch (err) {
+        if (errorCode(err) === "USER_ERROR") {
+          process.stderr.write(
+            `warning: [44-profile-basic] talent-profile rejected the #604 sentinel with USER_ERROR ` +
+              `(business gate, NOT a wire-shape regression). Subtest skipped.\n`,
+          );
+          return;
+        }
+        // GRAPHQL_ERROR here would mean the live API rejected one of the
+        // six new input fields ("Field 'X' is not defined on
+        // UpdateBasicInfoProfileInput") — the hypothesis underlying the
+        // #604 fix is wrong, and the merge must take a different shape
+        // (capture+restore via external.update). Propagate.
+        throw err;
+      } finally {
+        // Restore the original headline.
+        if (originalHeadline !== null) {
+          try {
+            await profile.basic.set(token, { headline: originalHeadline });
+          } catch (restoreErr) {
+            process.stderr.write(
+              `warning: [44-profile-basic] failed to restore original headline after #604 sentinel apply: ` +
+                `${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}\n`,
+            );
+          }
+        }
+      }
+    },
+    30_000,
+  );
+
+  // -------------------------------------------------------------------
   // T1 wire-shape snapshot for UPDATE_BASIC_INFO
   // -------------------------------------------------------------------
 

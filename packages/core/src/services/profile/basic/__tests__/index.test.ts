@@ -440,6 +440,12 @@ const BASIC_INFO_CURRENT = {
       placeIdentity: "ChIJ-place-london",
       phoneNumber: "+44 20 0000 0000",
       twitter: "current_handle",
+      linkedin: "https://www.linkedin.com/in/ada",
+      github: "https://github.com/ada",
+      website: "https://ada.example",
+      behance: "https://www.behance.net/ada",
+      dribbble: "https://dribbble.com/ada",
+      skype: "ada.lovelace",
       country: { id: "country_uk" },
       citizenship: { id: "country_uk" },
       languages: {
@@ -534,6 +540,13 @@ describe("set", () => {
           citizenshipId: "country_uk",
           phoneNumber: "+44 20 0000 0000",
           twitter: "current_handle",
+          // #604 — social URLs + skype preserved from current state
+          linkedin: "https://www.linkedin.com/in/ada",
+          github: "https://github.com/ada",
+          website: "https://ada.example",
+          behance: "https://www.behance.net/ada",
+          dribbble: "https://dribbble.com/ada",
+          skype: "ada.lovelace",
           languageIds: ["lang_en", "lang_fr"],
           softwareSkills: [{ id: "ss_assembly", name: "Assembly" }],
         },
@@ -565,6 +578,28 @@ describe("set", () => {
     expect(variables.input.profile["softwareSkills"]).toEqual([{ id: "ss_assembly", name: "Assembly" }]);
   });
 
+  it("preserves social URLs + skype from current state on a headline-only edit (#604 regression)", async () => {
+    replyStock({ body: PROFILE_OK });
+    replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
+
+    await set(TOKEN, { headline: "only headline" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { profile: Record<string, unknown> } };
+    // #604 — UPDATE_BASIC_INFO is a full-replacement contract: any field
+    // omitted from the input is NULLED server-side. Pre-#604 these six were
+    // absent from the merge, so every bio/headline edit silently wiped the
+    // user's social links. The merge must echo the current value back.
+    expect(variables.input.profile["linkedin"]).toBe("https://www.linkedin.com/in/ada");
+    expect(variables.input.profile["github"]).toBe("https://github.com/ada");
+    expect(variables.input.profile["website"]).toBe("https://ada.example");
+    expect(variables.input.profile["behance"]).toBe("https://www.behance.net/ada");
+    expect(variables.input.profile["dribbble"]).toBe("https://dribbble.com/ada");
+    expect(variables.input.profile["skype"]).toBe("ada.lovelace");
+    // The user cannot SET these via basic.set — write ownership stays with
+    // external.update (#526). The merge only preserves; it never overrides.
+  });
+
   it("preserves empty-string updates (clearing a field is a real intent, not an unset)", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: BASIC_INFO_CURRENT }, { body: UPDATE_OK });
@@ -591,6 +626,14 @@ describe("set", () => {
     // Twitter is nullable on the server side — when current is null, the
     // merge passes null through verbatim (no twitter override from caller).
     sparseCurrent.data.profile.twitter = null as unknown as string;
+    // #604 — social URLs + skype the user never set must stay null, not be
+    // fabricated. The merge echoes whatever `getBasicInfo` read (here null).
+    sparseCurrent.data.profile.linkedin = null as unknown as string;
+    sparseCurrent.data.profile.github = null as unknown as string;
+    sparseCurrent.data.profile.website = null as unknown as string;
+    sparseCurrent.data.profile.behance = null as unknown as string;
+    sparseCurrent.data.profile.dribbble = null as unknown as string;
+    sparseCurrent.data.profile.skype = null as unknown as string;
 
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: sparseCurrent }, { body: UPDATE_OK });
@@ -602,6 +645,12 @@ describe("set", () => {
     expect(variables.input.profile["phoneNumber"]).toBeNull();
     expect(variables.input.profile["legalName"]).toBeNull();
     expect(variables.input.profile["twitter"]).toBeNull();
+    expect(variables.input.profile["linkedin"]).toBeNull();
+    expect(variables.input.profile["github"]).toBeNull();
+    expect(variables.input.profile["website"]).toBeNull();
+    expect(variables.input.profile["behance"]).toBeNull();
+    expect(variables.input.profile["dribbble"]).toBeNull();
+    expect(variables.input.profile["skype"]).toBeNull();
   });
 
   // ---------------------------------------------------------------------
@@ -1055,21 +1104,28 @@ describe("set", () => {
     // User did NOT supply bio → placeholder.
     expect(variables.input.profile["about"]).toBe("<preserved from current profile state>");
     // The full shape contains all required keys (including `twitter`
-    // added in #535 — basic-owned write-side field).
+    // added in #535 — basic-owned write-side field — and the six
+    // social/skype fields read-preserved for #604).
     expect(Object.keys(variables.input.profile).sort()).toEqual(
       [
         "about",
+        "behance",
         "citizenshipId",
         "city",
         "countryId",
+        "dribbble",
         "fullName",
+        "github",
         "languageIds",
         "legalName",
+        "linkedin",
         "phoneNumber",
         "placeIdentity",
         "quote",
+        "skype",
         "softwareSkills",
         "twitter",
+        "website",
       ].sort(),
     );
   });
@@ -1397,7 +1453,7 @@ describe("getBasicInfo", () => {
     expect(result.profileId).toBe("p1");
   });
 
-  it("requests the extended selection set (#393 / #535): identity + location + softwareSkills + twitter", async () => {
+  it("requests the extended selection set (#393 / #535 / #604): identity + location + softwareSkills + twitter + social URLs", async () => {
     replyStock({ body: PROFILE_OK });
     replyImpersonated({ body: BASIC_INFO_OK });
 
@@ -1417,6 +1473,15 @@ describe("getBasicInfo", () => {
     expect(infoCall.body.query).toContain("country");
     expect(infoCall.body.query).toContain("citizenship");
     expect(infoCall.body.query).toContain("softwareSkills");
+    // #604 — the six social fields the full-replacement merge must preserve.
+    // Dropping any from the query means the live read returns it as absent →
+    // the merge sends null → the full-replacement contract wipes it.
+    expect(infoCall.body.query).toContain("linkedin");
+    expect(infoCall.body.query).toContain("github");
+    expect(infoCall.body.query).toContain("website");
+    expect(infoCall.body.query).toContain("behance");
+    expect(infoCall.body.query).toContain("dribbble");
+    expect(infoCall.body.query).toContain("skype");
   });
 
   it("propagates Cf403Error from the talent-profile call (Cloudflare-protected surface)", async () => {

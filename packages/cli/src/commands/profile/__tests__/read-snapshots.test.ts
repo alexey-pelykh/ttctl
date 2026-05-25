@@ -197,6 +197,13 @@ describe("profile.basic — read snapshots", () => {
     citizenshipId: "country_us",
     phoneNumber: "+1 555 0100",
     twitter: "testuser",
+    // #604 — social URLs + skype read-preserved by basic.set's merge.
+    linkedin: "https://www.linkedin.com/in/testuser",
+    github: "https://github.com/testuser",
+    website: "https://testuser.example",
+    behance: null,
+    dribbble: null,
+    skype: "testuser.skype",
     softwareSkills: [
       { id: "ss_typescript", name: "TypeScript" },
       { id: "ss_postgres", name: "PostgreSQL" },
@@ -216,6 +223,12 @@ describe("profile.basic — read snapshots", () => {
     citizenshipId: null,
     phoneNumber: null,
     twitter: null,
+    linkedin: null,
+    github: null,
+    website: null,
+    behance: null,
+    dribbble: null,
+    skype: null,
     softwareSkills: [],
   };
 
