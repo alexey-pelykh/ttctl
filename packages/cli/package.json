@@ -48,6 +48,7 @@
     "@ttctl/core": "workspace:^",
     "cli-table3": "catalog:",
     "commander": "catalog:",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "zod": "catalog:"
   }
 }
