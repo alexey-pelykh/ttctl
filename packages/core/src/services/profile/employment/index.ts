@@ -1048,6 +1048,9 @@ export function buildUpdateEmploymentInput(current: Employment, fields: Employme
     showViaToptal: current.showViaToptal,
     // #508 — echoed; see helper-doc § #508 noEmployer branch.
     toptalRelated: current.toptalRelated,
+    // #607 — defense-in-depth; server preserves on omit (verified live),
+    // pattern-consistency with #487/#604 + wire-shape drift insurance.
+    highlight: current.highlight,
     startDate,
     // #487 — force-echoed because the wire treats omission as null-set
     // (NOT preservation). See helper-doc § endDate force-echo. Other
