@@ -98,12 +98,14 @@ export function registerProfileExternalUpdateTool(server: McpServer, ctx: ToolRe
       if (input.dribbble !== undefined) changes.dribbble = input.dribbble;
 
       if (input.dryRun === true) {
+        // `profile:` wrapper matches the apply path; the prior `externalProfiles:`
+        // was stale and misrepresented the request (#606).
         return dryRunResponse(
           buildMcpDryRunPreview(
             "UpdateExternalProfiles",
             "talent-profile",
             {
-              input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, externalProfiles: changes },
+              input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, profile: changes },
             },
             auth.token,
           ),

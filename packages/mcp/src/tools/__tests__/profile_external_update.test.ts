@@ -160,3 +160,66 @@ describe("ttctl_profile_external_update MCP tool — #526 twitter redirect", () 
     expect(MOCKED_UPDATE.mock.calls[0]?.[1]).toEqual({ linkedin: "https://linkedin.com/in/ada" });
   });
 });
+
+// #606: the dry-run preview must match the apply path's wire shape.
+interface ToolSuccessShape {
+  content: { type: string; text: string }[];
+}
+interface DryRunEnvelope {
+  ok: boolean;
+  dryRun: boolean;
+  preview: { operationName: string; variables: { input: Record<string, unknown> } };
+}
+
+describe("ttctl_profile_external_update MCP tool — dry-run preview wire shape (#606)", () => {
+  let server: McpServer;
+
+  beforeEach(() => {
+    MOCKED_UPDATE.mockReset();
+    server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("previews under the `profile:` wrapper (matches the apply path), not the stale `externalProfiles:`", async () => {
+    const ctx = buildTokenSuccessCtx();
+    registerProfileExternalUpdateTool(server, ctx);
+
+    const handler = getToolHandler(server, TOOL_NAME);
+    const result = (await handler(
+      { linkedin: "https://linkedin.com/in/ada", github: "https://github.com/ada", dryRun: true },
+      {},
+    )) as ToolSuccessShape;
+
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as DryRunEnvelope;
+    expect(parsed.ok).toBe(true);
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.preview.operationName).toBe("UpdateExternalProfiles");
+
+    const input = parsed.preview.variables.input;
+    expect(input).toHaveProperty("profile");
+    expect(input).not.toHaveProperty("externalProfiles");
+    expect(input["profile"]).toEqual({
+      linkedin: "https://linkedin.com/in/ada",
+      github: "https://github.com/ada",
+    });
+    // Dry-run never reaches the apply path.
+    expect(MOCKED_UPDATE).not.toHaveBeenCalled();
+  });
+
+  it("previews ONLY the supplied fields (partial-merge — no resolved-from-current placeholders)", async () => {
+    const ctx = buildTokenSuccessCtx();
+    registerProfileExternalUpdateTool(server, ctx);
+
+    const handler = getToolHandler(server, TOOL_NAME);
+    const result = (await handler({ website: "https://ada.dev", dryRun: true }, {})) as ToolSuccessShape;
+
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as DryRunEnvelope;
+    const profileInput = parsed.preview.variables.input["profile"] as Record<string, unknown>;
+    expect(Object.keys(profileInput)).toEqual(["website"]);
+    expect(profileInput["website"]).toBe("https://ada.dev");
+    expect(MOCKED_UPDATE).not.toHaveBeenCalled();
+  });
+});
