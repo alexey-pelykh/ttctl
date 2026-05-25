@@ -237,8 +237,48 @@ describe("add", () => {
     expect(c.id).toBe(CERT_2.id);
     const call = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(call.body.operationName).toBe("CREATE_CERTIFICATION");
+    // #605: `skills` is defaulted to `[]` because the wire requires
+    // non-null on `CreateCertificationInput.certification.skills` (live
+    // capture 2026-05-25: `Expected value to not be null`).
     expect(call.body.variables).toEqual({
-      input: { profileId: "p1", certification: { certificate: "GCP Cloud Architect", institution: "Google" } },
+      input: {
+        profileId: "p1",
+        certification: { certificate: "GCP Cloud Architect", institution: "Google", skills: [] },
+      },
+    });
+  });
+
+  it("forwards user-supplied skills verbatim instead of defaulting to [] (#605)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createCertification: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", certifications: { nodes: [CERT_2] } },
+          },
+        },
+      },
+    });
+
+    await add(TOKEN, {
+      certificate: "GCP Cloud Architect",
+      institution: "Google",
+      skills: [{ id: "V1-Skill-7", name: "GCP" }],
+    });
+
+    const call = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(call.body.variables).toEqual({
+      input: {
+        profileId: "p1",
+        certification: {
+          certificate: "GCP Cloud Architect",
+          institution: "Google",
+          skills: [{ id: "V1-Skill-7", name: "GCP" }],
+        },
+      },
     });
   });
 });
@@ -248,7 +288,12 @@ describe("update", () => {
     await expect(update(TOKEN, "id", {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("dispatches UPDATE_CERTIFICATION with certificationId + certification input", async () => {
+  it("dispatches UPDATE_CERTIFICATION with merged input (read-current + user overrides) (#605)", async () => {
+    // read-current step → update mutation. CERT_1's null link/number/
+    // validFromMonth/validFromYear are omitted (write-side non-nullable);
+    // validToMonth/validToYear are user-overridden.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [CERT_1] } } } } });
     replyImpersonated({
       body: {
         data: {
@@ -263,10 +308,72 @@ describe("update", () => {
 
     const updated = await update(TOKEN, CERT_1.id, { validToYear: 2030, validToMonth: 12 });
     expect(updated.validToYear).toBe(2030);
-    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.body.variables).toEqual({
-      input: { certificationId: CERT_1.id, certification: { validToYear: 2030, validToMonth: 12 } },
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.operationName).toBe("UPDATE_CERTIFICATION");
+    expect(updateCall.body.variables).toEqual({
+      input: {
+        certificationId: CERT_1.id,
+        certification: {
+          certificate: CERT_1.certificate,
+          institution: CERT_1.institution,
+          highlight: CERT_1.highlight,
+          validFromMonth: CERT_1.validFromMonth,
+          validFromYear: CERT_1.validFromYear,
+          validToMonth: 12,
+          validToYear: 2030,
+          skills: [],
+        },
+      },
     });
+  });
+
+  it("preserves every writable field omitted by the caller (#605 regression: full-replace contract)", async () => {
+    // CERT_2 has every writable field populated. User updates ONLY
+    // highlight=false; pre-#605 the other eight would have nulled.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [CERT_2] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          updateCertification: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", certifications: { nodes: [{ ...CERT_2, highlight: false }] } },
+          },
+        },
+      },
+    });
+
+    await update(TOKEN, CERT_2.id, { highlight: false });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.variables).toEqual({
+      input: {
+        certificationId: CERT_2.id,
+        certification: {
+          certificate: CERT_2.certificate,
+          institution: CERT_2.institution,
+          link: CERT_2.link,
+          number: CERT_2.number,
+          validFromMonth: CERT_2.validFromMonth,
+          validFromYear: CERT_2.validFromYear,
+          validToMonth: CERT_2.validToMonth,
+          validToYear: CERT_2.validToYear,
+          skills: CERT_2_MAPPED.skills,
+          highlight: false,
+        },
+      },
+    });
+  });
+
+  it("read-current failure (id not found) surfaces as VALIDATION_ERROR without firing the update mutation", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", certifications: { nodes: [] } } } } });
+
+    await expect(update(TOKEN, "missing", { highlight: true })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
   });
 });
 

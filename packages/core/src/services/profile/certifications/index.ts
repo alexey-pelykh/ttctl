@@ -15,17 +15,16 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  *
  * `status` carries Toptal's verification / expiry state. Typed `string |
  * null` because the synthesized SDL types it `Unknown` (see #557) — the
- * concrete enum members (likely `valid` / `expired` / `pending-verification`
- * per the upstream fragment in
- * `research/graphql/talent_profile/fragments/Certification.graphql`) are
- * inferred from the wire and surfaced verbatim; the field is read-only
- * (not on `CertificationInput`).
+ * concrete enum members are inferred from the wire and surfaced verbatim;
+ * the field is read-only (not on `CertificationInput`).
  *
  * `skills` carries the talent's self-attested skill links per
  * certification (#558). Wire shape is the connection
- * `skills { nodes { id name } }` per the upstream fragment; ttctl
- * flattens it to `SkillRef[]` (mirrors `Employment.skills`). Read-only
- * (not on `CertificationInput`).
+ * `skills { nodes { id name } }`; ttctl flattens to `SkillRef[]`. ALSO
+ * present on the write-side `CertificationInput` (live-capture 2026-05-25
+ * #605: wire requires non-null on CREATE / UPDATE). Preservation-by-
+ * default via {@link buildUpdateCertificationInput}; not yet exposed as
+ * a CLI / MCP writable flag.
  */
 export interface Certification {
   id: string;
@@ -46,7 +45,9 @@ export interface Certification {
  * Fields editable on a Certification row. Mirrors `CertificationInput` per
  * the inferred shape in `research/notes/10-mutation-input-patterns.md`
  * (Pattern 1) and the live capture in
- * `research/captures/web/inputs/UpdateCertificationInput.json`.
+ * `research/captures/web/inputs/UpdateCertificationInput.json`. `skills`
+ * is wire-required non-null (#605) and is preservation-only — `add()`
+ * defaults to `[]`, `update()` echoes `current.skills` through the merge.
  */
 export interface CertificationFields {
   certificate?: string;
@@ -58,6 +59,7 @@ export interface CertificationFields {
   validToMonth?: number | null;
   validToYear?: number | null;
   highlight?: boolean;
+  skills?: { id: string; name: string }[];
 }
 
 const CERTIFICATION_FRAGMENT = `fragment Certification on Certification {
@@ -223,7 +225,9 @@ export async function show(token: string, id: string): Promise<Certification> {
 /**
  * Create a new certification row. Wire format per Pattern 2:
  * `{ profileId, certification: CertificationInput }`. `certificate` and
- * `institution` are required.
+ * `institution` are required. `skills` defaults to `[]` — the wire
+ * requires non-null `certification.skills` (live capture 2026-05-25,
+ * #605).
  */
 export async function add(token: string, fields: CertificationFields): Promise<Certification> {
   if (!fields.certificate || !fields.institution) {
@@ -235,11 +239,12 @@ export async function add(token: string, fields: CertificationFields): Promise<C
   const profileId = await extractProfileId(token);
   const before = await listByProfileId(token, profileId);
   const beforeIds = new Set(before.map((c) => c.id));
+  const certificationInput: CertificationFields = { ...fields, skills: fields.skills ?? [] };
   const res = await callTalentProfile(
     token,
     "CREATE_CERTIFICATION",
     CREATE_CERTIFICATION_MUTATION,
-    { input: { profileId, certification: fields } },
+    { input: { profileId, certification: certificationInput } },
     "certifications add",
   );
   const payload = unwrapMutation(res, "createCertification", "certifications add");
@@ -255,18 +260,84 @@ export async function add(token: string, fields: CertificationFields): Promise<C
 }
 
 /**
- * Update an existing certification row. Wire format per Pattern 1:
- * `{ certificationId, certification: CertificationInput }`.
+ * Build the merged `CertificationInput` for an `update()` call by reading
+ * the current row's writable fields and layering the user-supplied
+ * `fields` on top. Pure — no I/O.
+ *
+ * `UpdateCertification` treats `CertificationInput` as a full replacement
+ * (#605, same posture as `UpdateEmployment` per #394 and `UpdateBasicInfo`
+ * per #604) — every writable field omitted from the input is NULLed
+ * server-side.
+ *
+ * Echo strategy:
+ *
+ * - `certificate`, `institution`, `highlight`, `skills`: wire-required
+ *   non-null, always echoed.
+ * - `validToMonth`, `validToYear`: accept `null` on the write side, echoed
+ *   unconditionally so a current "no expiry" row stays that way.
+ * - `link`, `number`, `validFromMonth`, `validFromYear`: write side is
+ *   non-nullable (`string | undefined` / `number | undefined`); echoed
+ *   only when the current value is non-null.
+ *
+ * Exported so the MCP layer can build the same merged input for the
+ * dry-run preview's placeholder field set.
+ *
+ * @throws `ProfileError("VALIDATION_ERROR")` when `fields` is empty.
  */
-export async function update(token: string, id: string, fields: CertificationFields): Promise<Certification> {
+export function buildUpdateCertificationInput(
+  current: Certification,
+  fields: CertificationFields,
+): CertificationFields {
   if (Object.keys(fields).length === 0) {
     throw new ProfileError("VALIDATION_ERROR", "certifications update requires at least one field flag.");
   }
+  const merged: CertificationFields = {
+    certificate: current.certificate,
+    institution: current.institution,
+    highlight: current.highlight,
+    validToMonth: current.validToMonth,
+    validToYear: current.validToYear,
+    skills: current.skills,
+  };
+  if (current.link !== null) merged.link = current.link;
+  if (current.number !== null) merged.number = current.number;
+  if (current.validFromMonth !== null) merged.validFromMonth = current.validFromMonth;
+  if (current.validFromYear !== null) merged.validFromYear = current.validFromYear;
+  return { ...merged, ...fields };
+}
+
+/**
+ * Sentinel surfaced in the MCP dry-run preview for fields that the apply
+ * path injects from the current row at send-time (read-current+merge per
+ * {@link buildUpdateCertificationInput}). Mirrors
+ * `DRY_RUN_BASIC_INFO_FIELD_PLACEHOLDER` (#604) and
+ * `DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER` (#394).
+ */
+export const DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER = "<preserved from current certification state>" as const;
+
+/**
+ * Update an existing certification row. Wire format per Pattern 1:
+ * `{ certificationId, certification: CertificationInput }`. Reads the
+ * current row first (via `show()`) and merges the writable fields per
+ * {@link buildUpdateCertificationInput} — `UpdateCertification` treats
+ * the input as a full replacement (#605).
+ *
+ * @throws `ProfileError("VALIDATION_ERROR")` when `fields` is empty or
+ *   when the `id` does not resolve to an existing row.
+ */
+export async function update(token: string, id: string, fields: CertificationFields): Promise<Certification> {
+  // Short-circuit before the read round-trip on no-op calls; the helper
+  // re-asserts the same gate for callers that bypass `update()`.
+  if (Object.keys(fields).length === 0) {
+    throw new ProfileError("VALIDATION_ERROR", "certifications update requires at least one field flag.");
+  }
+  const current = await show(token, id);
+  const merged = buildUpdateCertificationInput(current, fields);
   const res = await callTalentProfile(
     token,
     "UPDATE_CERTIFICATION",
     UPDATE_CERTIFICATION_MUTATION,
-    { input: { certificationId: id, certification: fields } },
+    { input: { certificationId: id, certification: merged } },
     "certifications update",
   );
   const payload = unwrapMutation(res, "updateCertification", "certifications update");

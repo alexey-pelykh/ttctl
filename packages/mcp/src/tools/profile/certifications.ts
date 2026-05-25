@@ -72,11 +72,19 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
       if (input.number !== undefined) fields.number = input.number;
 
       if (input.dryRun === true) {
+        // skills: [] mirrors core add() — the wire requires non-null skills
+        // and the MCP tool has no skills input, so the apply path always
+        // sends []. Surface it so the preview matches the wire payload.
         return dryRunResponse(
           buildMcpDryRunPreview(
             "CREATE_CERTIFICATION",
             "talent-profile",
-            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, certification: fields } },
+            {
+              input: {
+                profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER,
+                certification: { ...fields, skills: [] },
+              },
+            },
             auth.token,
           ),
         );
@@ -134,11 +142,25 @@ export function registerCertificationsTools(server: McpServer, ctx: ToolRegistra
       if (input.highlight !== undefined) fields.highlight = input.highlight;
 
       if (input.dryRun === true) {
+        // Preview placeholders mirror the UNCONDITIONAL echoes in
+        // `buildUpdateCertificationInput`. Conditionally-echoed fields
+        // (link, number, validFromMonth, validFromYear) surface only when
+        // the caller supplies them — zero-transport preview can't read
+        // the current row to know which are non-null.
+        const previewCertification: Record<string, unknown> = {
+          certificate: profile.certifications.DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER,
+          institution: profile.certifications.DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER,
+          highlight: profile.certifications.DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER,
+          validToMonth: profile.certifications.DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER,
+          validToYear: profile.certifications.DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER,
+          skills: profile.certifications.DRY_RUN_CERTIFICATION_FIELD_PLACEHOLDER,
+          ...fields,
+        };
         return dryRunResponse(
           buildMcpDryRunPreview(
             "UPDATE_CERTIFICATION",
             "talent-profile",
-            { input: { certificationId: input.id, certification: fields } },
+            { input: { certificationId: input.id, certification: previewCertification } },
             auth.token,
           ),
         );
