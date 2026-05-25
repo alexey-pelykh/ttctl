@@ -82,7 +82,7 @@ export function buildProfileEmploymentCommand(): Command {
     )
     .option(
       "--primary-geography-id <id>",
-      "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation. A discovery command is tracked in #596; until then, read an existing row's geography id or set it once via the Toptal web UI.",
+      "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation. Discover a valid id with `ttctl profile countries list`, an existing row's geography id, or the Toptal web UI.",
     )
     .option(
       "--engagement-id <id>",
@@ -130,7 +130,7 @@ export function buildProfileEmploymentCommand(): Command {
     )
     .option(
       "--primary-geography-id <id>",
-      "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation (which flags rows missing geography); omit to preserve the current value. A discovery command is tracked in #596; until then, read an existing row's geography id or set it once via the Toptal web UI.",
+      "the role's primary geography — a Toptal Country catalog id (e.g. VjEtQ291bnRyeS0yMzQ for United States). Setting it satisfies the EmploymentsMissingData recommendation (which flags rows missing geography); omit to preserve the current value. Discover a valid id with `ttctl profile countries list`, an existing row's geography id, or the Toptal web UI.",
     )
     .option(
       "--engagement-id <id>",

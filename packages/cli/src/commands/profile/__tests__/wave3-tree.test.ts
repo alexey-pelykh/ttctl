@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildProfileCommand } from "../index.js";
 import { buildProfileCertificationsCommand } from "../certifications/index.js";
+import { buildProfileCountriesCommand } from "../countries/index.js";
 import { buildProfileEducationCommand } from "../education/index.js";
 import { buildProfileEmploymentCommand } from "../employment/index.js";
 import { buildProfileIndustriesCommand } from "../industries/index.js";
@@ -138,8 +139,28 @@ describe("buildProfileIndustriesCommand (6 leaves, +show #342)", () => {
   });
 });
 
+describe("buildProfileCountriesCommand (1 leaf, #596)", () => {
+  const cmd = buildProfileCountriesCommand();
+
+  it("registers `list` as its only leaf", () => {
+    expect(findSubcommand(cmd, "list")).toBeDefined();
+    expect(cmd.commands).toHaveLength(1);
+  });
+
+  it("list declares -o/--output with pretty|json|yaml and takes no positional args", () => {
+    const listCmd = findSubcommand(cmd, "list");
+    const out = listCmd?.options.find((o) => o.long === "--output");
+    expect(out?.argChoices).toEqual(["pretty", "json", "yaml"]);
+    expect(listCmd?.registeredArguments ?? []).toHaveLength(0);
+  });
+});
+
 describe("buildProfileCommand wires all four wave-3 sub-domains", () => {
   const profile = buildProfileCommand();
+
+  it("registers `countries` (#596)", () => {
+    expect(findSubcommand(profile, "countries")).toBeDefined();
+  });
 
   it("registers `industries`", () => {
     expect(findSubcommand(profile, "industries")).toBeDefined();

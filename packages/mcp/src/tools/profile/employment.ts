@@ -125,8 +125,8 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
           .describe(
             "The role's primary geography — a Toptal Country catalog id (e.g. `VjEtQ291bnRyeS0yMzQ` = United States). " +
               "Live-verified to persist on the create path (#586). Setting it satisfies the `EmploymentsMissingData` " +
-              "profile recommendation. A catalog-lookup command for discovering ids is tracked in #596; until then, read " +
-              "an existing row's `primaryGeography.id` (via `ttctl_profile_employment_list`) or set it once via the Toptal web UI.",
+              "profile recommendation. Discover a valid id via `ttctl_profile_countries_list` (the Country/geography " +
+              "catalog), an existing row's `primaryGeography.id` (via `ttctl_profile_employment_list`), or the Toptal web UI.",
           ),
         engagementId: z
           .string()
@@ -317,8 +317,8 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
             "The role's primary geography — a Toptal Country catalog id (e.g. `VjEtQ291bnRyeS0yMzQ` = United States). " +
               "Live-verified to persist on the update path (#586). Setting it satisfies the `EmploymentsMissingData` " +
               "profile recommendation, which flags existing rows missing geography. When omitted, the read-current+merge " +
-              "preserves the row's existing geography. A catalog-lookup command for discovering ids is tracked in #596; " +
-              "until then, read an existing row's `primaryGeography.id` or set it once via the Toptal web UI.",
+              "preserves the row's existing geography. Discover a valid id via `ttctl_profile_countries_list` (the " +
+              "Country/geography catalog), an existing row's `primaryGeography.id`, or the Toptal web UI.",
           ),
         engagementId: z
           .string()

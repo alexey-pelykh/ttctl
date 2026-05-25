@@ -185,6 +185,8 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_certifications_remove: { id: "cert_123" },
   ttctl_profile_certifications_show: { id: "cert_123" },
   ttctl_profile_certifications_update: { id: "cert_123", name: "AWS Pro" },
+  // profile.countries (1, #596)
+  ttctl_profile_countries_list: {},
   // profile.education (6, +list #341)
   ttctl_profile_education_add: { institution: "MIT", degree: "BSc" },
   ttctl_profile_education_highlight: { id: "edu_123" },
@@ -318,7 +320,7 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 120 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 121 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
@@ -333,9 +335,10 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     // specializations read (#466): profile_specializations_show + 1
     // new DESTRUCTIVE specializations apply (#467):
     // profile_specializations_apply + 1 new Pattern-6 connection
-    // helper (#465): profile_industries_add_connections −
+    // helper (#465): profile_industries_add_connections + 1 new
+    // Country/geography catalog read (#596): profile_countries_list −
     // 1 removed unusable profile_reviews_submit_for_review (#544).
-    expect(Object.keys(tools)).toHaveLength(120);
+    expect(Object.keys(tools)).toHaveLength(121);
   });
 
   it("every registered tool has a fixture", () => {

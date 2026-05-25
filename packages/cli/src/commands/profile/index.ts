@@ -10,6 +10,7 @@ import { buildProfileBasicCommand } from "./basic/index.js";
 import { runProfileBasicShow } from "./basic/show.js";
 import { runProfileBasicUpdate } from "./basic/set.js";
 import { buildProfileCertificationsCommand } from "./certifications/index.js";
+import { buildProfileCountriesCommand } from "./countries/index.js";
 import { buildProfileEducationCommand } from "./education/index.js";
 import { buildProfileEmploymentCommand } from "./employment/index.js";
 import { buildProfileExternalCommand } from "./external/index.js";
@@ -91,6 +92,8 @@ export function buildProfileCommand(): Command {
   profile.addCommand(buildProfileSkillsCommand());
   profile.addCommand(buildProfileSpecializationsCommand());
   profile.addCommand(buildProfileVisasCommand());
+
+  profile.addCommand(buildProfileCountriesCommand());
 
   return profile;
 }
