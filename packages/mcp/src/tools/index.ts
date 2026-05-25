@@ -13,6 +13,7 @@ import { registerJobsTools } from "./jobs.js";
 import { registerPaymentsTools } from "./payments.js";
 import { registerTimesheetTools } from "./timesheet.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
+import { registerCountriesTools } from "./profile/countries.js";
 import { registerEducationTools } from "./profile/education.js";
 import { registerEmploymentTools } from "./profile/employment.js";
 import { registerIndustriesTools } from "./profile/industries.js";
@@ -95,6 +96,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerEducationTools(server, ctx);
   registerCertificationsTools(server, ctx);
   registerEmploymentTools(server, ctx);
+
+  // profile.countries — 1 leaf (#596). Country/geography catalog lookup.
+  registerCountriesTools(server, ctx);
 
   // profile.portfolio (8), profile.visas (4), profile.resume (2) — #75
   registerPortfolioTools(server, ctx);

@@ -212,8 +212,8 @@ export interface EmploymentFields {
    * `71-profile-employment-primary-geography.e2e.test.ts`). Setting it
    * satisfies the `EmploymentsMissingData` profile recommendation. The
    * read echo is {@link Employment.primaryGeography} (the nested
-   * `{ id, code, name }` object, not the scalar write-input name). A
-   * catalog-lookup command for discovering ids is tracked in #596; the
+   * `{ id, code, name }` object, not the scalar write-input name).
+   * Discover a valid id via `profile.countries.list` (#596); the
    * surfaces expose set-only (non-null) while the type permits `null`.
    */
   primaryGeographyId?: string | null;
