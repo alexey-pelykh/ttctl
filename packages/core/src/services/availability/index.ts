@@ -553,11 +553,20 @@ export const workingHours = {
       );
     }
 
+    // #608 defense-in-depth read-merge; sibling to #604/#605/#607.
+    const merged: Record<string, string> = {};
+    if (snap.timeZone !== null) merged["timeZone"] = snap.timeZone.value;
+    if (snap.workingTimeFrom !== null) merged["workingTimeFrom"] = snap.workingTimeFrom;
+    if (snap.workingTimeTo !== null) merged["workingTimeTo"] = snap.workingTimeTo;
+    if (snap.availableShiftRangeFrom !== null) merged["availableShiftRangeFrom"] = snap.availableShiftRangeFrom;
+    if (snap.availableShiftRangeTo !== null) merged["availableShiftRangeTo"] = snap.availableShiftRangeTo;
+    Object.assign(merged, profileFields);
+
     const data = await callGateway<UpdateWorkingHoursResponse>(
       token,
       "UpdateWorkingHours",
       UPDATE_WORKING_HOURS_MUTATION,
-      { input: { profileId: snap.profileId, profile: profileFields } },
+      { input: { profileId: snap.profileId, profile: merged } },
     );
     if (data.updateWorkingHours === null) {
       throw new AvailabilityError("UNKNOWN", "UpdateWorkingHours returned a null payload.");
