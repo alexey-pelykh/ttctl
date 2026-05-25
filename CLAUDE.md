@@ -331,6 +331,52 @@ and skipped — the leading-underscore convention coexists with the
 explicit `// surface-exempt:` marker for cases where the export name
 cannot be changed without breaking callers.
 
+### Merge-completeness gate (full-replace class defense)
+
+`scripts/check-merge-completeness.ts` (wired into `pnpm lint`) is the
+structural CI-time defense against the **full-replace merge bug class**
+(#608). Toptal's `talent_profile` `<Entity>Input` mutations are
+full-replacement contracts: fields OMITTED from the input are NULLED
+server-side. ttctl services that send partial inputs silently null
+unsent fields. Members: #604 (basic, fixed), #605 (cert, fixed),
+#606 (external, partial-empirically), #607 (employment.highlight,
+partial-empirically), #608 (availability.workingHours, defense-in-depth),
+#612 (education, open — caught by this gate at PR-time).
+
+Detection scope: walks `../research/captures/web/inputs/*Input.json` and
+for each capture (a) loads the payload field roster from
+`inferred_inputs.<PayloadType>`, (b) finds the ttctl invocation of the
+matching operation under `packages/core/src/services/**/index.ts` (literal
+`operationName: "<OpName>"` OR helper-wrapped `callTalentProfile(token,
+"<OpName>", ...)` / `callGateway(token, "<OpName>", ...)`), (c) extracts
+the SENT field set from the merge construction via three resolution
+patterns: inline literal (`<wrapper>: { f1, f2, ... }`), variable
+(`<wrapper>: merged` where `merged` is declared in the same file with an
+object literal plus optional `merged.<key> = ...` assignments), or helper
+call (`<wrapper>: buildXInput(...)` where the helper is defined in the
+same file). Comparison: capture's payload roster MUST be a subset of the
+SENT field set.
+
+- **Exempt** a missing field by placing
+  `// merge-complete-exempt: <field> — <reason>` anywhere in the file
+  hosting the merge construction. The reason is mandatory and surfaces
+  in the report. Use cases: write-only fields (upload tokens, ephemeral
+  secrets), operations empirically verified as partial-merge
+  (#606/#607/#608 lineage), capture-vs-live shape divergence (the
+  capture is outdated or for a sibling op).
+- **Default mode** is warn-only (exit 0). Set
+  `MERGE_COMPLETENESS_STRICT=1` (or pass `--strict`) to fail on
+  non-exempt gaps once the existing gap (currently #612 education) is
+  paid down. Sibling pattern to `E2E_COVERAGE_STRICT` /
+  `SURFACE_COVERAGE_STRICT` / `WRITE_READ_SYMMETRY_STRICT`.
+
+Captures with no matching ttctl invocation are reported once at the end
+and skipped — typical case: `UpdateTimeZoneWorkingHoursInput` (the
+talent-profile sibling of `UpdateWorkingHours` that ttctl uses on the
+gateway surface). Helper-name allowlist mirrors `HELPER_SIGNATURES` in
+`check-e2e-coverage.ts` and must be kept in sync manually when a new
+transport helper is added.
+
 ### Wire-shape snapshots
 
 Post-merge wire-drift detection sibling to the rule above. E2E runs
