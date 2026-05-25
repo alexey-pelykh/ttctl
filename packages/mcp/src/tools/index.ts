@@ -35,6 +35,7 @@ import { registerProfileReviewsApproveItemTool } from "./profile_reviews_approve
 import { registerProfileReviewsApproveSectionTool } from "./profile_reviews_approve_section.js";
 import { registerProfileReviewsListTool } from "./profile_reviews_list.js";
 import { registerProfileSkillsAddTool } from "./profile_skills_add.js";
+import { registerProfileSkillsAddConnectionTool } from "./profile_skills_add_connection.js";
 import { registerProfileSkillsAutocompleteTool } from "./profile_skills_autocomplete.js";
 import { registerProfileSkillsListTool } from "./profile_skills_list.js";
 import { registerProfileSkillsReadinessTool } from "./profile_skills_readiness.js";
@@ -82,7 +83,7 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileBasicPhotoShowTool(server, ctx);
   registerProfileBasicPhotoUploadTool(server, ctx);
 
-  // profile.skills — 7 leaves (#73, cardinality-collapsed from 18 raw operations)
+  // profile.skills — 8 leaves (#73 + #462 add-connection)
   registerProfileSkillsAddTool(server, ctx);
   registerProfileSkillsRemoveTool(server, ctx);
   registerProfileSkillsUpdateTool(server, ctx);
@@ -90,6 +91,7 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileSkillsListTool(server, ctx);
   registerProfileSkillsAutocompleteTool(server, ctx);
   registerProfileSkillsReadinessTool(server, ctx);
+  registerProfileSkillsAddConnectionTool(server, ctx);
 
   // profile.industries / education / certifications / employment — 21 leaves (#74)
   registerIndustriesTools(server, ctx);

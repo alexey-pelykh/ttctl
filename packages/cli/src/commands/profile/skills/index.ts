@@ -213,6 +213,115 @@ async function runSkillsRm(id: string, format: OutputFormat): Promise<void> {
   });
 }
 
+interface SkillsAddConnectionOptions {
+  skillSetId?: string;
+  connectionType?: profile.skills.SkillConnectionType;
+  connectionId?: string;
+  consentProfileCapability?: boolean;
+  output: OutputFormat;
+}
+
+/**
+ * Action handler for `ttctl profile skills add-connection` (#462). Links
+ * an existing `ProfileSkillSet` to a single
+ * employment / education / certification / portfolio row via
+ * `addProfileSkillSetConnection` (Pattern-6 mutation, INFERRED wire shape
+ * — see CLAUDE.md § Schema/contract validation rule).
+ *
+ * **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the
+ * caller MUST pass `--consent-profile-capability` (or set
+ * `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1` for non-interactive contexts).
+ * Absence raises `ConsentRequiredError("CONSENT_REQUIRED")` at the
+ * service layer.
+ */
+async function runSkillsAddConnection(options: SkillsAddConnectionOptions): Promise<void> {
+  const commandLabel = "profile skills add-connection";
+  const format = options.output;
+
+  // Defense-in-depth alongside commander's `.requiredOption` /
+  // `.makeOptionMandatory` — catches whitespace-only values that pass
+  // commander's presence check, and narrows each option via
+  // `emitErrorAndExit`'s `never` return type for the downstream call.
+  const skillSetId = options.skillSetId?.trim();
+  if (skillSetId === undefined || skillSetId.length === 0) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [{ code: "VALIDATION_ERROR", message: "Missing required flag: --skill-set-id." }],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): missing --skill-set-id.`,
+    });
+  }
+  const connectionType = options.connectionType;
+  if (connectionType === undefined) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [{ code: "VALIDATION_ERROR", message: "Missing required flag: --connection-type." }],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): missing --connection-type.`,
+    });
+  }
+  const connectionId = options.connectionId?.trim();
+  if (connectionId === undefined || connectionId.length === 0) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [{ code: "VALIDATION_ERROR", message: "Missing required flag: --connection-id." }],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): missing --connection-id.`,
+    });
+  }
+
+  if (!profile.skills.SKILL_CONNECTION_TYPES.includes(connectionType)) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          field: "connectionType",
+          message: `--connection-type must be one of: ${profile.skills.SKILL_CONNECTION_TYPES.join(", ")}.`,
+        },
+      ],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --connection-type must be one of: ${profile.skills.SKILL_CONNECTION_TYPES.join(", ")}.`,
+    });
+  }
+
+  const token = await loadTokenOrExit(commandLabel, format);
+  const dryRun = getCliDryRun();
+
+  // Static type only allows `true` literal; the runtime gate at the
+  // service entry covers the `false` case (operator omits the flag).
+  const consent = {
+    profileCapabilityConsentIssued: options.consentProfileCapability ?? false,
+  } as unknown as profile.skills.AddSkillConnectionConsent;
+
+  let outcome: profile.skills.AddSkillConnectionOutcome;
+  try {
+    outcome = await profile.skills.addConnection(token, { skillSetId, connectionType, connectionId }, consent, {
+      dryRun,
+    });
+  } catch (err) {
+    handleSkillsError(err, commandLabel, format);
+  }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: operationFor(commandLabel),
+      format,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const { result } = outcome;
+  emitUpdateSuccess({
+    operation: operationFor(commandLabel),
+    format,
+    updated: result,
+    prettySummary: `Linked skillSet ${result.skillSetId} to ${connectionType} ${connectionId} (${result.connectionsCount.toString()} connection${result.connectionsCount === 1 ? "" : "s"} total).`,
+    notice: result.notice ?? undefined,
+  });
+}
+
 interface SkillsUpdateOptions {
   rating?: profile.skills.ProficiencyRating;
   experience?: string;
@@ -601,6 +710,42 @@ export function buildProfileSkillsCommand(): Command {
     .action(async (options: { output: OutputFormat }) => {
       await runSkillsReadiness(options.output);
     });
+
+  markMutation(
+    skills
+      .command("add-connection")
+      .description(
+        "Link an existing ProfileSkillSet to one of your employment, education, certification, or portfolio rows. INFERRED Pattern-6 mutation — requires --consent-profile-capability per ADR-009 (ttctl). Use `profile skills list` and `profile {employment,education,certifications,portfolio} list` to discover the ids.",
+      )
+      .requiredOption(
+        "--skill-set-id <id>",
+        "ProfileSkillSet id (V1-ProfileSkillSet-NNN) — get via `profile skills list`",
+      )
+      .addOption(
+        new Option(
+          "--connection-type <type>",
+          "Target row class (one of: EMPLOYMENT, EDUCATION, PORTFOLIO_ITEM, CERTIFICATION)",
+        )
+          .choices([...profile.skills.SKILL_CONNECTION_TYPES])
+          .makeOptionMandatory(),
+      )
+      .requiredOption(
+        "--connection-id <id>",
+        "Target row id — V1-Employment-NNN / V1-Education-NNN / V1-Certification-NNN / V1-PortfolioItem-NNN",
+      )
+      .option(
+        "--consent-profile-capability",
+        "REQUIRED — acknowledge that this writes a recruiter-visible skill→entity link to your public profile (ADR-009 (ttctl) profile-capability domain)",
+      )
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (options: SkillsAddConnectionOptions) => {
+        await runSkillsAddConnection(options);
+      }),
+  );
 
   return skills;
 }
