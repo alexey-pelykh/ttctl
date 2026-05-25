@@ -259,6 +259,12 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   // autocomplete-resolution path is exercised in the core service's unit
   // tests.
   ttctl_profile_skills_add: { name: "TypeScript", skillId: "V1-Skill-stub" },
+  ttctl_profile_skills_add_connection: {
+    skillSetId: "V1-ProfileSkillSet-stub",
+    connectionType: "EMPLOYMENT",
+    connectionId: "V1-Employment-stub",
+    profileCapabilityConsentIssued: true,
+  },
   ttctl_profile_skills_autocomplete: { query: "Type" },
   ttctl_profile_skills_list: {},
   ttctl_profile_skills_readiness: {},
@@ -320,7 +326,7 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 121 tools (sanity for the smoke loop)", () => {
+  it("registers exactly 122 tools (sanity for the smoke loop)", () => {
     // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
     // reject, reject_reasons + 4 new apply-funnel tools (#436):
     // apply, apply_data, apply_questions, apply_rate_insight + 1
@@ -338,7 +344,7 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     // helper (#465): profile_industries_add_connections + 1 new
     // Country/geography catalog read (#596): profile_countries_list −
     // 1 removed unusable profile_reviews_submit_for_review (#544).
-    expect(Object.keys(tools)).toHaveLength(121);
+    expect(Object.keys(tools)).toHaveLength(122);
   });
 
   it("every registered tool has a fixture", () => {

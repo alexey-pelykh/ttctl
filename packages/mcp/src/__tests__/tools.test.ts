@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (121 tools = 64 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #467 specializations_apply + 1 #465 industries_add_connections + 1 #596 countries_list − 1 #544 reviews_submit_for_review] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the cumulative tool set (122 tools = 65 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #467 specializations_apply + 1 #465 industries_add_connections + 1 #462 skills_add_connection + 1 #596 countries_list − 1 #544 reviews_submit_for_review] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -200,8 +200,9 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_reviews_approve_item",
       "ttctl_profile_reviews_approve_section",
       "ttctl_profile_reviews_list",
-      // #73 — profile.skills (7)
+      // #73 + #462 — profile.skills (8)
       "ttctl_profile_skills_add",
+      "ttctl_profile_skills_add_connection",
       "ttctl_profile_skills_autocomplete",
       "ttctl_profile_skills_list",
       "ttctl_profile_skills_readiness",

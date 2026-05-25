@@ -135,8 +135,30 @@ describe("buildProfileSkillsCommand", () => {
   const cmd = buildProfileSkillsCommand();
   const subNames = cmd.commands.map((c) => c.name());
 
-  it("registers exactly the seven leaves the issue specifies", () => {
-    expect(subNames.sort()).toEqual(["add", "autocomplete", "list", "readiness", "remove", "show", "update"]);
+  it("registers exactly the eight leaves the issue specifies (#73 + #462 add-connection)", () => {
+    expect(subNames.sort()).toEqual([
+      "add",
+      "add-connection",
+      "autocomplete",
+      "list",
+      "readiness",
+      "remove",
+      "show",
+      "update",
+    ]);
+  });
+
+  it("add-connection leaf accepts --skill-set-id, --connection-type, --connection-id, --consent-profile-capability flags (#462)", () => {
+    const addConn = cmd.commands.find((c) => c.name() === "add-connection");
+    const flags = addConn?.options.map((o) => o.long);
+    expect(flags).toEqual(
+      expect.arrayContaining([
+        "--skill-set-id",
+        "--connection-type",
+        "--connection-id",
+        "--consent-profile-capability",
+      ]),
+    );
   });
 
   it("declares `rm` as an alias on the `remove` leaf (per issue #72 convention)", () => {

@@ -12,8 +12,10 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { add, autocomplete, list, readiness, rm, set, show, SkillsError } from "../index.js";
+import { add, addConnection, autocomplete, list, readiness, rm, set, show, SkillsError } from "../index.js";
+import type { AddSkillConnectionConsent } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
+import { ConsentRequiredError } from "../../../../consent.js";
 import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
 import type { TransportRequest, TransportResponse } from "../../../../transport.js";
 import { VIEWER_OK } from "../../__tests__/fixtures.js";
@@ -727,5 +729,263 @@ describe("skills.readiness", () => {
   it("throws SkillsError when the profile id doesn't resolve", async () => {
     reply({ body: { data: { profile: null } } });
     await expect(readiness(TOKEN, "p-stale")).rejects.toBeInstanceOf(SkillsError);
+  });
+});
+
+// -----------------------------------------------------------------------
+// addConnection — Pattern-6 addProfileSkillSetConnection (#462)
+// -----------------------------------------------------------------------
+
+describe("skills.addConnection (#462 — Pattern-6 addProfileSkillSetConnection)", () => {
+  const CONSENT: AddSkillConnectionConsent = { profileCapabilityConsentIssued: true };
+  const FIELDS = {
+    skillSetId: "V1-ProfileSkillSet-1",
+    connectionType: "EMPLOYMENT" as const,
+    connectionId: "V1-Employment-42",
+  };
+
+  const ADD_CONNECTION_OK_BODY = {
+    data: {
+      addProfileSkillSetConnection: {
+        skillSet: {
+          id: "V1-ProfileSkillSet-1",
+          connections: {
+            totalCount: 2,
+            nodes: [{ id: "V1-Employment-7" }, { id: "V1-Employment-42" }],
+          },
+        },
+        success: true,
+        notice: "Connection added.",
+        errors: [],
+      },
+    },
+  };
+
+  // -------- Consent gate (ADR-009 profile-capability) --------
+
+  it("refuses with ConsentRequiredError when profileCapabilityConsentIssued is false", async () => {
+    const noConsent = { profileCapabilityConsentIssued: false } as unknown as AddSkillConnectionConsent;
+    await expect(addConnection(TOKEN, FIELDS, noConsent)).rejects.toBeInstanceOf(ConsentRequiredError);
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("refuses with ConsentRequiredError when the consent field is missing", async () => {
+    const noConsent = {} as unknown as AddSkillConnectionConsent;
+    await expect(addConnection(TOKEN, FIELDS, noConsent)).rejects.toMatchObject({
+      code: "CONSENT_REQUIRED",
+      domain: "profile-capability",
+      opName: "addProfileSkillSetConnection",
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("consent gate fires BEFORE the dry-run short-circuit (no preview emitted on refusal)", async () => {
+    const noConsent = {} as unknown as AddSkillConnectionConsent;
+    await expect(addConnection(TOKEN, FIELDS, noConsent, { dryRun: true })).rejects.toBeInstanceOf(
+      ConsentRequiredError,
+    );
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("env-var bypass (TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1) allows the call without the literal", async () => {
+    const prev = process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"];
+    process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"] = "1";
+    try {
+      reply({ body: ADD_CONNECTION_OK_BODY });
+      const noConsent = {} as unknown as AddSkillConnectionConsent;
+      const outcome = await addConnection(TOKEN, FIELDS, noConsent);
+      expect(outcome.kind).toBe("applied");
+    } finally {
+      if (prev === undefined) delete process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"];
+      else process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"] = prev;
+    }
+  });
+
+  // -------- Input validation --------
+
+  it("refuses with VALIDATION_ERROR on empty skillSetId (no wire call)", async () => {
+    await expect(addConnection(TOKEN, { ...FIELDS, skillSetId: "" }, CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Skill set id"),
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("refuses with VALIDATION_ERROR on empty connectionId (no wire call)", async () => {
+    await expect(addConnection(TOKEN, { ...FIELDS, connectionId: "" }, CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Connection id"),
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("refuses with VALIDATION_ERROR on a connectionType outside the enum (no wire call)", async () => {
+    const bad = { ...FIELDS, connectionType: "BAD_TYPE" as unknown as "EMPLOYMENT" };
+    await expect(addConnection(TOKEN, bad, CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("BAD_TYPE"),
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  // -------- Dry-run short-circuit --------
+
+  it("emits a DryRunPreview with the prepared variables and makes no wire call", async () => {
+    const outcome = await addConnection(TOKEN, FIELDS, CONSENT, { dryRun: true });
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.surface).toBe("talent-profile");
+    expect(outcome.preview.transport).toBe("impersonated");
+    expect(outcome.preview.operationName).toBe("addProfileSkillSetConnection");
+    expect(outcome.preview.variables).toEqual({
+      input: {
+        skillSetId: "V1-ProfileSkillSet-1",
+        connectionType: "EMPLOYMENT",
+        connectionId: "V1-Employment-42",
+      },
+    });
+    expect(outcome.preview.headers["authorization"]).toBe("Token token=<redacted>");
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  // -------- Apply-path wire shape --------
+
+  it("dispatches addProfileSkillSetConnection against the talent-profile surface with the Pattern-6 variables", async () => {
+    reply({ body: ADD_CONNECTION_OK_BODY });
+    await addConnection(TOKEN, FIELDS, CONSENT);
+    const call = mocked.mock.calls[0]?.[0];
+    expect(call?.surface).toBe("talent-profile");
+    expect(call?.authToken).toBe(TOKEN);
+    expect(call?.body.operationName).toBe("addProfileSkillSetConnection");
+    expect(call?.body.variables).toEqual({
+      input: {
+        skillSetId: "V1-ProfileSkillSet-1",
+        connectionType: "EMPLOYMENT",
+        connectionId: "V1-Employment-42",
+      },
+    });
+  });
+
+  it("returns the applied outcome with skillSetId echo, count, connectionIds[], and notice", async () => {
+    reply({ body: ADD_CONNECTION_OK_BODY });
+    const outcome = await addConnection(TOKEN, FIELDS, CONSENT);
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result).toEqual({
+      skillSetId: "V1-ProfileSkillSet-1",
+      connectionsCount: 2,
+      connectionIds: ["V1-Employment-7", "V1-Employment-42"],
+      notice: "Connection added.",
+    });
+  });
+
+  it("filters out null nodes in the wire connections.nodes array (defensive)", async () => {
+    reply({
+      body: {
+        data: {
+          addProfileSkillSetConnection: {
+            skillSet: {
+              id: "V1-ProfileSkillSet-1",
+              connections: { totalCount: 1, nodes: [{ id: "V1-Employment-42" }, null] },
+            },
+            success: true,
+            notice: null,
+            errors: [],
+          },
+        },
+      },
+    });
+    const outcome = await addConnection(TOKEN, FIELDS, CONSENT);
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result.connectionIds).toEqual(["V1-Employment-42"]);
+    expect(outcome.result.notice).toBeNull();
+  });
+
+  // -------- Error mapping --------
+
+  it("maps a payload.errors[] entry to USER_ERROR with the (key) prefix in the message", async () => {
+    reply({
+      body: {
+        data: {
+          addProfileSkillSetConnection: {
+            skillSet: null,
+            success: false,
+            notice: null,
+            errors: [{ code: null, key: "duplicate", message: "Connection already exists." }],
+          },
+        },
+      },
+    });
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("duplicate"),
+    });
+  });
+
+  it("maps success=false with no errors[] to USER_ERROR carrying the notice", async () => {
+    reply({
+      body: {
+        data: {
+          addProfileSkillSetConnection: {
+            skillSet: null,
+            success: false,
+            notice: "Skill set not found.",
+            errors: [],
+          },
+        },
+      },
+    });
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+      message: expect.stringContaining("Skill set not found."),
+    });
+  });
+
+  it("maps a null payload to UNKNOWN", async () => {
+    reply({ body: { data: { addProfileSkillSetConnection: null } } });
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toMatchObject({ code: "UNKNOWN" });
+  });
+
+  it("maps success=true with no skillSet to UNKNOWN", async () => {
+    reply({
+      body: {
+        data: { addProfileSkillSetConnection: { skillSet: null, success: true, notice: null, errors: [] } },
+      },
+    });
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toMatchObject({
+      code: "UNKNOWN",
+      message: expect.stringContaining("skillSet"),
+    });
+  });
+
+  it("maps a success=true skillSet missing connections to UNKNOWN", async () => {
+    reply({
+      body: {
+        data: {
+          addProfileSkillSetConnection: {
+            skillSet: { id: "V1-ProfileSkillSet-1", connections: null },
+            success: true,
+            notice: null,
+            errors: [],
+          },
+        },
+      },
+    });
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toMatchObject({
+      code: "UNKNOWN",
+      message: expect.stringContaining("connections"),
+    });
+  });
+
+  // -------- Transport-level errors --------
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { data: null } });
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("propagates Cf403Error from the impersonated transport", async () => {
+    mocked.mockRejectedValueOnce(new Cf403Error("Cloudflare 403"));
+    await expect(addConnection(TOKEN, FIELDS, CONSENT)).rejects.toBeInstanceOf(Cf403Error);
   });
 });
