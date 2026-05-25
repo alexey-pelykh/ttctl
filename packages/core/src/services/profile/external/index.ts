@@ -371,6 +371,12 @@ interface UpdateExternalProfilesPayload {
  * both of which use `profile:` because they write fields directly on the
  * Profile entity.
  *
+ * Partial-merge server-side: omitted writable URLs are preserved, so this
+ * sends the caller's fields verbatim with NO read-current+merge — unlike the
+ * full-replacement siblings UPDATE_BASIC_INFO (#604), UPDATE_CERTIFICATION
+ * (#605), UPDATE_EMPLOYMENT (#394). Verified live in #606; regression guard
+ * 74-profile-external-update-merge.e2e.test.ts.
+ *
  * Errors:
  *   - `ProfileError("VALIDATION_ERROR")` when `twitter` is supplied (any
  *     value, including `""` / `null`) — carries {@link TWITTER_NOT_EXTERNAL_MESSAGE}
