@@ -7,6 +7,170 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.11] - 2026-05-26
+
+### Added
+
+- **`profile.skills.add-connection`: link an existing `ProfileSkillSet` to a
+  single employment / education / certification / portfolio row via the
+  `addProfileSkillSetConnection` mutation (#462).** Pattern-6 mutation —
+  sibling to `profile.specializations.apply` (#467 / PR #534) under the same
+  ADR-009 `profile-capability` consent domain (`profileCapabilityConsentIssued:
+true`). Core: `profile.skills.addConnection(token, fields, consent,
+options)` returns `{ skillSetId, connectionsCount, connectionIds, notice }`
+  with write-read symmetry against the existing `list()` read. CLI: `ttctl
+profile skills add-connection --skill-set-id <id> --connection-type
+<EMPLOYMENT|EDUCATION|PORTFOLIO_ITEM|CERTIFICATION> --connection-id <id>
+--consent-profile-capability`. MCP: `ttctl_profile_skills_add_connection`
+  with `destructiveHint: true` and `profileCapabilityConsentIssued:
+z.literal(true)`. Wire-shape disposition: Schema/contract rule
+  **triggered** (new GraphQL op `addProfileSkillSetConnection` under
+  `packages/core/src/services/profile/**`, hand-authored against
+  `talent-profile`, in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` — both input and
+  payload positions are `Unknown` in the synthesized SDL); **Track 1** (new
+  `packages/e2e/src/wire-snapshots/addProfileSkillSetConnection.snapshot.json`,
+  recorded against the live mutation). Validated live (`TTCTL_E2E=1`) via
+  `packages/e2e/src/78-profile-skills-add-connection.e2e.test.ts`.
+- **`profile.countries.list`: expose the `getCountries` query as a catalog
+  lookup across `core` / `cli` / `mcp` (#596).** Wave-2 follow-up to #586 —
+  surfaces the live-verified country catalog so users can discover a valid
+  id for `employment.update --primary-geography-id` (and any future site
+  consuming a Country id, e.g. `BasicInfo.countryId` / `citizenshipId`).
+  Namespace chosen at the top level rather than nested under `employment`
+  via `/council` CONVERGENT+HIGH_CONFIDENCE+FALSIFIER-CONVERGENT, since
+  Country is a multi-consumer catalog (3 sites) and breaks the
+  single-consumer `employerAutocomplete`-nesting precedent. Core:
+  `profile.countries.list(token)` → `Country[]` `{ id, code, name }`
+  (defensive projection, no-silent-empty contract, mirrors `industries.list`).
+  CLI: `ttctl profile countries list [-o pretty|json|yaml]`. MCP:
+  `ttctl_profile_countries_list` (read-only, `dryRun`-capable). Wire-shape
+  disposition: Schema/contract rule **triggered** (new GraphQL op
+  `getCountries` under `packages/core/src/services/profile/**`); **Track 1**
+  (committed `packages/e2e/src/wire-snapshots/getCountries.snapshot.json` —
+  shape-only `{ code, id, name }`, no PII; `getCountries` is in
+  `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`). Validated live (`TTCTL_E2E=1`) via
+  `packages/e2e/src/77-profile-countries-list.e2e.test.ts`.
+
+### Fixed
+
+- **Full-replace merge bug class umbrella closed (#604 / #605 / #606 / #607
+  / #608).** Toptal's `talent_profile` `<Entity>Input` mutations are
+  full-replacement contracts: fields OMITTED from the input are NULLED
+  server-side. ttctl services that sent partial inputs silently nulled
+  unsent fields. This release ships per-member fixes plus a structural CI
+  defense so the class cannot regress.
+  - **`profile.basic.set`: preserve 6 social URLs + skype on every
+    bio/headline edit (#604).** `UPDATE_BASIC_INFO` is full-replacement
+    (#393). The previous merge omitted **all six** social fields the live
+    `profile` input carries (`linkedin / github / website / behance /
+dribbble / skype`), so every minimal edit silently wiped them. The
+    reported scope was 3 fields; the 2026-05-06 live curl in
+    `research/notes/10` § Captured exception proved all six. `GET_BASIC_INFO`
+    now reads the six fields and the merge echoes them back unchanged, the
+    same way `twitter` already worked. **Write ownership is unchanged**: per
+    #526 these remain `external.update`-owned; `basic.set`'s `ProfileUpdate`
+    still does not accept them as inputs. The merge only preserves; it
+    never overrides. Wire-shape disposition: Schema/contract rule
+    **triggered** (`UPDATE_BASIC_INFO`; selection grew on `GET_BASIC_INFO`
+    and the merge wrapper grew 6 preserved fields); **Track 1** (existing
+    `UPDATE_BASIC_INFO` snapshot updated; the 6 new echo fields validated
+    via the round-trip in `44-profile-basic.e2e.test.ts`).
+  - **`profile.certifications.update`: add read-current+merge over the
+    full-replacement `UpdateCertification` contract (#605).** Mirrors the
+    proven `buildUpdateEmploymentInput` pattern: read the row via `show()`,
+    build a merged `CertificationInput`, layer the user-supplied fields on
+    top. A minimal edit (e.g. toggling `highlight`) previously wiped
+    `certificate` / `institution` / `link` / `number` / validity dates /
+    `skills`. Live-wire discovery during this work: `CreateCertification` /
+    `UpdateCertification` REQUIRE non-null `certification.skills` (Rails
+    `.blank?` min-1, same gate as #394) — `skills` is now on
+    `CertificationFields` as **preservation-only** (`add()` defaults `[]`,
+    `update()` echoes `current.skills`); no new CLI / MCP writable flag.
+    `#605`'s scope originally also covered `education.update`, but a
+    deeper, pre-existing bug surfaced (`education.add/update` send
+    `institution`, which the wire's `EducationInput` does NOT define — the
+    wire field is `title`); education was split to **#612** for separate
+    reverse-engineering. Wire-shape disposition: Schema/contract rule
+    **triggered**; **Track 1** (`UPDATE_CERTIFICATION` in
+    `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`; committed
+    `packages/e2e/src/wire-snapshots/UPDATE_CERTIFICATION.snapshot.json`).
+  - **`profile.external.update`: confirm partial-merge contract + correct
+    MCP dry-run wrapper key (#606).** `#606` originally suspected
+    `UpdateExternalProfiles` of being full-replacement like its #604
+    sibling. Empirically refuted: a live E2E that sets ONE writable field
+    to a distinct new value (unique-query-param trick to rule out the
+    "server no-ops unchanged input" confound) and re-reads via a fresh
+    `show()` proves the OTHER writable URLs are preserved. No client-side
+    read-merge is warranted. The PR ships the regression-guard E2E plus a
+    real adjacent fix: the MCP `ttctl_profile_external_update` dry-run
+    preview emitted the stale `externalProfiles:` wrapper key while the
+    apply path uses `profile:` — corrected, with 2 unit tests pinning the
+    preview to the apply-path shape. Core `update()` JSDoc now records the
+    verified partial-merge contract and contrasts the full-replace siblings.
+    Wire-shape disposition: Schema/contract rule **triggered**; **Track 1**
+    (`UpdateExternalProfiles` snapshot unchanged; new
+    `74-profile-external-update-merge.e2e.test.ts` proves the contract).
+  - **`profile.employment.update`: defense-in-depth read-merge for
+    `highlight` (#607).** Echo `current.highlight` into
+    `buildUpdateEmploymentInput`'s merged base so partial employment
+    updates that omit `highlight` cannot wipe it server-side. Live E2E
+    against the PRIMARY account reveals the server preserves the field on
+    omit (same regime as `toptalRelated` per helper-doc § "the field's
+    PERSISTED-state on update is server-controlled" and the parallel
+    finding for `external.update` in #606), but pattern-consistency with
+    #487 / #604 + wire-shape-drift insurance (cf. #275) justify shipping.
+    Wire-shape disposition: Schema/contract rule **triggered**; **Track 1**
+    (`UpdateEmployment` snapshot unchanged — defense-in-depth at the
+    client merge layer, not a wire shape change).
+  - **`profile.availability.workingHours.set`: defense-in-depth read-merge
+    on the apply path (#608).** The last open verification in the bug-class
+    table. Echo current snap fields before applying caller overrides on the
+    apply path; dry-run path stays unchanged per the existing #164 AC.
+    Empirical verdict via with-fix-stashed E2E: **partial-merge** (same
+    regime as #606 / #607). Defense-in-depth for pattern consistency +
+    wire-shape-drift insurance.
+  - **CI gate: `scripts/check-merge-completeness.ts` (#608).** New
+    structural defense wired into `pnpm lint`. Walks
+    `research/captures/web/inputs/*Input.json` and for each capture
+    asserts the captured payload roster ⊆ ttctl's sent field set for the
+    matched operation. Three resolution patterns (inline literal, variable
+    assignment, helper call). Per-field exemption via `//
+merge-complete-exempt: <field> — <reason>`. Default warn-mode;
+    `MERGE_COMPLETENESS_STRICT=1` (or `--strict`) to fail on non-exempt
+    gaps once the currently-open gap (#612 `education.update`) is paid
+    down. Sibling to existing `check-write-read-symmetry.ts` (Class B),
+    `check-surface-coverage.ts` (Class A), and `check-e2e-coverage.ts`
+    defenses. CLAUDE.md § Merge-completeness gate documents the contract,
+    exemption syntax, and capture-vs-invocation pairing rules.
+
+- **`jobs.apply`: restore `JobApplicationRateInsight` aliases + decouple
+  rate-insight pre-fetch from the apply mutation (#610).** `ttctl jobs
+apply` aborted with HTTP 400 because the inline `JobApplicationRateInsight`
+  query selected `estimatedRevenue` bare on both `TalentJobRateInsight`
+  union variants; the live gateway rejected with `FieldsInSetCanMerge`
+  despite the synthesized SDL declaring both members compatible.
+  - **Track B (root cause)** — restored per-variant aliases on the wire
+    query (`competitiveRevenue: estimatedRevenue`, `uncompetitiveRevenue:
+estimatedRevenue`, plus matching `*Explanation` pair), mirroring the
+    captured mobile op. Public `RateInsight` type unchanged;
+    `projectRateInsight` bridges wire → public.
+  - **Track A (defense-in-depth)** — the apply mutation should never have
+    been blocked by an unused read-only pre-fetch. `apply()`'s
+    `Promise.all` now only awaits `applyData` + `applyQuestions`;
+    `rateInsight` is fire-and-forget — failures emit a stderr warning and
+    apply proceeds. `_shared/transport.ts` non-2xx errors now surface
+    `body.errors[0].message` so the next wire breakage self-diagnoses (the
+    bare `"returned HTTP 400"` is what forced operator re-curl to identify
+    #610 in the first place).
+  - Wire-shape disposition: Schema/contract rule **triggered** (alias
+    addition on existing fields in `JOB_APPLICATION_RATE_INSIGHT_QUERY`);
+    **Track 1** (new
+    `packages/e2e/src/wire-snapshots/JobApplicationRateInsight.snapshot.json`
+    — the exact breakage class snapshots detect structurally; sibling
+    `JobApplyData.snapshot.json` added incidentally). Validated live
+    (`TTCTL_E2E=1`) via `57-jobs-apply-data.e2e.test.ts` — 7/7 including
+    the rate-insight happy path that surfaced #610.
+
 ## [v0.1.0-rc.10] - 2026-05-25
 
 ### Added
