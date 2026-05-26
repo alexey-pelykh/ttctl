@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (124 tools)", () => {
+  it("registers exactly the cumulative tool set (125 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -203,13 +203,14 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_reviews_approve_item",
       "ttctl_profile_reviews_approve_section",
       "ttctl_profile_reviews_list",
-      // #73 + #462 — profile.skills (8)
+      // #73 + #462 + #463 — profile.skills (9)
       "ttctl_profile_skills_add",
       "ttctl_profile_skills_add_connection",
       "ttctl_profile_skills_autocomplete",
       "ttctl_profile_skills_list",
       "ttctl_profile_skills_readiness",
       "ttctl_profile_skills_remove",
+      "ttctl_profile_skills_remove_connection",
       "ttctl_profile_skills_show",
       "ttctl_profile_skills_update",
       // #466 + #467 — profile.specializations (2, read GetTalentSpecializations + DESTRUCTIVE ApplyForSpecialization)

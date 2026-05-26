@@ -17,15 +17,18 @@
  * | `autocomplete`   | `GET_SKILLS_FOR_AUTOCOMPLETE`                           |
  * | `readiness`      | `getSkillsReadiness`                                    |
  * | `add-connection` | `addProfileSkillSetConnection` (Pattern-6, #462)        |
+ * | `remove-connection` | `removeProfileSkillSetConnection` (#463)             |
  *
- * **Cardinality (per issue #73, amended by #462)**: 18 raw operations →
- * 8 leaves. #462 promoted `addProfileSkillSetConnection` from "folded
- * into `add`" to a standalone leaf — connection semantics (linking an
- * existing skillSet to a portfolio / education / employment /
- * certification row) are materially distinct from creating a skillSet,
- * the input schema differs, and ADR-009 (ttctl) gates the call with a
- * `profile-capability` consent ceremony that does not apply to plain
- * `add`. Full mapping table:
+ * **Cardinality (per issue #73, amended by #462 + #463)**: 19 raw
+ * operations → 9 leaves. #462 promoted `addProfileSkillSetConnection`
+ * from "folded into `add`" to a standalone leaf — connection semantics
+ * (linking an existing skillSet to a portfolio / education / employment
+ * / certification row) are materially distinct from creating a
+ * skillSet, the input schema differs, and ADR-009 (ttctl) gates the
+ * call with a `profile-capability` consent ceremony that does not apply
+ * to plain `add`. #463 adds the matching `remove-connection` leaf —
+ * per-edge unlink without removing the whole skill-set, completing the
+ * Pattern-6 add/remove pair. Full mapping table:
  *
  * - `ADD_PROFILE_SKILL_SET`                                            → `add`
  * - `REMOVE_PROFILE_SKILL_SET`, `RemoveProfileSkillSet`                → `rm`
@@ -40,6 +43,7 @@
  *   `GetSkillsForAutoSuggest`, `SkillsAutocomplete`                    → `autocomplete`
  * - `getSkillsReadiness`                                               → `readiness`
  * - `addProfileSkillSetConnection`                                     → `add-connection`
+ * - `removeProfileSkillSetConnection`                                  → `remove-connection`
  *
  * **Routing**: All operations dispatch against the `talent_profile`
  * Cloudflare-protected surface via `impersonatedTransport`. The mobile
@@ -48,12 +52,6 @@
  * autocomplete, readiness) only exist on the talent-profile surface — and
  * routing all skills calls through one transport keeps the implementation
  * coherent and the response shapes uniform.
- *
- * **`removeProfileSkillSetConnection`** (the per-edge unlink op) remains
- * out of scope. The existing `rm` leaf removes a whole `ProfileSkillSet`
- * (cascading its connections server-side), which covers the "skill
- * should no longer appear on my profile" use case. File a follow-up if
- * per-edge unlink without removing the whole skillSet is needed.
  */
 
 import type { z } from "zod";
@@ -1424,6 +1422,169 @@ export async function addConnection(
     throw new SkillsError(
       "UNKNOWN",
       "addProfileSkillSetConnection succeeded but response had no `skillSet.connections` payload",
+    );
+  }
+  const connectionIds = (connections.nodes ?? []).filter((n): n is { id: string } => n !== null).map((n) => n.id);
+  return {
+    kind: "applied",
+    result: {
+      skillSetId: payload.skillSet.id,
+      connectionsCount: connections.totalCount,
+      connectionIds,
+      notice: payload.notice ?? null,
+    },
+  };
+}
+
+// -----------------------------------------------------------------------
+// remove-connection — removeProfileSkillSetConnection (#463)
+// -----------------------------------------------------------------------
+
+export interface RemoveSkillConnectionConsent {
+  // write-only: ADR-009 (ttctl) per-domain consent literal — never echoed by the wire.
+  profileCapabilityConsentIssued: true;
+}
+
+export interface RemoveSkillConnectionFields {
+  skillSetId: string;
+  connectionId: string;
+}
+
+export interface RemoveSkillConnectionOptions {
+  dryRun?: boolean;
+}
+
+export interface RemoveSkillConnectionResult {
+  skillSetId: string;
+  connectionsCount: number;
+  connectionIds: string[];
+  notice: string | null;
+}
+
+export interface RemoveSkillConnectionAppliedOutcome {
+  kind: "applied";
+  result: RemoveSkillConnectionResult;
+}
+
+export interface RemoveSkillConnectionPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+export type RemoveSkillConnectionOutcome = RemoveSkillConnectionAppliedOutcome | RemoveSkillConnectionPreviewOutcome;
+
+// In TALENT_PROFILE_KNOWN_UNTRUSTED_OPS → T1 (snapshot) disposition.
+const REMOVE_PROFILE_SKILL_SET_CONNECTION_MUTATION = `mutation removeProfileSkillSetConnection($input: RemoveProfileSkillSetConnectionInput!) {
+  removeProfileSkillSetConnection(input: $input) {
+    skillSet {
+      id
+      connections {
+        totalCount
+        nodes {
+          ... on Node { id }
+        }
+      }
+    }
+    success
+    notice
+    errors { code key message }
+  }
+}`;
+
+interface RemoveSkillSetConnectionData {
+  removeProfileSkillSetConnection?: {
+    skillSet?: {
+      id: string;
+      connections?: {
+        totalCount: number;
+        nodes?: ({ id: string } | null)[] | null;
+      } | null;
+    } | null;
+    success?: boolean | null;
+    notice?: string | null;
+    errors?: UserErrorEntry[] | null;
+  } | null;
+}
+
+/**
+ * Per-edge unlink (#463) — sibling of {@link addConnection}. Captured
+ * wire input is `{ skillSetId, connectionId }` (no `connectionType` —
+ * server discriminates from the Relay id; refutes prior Pattern-6
+ * inference in `research/notes/10`).
+ */
+export async function removeConnection(
+  token: string,
+  fields: RemoveSkillConnectionFields,
+  consent: RemoveSkillConnectionConsent,
+  options: RemoveSkillConnectionOptions = {},
+): Promise<RemoveSkillConnectionOutcome> {
+  // Runtime consent gate covers `as`-cast bypasses past the literal type.
+  ensureDestructiveConsent(
+    "removeProfileSkillSetConnection",
+    "profile-capability",
+    consent as unknown as { readonly [key: string]: unknown },
+  );
+
+  if (fields.skillSetId.trim().length === 0) {
+    throw new SkillsError("VALIDATION_ERROR", "Skill set id is required.");
+  }
+  if (fields.connectionId.trim().length === 0) {
+    throw new SkillsError("VALIDATION_ERROR", "Connection id is required.");
+  }
+
+  const variables = {
+    input: {
+      skillSetId: fields.skillSetId,
+      connectionId: fields.connectionId,
+    },
+  };
+
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "removeProfileSkillSetConnection",
+          query: REMOVE_PROFILE_SKILL_SET_CONNECTION_MUTATION,
+          variables,
+        },
+      }),
+    };
+  }
+
+  const data = await callTalentProfile<RemoveSkillSetConnectionData>(
+    token,
+    "removeProfileSkillSetConnection",
+    REMOVE_PROFILE_SKILL_SET_CONNECTION_MUTATION,
+    variables,
+  );
+  const payload = data.removeProfileSkillSetConnection;
+  if (!payload) {
+    throw new SkillsError(
+      "UNKNOWN",
+      "removeProfileSkillSetConnection response had no `data.removeProfileSkillSetConnection` field",
+    );
+  }
+  raiseUserErrors("Skill remove-connection", payload.errors);
+  if (payload.success === false) {
+    throw new SkillsError(
+      "USER_ERROR",
+      `Skill remove-connection reported success=false${payload.notice ? `: ${payload.notice}` : ""}`,
+    );
+  }
+  if (!payload.skillSet) {
+    throw new SkillsError(
+      "UNKNOWN",
+      "removeProfileSkillSetConnection succeeded but response had no `skillSet` payload",
+    );
+  }
+  const connections = payload.skillSet.connections;
+  if (!connections) {
+    throw new SkillsError(
+      "UNKNOWN",
+      "removeProfileSkillSetConnection succeeded but response had no `skillSet.connections` payload",
     );
   }
   const connectionIds = (connections.nodes ?? []).filter((n): n is { id: string } => n !== null).map((n) => n.id);
