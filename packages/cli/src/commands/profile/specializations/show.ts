@@ -83,7 +83,7 @@ export function formatSpecializationsText(rows: profile.specializations.Speciali
         `  applicationCompletedAt:   ${s.applicationCompletedAt ?? "(unset)"}`,
         `  eligibleJobsCount:        ${s.eligibleJobsCount === null ? "(unset)" : s.eligibleJobsCount.toString()}`,
         `  logoUrl:                  ${s.logoUrl ?? "(unset)"}`,
-        `  apply.callable:           ${s.operations.apply.callable.toString()}`,
+        `  apply.callable:           ${s.operations.apply.callable || "(unset)"}`,
       ];
       if (s.operations.apply.messages.length > 0) {
         lines.push(`  apply.messages:`);
@@ -115,7 +115,7 @@ export function formatSpecializationsTable(rows: profile.specializations.Special
       s.applicationStatus,
       s.applicationCompletedAt ?? "",
       s.eligibleJobsCount === null ? "" : s.eligibleJobsCount.toString(),
-      s.operations.apply.callable.toString(),
+      s.operations.apply.callable,
     ].join("\t"),
   );
   return [header, ...lines].join("\n");

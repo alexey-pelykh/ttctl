@@ -57,7 +57,8 @@ const DRY_RUN_FIELD = z
  * `ttctl_profile_specializations_show` call — the affected
  * specialization's `applicationStatus` transitions to `PENDING` (or
  * directly `ACCEPTED` when the platform short-circuits) and
- * `operations.apply.callable` flips to `false`.
+ * `operations.apply.callable` transitions away from its enabled marker
+ * (per `Operation.callable: String!` in the synthesized schema).
  */
 export function registerProfileSpecializationsApplyTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -71,9 +72,9 @@ export function registerProfileSpecializationsApplyTool(server: McpServer, ctx: 
         "",
         "**Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the caller MUST set `profileCapabilityConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
         "",
-        '**Pre-flight check**: call `ttctl_profile_specializations_show` first — every row carries `operations.apply.callable: boolean` and `operations.apply.messages: string[]` indicating whether the apply would succeed (and the server-supplied reasons when it would not, e.g. "Already a member of this specialization.").',
+        '**Pre-flight check**: call `ttctl_profile_specializations_show` first — every row carries `operations.apply.callable: string` (per the synthesized schema `Operation.callable: String!`; empirical value `"ENABLED"` for the affirmative case) and `operations.apply.messages: string[]` indicating whether the apply would succeed (and the server-supplied reasons when it would not, e.g. "Already a member of this specialization.").',
         "",
-        "**Post-apply verification**: call `ttctl_profile_specializations_show` again — the affected row's `applicationStatus` transitions to `PENDING` and `operations.apply.callable` flips to `false`.",
+        '**Post-apply verification**: call `ttctl_profile_specializations_show` again — the affected row\'s `applicationStatus` transitions to `PENDING` and `operations.apply.callable` transitions away from `"ENABLED"`.',
         "",
         "Example user prompts that should map to this tool:",
         '  - "Apply me for the Marketplace specialization."',

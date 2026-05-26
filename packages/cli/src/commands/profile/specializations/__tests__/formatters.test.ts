@@ -16,7 +16,7 @@ const SAMPLE: profile.specializations.Specialization = {
   eligibleJobsCount: 0,
   applicationCompletedAt: "2024-01-15T12:00:00Z",
   operations: {
-    apply: { callable: false, messages: ["Already accepted."] },
+    apply: { callable: "DISABLED", messages: ["Already accepted."] },
   },
 };
 
@@ -29,7 +29,7 @@ describe("formatSpecializationsText (profile specializations show pretty)", () =
     expect(out).toContain("applicationCompletedAt:   2024-01-15T12:00:00Z");
     expect(out).toContain("eligibleJobsCount:        0");
     expect(out).toContain("logoUrl:                  https://example.com/badge.png");
-    expect(out).toContain("apply.callable:           false");
+    expect(out).toContain("apply.callable:           DISABLED");
     expect(out).toContain("apply.messages:");
     expect(out).toContain("- Already accepted.");
     expect(out).toContain("description:              Flagship Toptal Core network.");
@@ -42,14 +42,24 @@ describe("formatSpecializationsText (profile specializations show pretty)", () =
       logoUrl: null,
       eligibleJobsCount: null,
       applicationCompletedAt: null,
-      operations: { apply: { callable: true, messages: [] } },
+      operations: { apply: { callable: "ENABLED", messages: [] } },
     };
     const out = formatSpecializationsText([sparse]);
     expect(out).toContain("applicationCompletedAt:   (unset)");
     expect(out).toContain("eligibleJobsCount:        (unset)");
     expect(out).toContain("logoUrl:                  (unset)");
+    expect(out).toContain("apply.callable:           ENABLED");
     expect(out).not.toContain("apply.messages:"); // empty list → skip the section
     expect(out).not.toContain("description:"); // null description → skip the line
+  });
+
+  it("renders `(unset)` for an empty `callable` (defensive default for a missing wire field)", () => {
+    const missingCallable: profile.specializations.Specialization = {
+      ...SAMPLE,
+      operations: { apply: { callable: "", messages: [] } },
+    };
+    const out = formatSpecializationsText([missingCallable]);
+    expect(out).toContain("apply.callable:           (unset)");
   });
 
   it("renders the explanatory empty-list line when no specializations are recorded", () => {
@@ -79,7 +89,7 @@ describe("formatSpecializationsTable (profile specializations show table)", () =
     const lines = out.split("\n");
     expect(lines).toHaveLength(2);
     expect(lines[0]).toBe("slug\ttitle\tstatus\tapplicationCompletedAt\teligibleJobsCount\tapply.callable");
-    expect(lines[1]).toBe("core\tCore\tACCEPTED\t2024-01-15T12:00:00Z\t0\tfalse");
+    expect(lines[1]).toBe("core\tCore\tACCEPTED\t2024-01-15T12:00:00Z\t0\tDISABLED");
   });
 
   it("blank-fills nullable fields rather than printing `null`", () => {
