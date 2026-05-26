@@ -26,39 +26,10 @@ const DRY_RUN_FIELD = z
   );
 
 /**
- * Register the `ttctl_profile_skills_add_connection` MCP tool (#462).
- * Mirrors the `ttctl profile skills add-connection` CLI leaf — links an
- * existing `ProfileSkillSet` to one of the talent's
- * employment / education / certification / portfolio rows via the
- * `addProfileSkillSetConnection` Pattern-6 mutation on the talent-profile
- * surface (Cloudflare-protected, impersonated transport).
- *
- * **DESTRUCTIVE** (recruiter-visible state change): writes a new
- * skill→entity link onto the public profile. Reverse with
- * `ttctl_profile_skills_remove_connection` (per-edge unlink, #463) or
- * `ttctl_profile_skills_remove` (whole skill-set removal cascades all
- * connections server-side).
- *
- * **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the
- * tool requires `profileCapabilityConsentIssued: true` on input. The
- * Zod schema enforces the literal at validation time; the service-layer
- * runtime gate is a defense-in-depth layer covering `as`-cast bypasses.
- * The `destructiveHint: true` MCP annotation signals to the MCP host
- * that this tool effects irreversible-by-default state (Claude Desktop
- * and similar hosts surface a confirmation prompt).
- *
- * **Wire shape** (T1 disposition per `docs/wire-validation-routing.md`):
- * the op is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` so no codegen type
- * exists. The committed snapshot at
- * `packages/e2e/src/wire-snapshots/addProfileSkillSetConnection.snapshot.json`
- * (captured on the gated `TTCTL_E2E_ADD_SKILL_CONNECTION=…` run) is the
- * wire-shape authority.
- *
- * **Write-read symmetry**: post-link state surfaces on the next
- * `ttctl_profile_skills_show` (the skill-set's `connectionsCount`
- * increments by 1) and `ttctl_profile_skills_list` (same count on the
- * matching skill-set node) — the connection ids are also returned
- * directly in this tool's response (`connectionIds[]`).
+ * Per-edge link sibling of `ttctl_profile_skills_remove_connection`.
+ * T1 disposition; wire input is `{ skillSetId, connectionId }` —
+ * `connectionType` is a TTCtl-layer UX guard cross-checked against the
+ * connectionId Relay prefix, not a wire field.
  */
 export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: ToolRegistrationContext): void {
   server.registerTool(
@@ -66,7 +37,7 @@ export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: T
     {
       title: "Link a profile skill to an employment/education/certification/portfolio row (DESTRUCTIVE)",
       description: [
-        "Link an existing `ProfileSkillSet` to one of your employment, education, certification, or portfolio rows via the `addProfileSkillSetConnection` Pattern-6 mutation. The link surfaces on your recruiter-visible public profile.",
+        "Link an existing `ProfileSkillSet` to one of your employment, education, certification, or portfolio rows via the `addProfileSkillSetConnection` mutation. The link surfaces on your recruiter-visible public profile.",
         "",
         "**DESTRUCTIVE**: this writes a new skill→entity connection onto your public profile. Reverse with `ttctl_profile_skills_remove_connection` (per-edge unlink) or `ttctl_profile_skills_remove` (whole skill-set removal cascades all connections server-side).",
         "",
@@ -133,7 +104,6 @@ export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: T
             {
               input: {
                 skillSetId: input.skillSetId,
-                connectionType: input.connectionType,
                 connectionId: input.connectionId,
               },
             },

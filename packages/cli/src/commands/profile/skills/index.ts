@@ -222,11 +222,12 @@ interface SkillsAddConnectionOptions {
 }
 
 /**
- * Action handler for `ttctl profile skills add-connection` (#462). Links
- * an existing `ProfileSkillSet` to a single
- * employment / education / certification / portfolio row via
- * `addProfileSkillSetConnection` (Pattern-6 mutation, INFERRED wire shape
- * — see CLAUDE.md § Schema/contract validation rule).
+ * Action handler for `ttctl profile skills add-connection`. Links an
+ * existing `ProfileSkillSet` to a single employment / education /
+ * certification / portfolio row via `addProfileSkillSetConnection`. Wire
+ * input is the captured 2-field `{ skillSetId, connectionId }`; the
+ * `--connection-type` flag is a client-side UX guard cross-checked
+ * against the connectionId Relay prefix.
  *
  * **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the
  * caller MUST pass `--consent-profile-capability` (or set
@@ -778,7 +779,7 @@ export function buildProfileSkillsCommand(): Command {
     skills
       .command("add-connection")
       .description(
-        "Link an existing ProfileSkillSet to one of your employment, education, certification, or portfolio rows. INFERRED Pattern-6 mutation — requires --consent-profile-capability per ADR-009 (ttctl). Use `profile skills list` and `profile {employment,education,certifications,portfolio} list` to discover the ids.",
+        "Link an existing ProfileSkillSet to one of your employment, education, certification, or portfolio rows. Requires --consent-profile-capability per ADR-009 (ttctl). Use `profile skills list` and `profile {employment,education,certifications,portfolio} list` to discover the ids.",
       )
       .requiredOption(
         "--skill-set-id <id>",
