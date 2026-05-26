@@ -57,7 +57,7 @@ const SPECIALIZATION_FIXTURE = {
     __typename: "TalentSpecializationOperations",
     apply: {
       __typename: "Operation",
-      callable: false,
+      callable: "DISABLED",
       messages: ["Already a member of this specialization."],
     },
   },
@@ -94,7 +94,7 @@ describe("specializations.show (#466 / T1 GetTalentSpecializations)", () => {
       applicationCompletedAt: "2024-01-15T12:00:00Z",
       operations: {
         apply: {
-          callable: false,
+          callable: "DISABLED",
           messages: ["Already a member of this specialization."],
         },
       },
@@ -136,14 +136,14 @@ describe("specializations.show (#466 / T1 GetTalentSpecializations)", () => {
   it("filters out null messages within operations.apply.messages (defensive)", async () => {
     const rowWithNullMessages = {
       ...SPECIALIZATION_FIXTURE,
-      operations: { apply: { callable: false, messages: ["valid msg", null, "another"] } },
+      operations: { apply: { callable: "DISABLED", messages: ["valid msg", null, "another"] } },
     };
     reply({ body: { data: { viewer: { id: "v1", specializations: [rowWithNullMessages] } } } });
     const result = await show(TOKEN);
     expect(result[0]?.operations.apply.messages).toEqual(["valid msg", "another"]);
   });
 
-  it("normalises missing optional fields to typed defaults (null/false/empty)", async () => {
+  it("normalises missing optional fields to typed defaults (null/empty)", async () => {
     const sparse = {
       id: "spec-sparse",
       slug: null,
@@ -167,7 +167,7 @@ describe("specializations.show (#466 / T1 GetTalentSpecializations)", () => {
         applicationStatus: "",
         eligibleJobsCount: null,
         applicationCompletedAt: null,
-        operations: { apply: { callable: false, messages: [] } },
+        operations: { apply: { callable: "", messages: [] } },
       },
     ]);
   });

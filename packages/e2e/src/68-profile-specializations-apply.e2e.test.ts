@@ -222,9 +222,11 @@ describe("profile specializations apply (live mobile-gateway, #467)", () => {
         }),
       ).not.toThrow();
 
-      // Cross-check write-read symmetry: the affected row should now
-      // surface on `show()` with `operations.apply.callable: false`
-      // (the wire flips the flag once an application is in progress).
+      // Cross-check write-read symmetry: the affected row now surfaces
+      // on `show()` with `operations.apply.callable` transitioned away
+      // from `"ENABLED"` (the wire flips it once an application is in
+      // progress; disabled value is platform-controlled, so assert
+      // "not ENABLED" rather than coupling to an INFERRED disabled enum).
       const allSpecs = await profile.specializations.show(token);
       const applied = allSpecs.find((s) => s.id === applySpecializationId);
       expect(applied).toBeDefined();
@@ -234,7 +236,8 @@ describe("profile specializations apply (live mobile-gateway, #467)", () => {
         // state (PENDING, IN_REVIEW, ACCEPTED depending on track
         // gating). Just assert the field is populated.
         expect(typeof applied.applicationStatus).toBe("string");
-        expect(applied.operations.apply.callable).toBe(false);
+        expect(typeof applied.operations.apply.callable).toBe("string");
+        expect(applied.operations.apply.callable).not.toBe("ENABLED");
       }
     },
   );

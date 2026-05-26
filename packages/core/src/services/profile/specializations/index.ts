@@ -105,17 +105,22 @@ export type { ProfileErrorCode };
  *                         "granted-at date" in issue #466's verbiage).
  *                         `null` for prospective / pending / rejected
  *                         applications.
- *   - `operations.apply.callable` — server-computed flag indicating
- *                         whether `applyForSpecialization` would succeed
- *                         (the apply mutation may be gated by talent
- *                         state or prior history).
+ *   - `operations.apply.callable` — server-computed enum-string marker
+ *                         indicating whether `applyForSpecialization`
+ *                         would succeed (per the synthesized schema
+ *                         `Operation.callable: String!`; empirical value
+ *                         `"ENABLED"` for the affirmative case). Exposed
+ *                         verbatim as a forward-compatible `string`
+ *                         rather than coupling to an INFERRED enum —
+ *                         same posture as `applicationStatus` above.
  *   - `operations.apply.messages` — server-supplied human-readable
- *                         messages explaining why `callable` is false
- *                         (e.g. "Already accepted", "Requires …
- *                         certification"). Always an array; may be empty.
+ *                         messages explaining why `callable` is not
+ *                         `"ENABLED"` (e.g. "Already accepted",
+ *                         "Requires … certification"). Always an array;
+ *                         may be empty.
  */
 export interface SpecializationApplyOperation {
-  callable: boolean;
+  callable: string;
   messages: string[];
 }
 
@@ -151,7 +156,7 @@ const GET_TALENT_SPECIALIZATIONS_QUERY = `query GetTalentSpecializations { viewe
 // ---------------------------------------------------------------------
 
 interface WireSpecializationApplyOperation {
-  callable?: boolean | null;
+  callable?: string | null;
   messages?: (string | null)[] | null;
 }
 
@@ -231,7 +236,7 @@ function project(wire: WireSpecialization): Specialization {
     applicationCompletedAt: wire.applicationCompletedAt ?? null,
     operations: {
       apply: {
-        callable: wire.operations?.apply?.callable ?? false,
+        callable: wire.operations?.apply?.callable ?? "",
         messages,
       },
     },
@@ -392,7 +397,9 @@ interface ApplyForSpecializationResponse {
  * `show()` call — the affected specialization's `applicationStatus`
  * transitions from a prospective state (e.g. unset / `null`) to
  * `PENDING` (or directly `ACCEPTED` when the platform short-circuits)
- * and `operations.apply.callable` flips to `false`. The caller can
+ * and `operations.apply.callable` transitions away from its enabled
+ * marker (per `Operation.callable: String!` in the synthesized schema —
+ * exact disabled value is platform-controlled). The caller can
  * cross-check by id (the echoed `specializationId` matches
  * `Specialization.id`).
  *

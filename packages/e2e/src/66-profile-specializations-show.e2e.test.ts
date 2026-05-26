@@ -16,8 +16,10 @@
  *     full projected shape: id, slug, title, description, logoUrl,
  *     applicationStatus, eligibleJobsCount, applicationCompletedAt,
  *     operations.apply.{callable, messages}.
- *   - pretty output renders either the empty-state explanatory line or
- *     a per-row block depending on account state.
+ *   - pretty output renders the column header from
+ *     `formatSpecializationsTable` (the list-shape dispatcher target).
+ *     Empty accounts emit header-only; populated accounts emit header
+ *     plus N data rows.
  *   - Wire-shape snapshot assertion (T1 disposition): the projected
  *     shape is pinned to
  *     `wire-snapshots/GetTalentSpecializations.snapshot.json`. Skipped
@@ -115,25 +117,27 @@ describe("profile specializations show (live mobile-gateway, #466)", () => {
       expect(typeof row["id"]).toBe("string");
       expect((row["id"] as string).length).toBeGreaterThan(0);
 
-      // operations.apply.{callable, messages} structure
+      // operations.apply.{callable, messages} structure. `callable` is
+      // an enum-string per the schema (`Operation.callable: String!`).
       const operations = row["operations"] as Record<string, unknown>;
       expect("apply" in operations).toBe(true);
       const apply = operations["apply"] as Record<string, unknown>;
-      expect(typeof apply["callable"]).toBe("boolean");
+      expect(typeof apply["callable"]).toBe("string");
       expect(Array.isArray(apply["messages"])).toBe(true);
     }
   });
 
-  it.skipIf(!e2eEnabled)("pretty output renders either the empty-state line or a per-row block", async () => {
+  it.skipIf(!e2eEnabled)("pretty output renders the table header and zero-or-more data rows", async () => {
     const result = await cli.run(["profile", "specializations", "show"]);
     expect(result.exitCode).toBe(0);
-    // One of two shapes — depends on account state:
-    //   1. No specializations: the explanatory line.
-    //   2. Has specializations: one or more `(slug)` headlines with the
-    //      labelled field block (`id:`, `status:`, etc.).
-    const isEmpty = result.stdout.includes("No specializations recorded on this profile.");
-    const isPopulated = result.stdout.includes("status:") && result.stdout.includes("id:");
-    expect(isEmpty || isPopulated).toBe(true);
+    // Array-shaped data routes through `formatSpecializationsTable` per
+    // `formatResult`'s list-shape dispatch (not `formatSpecializationsText`,
+    // which is reachable only for show-shape objects). Both empty and
+    // populated outputs share the column-header line; the populated
+    // case adds N tab-separated data rows.
+    const lines = result.stdout.split("\n").filter((l) => l.length > 0);
+    expect(lines[0]).toBe("slug\ttitle\tstatus\tapplicationCompletedAt\teligibleJobsCount\tapply.callable");
+    expect(lines.length).toBeGreaterThanOrEqual(1);
   });
 
   // -------------------------------------------------------------------

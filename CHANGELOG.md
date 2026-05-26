@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`profile.specializations.show` exposes `operations.apply.callable` as
+  a string, not a boolean (#637).** The synthesized schema declares
+  `Operation.callable: String!` (empirical value `"ENABLED"`) and the
+  codegen already types every other site correctly; only the
+  specializations service mistyped it as `boolean` and projected with
+  `?? false` — the wire was always returning a string ("ENABLED"), and
+  `TTCTL_E2E=1 pnpm test:e2e src/66-profile-specializations-show.e2e.test.ts`
+  surfaced the drift via `typeof apply["callable"]` returning `"string"`
+  not `"boolean"`. **Scope**: `SpecializationApplyOperation.callable`
+  retyped `string`; projection defaults to `""` on a missing wire field;
+  pretty / table formatters drop the dead `.toString()` calls; CLI text
+  formatter renders `(unset)` for the empty default; MCP tool docs
+  corrected. **BC**: the JSON / YAML output for
+  `ttctl profile specializations show` now emits a string value (e.g.
+  `"ENABLED"`) instead of a boolean — `jq` / `yq` consumers comparing
+  with `==` or `===` need to compare against the string. Same posture
+  for callers of `profile.specializations.show()` programmatically.
 - **`profile.education.update` no longer nulls omitted writable fields under
   the full-replacement contract, and `add`/`update` map ttctl-surface
   `institution` to wire `title` (the only school-name slot on

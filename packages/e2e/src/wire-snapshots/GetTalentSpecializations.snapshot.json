@@ -1,0 +1,61 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-26T19:05:30.022Z",
+  "operationName": "GetTalentSpecializations",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "applicationCompletedAt": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
+        "applicationStatus": {
+          "kind": "string"
+        },
+        "description": {
+          "kind": "string"
+        },
+        "eligibleJobsCount": {
+          "kind": "number"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "logoUrl": {
+          "kind": "string"
+        },
+        "operations": {
+          "kind": "object",
+          "fields": {
+            "apply": {
+              "kind": "object",
+              "fields": {
+                "callable": {
+                  "kind": "string"
+                },
+                "messages": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "unknown"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "slug": {
+          "kind": "string"
+        },
+        "title": {
+          "kind": "string"
+        }
+      }
+    }
+  }
+}
