@@ -6,8 +6,10 @@ import { Command, Option } from "commander";
 
 import Table from "cli-table3";
 
+import { getCliDryRun, markMutation } from "../../../lib/dry-run.js";
 import {
   emitAddSuccess,
+  emitDryRunSuccess,
   emitErrorAndExit,
   emitRemoveSuccess,
   emitUpdateSuccess,
@@ -210,6 +212,57 @@ export function buildProfileEmploymentCommand(): Command {
     .action(async (query: string, options: { limit: string; output: OutputFormat }) => {
       await runEmployerAutocomplete(query, options);
     });
+
+  // ----- skills sub-group (#614) ---------------------------------------
+  // Additive merge ops on an employment row's catalog-skill set.
+  // `employment update --skill-id ...` (#541) is full-replace; these
+  // leaves wrap a read-merge-write around it so bulk profile uplift
+  // doesn't force the caller to re-implement the same merge logic.
+  const skills = employment
+    .command("skills")
+    .description(
+      "Add or remove catalog-skill connections on an employment entry (additive merge over #541's full-replace)",
+    );
+
+  markMutation(
+    skills
+      .command("add")
+      .description("Link one or more catalog skills to an employment entry (de-duplicated against the current set)")
+      .argument("<employment-id>", "employment id (V1-Employment-NNN)")
+      .requiredOption(
+        "--skill-id <id>",
+        "ProfileSkillSet id (V1-ProfileSkillSet-NNN, repeatable). Discover via `ttctl profile skills list`. Ids already linked to the entry are silently skipped (idempotent).",
+        (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+      )
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (employmentId: string, options: { skillId: string[]; output: OutputFormat }) => {
+        await runSkillsAdd(employmentId, options);
+      }),
+  );
+
+  markMutation(
+    skills
+      .command("remove")
+      .description("Unlink one or more catalog skills from an employment entry (only ids currently linked are removed)")
+      .argument("<employment-id>", "employment id (V1-Employment-NNN)")
+      .requiredOption(
+        "--skill-id <id>",
+        "ProfileSkillSet id (V1-ProfileSkillSet-NNN, repeatable). Ids not currently linked are silently dropped. Refuses to leave the entry with zero skills — use `ttctl profile employment remove` to drop the whole row.",
+        (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+      )
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (employmentId: string, options: { skillId: string[]; output: OutputFormat }) => {
+        await runSkillsRemove(employmentId, options);
+      }),
+  );
 
   return employment;
 }
@@ -537,6 +590,61 @@ async function runEmployerAutocomplete(query: string, options: { limit: string; 
   emitResult(wrapListEnvelope(suggestions), options.output, {
     pretty: (data) => formatEmployersText(data.items),
     table: (data) => formatEmployersTable(data.items),
+  });
+}
+
+async function runSkillsAdd(employmentId: string, options: { skillId: string[]; output: OutputFormat }): Promise<void> {
+  await runEmploymentSkillsMutation({
+    employmentId,
+    skillSetIds: options.skillId,
+    output: options.output,
+    operation: "profile.employment.skills.add",
+    invoke: (token, dryRun) =>
+      profile.employment.skills.add(token, employmentId, { skillSetIds: options.skillId }, { dryRun }),
+  });
+}
+
+async function runSkillsRemove(
+  employmentId: string,
+  options: { skillId: string[]; output: OutputFormat },
+): Promise<void> {
+  await runEmploymentSkillsMutation({
+    employmentId,
+    skillSetIds: options.skillId,
+    output: options.output,
+    operation: "profile.employment.skills.remove",
+    invoke: (token, dryRun) =>
+      profile.employment.skills.remove(token, employmentId, { skillSetIds: options.skillId }, { dryRun }),
+  });
+}
+
+async function runEmploymentSkillsMutation(args: {
+  employmentId: string;
+  skillSetIds: string[];
+  output: OutputFormat;
+  operation: string;
+  invoke: (token: string, dryRun: boolean) => Promise<profile.employment.EmploymentSkillsOutcome>;
+}): Promise<void> {
+  const token = await loadAuthTokenOrExit(args.operation.replace(/\./g, " "), args.output);
+  const dryRun = getCliDryRun();
+  let outcome: profile.employment.EmploymentSkillsOutcome;
+  try {
+    outcome = await args.invoke(token, dryRun);
+  } catch (err) {
+    presentSubDomainError(args.operation.replace(/\./g, " "), err, args.output);
+  }
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({ operation: args.operation, format: args.output, preview: outcome.preview });
+    return;
+  }
+  const summary = `${outcome.result.position} — ${outcome.result.company} (id ${outcome.result.id})`;
+  emitUpdateSuccess({
+    operation: args.operation,
+    format: args.output,
+    updated: outcome.result,
+    prettySummary: outcome.kind === "noop" ? `${summary} — no change (${outcome.reason})` : summary,
+    prettyEntity: formatEmploymentText,
+    notice: outcome.kind === "noop" ? outcome.reason : undefined,
   });
 }
 

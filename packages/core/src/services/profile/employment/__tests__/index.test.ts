@@ -20,6 +20,7 @@ import {
   list,
   remove,
   show,
+  skills as employmentSkills,
   update,
   validateExperienceItems,
 } from "../index.js";
@@ -1538,5 +1539,322 @@ describe("buildUpdateEmploymentInput — #492 experienceItems length gate", () =
       experienceItems: ["A".repeat(50), "B".repeat(249)],
     });
     expect(merged.experienceItems).toEqual(["A".repeat(50), "B".repeat(249)]);
+  });
+});
+
+// -------------------------------------------------------------------
+// skills.add / skills.remove — additive merge ops (#614)
+//
+// Both ops wrap `update()` with read-merge-write: read the current
+// employment, compute the merged/filtered skills array, write back.
+// The tests assert:
+//   - id sanitization (empty input rejected; whitespace stripped)
+//   - dedupe (add) / filter (remove) semantics
+//   - idempotent noop branches (no wire mutation fires)
+//   - refusal when remove would leave an empty skill set
+//   - dryRun preview shape mirrors the apply-path wire input
+// -------------------------------------------------------------------
+
+const EMP_WITH_SKILLS = {
+  ...EMP_2_MAPPED,
+  skills: [
+    { id: "V1-ProfileSkillSet-1", name: "TypeScript" },
+    { id: "V1-ProfileSkillSet-2", name: "React" },
+  ],
+  industries: [{ id: "V1-Industry-1", name: "Software" }],
+} as Employment;
+
+const EMP_WITH_SKILLS_WIRE = {
+  id: EMP_WITH_SKILLS.id,
+  company: EMP_WITH_SKILLS.company,
+  position: EMP_WITH_SKILLS.position,
+  companyWebsite: EMP_WITH_SKILLS.companyWebsite,
+  noWebsite: EMP_WITH_SKILLS.noWebsite,
+  startDate: EMP_WITH_SKILLS.startDate,
+  endDate: EMP_WITH_SKILLS.endDate,
+  experienceItems: EMP_WITH_SKILLS.experienceItems,
+  highlight: EMP_WITH_SKILLS.highlight,
+  showViaToptal: EMP_WITH_SKILLS.showViaToptal,
+  toptalRelated: EMP_WITH_SKILLS.toptalRelated,
+  publicationPermit: EMP_WITH_SKILLS.publicationPermit,
+  reportingTo: EMP_WITH_SKILLS.reportingTo,
+  industries: { nodes: EMP_WITH_SKILLS.industries },
+  primaryGeography: EMP_WITH_SKILLS.primaryGeography,
+  skills: { nodes: EMP_WITH_SKILLS.skills },
+  engagement: EMP_WITH_SKILLS.engagement,
+  isEnterpriseExperience: EMP_WITH_SKILLS.isEnterpriseExperience,
+};
+
+describe("skills.add (#614)", () => {
+  it("rejects an empty skillSetIds array (no wire I/O)", async () => {
+    await expect(employmentSkills.add(TOKEN, EMP_WITH_SKILLS.id, { skillSetIds: [] })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an array of empty/whitespace ids", async () => {
+    await expect(
+      employmentSkills.add(TOKEN, EMP_WITH_SKILLS.id, { skillSetIds: [" ", "\t", ""] }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("returns noop without firing UpdateEmployment when all supplied ids are already linked", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+
+    const outcome = await employmentSkills.add(TOKEN, EMP_WITH_SKILLS.id, {
+      skillSetIds: ["V1-ProfileSkillSet-1", "V1-ProfileSkillSet-2"],
+    });
+    expect(outcome.kind).toBe("noop");
+    if (outcome.kind !== "noop") throw new Error("unreachable");
+    expect(outcome.result.skills).toEqual(EMP_WITH_SKILLS.skills);
+    // Two transport calls total: stockTransport for viewer, impersonated for GET_WORK_EXPERIENCE.
+    // NO third call (UpdateEmployment) because every id was already linked.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges new ids onto the existing set, preserving current order then appending new", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+    // After the update, the wire echoes back the row with the merged skills.
+    const merged = [
+      ...EMP_WITH_SKILLS.skills,
+      { id: "V1-ProfileSkillSet-3", name: "" },
+      { id: "V1-ProfileSkillSet-4", name: "" },
+    ];
+    const mergedWire = { ...EMP_WITH_SKILLS_WIRE, skills: { nodes: merged } };
+    replyImpersonated({
+      body: {
+        data: {
+          updateEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [mergedWire] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await employmentSkills.add(TOKEN, EMP_WITH_SKILLS.id, {
+      skillSetIds: ["V1-ProfileSkillSet-3", "V1-ProfileSkillSet-4"],
+    });
+    expect(outcome.kind).toBe("updated");
+    if (outcome.kind !== "updated") throw new Error("unreachable");
+
+    // Verify the wire input carried the merged list (existing 2 + new 2).
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.operationName).toBe("UpdateEmployment");
+    const sent = updateCall.body.variables as {
+      input: { employment: { skills: { id: string; name: string }[] } };
+    };
+    expect(sent.input.employment.skills).toEqual([
+      { id: "V1-ProfileSkillSet-1", name: "TypeScript" },
+      { id: "V1-ProfileSkillSet-2", name: "React" },
+      { id: "V1-ProfileSkillSet-3", name: "" },
+      { id: "V1-ProfileSkillSet-4", name: "" },
+    ]);
+  });
+
+  it("dedupes against current set when caller supplies a mix of present + new ids", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+    const mergedWire = {
+      ...EMP_WITH_SKILLS_WIRE,
+      skills: { nodes: [...EMP_WITH_SKILLS.skills, { id: "V1-ProfileSkillSet-5", name: "" }] },
+    };
+    replyImpersonated({
+      body: {
+        data: {
+          updateEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [mergedWire] } },
+          },
+        },
+      },
+    });
+
+    await employmentSkills.add(TOKEN, EMP_WITH_SKILLS.id, {
+      skillSetIds: ["V1-ProfileSkillSet-1", "V1-ProfileSkillSet-5"],
+    });
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const sent = updateCall.body.variables as {
+      input: { employment: { skills: { id: string; name: string }[] } };
+    };
+    // Only the genuinely-new id is appended; the duplicate is skipped.
+    expect(sent.input.employment.skills.map((s) => s.id)).toEqual([
+      "V1-ProfileSkillSet-1",
+      "V1-ProfileSkillSet-2",
+      "V1-ProfileSkillSet-5",
+    ]);
+  });
+
+  it("dedupes caller-supplied duplicates against each other (single appended entry on the wire)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+    const mergedWire = {
+      ...EMP_WITH_SKILLS_WIRE,
+      skills: { nodes: [...EMP_WITH_SKILLS.skills, { id: "V1-ProfileSkillSet-7", name: "" }] },
+    };
+    replyImpersonated({
+      body: {
+        data: {
+          updateEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [mergedWire] } },
+          },
+        },
+      },
+    });
+
+    await employmentSkills.add(TOKEN, EMP_WITH_SKILLS.id, {
+      skillSetIds: ["V1-ProfileSkillSet-7", "V1-ProfileSkillSet-7", "V1-ProfileSkillSet-1"],
+    });
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const sent = updateCall.body.variables as {
+      input: { employment: { skills: { id: string; name: string }[] } };
+    };
+    // V1-ProfileSkillSet-7 appears exactly once; the already-linked
+    // V1-ProfileSkillSet-1 is skipped.
+    expect(sent.input.employment.skills.map((s) => s.id)).toEqual([
+      "V1-ProfileSkillSet-1",
+      "V1-ProfileSkillSet-2",
+      "V1-ProfileSkillSet-7",
+    ]);
+  });
+
+  it("emits a dryRun preview matching the merged UpdateEmployment payload", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+
+    const outcome = await employmentSkills.add(
+      TOKEN,
+      EMP_WITH_SKILLS.id,
+      { skillSetIds: ["V1-ProfileSkillSet-9"] },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    expect(outcome.preview.operationName).toBe("UpdateEmployment");
+    const vars = outcome.preview.variables as {
+      input: { employment: { skills: { id: string; name: string }[] } };
+    };
+    expect(vars.input.employment.skills.map((s) => s.id)).toEqual([
+      "V1-ProfileSkillSet-1",
+      "V1-ProfileSkillSet-2",
+      "V1-ProfileSkillSet-9",
+    ]);
+    // Only the read fires; the mutation transport is NOT invoked.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("skills.remove (#614)", () => {
+  it("rejects an empty skillSetIds array (no wire I/O)", async () => {
+    await expect(employmentSkills.remove(TOKEN, EMP_WITH_SKILLS.id, { skillSetIds: [] })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedImpersonated).not.toHaveBeenCalled();
+  });
+
+  it("returns noop when none of the supplied ids are currently linked", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+
+    const outcome = await employmentSkills.remove(TOKEN, EMP_WITH_SKILLS.id, {
+      skillSetIds: ["V1-ProfileSkillSet-99"],
+    });
+    expect(outcome.kind).toBe("noop");
+    if (outcome.kind !== "noop") throw new Error("unreachable");
+    // Only the read fired; no UpdateEmployment call.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters the supplied ids out of the row's current set", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+    const filtered = [{ id: "V1-ProfileSkillSet-2", name: "React" }];
+    const filteredWire = { ...EMP_WITH_SKILLS_WIRE, skills: { nodes: filtered } };
+    replyImpersonated({
+      body: {
+        data: {
+          updateEmployment: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", employments: { nodes: [filteredWire] } },
+          },
+        },
+      },
+    });
+
+    const outcome = await employmentSkills.remove(TOKEN, EMP_WITH_SKILLS.id, {
+      skillSetIds: ["V1-ProfileSkillSet-1"],
+    });
+    expect(outcome.kind).toBe("updated");
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.operationName).toBe("UpdateEmployment");
+    const sent = updateCall.body.variables as {
+      input: { employment: { skills: { id: string; name: string }[] } };
+    };
+    expect(sent.input.employment.skills).toEqual(filtered);
+  });
+
+  it("refuses VALIDATION_ERROR when filtered result would be empty (no wire mutation)", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+
+    await expect(
+      employmentSkills.remove(TOKEN, EMP_WITH_SKILLS.id, {
+        skillSetIds: ["V1-ProfileSkillSet-1", "V1-ProfileSkillSet-2"],
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/zero skills/) as unknown,
+    });
+    // Only the read fires; the would-be empty mutation is rejected client-side.
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("dryRun previews the filtered shape without firing the mutation", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({
+      body: { data: { profile: { id: "p1", employments: { nodes: [EMP_WITH_SKILLS_WIRE] } } } },
+    });
+
+    const outcome = await employmentSkills.remove(
+      TOKEN,
+      EMP_WITH_SKILLS.id,
+      { skillSetIds: ["V1-ProfileSkillSet-1"] },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("unreachable");
+    const vars = outcome.preview.variables as {
+      input: { employment: { skills: { id: string; name: string }[] } };
+    };
+    expect(vars.input.employment.skills.map((s) => s.id)).toEqual(["V1-ProfileSkillSet-2"]);
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
   });
 });

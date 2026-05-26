@@ -215,6 +215,15 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_employment_remove: { id: "emp_123" },
   ttctl_profile_employment_show: { id: "emp_123" },
   ttctl_profile_employment_update: { id: "emp_123", company: "Anthropic" },
+  // #614 — additive merge ops on employment.skills.
+  ttctl_profile_employment_skills_add: {
+    employmentId: "V1-Employment-1",
+    skillSetIds: ["V1-ProfileSkillSet-1"],
+  },
+  ttctl_profile_employment_skills_remove: {
+    employmentId: "V1-Employment-1",
+    skillSetIds: ["V1-ProfileSkillSet-1"],
+  },
   // profile.external (7; +show #343)
   ttctl_profile_external_show: {},
   ttctl_profile_external_advanced_wizard_show: {},
@@ -326,25 +335,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 122 tools (sanity for the smoke loop)", () => {
-    // 104 pre-#411 + 3 new IR write-surface tools (#411): accept,
-    // reject, reject_reasons + 4 new apply-funnel tools (#436):
-    // apply, apply_data, apply_questions, apply_rate_insight + 1
-    // new opt-in suggestion tool (#452): apply_similar_answers + 1
-    // new lightweight rate read (#447): rate_current + 1 new
-    // aggregate payment read (#448): summary + 1 new interview-detail
-    // tool (#439): applications_interview_show + 1 new interview-notes
-    // tool (#440): applications_interview_notes_show + 1 new
-    // availability-request-detail tool (#442):
-    // applications_availability_request_show + 1 new interview-guide
-    // tool (#470): applications_interview_guide_show + 1 new
-    // specializations read (#466): profile_specializations_show + 1
-    // new DESTRUCTIVE specializations apply (#467):
-    // profile_specializations_apply + 1 new Pattern-6 connection
-    // helper (#465): profile_industries_add_connections + 1 new
-    // Country/geography catalog read (#596): profile_countries_list −
-    // 1 removed unusable profile_reviews_submit_for_review (#544).
-    expect(Object.keys(tools)).toHaveLength(122);
+  it("registers exactly 124 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(124);
   });
 
   it("every registered tool has a fixture", () => {

@@ -1209,3 +1209,280 @@ function unwrapMutation(
   applyUserErrorsAndSuccess(payload, verb);
   return payload;
 }
+
+// -----------------------------------------------------------------------
+// skills.add / skills.remove — additive merge ops (#614)
+// -----------------------------------------------------------------------
+
+/**
+ * Input shape for {@link skills.add} and {@link skills.remove}.
+ *
+ * `skillSetIds` carries `ProfileSkillSet` ids (`V1-ProfileSkillSet-<n>`)
+ * — the same id surface that `Employment.skills[i].id` and
+ * `profile.skills.list()` already use. NOT catalog `Skill` ids
+ * (`V1-Skill-<n>`); the catalog id is only meaningful on
+ * `addProfileSkillSet` (catalog-level skill creation).
+ */
+export interface EmploymentSkillsFields {
+  skillSetIds: string[];
+}
+
+/**
+ * Options accepted by {@link skills.add} and {@link skills.remove}.
+ * `dryRun` mirrors the cross-service convention (`basic.set`,
+ * `employment.add` (#395), `skills.add` (#396)) — preview the merged
+ * UpdateEmployment payload that WOULD be sent, without firing the
+ * mutation transport. The dryRun path fires ONE read (`GET_WORK_EXPERIENCE`
+ * via `show()`) so the preview's `employment` object reflects the
+ * actual current row + the proposed merge / filter.
+ */
+export interface EmploymentSkillsOptions {
+  dryRun?: boolean;
+}
+
+/**
+ * Apply-path outcome for {@link skills.add} / {@link skills.remove} when
+ * the wire mutation fired and the row was updated. `result` is the
+ * post-update row (matches `update()`'s return shape).
+ */
+export interface EmploymentSkillsUpdatedOutcome {
+  kind: "updated";
+  result: Employment;
+}
+
+/**
+ * Idempotent no-op outcome: the caller's request would not change the
+ * row's skill set, so no wire mutation was fired and `result` is the
+ * pre-call row state (functionally identical to the would-be post-state).
+ *
+ * Fires when:
+ *   - `add`: every supplied id is already linked to the row.
+ *   - `remove`: none of the supplied ids are linked to the row.
+ *
+ * `reason` is a short human-readable string suitable for CLI / MCP
+ * surfaces; callers branching on the no-op kind do not parse it.
+ */
+export interface EmploymentSkillsNoopOutcome {
+  kind: "noop";
+  result: Employment;
+  reason: string;
+}
+
+/**
+ * Dry-run outcome. `preview` carries the prepared `UpdateEmployment`
+ * wire payload (matching what the apply path would send), with the
+ * bearer token redacted per the cross-service `DryRunPreview` contract.
+ */
+export interface EmploymentSkillsPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+/**
+ * Discriminated-union return type for {@link skills.add} and
+ * {@link skills.remove}. Apply-path callers branch on `kind === "updated"`;
+ * no-op callers branch on `"noop"` (and may surface the `reason`);
+ * dry-run callers branch on `"preview"`.
+ */
+export type EmploymentSkillsOutcome =
+  | EmploymentSkillsUpdatedOutcome
+  | EmploymentSkillsNoopOutcome
+  | EmploymentSkillsPreviewOutcome;
+
+function sanitizeSkillSetIds(operation: string, ids: readonly string[]): string[] {
+  if (ids.length === 0) {
+    throw new ProfileError("VALIDATION_ERROR", `${operation} requires at least one skill set id.`);
+  }
+  const cleaned = ids.map((s) => s.trim()).filter((s) => s.length > 0);
+  if (cleaned.length === 0) {
+    throw new ProfileError("VALIDATION_ERROR", `${operation}: all supplied skill set ids were empty / whitespace.`);
+  }
+  return cleaned;
+}
+
+async function sendEmploymentSkillsUpdate(
+  token: string,
+  employmentId: string,
+  current: Employment,
+  mergedSkills: { id: string; name: string }[],
+  operation: string,
+): Promise<Employment> {
+  const employment = buildUpdateEmploymentInput(current, { skills: mergedSkills });
+  const res = await callTalentProfile(
+    token,
+    "UpdateEmployment",
+    UPDATE_EMPLOYMENT_MUTATION,
+    { input: { employmentId, employment } },
+    operation,
+  );
+  const payload = unwrapMutation(res, "updateEmployment", operation);
+  const updated = payload.profile?.employments.nodes
+    .filter((n): n is Record<string, unknown> => n !== null)
+    .map(mapEmploymentNode)
+    .find((e) => e.id === employmentId);
+  if (!updated) {
+    throw new ProfileError(
+      "UNKNOWN",
+      `${operation} returned success but row "${employmentId}" was not in the response.`,
+    );
+  }
+  return updated;
+}
+
+function buildSkillsDryRunPreview(
+  token: string,
+  employmentId: string,
+  current: Employment,
+  mergedSkills: { id: string; name: string }[],
+): DryRunPreview {
+  const employment = buildUpdateEmploymentInput(current, { skills: mergedSkills });
+  return buildDryRunPreview({
+    surface: "talent-profile",
+    authToken: token,
+    body: {
+      operationName: "UpdateEmployment",
+      query: UPDATE_EMPLOYMENT_MUTATION,
+      variables: { input: { employmentId, employment } },
+    },
+  });
+}
+
+/**
+ * `skills.add` / `skills.remove` — additive merge ops on an employment
+ * row's catalog-skill set (#614). Both wrap the existing full-replace
+ * `update()` path: read current row → compute the merged / filtered
+ * skills array → fire `UpdateEmployment` with the new array.
+ *
+ * **Why this exists**: `employment.update.skills` (#541) is full-replace
+ * — the caller has to read the current set, dedupe-merge in (or filter
+ * out) the target ids, and write the FULL array back. For bulk profile
+ * uplift across N employments (#614 motivation: 13 employments, 100+
+ * skills each on the largest), every additive operation forced callers
+ * to re-implement the same read-merge logic client-side. These leaves
+ * own that bookkeeping internally; the wire shape is unchanged.
+ *
+ * **Idempotency**:
+ *   - `add`: ids already on the row are silently skipped (dedupe by id,
+ *     preserving the current array's order); if every supplied id was
+ *     already present, NO wire mutation fires and the result is a
+ *     `noop` outcome carrying the unchanged row.
+ *   - `remove`: ids not on the row are silently dropped; if none of
+ *     the supplied ids were present, NO wire mutation fires (no-op).
+ *
+ * **Refusal**: `remove` refuses client-side (VALIDATION_ERROR) when the
+ * filtered set would be empty. The Toptal server rejects an empty
+ * `skills: []` on `UpdateEmployment` with `"is too short (minimum is 1
+ * character)"`. Callers wanting to clear the row should remove the row
+ * itself via `profile.employment.remove`.
+ *
+ * **Wire**: passes `{ id, name: "" }` for new `SkillRefInput` entries —
+ * `SkillRefInput.name` is OPTIONAL per
+ * `research/captures/web/inputs/UpdateEmploymentInput.json`, and the
+ * server keys on `id`. Matches the convention used by
+ * `employment.update.skills` (#541) and `employment.add.skills` (#484).
+ *
+ * **Consent**: NOT consent-gated. Mirrors the established posture for
+ * `employment.update.skills` (#541) — an UPDATE on an existing row is
+ * not a Pattern-6 capability-claim creation. Distinct from
+ * `addProfileSkillSetConnection` (#462), which is consent-gated per
+ * ADR-009 because it materializes a recruiter-visible connection edge
+ * outside the employment-update flow.
+ */
+export const skills = {
+  /**
+   * Add catalog-skill connections to an existing employment row.
+   *
+   * Reads the current row via `show()`, merges the supplied skill set
+   * ids onto the existing set (de-duplicated by id, preserving the
+   * current row's order followed by the supplied ids' order), and fires
+   * a single `UpdateEmployment` mutation. When every supplied id is
+   * already linked, NO wire mutation fires and a `noop` outcome returns
+   * the unchanged row.
+   *
+   * @throws `ProfileError("VALIDATION_ERROR")` when `skillSetIds` is
+   *   empty or every entry is empty / whitespace.
+   * @throws `ProfileError("UNKNOWN")` when the wire mutation reports
+   *   success but the response did not contain the updated row.
+   * @throws standard transport-error path (auth-revoked / Cf403 /
+   *   GraphQL / network / unknown) from `callTalentProfile`.
+   */
+  async add(
+    token: string,
+    employmentId: string,
+    fields: EmploymentSkillsFields,
+    options: EmploymentSkillsOptions = {},
+  ): Promise<EmploymentSkillsOutcome> {
+    const ids = sanitizeSkillSetIds("employment.skills.add", fields.skillSetIds);
+    const current = await show(token, employmentId);
+    const currentIds = new Set(current.skills.map((s) => s.id));
+    const seen = new Set<string>();
+    const toAdd = ids.filter((id) => !currentIds.has(id) && (seen.has(id) ? false : (seen.add(id), true)));
+    if (toAdd.length === 0) {
+      return {
+        kind: "noop",
+        result: current,
+        reason: "every supplied skill set id is already linked to this employment",
+      };
+    }
+    const merged: { id: string; name: string }[] = [...current.skills, ...toAdd.map((id) => ({ id, name: "" }))];
+    if (options.dryRun === true) {
+      return { kind: "preview", preview: buildSkillsDryRunPreview(token, employmentId, current, merged) };
+    }
+    const updated = await sendEmploymentSkillsUpdate(token, employmentId, current, merged, "employment.skills.add");
+    return { kind: "updated", result: updated };
+  },
+
+  /**
+   * Remove catalog-skill connections from an existing employment row.
+   *
+   * Reads the current row via `show()`, filters out the supplied skill
+   * set ids, and fires a single `UpdateEmployment` mutation. When none
+   * of the supplied ids are linked, NO wire mutation fires and a `noop`
+   * outcome returns the unchanged row. When the filtered set would be
+   * empty (the Toptal server rejects empty `skills: []`), refuses with
+   * `VALIDATION_ERROR` — use `profile.employment.remove` to drop the
+   * whole row instead.
+   *
+   * @throws `ProfileError("VALIDATION_ERROR")` when `skillSetIds` is
+   *   empty, every entry is empty / whitespace, or the filtered result
+   *   would leave the row with zero skills.
+   * @throws `ProfileError("UNKNOWN")` when the wire mutation reports
+   *   success but the response did not contain the updated row.
+   * @throws standard transport-error path.
+   */
+  async remove(
+    token: string,
+    employmentId: string,
+    fields: EmploymentSkillsFields,
+    options: EmploymentSkillsOptions = {},
+  ): Promise<EmploymentSkillsOutcome> {
+    const ids = sanitizeSkillSetIds("employment.skills.remove", fields.skillSetIds);
+    const current = await show(token, employmentId);
+    const idsToRemove = new Set(ids);
+    const filtered = current.skills.filter((s) => !idsToRemove.has(s.id));
+    if (filtered.length === current.skills.length) {
+      return {
+        kind: "noop",
+        result: current,
+        reason: "none of the supplied skill set ids are linked to this employment",
+      };
+    }
+    if (filtered.length === 0) {
+      throw new ProfileError(
+        "VALIDATION_ERROR",
+        `employment.skills.remove would leave employment "${employmentId}" with zero skills, which the Toptal server rejects ("is too short (minimum is 1 character)"). Remove the row itself via \`profile.employment.remove\`, or leave at least one skill linked.`,
+      );
+    }
+    if (options.dryRun === true) {
+      return { kind: "preview", preview: buildSkillsDryRunPreview(token, employmentId, current, filtered) };
+    }
+    const updated = await sendEmploymentSkillsUpdate(
+      token,
+      employmentId,
+      current,
+      filtered,
+      "employment.skills.remove",
+    );
+    return { kind: "updated", result: updated };
+  },
+};
