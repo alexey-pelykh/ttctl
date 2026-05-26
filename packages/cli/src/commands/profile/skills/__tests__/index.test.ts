@@ -15,7 +15,7 @@ import {
 
 const SKILL_OK: profile.skills.ProfileSkillSet = {
   id: "ss1",
-  experience: 60,
+  experience: 8,
   rating: "EXPERT",
   public: true,
   position: 1,
@@ -38,25 +38,21 @@ const SKILL_PARTIAL: profile.skills.ProfileSkillSet = {
 // -----------------------------------------------------------------------
 
 describe("parseExperience", () => {
-  it("parses a bare integer as months", () => {
-    expect(parseExperience("60")).toBe(60);
-    expect(parseExperience("  120  ")).toBe(120);
+  it("parses a bare integer as years", () => {
+    expect(parseExperience("5")).toBe(5);
+    expect(parseExperience("  20  ")).toBe(20);
   });
 
-  it("parses Ny as N*12 months", () => {
-    expect(parseExperience("5y")).toBe(60);
-    expect(parseExperience("1Y")).toBe(12);
-  });
-
-  it("parses Nm as N months (case-insensitive)", () => {
-    expect(parseExperience("36m")).toBe(36);
-    expect(parseExperience("0M")).toBe(0);
+  it("parses Ny as N years (no multiplication)", () => {
+    expect(parseExperience("5y")).toBe(5);
+    expect(parseExperience("1Y")).toBe(1);
   });
 
   it("returns null for unrecognised formats", () => {
     expect(parseExperience("forever")).toBeNull();
     expect(parseExperience("5 years")).toBeNull();
     expect(parseExperience("5w")).toBeNull();
+    expect(parseExperience("5m")).toBeNull();
     expect(parseExperience("")).toBeNull();
   });
 });
@@ -71,7 +67,7 @@ describe("formatSkillSetText", () => {
     expect(out.split("\n")[0]).toBe("TypeScript");
     expect(out).toContain("  id: ss1");
     expect(out).toContain("  rating: EXPERT");
-    expect(out).toContain("  experience: 60 months");
+    expect(out).toContain("  experience: 8 years");
     expect(out).toContain("  visibility: public");
     expect(out).toContain("  connections: 3");
   });

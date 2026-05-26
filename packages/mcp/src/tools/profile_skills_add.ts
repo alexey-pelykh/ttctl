@@ -65,8 +65,9 @@ export function registerProfileSkillsAddTool(server: McpServer, ctx: ToolRegistr
           .number()
           .int()
           .min(0)
+          .max(70)
           .optional()
-          .describe("Total experience on the skill (integer). Defaults to 1."),
+          .describe("Total years of experience on the skill (integer, 0-70). Defaults to 1."),
         public: z.boolean().optional().describe("Show the skill on the public profile. Defaults to false (private)."),
         skillId: z
           .string()

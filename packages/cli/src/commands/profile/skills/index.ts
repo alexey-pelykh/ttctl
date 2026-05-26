@@ -157,10 +157,10 @@ async function runSkillsAdd(name: string, options: SkillsAddOptions): Promise<vo
           {
             code: "VALIDATION_ERROR",
             field: "experience",
-            message: '--experience must be an integer count of months or a duration like "5y" or "60m".',
+            message: '--experience must be an integer count of years or a duration like "5y".',
           },
         ],
-        prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --experience must be an integer count of months or a duration like "5y" or "60m".`,
+        prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --experience must be an integer count of years or a duration like "5y".`,
       });
     }
     fields.experience = experience;
@@ -424,8 +424,8 @@ async function runSkillsUpdate(id: string, options: SkillsUpdateOptions, format:
     fields.rating = options.rating;
   }
   if (options.experience !== undefined) {
-    const months = parseExperience(options.experience);
-    if (months === null) {
+    const years = parseExperience(options.experience);
+    if (years === null) {
       emitErrorAndExit({
         operation: operationFor(commandLabel),
         format,
@@ -433,13 +433,13 @@ async function runSkillsUpdate(id: string, options: SkillsUpdateOptions, format:
           {
             code: "VALIDATION_ERROR",
             field: "experience",
-            message: '--experience must be an integer count of months or a duration like "5y" or "60m".',
+            message: '--experience must be an integer count of years or a duration like "5y".',
           },
         ],
-        prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --experience must be an integer count of months or a duration like "5y" or "60m".`,
+        prettySummary: `${commandLabel} failed (VALIDATION_ERROR): --experience must be an integer count of years or a duration like "5y".`,
       });
     }
-    fields.experience = months;
+    fields.experience = years;
   }
   if (options.public === true) fields.public = true;
   if (options.private === true) fields.public = false;
@@ -476,28 +476,24 @@ async function runSkillsUpdate(id: string, options: SkillsUpdateOptions, format:
 function formatSkillUpdateResult(result: profile.skills.UpdateSkillResult): string {
   const lines: string[] = [];
   if (result.rating !== null) lines.push(`rating: ${result.rating}`);
-  if (result.experience !== null) lines.push(`experience: ${result.experience.toString()} months`);
+  if (result.experience !== null) lines.push(`experience: ${result.experience.toString()} years`);
   if (result.public !== null) lines.push(`visibility: ${result.public ? "public" : "private"}`);
   return lines.join("\n");
 }
 
 /**
- * Parse an `--experience` flag value into an integer count of months.
- * Accepts a bare number ("60" → 60), `Ny` ("5y" → 60), or `Nm` ("60m" →
- * 60). Returns `null` for anything that doesn't match — the caller turns
- * that into a `VALIDATION_ERROR` exit.
- *
- * Pure function — directly unit-testable.
+ * Parse an `--experience` flag value into an integer count of years.
+ * Accepts a bare number (`"5"` → 5) or `Ny` (`"5y"` → 5); anything else
+ * returns `null`.
  */
 export function parseExperience(raw: string): number | null {
   const trimmed = raw.trim().toLowerCase();
   if (/^\d+$/.test(trimmed)) {
     return Number.parseInt(trimmed, 10);
   }
-  const match = /^(\d+)([ym])$/.exec(trimmed);
+  const match = /^(\d+)y$/.exec(trimmed);
   if (match === null) return null;
-  const n = Number.parseInt(match[1] ?? "0", 10);
-  return match[2] === "y" ? n * 12 : n;
+  return Number.parseInt(match[1] ?? "0", 10);
 }
 
 async function runSkillsShow(id: string, format: OutputFormat): Promise<void> {
@@ -593,7 +589,7 @@ function humanReadiness(key: string): string {
 export function formatSkillSetText(skill: profile.skills.ProfileSkillSet): string {
   const lines: string[] = [skill.skill.name, `  id: ${skill.id}`];
   if (skill.rating !== null) lines.push(`  rating: ${skill.rating}`);
-  if (skill.experience !== null) lines.push(`  experience: ${skill.experience.toString()} months`);
+  if (skill.experience !== null) lines.push(`  experience: ${skill.experience.toString()} years`);
   lines.push(`  visibility: ${skill.public ? "public" : "private"}`);
   lines.push(`  connections: ${skill.connectionsCount.toString()}`);
   return lines.join("\n");
@@ -659,10 +655,7 @@ export function buildProfileSkillsCommand(): Command {
         "Add a skill to your profile. By default `name` auto-resolves against the catalog: a single exact match (case-insensitive) binds to that catalog Skill; ≥2 exact duplicates surface a `--skill-id` disambiguation error; no exact match falls back to creating a custom (non-catalog) skill. Pass `--skill-id` to override resolution. Defaults applied when omitted: rating=COMPETENT, experience=1, --private.",
       )
       .option("--rating <value>", "Proficiency level (one of: COMPETENT, STRONG, EXPERT). Defaults to COMPETENT.")
-      .option(
-        "--experience <duration>",
-        'Experience: integer ("60"), "Ny" ("5y" = 60 months), or "Nm" ("60m" = 60 months). Defaults to 1.',
-      )
+      .option("--experience <duration>", 'Years of experience: integer ("5") or "Ny" ("5y" = 5 years). Defaults to 1.')
       .option("--public", "Show the skill on your public profile (defaults to private)")
       .option("--private", "Hide the skill from your public profile (default)")
       .option(
@@ -696,10 +689,7 @@ export function buildProfileSkillsCommand(): Command {
     .command("update <id>")
     .description("Update one or more fields on an existing skill (rating / experience / public)")
     .option("--rating <value>", "Proficiency level: COMPETENT | STRONG | EXPERT | NOVICE")
-    .option(
-      "--experience <duration>",
-      'Years or months of experience: integer ("60"), "Ny" ("5y" = 60 months), or "Nm" ("60m" = 60 months)',
-    )
+    .option("--experience <duration>", 'Years of experience: integer ("5") or "Ny" ("5y" = 5 years)')
     .option("--public", "Show the skill on your public profile")
     .option("--private", "Hide the skill from your public profile")
     .addOption(

@@ -113,7 +113,7 @@ function defaultSkillSetsReply(): MockResponse {
             nodes: [
               {
                 id: "ss-default-1",
-                experience: 60,
+                experience: 5,
                 rating: "STRONG",
                 public: true,
                 position: 0,

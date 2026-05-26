@@ -48,7 +48,7 @@ export function registerProfileSkillsUpdateTool(server: McpServer, ctx: ToolRegi
         "",
         "Example user prompts that should map to this tool:",
         '  - "Mark TypeScript as expert level on my profile." (after looking up its id)',
-        '  - "Set my Python skill to public, expert level, 60 months of experience."',
+        '  - "Set my Python skill to public, expert level, 5 years of experience."',
         '  - "Hide my Bash skill from my public profile."',
       ].join("\n"),
       inputSchema: {
@@ -61,8 +61,9 @@ export function registerProfileSkillsUpdateTool(server: McpServer, ctx: ToolRegi
           .number()
           .int()
           .min(0)
+          .max(70)
           .optional()
-          .describe("Total months of experience on this skill (integer, >= 0). E.g., 60 for 5 years. Optional."),
+          .describe("Total years of experience on this skill (integer, 0-70). E.g., 5 for 5 years. Optional."),
         public: z
           .boolean()
           .optional()
