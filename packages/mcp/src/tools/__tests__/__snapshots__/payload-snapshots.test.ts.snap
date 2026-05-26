@@ -110,7 +110,7 @@ exports[`MCP profile_basic_show — payload snapshots > payload: BasicShowPayloa
             {
               "__typename": "ProfileSkillSet",
               "id": "sk_test_001",
-              "experience": 96,
+              "experience": 8,
               "rating": "EXPERT",
               "public": true,
               "skill": {
@@ -238,7 +238,7 @@ exports[`MCP profile_basic_show — payload snapshots > payload: BasicShowPayloa
             {
               "__typename": "ProfileSkillSet",
               "id": "sk_test_001",
-              "experience": 96,
+              "experience": 8,
               "rating": "EXPERT",
               "public": true,
               "skill": {
@@ -386,7 +386,7 @@ exports[`MCP profile_basic_show — payload snapshots > payload: full BasicShowP
             {
               "__typename": "ProfileSkillSet",
               "id": "sk_test_001",
-              "experience": 96,
+              "experience": 8,
               "rating": "EXPERT",
               "public": true,
               "skill": {
@@ -837,7 +837,7 @@ exports[`MCP profile_skills_list — payload snapshots > payload: full profile s
 "[
   {
     "id": "sk_test_001",
-    "experience": 96,
+    "experience": 8,
     "rating": "EXPERT",
     "public": true,
     "position": 1,
@@ -849,7 +849,7 @@ exports[`MCP profile_skills_list — payload snapshots > payload: full profile s
   },
   {
     "id": "sk_test_002",
-    "experience": 84,
+    "experience": 7,
     "rating": "EXPERT",
     "public": true,
     "position": 2,
@@ -861,7 +861,7 @@ exports[`MCP profile_skills_list — payload snapshots > payload: full profile s
   },
   {
     "id": "sk_test_003",
-    "experience": 48,
+    "experience": 4,
     "rating": "STRONG",
     "public": true,
     "position": 3,
@@ -873,7 +873,7 @@ exports[`MCP profile_skills_list — payload snapshots > payload: full profile s
   },
   {
     "id": "sk_test_004",
-    "experience": 60,
+    "experience": 5,
     "rating": "STRONG",
     "public": true,
     "position": 4,
@@ -890,7 +890,7 @@ exports[`MCP profile_skills_list — payload snapshots > payload: single skill 1
 "[
   {
     "id": "sk_test_001",
-    "experience": 96,
+    "experience": 8,
     "rating": "EXPERT",
     "public": true,
     "position": 1,

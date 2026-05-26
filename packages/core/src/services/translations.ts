@@ -60,9 +60,9 @@ export const PROFILE_BASIC_FIELDS = {
  *      regardless of whether any field actually renames, so future entries
  *      can be added in-place without changing call-sites.
  *   2. **Discovery surface** — when a future field needs renaming
- *      (e.g., a server-side `experience` that's actually expressed in months
- *      while the CLI exposes `--experience-years`), this is the documented
- *      home for that mapping.
+ *      (e.g., a hypothetical server-side `tenureMonths` that the CLI
+ *      surfaces as `--tenure-years`), this is the documented home for
+ *      that mapping.
  *
  * The empty `as const` literal still produces a `Readonly<Record<string,
  * string>>` per the `satisfies` clause, so `serverToCli(_, PROFILE_SKILL_FIELDS)`

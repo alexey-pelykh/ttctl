@@ -38,14 +38,12 @@ import type {
 // Skills
 // -----------------------------------------------------------------------
 
-// `experience` is a count of months on the wire (see `ProfileSkillSet` —
-// the CLI converts a duration string like `"5y"` to months before
-// calling `set()`). The trailing `// N years` comments below name the
-// month count's intent so readers don't have to divide by 12.
+// `experience` values are years (see the `SkillUpdate.experience` jsdoc
+// in `services/profile/skills/index.ts`).
 
 export const SKILL_TYPESCRIPT: ProfileSkillSet = {
   id: "sk_test_001",
-  experience: 96, // 8 years
+  experience: 8,
   rating: "EXPERT",
   public: true,
   position: 1,
@@ -55,7 +53,7 @@ export const SKILL_TYPESCRIPT: ProfileSkillSet = {
 
 export const SKILL_POSTGRES: ProfileSkillSet = {
   id: "sk_test_002",
-  experience: 84, // 7 years
+  experience: 7,
   rating: "EXPERT",
   public: true,
   position: 2,
@@ -65,7 +63,7 @@ export const SKILL_POSTGRES: ProfileSkillSet = {
 
 export const SKILL_KUBERNETES: ProfileSkillSet = {
   id: "sk_test_003",
-  experience: 48, // 4 years
+  experience: 4,
   rating: "STRONG",
   public: true,
   position: 3,
@@ -75,7 +73,7 @@ export const SKILL_KUBERNETES: ProfileSkillSet = {
 
 export const SKILL_GRAPHQL: ProfileSkillSet = {
   id: "sk_test_004",
-  experience: 60, // 5 years
+  experience: 5,
   rating: "STRONG",
   public: true,
   position: 4,

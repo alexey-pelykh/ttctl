@@ -170,7 +170,7 @@ describe("profile.basic — read snapshots", () => {
             {
               __typename: "ProfileSkillSet",
               id: "sk_test_001",
-              experience: 96,
+              experience: 8,
               rating: "EXPERT",
               public: true,
               skill: { __typename: "Skill", id: "skill_cat_ts", name: "TypeScript" },

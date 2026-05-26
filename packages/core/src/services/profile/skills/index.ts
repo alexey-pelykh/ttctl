@@ -319,9 +319,10 @@ export interface SkillsReadiness {
  * flags" case at the CLI / MCP layer too — the duplicate gate keeps the
  * service self-defending).
  *
- * `experience` is the talent's total years/months on this skill,
- * expressed as an integer count of months on the wire; the CLI accepts a
- * duration string (`"5y"`, `"60"`) and converts before calling.
+ * `experience` is the talent's total years on the skill (Int on the
+ * wire, range `1-20+` per the `UpdateProfileSkillSetExperienceInput`
+ * capture). The CLI accepts a bare integer or `Ny` shorthand and passes
+ * the year count through unchanged.
  */
 export interface SkillUpdate {
   rating?: ProficiencyRating;
@@ -374,7 +375,7 @@ export interface AddSkillFields {
   name: string;
   /** Proficiency rating. Defaults to `"COMPETENT"`. */
   rating?: ProficiencyRating;
-  /** Total experience on the skill. Defaults to `1`. Passed verbatim to the wire (the existing `set` flow uses the same convention). */
+  /** Total years of experience on the skill. Defaults to `1`. Passed verbatim to the wire (Int years; see `SkillUpdate.experience` docstring). */
   experience?: number;
   /** Profile visibility. Defaults to `false` (private). */
   public?: boolean;

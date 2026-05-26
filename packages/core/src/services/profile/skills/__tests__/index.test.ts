@@ -70,7 +70,7 @@ beforeEach(() => {
 
 const SKILL_SET_OK = {
   id: "ss1",
-  experience: 60,
+  experience: 5,
   rating: "EXPERT",
   public: true,
   position: 1,
@@ -498,7 +498,7 @@ describe("skills.set", () => {
         body: {
           data: {
             updateProfileSkillSetExperience: {
-              skillSet: { id: "ss1", experience: 60 },
+              skillSet: { id: "ss1", experience: 5 },
               success: true,
               errors: [],
             },
@@ -518,9 +518,9 @@ describe("skills.set", () => {
       },
     );
 
-    const result = await set(TOKEN, "ss1", { rating: "EXPERT", experience: 60, public: true });
+    const result = await set(TOKEN, "ss1", { rating: "EXPERT", experience: 5, public: true });
     expect(result.rating).toBe("EXPERT");
-    expect(result.experience).toBe(60);
+    expect(result.experience).toBe(5);
     expect(result.public).toBe(true);
 
     expect(mocked).toHaveBeenCalledTimes(3);
@@ -545,7 +545,7 @@ describe("skills.set", () => {
       },
     });
 
-    await expect(set(TOKEN, "ss1", { rating: "EXPERT", experience: 60 })).rejects.toMatchObject({
+    await expect(set(TOKEN, "ss1", { rating: "EXPERT", experience: 5 })).rejects.toMatchObject({
       code: "USER_ERROR",
       message: expect.stringContaining("Invalid rating"),
     });

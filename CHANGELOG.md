@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`profile.skills` `experience` is years on the wire, not months (#627).**
+  The MCP `ttctl_profile_skills_update.experience` docstring claimed
+  "months"; the CLI `--experience` flag, `parseExperience` parser,
+  validation messages, and pretty-print rendering all carried the same
+  wrong-unit assumption (with `parseExperience` ACTIVELY multiplying `Ny`
+  inputs by 12). The wire capture at
+  `research/captures/web/inputs/UpdateProfileSkillSetExperienceInput.json`
+  annotates `Int (years; 1-20+)`, and several talents' public profiles
+  rendered nonsense values (e.g., "60 years" for a skill the caller
+  intended as 5 years). **Scope**: corrected every docstring, validation
+  message, help text, parser, format helper, service jsdoc, test fixture,
+  and snapshot in the skills sub-domain. `parseExperience` no longer
+  multiplies by 12 — `5y` now returns `5`; the `Nm` (months) shorthand
+  is rejected outright (was never working semantics). Added defensive
+  `.max(70)` Zod bound on both `ttctl_profile_skills_add.experience` and
+  `ttctl_profile_skills_update.experience` so corruption attempts
+  surface at the MCP boundary instead of silently landing on the wire.
+  **BC note**: any caller passing `--experience 5y` previously sent `60`
+  (= 60 years on the wire — already broken); now sends `5` correctly. No
+  preservation path exists for the previous semantics because the
+  previous semantics were data-corrupting.
+
 ## [v0.1.0-rc.11] - 2026-05-26
 
 ### Added
