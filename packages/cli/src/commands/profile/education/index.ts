@@ -43,7 +43,6 @@ export function buildProfileEducationCommand(): Command {
     .option("--to <date>", "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
     .option("--field-of-study <text>", "field of study (optional)")
     .option("--location <text>", "city / country (optional)")
-    .option("--title <text>", "thesis or program title (optional)")
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -63,7 +62,6 @@ export function buildProfileEducationCommand(): Command {
     .option("--to <date>", "end date — ISO-8601 or YYYY")
     .option("--field-of-study <text>", "field of study")
     .option("--location <text>", "city / country")
-    .option("--title <text>", "thesis or program title")
     .option("--highlight <bool>", "set highlight flag (true|false)")
     .addOption(
       new Option("-o, --output <format>", "output format")
@@ -136,7 +134,6 @@ interface AddOptions {
   to?: string;
   fieldOfStudy?: string;
   location?: string;
-  title?: string;
   output: OutputFormat;
 }
 
@@ -147,7 +144,6 @@ interface UpdateOptions {
   to?: string;
   fieldOfStudy?: string;
   location?: string;
-  title?: string;
   highlight?: string;
   output: OutputFormat;
 }
@@ -182,7 +178,6 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
   if (options.degree !== undefined) fields.degree = options.degree;
   if (options.fieldOfStudy !== undefined) fields.fieldOfStudy = options.fieldOfStudy;
   if (options.location !== undefined) fields.location = options.location;
-  if (options.title !== undefined) fields.title = options.title;
   if (options.highlight !== undefined) {
     if (options.highlight !== "true" && options.highlight !== "false") {
       emitErrorAndExit({
@@ -316,11 +311,10 @@ function applyDateFlags(
 
 function applyOptionalStrings(
   fields: profile.education.EducationFields,
-  options: { fieldOfStudy?: string; location?: string; title?: string },
+  options: { fieldOfStudy?: string; location?: string },
 ): void {
   if (options.fieldOfStudy !== undefined) fields.fieldOfStudy = options.fieldOfStudy;
   if (options.location !== undefined) fields.location = options.location;
-  if (options.title !== undefined) fields.title = options.title;
 }
 
 /**

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`profile.education.update` no longer nulls omitted writable fields under
+  the full-replacement contract, and `add`/`update` map ttctl-surface
+  `institution` to wire `title` (the only school-name slot on
+  `EducationInput`) (#612).** Same posture as `UpdateCertification` #605
+  and `UpdateBasicInfo` #604: `UpdateEducation` treats `EducationInput` as
+  a full replacement — pre-fix, calling `ttctl profile education update
+<id> --highlight true` would null every other field server-side. Pre-fix,
+  `add()` and `update()` also sent `education.institution: <value>` to a
+  wire input that has no `institution` slot (capture
+  `research/captures/web/inputs/UpdateEducationInput.json`) — the live API
+  rejected with `GRAPHQL_ERROR`, blocking BOTH adding and updating
+  education rows from ttctl. **Scope**: `core` `update()` now reads the
+  current row via `show()` then merges through the exported
+  `buildUpdateEducationInput(current, fields)` helper (mirror of
+  `buildUpdateCertificationInput`); `add()` builds the wire input via
+  `toEducationWireInput(fields)` and defaults `skills: []` (the wire
+  requires non-null, same `.blank?` posture as the cert sibling).
+  `DRY_RUN_EDUCATION_FIELD_PLACEHOLDER` is exported for the MCP layer;
+  the MCP `_update` dry-run preview now surfaces the placeholder for
+  every unconditional-echo field. **BC**: removed the `--title` flag from
+  `ttctl profile education add`/`update` and the `title` input on the
+  MCP `ttctl_profile_education_add`/`_update` tools — the wire `title`
+  slot is owned by `institution` (school name), and the read-side
+  `Education.title` is server-populated, not user-controlled. Any caller
+  passing `--title` was previously overwriting the school name; no
+  preservation path exists because the previous semantics were
+  data-corrupting.
 - **`profile.skills` `experience` is years on the wire, not months (#627).**
   The MCP `ttctl_profile_skills_update.experience` docstring claimed
   "months"; the CLI `--experience` flag, `parseExperience` parser,

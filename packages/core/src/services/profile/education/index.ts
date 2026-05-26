@@ -14,14 +14,11 @@ import type { GraphQLErrorEntry, UserError } from "../shared.js";
  * `research/captures/web/inputs/UpdateEducationInput.json`.
  *
  * `skills` carries the talent's self-attested skill links per education
- * record (#556 — "learned Python during my CS degree"). Wire shape is the
- * connection `skills { nodes { id name } }` per the upstream fragment;
- * ttctl flattens it to `SkillRef[]` (mirrors `Employment.skills` and
- * `Certification.skills`). Read-only (not on `EducationInput`). The
- * synthesized SDL types `Education.skills` as `Unknown`; the shape was
- * confirmed by a live wire probe against the talent-profile surface
- * (2026-05-23) and is structurally locked by the
- * `GET_EDUCATION.snapshot.json` (T1).
+ * record (#556). Wire shape is the connection `skills { nodes { id name } }`
+ * per the upstream fragment; ttctl flattens it to `SkillRef[]` (mirrors
+ * `Employment.skills` and `Certification.skills`). Writable via the merge
+ * helper {@link buildUpdateEducationInput}; not yet exposed as a CLI / MCP
+ * writable flag.
  */
 export interface Education {
   id: string;
@@ -37,20 +34,64 @@ export interface Education {
 }
 
 /**
- * Fields editable on an Education row. All optional — `update()` rejects an
- * empty object. Mirrors `EducationInput` per the inferred shape in
- * `research/notes/10-mutation-input-patterns.md` (Pattern 1) and the live
- * capture in `research/captures/web/inputs/UpdateEducationInput.json`.
+ * Fields editable on an Education row from the ttctl surface. The wire
+ * `EducationInput` shape (capture
+ * `research/captures/web/inputs/UpdateEducationInput.json`) has no
+ * `institution` slot — the school name lives in wire `title`. ttctl
+ * surfaces `institution` here (matching the read-side and what users
+ * type for `--institution`) and maps it to wire `title` inside
+ * {@link toEducationWireInput}.
+ *
+ * `skills` is wire-required non-null (mirrors the #605 cert finding on
+ * CREATE; preserved through `update` via {@link buildUpdateEducationInput}).
  */
 export interface EducationFields {
+  /** School name. Sent as wire `title`; echoed back on read as `Education.institution`. */
   institution?: string;
   degree?: string;
   fieldOfStudy?: string;
   location?: string;
-  title?: string;
   yearFrom?: number;
   yearTo?: number;
   highlight?: boolean;
+  skills?: { id: string; name: string }[];
+}
+
+/**
+ * Wire-side shape of `EducationInput` per the capture
+ * `research/captures/web/inputs/UpdateEducationInput.json`. Exposed so
+ * the MCP layer can build wire-honest dry-run previews; production code
+ * should prefer {@link EducationFields} and let {@link toEducationWireInput}
+ * translate. The only divergence is the `institution` (ttctl)
+ * ↔ `title` (wire) rename.
+ */
+export interface EducationWireInput {
+  title?: string;
+  location?: string;
+  fieldOfStudy?: string;
+  degree?: string;
+  yearFrom?: number;
+  yearTo?: number;
+  highlight?: boolean;
+  skills?: { id: string; name: string }[];
+}
+
+/**
+ * Translate caller-supplied {@link EducationFields} to the wire-side
+ * {@link EducationWireInput} shape. The only divergence is
+ * `EducationFields.institution` → wire `title`. Pure — no I/O.
+ */
+export function toEducationWireInput(fields: EducationFields): EducationWireInput {
+  const out: EducationWireInput = {};
+  if (fields.institution !== undefined) out.title = fields.institution;
+  if (fields.degree !== undefined) out.degree = fields.degree;
+  if (fields.fieldOfStudy !== undefined) out.fieldOfStudy = fields.fieldOfStudy;
+  if (fields.location !== undefined) out.location = fields.location;
+  if (fields.yearFrom !== undefined) out.yearFrom = fields.yearFrom;
+  if (fields.yearTo !== undefined) out.yearTo = fields.yearTo;
+  if (fields.highlight !== undefined) out.highlight = fields.highlight;
+  if (fields.skills !== undefined) out.skills = fields.skills;
+  return out;
 }
 
 const EDUCATION_FRAGMENT = `fragment Education on Education {
@@ -208,7 +249,8 @@ export async function show(token: string, id: string): Promise<Education> {
 
 /**
  * Create a new education row. Wire format per Pattern 2: `{ profileId,
- * education: EducationInput }`.
+ * education: EducationInput }`. `skills` defaults to `[]` (mirrors #605
+ * cert finding — the wire requires non-null on CREATE).
  */
 export async function add(token: string, fields: EducationFields): Promise<Education> {
   if (!fields.institution || !fields.degree) {
@@ -217,11 +259,12 @@ export async function add(token: string, fields: EducationFields): Promise<Educa
   const profileId = await extractProfileId(token);
   const before = await listByProfileId(token, profileId);
   const beforeIds = new Set(before.map((e) => e.id));
+  const wire: EducationWireInput = { ...toEducationWireInput(fields), skills: fields.skills ?? [] };
   const res = await callTalentProfile(
     token,
     "CREATE_EDUCATION",
     CREATE_EDUCATION_MUTATION,
-    { input: { profileId, education: fields } },
+    { input: { profileId, education: wire } },
     "education add",
   );
   const payload = unwrapMutation(res, "createEducation", "education add");
@@ -236,18 +279,76 @@ export async function add(token: string, fields: EducationFields): Promise<Educa
 }
 
 /**
+ * Build the merged `EducationInput` for an `update()` call by reading the
+ * current row's writable fields and layering caller-supplied `fields` on
+ * top. Pure — no I/O.
+ *
+ * `UpdateEducation` treats `EducationInput` as a full replacement (#612,
+ * same posture as `UpdateCertification` per #605 and `UpdateBasicInfo`
+ * per #604) — every writable field omitted from the input is NULLed
+ * server-side.
+ *
+ * The merge translates ttctl-surface `institution` → wire `title` (the
+ * wire has no `institution` slot). The read-side `Education.title` has
+ * no matching write slot — it is server-populated and round-trips via
+ * server state, not via the merge input.
+ *
+ * Echoed unconditionally: `title` (from `current.institution`), `degree`,
+ * `skills`. Echoed only when the current value is non-null: `fieldOfStudy`,
+ * `location`, `yearFrom`, `yearTo` (wire input is non-nullable per the
+ * capture; sending `null` would be rejected).
+ *
+ * Exported so the MCP layer can build the same merged input for the
+ * dry-run preview's placeholder field set.
+ *
+ * @throws `ProfileError("VALIDATION_ERROR")` when `fields` is empty.
+ */
+export function buildUpdateEducationInput(current: Education, fields: EducationFields): EducationWireInput {
+  if (Object.keys(fields).length === 0) {
+    throw new ProfileError("VALIDATION_ERROR", "education update requires at least one field flag.");
+  }
+  const merged: EducationWireInput = {
+    title: current.institution,
+    degree: current.degree,
+    highlight: current.highlight,
+    skills: current.skills,
+  };
+  if (current.fieldOfStudy !== null) merged.fieldOfStudy = current.fieldOfStudy;
+  if (current.location !== null) merged.location = current.location;
+  if (current.yearFrom !== null) merged.yearFrom = current.yearFrom;
+  if (current.yearTo !== null) merged.yearTo = current.yearTo;
+  return { ...merged, ...toEducationWireInput(fields) };
+}
+
+/**
+ * Sentinel surfaced in the MCP dry-run preview for fields that the apply
+ * path injects from the current row at send-time (read-current+merge per
+ * {@link buildUpdateEducationInput}). Mirrors the cert / basic /
+ * employment merge-placeholder pattern.
+ */
+export const DRY_RUN_EDUCATION_FIELD_PLACEHOLDER = "<preserved from current education state>" as const;
+
+/**
  * Update an existing education row. Wire format per Pattern 1:
- * `{ educationId, education: EducationInput }`.
+ * `{ educationId, education: EducationInput }`. Reads the current row
+ * first (via `show()`) and merges the writable fields per
+ * {@link buildUpdateEducationInput} — `UpdateEducation` treats the
+ * input as a full replacement (#612).
+ *
+ * @throws `ProfileError("VALIDATION_ERROR")` when `fields` is empty or
+ *   when the `id` does not resolve to an existing row.
  */
 export async function update(token: string, id: string, fields: EducationFields): Promise<Education> {
   if (Object.keys(fields).length === 0) {
     throw new ProfileError("VALIDATION_ERROR", "education update requires at least one field flag.");
   }
+  const current = await show(token, id);
+  const merged = buildUpdateEducationInput(current, fields);
   const res = await callTalentProfile(
     token,
     "UPDATE_EDUCATION",
     UPDATE_EDUCATION_MUTATION,
-    { input: { educationId: id, education: fields } },
+    { input: { educationId: id, education: merged } },
     "education update",
   );
   const payload = unwrapMutation(res, "updateEducation", "education update");
