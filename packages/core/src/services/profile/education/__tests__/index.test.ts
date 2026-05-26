@@ -12,7 +12,18 @@ vi.mock("../../../../transport.js", async () => {
   };
 });
 
-import { add, highlight, list, remove, show, update } from "../index.js";
+import {
+  add,
+  buildUpdateEducationInput,
+  DRY_RUN_EDUCATION_FIELD_PLACEHOLDER,
+  highlight,
+  list,
+  remove,
+  show,
+  toEducationWireInput,
+  update,
+} from "../index.js";
+import type { Education } from "../index.js";
 import { ProfileError } from "../../basic/index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { impersonatedTransport, stockTransport } from "../../../../transport.js";
@@ -218,7 +229,7 @@ describe("add", () => {
     await expect(add(TOKEN, { degree: "x" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("dispatches CREATE_EDUCATION with profileId and education input", async () => {
+  it("dispatches CREATE_EDUCATION with wire shape (institution → title, skills default []) (#612)", async () => {
     replyStock({ body: VIEWER_OK }); // for extractProfileId
     replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [EDU_1] } } } } }); // before list
     replyImpersonated({
@@ -239,7 +250,41 @@ describe("add", () => {
     const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(createCall.body.operationName).toBe("CREATE_EDUCATION");
     expect(createCall.body.variables).toEqual({
-      input: { profileId: "p1", education: { institution: "Stanford", degree: "MSc" } },
+      input: { profileId: "p1", education: { title: "Stanford", degree: "MSc", skills: [] } },
+    });
+  });
+
+  it("forwards user-supplied skills verbatim instead of defaulting to []", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          createEducation: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", educations: { nodes: [EDU_2] } },
+          },
+        },
+      },
+    });
+
+    await add(TOKEN, {
+      institution: "Stanford",
+      degree: "MSc",
+      skills: [{ id: "V1-Skill-7", name: "Computer Engineering" }],
+    });
+
+    const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(createCall.body.variables).toEqual({
+      input: {
+        profileId: "p1",
+        education: {
+          title: "Stanford",
+          degree: "MSc",
+          skills: [{ id: "V1-Skill-7", name: "Computer Engineering" }],
+        },
+      },
     });
   });
 
@@ -261,7 +306,11 @@ describe("update", () => {
     await expect(update(TOKEN, "id", {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("dispatches UPDATE_EDUCATION with educationId and education input", async () => {
+  it("dispatches UPDATE_EDUCATION with merged wire input (read-current + user overrides) (#612)", async () => {
+    // read-current step → update mutation. EDU_1 has null `title` on read;
+    // the wire `title` slot is populated from `current.institution` (= "MIT").
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [EDU_1] } } } } });
     replyImpersonated({
       body: {
         data: {
@@ -277,12 +326,74 @@ describe("update", () => {
     const updated = await update(TOKEN, EDU_1.id, { yearTo: 2015 });
 
     expect(updated.yearTo).toBe(2015);
-    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
-    expect(call.body.operationName).toBe("UPDATE_EDUCATION");
-    expect(call.body.variables).toEqual({ input: { educationId: EDU_1.id, education: { yearTo: 2015 } } });
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.operationName).toBe("UPDATE_EDUCATION");
+    expect(updateCall.body.variables).toEqual({
+      input: {
+        educationId: EDU_1.id,
+        education: {
+          title: EDU_1.institution,
+          degree: EDU_1.degree,
+          highlight: EDU_1.highlight,
+          skills: [],
+          fieldOfStudy: EDU_1.fieldOfStudy,
+          location: EDU_1.location,
+          yearFrom: EDU_1.yearFrom,
+          yearTo: 2015,
+        },
+      },
+    });
   });
 
-  it("throws ProfileError(UNKNOWN) when row not in response", async () => {
+  it("preserves every writable field omitted by the caller (#612 regression: full-replace contract)", async () => {
+    // EDU_2 has every writable field populated AND non-empty skills. User
+    // updates ONLY highlight=false; pre-#612 the other seven would have nulled.
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [EDU_2] } } } } });
+    replyImpersonated({
+      body: {
+        data: {
+          updateEducation: {
+            success: true,
+            errors: null,
+            profile: { id: "p1", educations: { nodes: [{ ...EDU_2, highlight: false }] } },
+          },
+        },
+      },
+    });
+
+    await update(TOKEN, EDU_2.id, { highlight: false });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    expect(updateCall.body.variables).toEqual({
+      input: {
+        educationId: EDU_2.id,
+        education: {
+          title: EDU_2.institution,
+          degree: EDU_2.degree,
+          fieldOfStudy: EDU_2.fieldOfStudy,
+          yearFrom: EDU_2.yearFrom,
+          yearTo: EDU_2.yearTo,
+          skills: EDU_2_MAPPED.skills,
+          highlight: false,
+        },
+      },
+    });
+  });
+
+  it("read-current failure (id not found) surfaces as VALIDATION_ERROR without firing the update mutation", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [] } } } } });
+
+    await expect(update(TOKEN, "missing", { highlight: true })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws ProfileError(UNKNOWN) when row not in update response", async () => {
+    replyStock({ body: VIEWER_OK });
+    replyImpersonated({ body: { data: { profile: { id: "p1", educations: { nodes: [EDU_1] } } } } });
     replyImpersonated({
       body: {
         data: {
@@ -296,6 +407,83 @@ describe("update", () => {
     });
 
     await expect(update(TOKEN, EDU_1.id, { yearTo: 2015 })).rejects.toBeInstanceOf(ProfileError);
+  });
+});
+
+describe("buildUpdateEducationInput", () => {
+  const CURRENT_FULL: Education = {
+    id: "V1-Education-99",
+    institution: "MIT",
+    degree: "BSc",
+    fieldOfStudy: "Mathematics",
+    location: "Cambridge",
+    title: "Some thesis title",
+    yearFrom: 2010,
+    yearTo: 2014,
+    highlight: false,
+    skills: [{ id: "V1-Skill-1", name: "Math" }],
+  };
+
+  it("echoes every writable field from current when caller supplies one override", () => {
+    const merged = buildUpdateEducationInput(CURRENT_FULL, { highlight: true });
+    expect(merged).toEqual({
+      title: "MIT",
+      degree: "BSc",
+      fieldOfStudy: "Mathematics",
+      location: "Cambridge",
+      yearFrom: 2010,
+      yearTo: 2014,
+      skills: [{ id: "V1-Skill-1", name: "Math" }],
+      highlight: true,
+    });
+  });
+
+  it("translates surface institution → wire title (no `institution` slot on EducationInput)", () => {
+    const merged = buildUpdateEducationInput(CURRENT_FULL, { institution: "Stanford" });
+    expect(merged.title).toBe("Stanford");
+    expect(merged).not.toHaveProperty("institution");
+  });
+
+  it("omits null-current nullable fields (wire input is non-nullable per capture)", () => {
+    const current: Education = {
+      ...CURRENT_FULL,
+      fieldOfStudy: null,
+      location: null,
+      yearFrom: null,
+      yearTo: null,
+    };
+    const merged = buildUpdateEducationInput(current, { degree: "MSc" });
+    expect(merged).not.toHaveProperty("fieldOfStudy");
+    expect(merged).not.toHaveProperty("location");
+    expect(merged).not.toHaveProperty("yearFrom");
+    expect(merged).not.toHaveProperty("yearTo");
+    expect(merged.title).toBe("MIT");
+    expect(merged.degree).toBe("MSc");
+    expect(merged.skills).toEqual([{ id: "V1-Skill-1", name: "Math" }]);
+  });
+
+  it("rejects empty fields", () => {
+    expect(() => buildUpdateEducationInput(CURRENT_FULL, {})).toThrowError(/at least one field flag/);
+  });
+});
+
+describe("toEducationWireInput", () => {
+  it("renames institution → title and passes others through", () => {
+    expect(toEducationWireInput({ institution: "MIT", degree: "BSc", highlight: true })).toEqual({
+      title: "MIT",
+      degree: "BSc",
+      highlight: true,
+    });
+  });
+
+  it("omits undefined fields", () => {
+    expect(toEducationWireInput({})).toEqual({});
+  });
+});
+
+describe("DRY_RUN_EDUCATION_FIELD_PLACEHOLDER", () => {
+  it("is the canonical placeholder sentinel string", () => {
+    expect(DRY_RUN_EDUCATION_FIELD_PLACEHOLDER).toBe("<preserved from current education state>");
   });
 });
 

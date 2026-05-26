@@ -341,7 +341,7 @@ server-side. ttctl services that send partial inputs silently null
 unsent fields. Members: #604 (basic, fixed), #605 (cert, fixed),
 #606 (external, partial-empirically), #607 (employment.highlight,
 partial-empirically), #608 (availability.workingHours, defense-in-depth),
-#612 (education, open — caught by this gate at PR-time).
+#612 (education, fixed — caught by this gate at PR-time).
 
 Detection scope: walks `../research/captures/web/inputs/*Input.json` and
 for each capture (a) loads the payload field roster from
@@ -366,8 +366,7 @@ SENT field set.
   capture is outdated or for a sibling op).
 - **Default mode** is warn-only (exit 0). Set
   `MERGE_COMPLETENESS_STRICT=1` (or pass `--strict`) to fail on
-  non-exempt gaps once the existing gap (currently #612 education) is
-  paid down. Sibling pattern to `E2E_COVERAGE_STRICT` /
+  non-exempt gaps. Sibling pattern to `E2E_COVERAGE_STRICT` /
   `SURFACE_COVERAGE_STRICT` / `WRITE_READ_SYMMETRY_STRICT`.
 
 Captures with no matching ttctl invocation are reported once at the end

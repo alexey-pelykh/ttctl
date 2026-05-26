@@ -40,7 +40,7 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
     {
       title: "Add education entry",
       description:
-        "Add a new education entry (institution + degree, with optional field of study, location, title, and start/end years). Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY).",
+        "Add a new education entry (institution + degree, with optional field of study, location, and start/end years). Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY).",
       inputSchema: {
         institution: z.string().min(1).describe("school / university name"),
         degree: z.string().min(1).describe("degree (e.g. BSc, MSc, PhD)"),
@@ -48,7 +48,6 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         to: dateInput.optional().describe("end date — ISO-8601 or year"),
         fieldOfStudy: z.string().optional(),
         location: z.string().optional(),
-        title: z.string().optional(),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -68,14 +67,21 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       }
       if (input.fieldOfStudy !== undefined) fields.fieldOfStudy = input.fieldOfStudy;
       if (input.location !== undefined) fields.location = input.location;
-      if (input.title !== undefined) fields.title = input.title;
 
       if (input.dryRun === true) {
+        // skills: [] mirrors core add() — the wire requires non-null
+        // skills (#605 cert sibling). Wire shape uses `title` for the
+        // school name (no `institution` slot on EducationInput).
         return dryRunResponse(
           buildMcpDryRunPreview(
             "CREATE_EDUCATION",
             "talent-profile",
-            { input: { profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER, education: fields } },
+            {
+              input: {
+                profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER,
+                education: { ...profile.education.toEducationWireInput(fields), skills: [] },
+              },
+            },
             auth.token,
           ),
         );
@@ -103,7 +109,6 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         to: dateInput.optional(),
         fieldOfStudy: z.string().optional(),
         location: z.string().optional(),
-        title: z.string().optional(),
         highlight: z.boolean().optional(),
         dryRun: DRY_RUN_FIELD,
       },
@@ -123,15 +128,27 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       if (input.degree !== undefined) fields.degree = input.degree;
       if (input.fieldOfStudy !== undefined) fields.fieldOfStudy = input.fieldOfStudy;
       if (input.location !== undefined) fields.location = input.location;
-      if (input.title !== undefined) fields.title = input.title;
       if (input.highlight !== undefined) fields.highlight = input.highlight;
 
       if (input.dryRun === true) {
+        // Preview placeholders mirror UNCONDITIONAL echoes in
+        // `buildUpdateEducationInput`. Conditionally-echoed fields
+        // (fieldOfStudy, location, yearFrom, yearTo) surface only when
+        // the caller supplies them — zero-transport preview can't read
+        // the current row to know which are non-null. Wire-side names
+        // (`title` for school) — EducationInput has no `institution`.
+        const previewEducation: Record<string, unknown> = {
+          title: profile.education.DRY_RUN_EDUCATION_FIELD_PLACEHOLDER,
+          degree: profile.education.DRY_RUN_EDUCATION_FIELD_PLACEHOLDER,
+          highlight: profile.education.DRY_RUN_EDUCATION_FIELD_PLACEHOLDER,
+          skills: profile.education.DRY_RUN_EDUCATION_FIELD_PLACEHOLDER,
+          ...profile.education.toEducationWireInput(fields),
+        };
         return dryRunResponse(
           buildMcpDryRunPreview(
             "UPDATE_EDUCATION",
             "talent-profile",
-            { input: { educationId: input.id, education: fields } },
+            { input: { educationId: input.id, education: previewEducation } },
             auth.token,
           ),
         );
