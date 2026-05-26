@@ -1796,8 +1796,8 @@ function rateInsightCompetitiveFixture(): unknown {
           id: JOB_ID,
           hourlyRateInsights: {
             __typename: "TalentJobRateInsightCompetitive",
-            estimatedRevenue: "12500.00",
-            estimatedRevenueExplanation: "Estimated revenue per month at the proposed rate.",
+            competitiveRevenue: "12500.00",
+            competitiveRevenueExplanation: "Estimated revenue per month at the proposed rate.",
             longTermDisclaimer: "Long-term engagements assume sustained availability.",
           },
         },
@@ -1817,8 +1817,8 @@ function rateInsightUncompetitiveFixture(): unknown {
           id: JOB_ID,
           hourlyRateInsights: {
             __typename: "TalentJobRateInsightUncompetitive",
-            estimatedRevenue: "8800.00",
-            estimatedRevenueExplanation: "Below the recent-applicant median.",
+            uncompetitiveRevenue: "8800.00",
+            uncompetitiveRevenueExplanation: "Below the recent-applicant median.",
             recentApplicationRate: "95.00",
             recommendedRate: "100.00",
           },
@@ -2328,9 +2328,11 @@ describe("applications.apply (#426)", () => {
   });
 
   it("propagates pre-fetch NOT_FOUND from applyData up the stack (Promise.all rejects-on-first)", async () => {
-    // First mock (applyData) returns the Relay decode error → NOT_FOUND.
-    // Subsequent mocks for applyQuestions / rateInsight never get
-    // consumed because Promise.all rejects on the first failure.
+    // #610: applyData + applyQuestions are in the blocking Promise.all;
+    // rateInsight is fire-and-forget AFTER that gate. applyData failure
+    // rejects the Promise.all and the `void rateInsight()` line is
+    // never reached — so the 3rd mock is queued defensively but stays
+    // unconsumed.
     reply({ body: { errors: [{ message: "Record not found" }] } });
     reply({ body: questionsFixture() });
     reply({ body: rateInsightCompetitiveFixture() });
@@ -2339,11 +2341,39 @@ describe("applications.apply (#426)", () => {
     });
   });
 
-  it("propagates AuthRevokedError from any pre-fetch call", async () => {
+  it("propagates AuthRevokedError from a blocking pre-fetch call (applyData / applyQuestions)", async () => {
     reply({ body: applyDataFixture() });
     reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
-    reply({ body: rateInsightCompetitiveFixture() });
     await expect(apply(TOKEN, JOB_ID, { consentIssued: true })).rejects.toBeInstanceOf(AuthRevokedError);
+  });
+
+  it("apply succeeds when rateInsight fails with HTTP 400 (#610: rate-insight is fire-and-forget)", async () => {
+    reply({ body: applyDataFixture({ hourlyRate: "85.00" }) });
+    reply({ body: questionsFixture({ matcher: [], expertise: [] }) });
+    // Simulates the #610 wire breakage that motivated the decouple:
+    // FieldsInSetCanMerge violation → HTTP 400 from the gateway.
+    reply({ status: 400, body: { errors: [{ message: "TEST: simulated FieldsInSetCanMerge violation" }] } });
+    reply({ body: jobApplySuccessFixture() });
+
+    // Silence the stderr warning emitted by the decouple .catch handler
+    // so test output stays clean.
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      const outcome = await apply(TOKEN, JOB_ID, { consentIssued: true });
+      expect(outcome.kind).toBe("applied");
+      if (outcome.kind !== "applied") return;
+      expect(outcome.result.id).toBe("app-77");
+      // 4 calls: applyData + applyQuestions + rateInsight (HTTP 400) + JobApply.
+      // The HTTP 400 from rateInsight does NOT block the mutation.
+      expect(mockedStock).toHaveBeenCalledTimes(4);
+    } finally {
+      // Drain the microtask queue so the fire-and-forget .catch settles
+      // before the spy restore — otherwise an unhandled-rejection warning
+      // can fire after the test ends.
+      await new Promise((resolve) => setImmediate(resolve));
+      stderrWrite.mockRestore();
+    }
   });
 });
 

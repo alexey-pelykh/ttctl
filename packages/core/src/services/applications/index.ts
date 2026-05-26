@@ -1572,19 +1572,13 @@ export type RateInsight = CompetitiveRateInsight | UncompetitiveRateInsight;
 //     not in the synthesized schema with that argument signature; the
 //     captured op passes both args, schema declares the field with no
 //     args (same pattern as `jobActivityList`).
-//   - Un-aliased union-member fields on `TalentJobRateInsight`: the
-//     captured `JobApplicationRateInsight.graphql` aliases
-//     `competitiveRevenue: estimatedRevenue` /
-//     `uncompetitiveRevenue: estimatedRevenue` (Apollo client-side
-//     normalization hint to avoid same-name-different-meaning
-//     collisions on the cache side). The inline query below selects
-//     them BARE — spec-conformant per GraphQL FieldsInSetCanMerge
-//     since both wire members carry `BigDecimal estimatedRevenue` /
-//     `BigDecimal estimatedRevenueExplanation` (same scalar type, so
-//     same-name selection across union members merges cleanly).
-//     {@link projectRateInsight} consumes the un-aliased response
-//     keys. If the server ever rejects un-aliased selections, #445
-//     E2E catches it on the live wire (this is a Track 1 op).
+//   - Per-variant aliases on `TalentJobRateInsight` union members
+//     (`competitiveRevenue` / `uncompetitiveRevenue` for
+//     `estimatedRevenue`, plus the matching `*Explanation` pair):
+//     bare same-name selection was rejected with HTTP 400 on the
+//     live wire (#610) despite the synthesized SDL declaring both
+//     members compatible under FieldsInSetCanMerge. {@link RateInsightWire}
+//     consumes the aliased keys.
 // ---------------------------------------------------------------------
 
 const JOB_APPLY_DATA_QUERY = `query JobApplyData($jobId: ID!) {
@@ -1679,14 +1673,14 @@ const JOB_APPLICATION_RATE_INSIGHT_QUERY = `query JobApplicationRateInsight($job
         __typename
         ... on TalentJobRateInsightCompetitive {
           __typename
-          estimatedRevenue
-          estimatedRevenueExplanation
+          competitiveRevenue: estimatedRevenue
+          competitiveRevenueExplanation: estimatedRevenueExplanation
           longTermDisclaimer
         }
         ... on TalentJobRateInsightUncompetitive {
           __typename
-          estimatedRevenue
-          estimatedRevenueExplanation
+          uncompetitiveRevenue: estimatedRevenue
+          uncompetitiveRevenueExplanation: estimatedRevenueExplanation
           recentApplicationRate
           recommendedRate
         }
@@ -1775,17 +1769,21 @@ interface JobApplicationQuestionsResponse {
   errors?: GraphQLErrorEntry[] | null;
 }
 
+// Wire shape uses per-variant aliased keys (#610 — see query body for
+// rationale); the public `RateInsight` type shares `estimatedRevenue` across
+// kind-narrowed branches. {@link projectRateInsight} bridges. Adding a field
+// here without updating the projection breaks at the type level.
 type RateInsightWire =
   | {
       __typename: "TalentJobRateInsightCompetitive";
-      estimatedRevenue: string | null;
-      estimatedRevenueExplanation: string | null;
+      competitiveRevenue: string | null;
+      competitiveRevenueExplanation: string | null;
       longTermDisclaimer: string | null;
     }
   | {
       __typename: "TalentJobRateInsightUncompetitive";
-      estimatedRevenue: string | null;
-      estimatedRevenueExplanation: string | null;
+      uncompetitiveRevenue: string | null;
+      uncompetitiveRevenueExplanation: string | null;
       recentApplicationRate: string | null;
       recommendedRate: string | null;
     };
@@ -1879,8 +1877,8 @@ function projectRateInsight(wire: RateInsightWire): RateInsight {
   if (wire.__typename === "TalentJobRateInsightCompetitive") {
     return {
       kind: "competitive",
-      estimatedRevenue: wire.estimatedRevenue,
-      estimatedRevenueExplanation: wire.estimatedRevenueExplanation,
+      estimatedRevenue: wire.competitiveRevenue,
+      estimatedRevenueExplanation: wire.competitiveRevenueExplanation,
       longTermDisclaimer: wire.longTermDisclaimer,
     };
   }
@@ -1903,8 +1901,8 @@ function projectRateInsight(wire: RateInsightWire): RateInsight {
   }
   return {
     kind: "uncompetitive",
-    estimatedRevenue: wire.estimatedRevenue,
-    estimatedRevenueExplanation: wire.estimatedRevenueExplanation,
+    estimatedRevenue: wire.uncompetitiveRevenue,
+    estimatedRevenueExplanation: wire.uncompetitiveRevenueExplanation,
     recentApplicationRate: wire.recentApplicationRate,
     recommendedRate: wire.recommendedRate,
   };
@@ -2996,26 +2994,15 @@ export async function apply(
     };
   }
 
-  // Pre-fetch via Promise.all — applyData + applyQuestions + rateInsight
-  // run concurrently. Promise.all rejects-on-first; intentional —
-  // any failure (NOT_FOUND, AuthRevokedError, GRAPHQL_ERROR) should
-  // block the mutation.
-  //
-  // The third return (rateInsight) is currently UNUSED by the apply
-  // path itself — the rate default comes from `preApply.suggestedRate`
-  // per REQ-A4, not from the insight's `recommendedRate`. The
-  // pre-fetch is still issued per the #426 AC ("Pre-fetch via
-  // Promise.all: applyData + applyQuestions + rateInsight") so the
-  // wire-traffic shape matches what the mobile app's apply screen
-  // issues (the insight is what the mobile app shows alongside the
-  // rate input).
-  // Future widening: surface the insight in the apply outcome so
-  // callers can render it post-apply.
-  const [preApply, questions] = await Promise.all([
-    applyData(token, jobId),
-    applyQuestions(token, jobId),
-    rateInsight(token, jobId),
-  ]);
+  const [preApply, questions] = await Promise.all([applyData(token, jobId), applyQuestions(token, jobId)]);
+
+  // #426 wire-traffic parity; result unused but the mobile app issues
+  // this alongside the blocking pre-fetches. Fire-and-forget per #610
+  // so a rate-insight wire regression cannot block JobApply.
+  void rateInsight(token, jobId).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`warning: JobApplicationRateInsight pre-fetch failed (apply continues): ${message}\n`);
+  });
 
   // Structural validation: every answer's id must resolve against
   // the inventory. The id-field name is asymmetric per the recovered
