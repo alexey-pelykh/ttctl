@@ -77,6 +77,9 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_employment_highlight",
   "ttctl_profile_employment_employer_autocomplete",
   "ttctl_profile_employment_list",
+  // #614 — additive merge ops over #541's full-replace `employment.update.skills`.
+  "ttctl_profile_employment_skills_add",
+  "ttctl_profile_employment_skills_remove",
   // portfolio (#75, 8 tools — `upload` exposed as two MCP tools)
   "ttctl_profile_portfolio_add",
   "ttctl_profile_portfolio_update",
@@ -234,7 +237,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (122 tools = 65 wave-3 profile [58 + 3 #341 list ops + 1 #466 specializations_show + 1 #467 specializations_apply + 1 #465 industries_add_connections + 1 #462 skills_add_connection + 1 #596 countries_list − 1 #544 reviews_submit_for_review] + 7 #15/#439/#440/#442/#470 applications [3 base + 1 interview_show + 1 interview_notes_show + 1 interview_guide_show + 1 availability_request_show] + 4 #371/#411 interest_requests + 2 #195 contracts + 8 #147/#155/#156 engagements + 5 #146 availability + 18 #148/#436/#452 jobs [13 base + 4 #436 apply-funnel + 1 #452 similar_answers] + 4 #13 timesheet [3 + 1 #374 pending_list] + 9 #149/#447/#448 payments [7 #149 + 1 #447 rate_current + 1 #448 summary])", () => {
+  it("registers exactly the EXPECTED_TOOLS set (124 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

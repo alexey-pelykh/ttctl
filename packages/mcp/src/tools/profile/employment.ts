@@ -612,6 +612,107 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
     },
   );
 
+  // Additive merge ops on `employment.skills`. Wraps the full-replace
+  // `employment.update.skills` path with read-merge-write — caller
+  // supplies only the ids to add or remove; ttctl owns dedupe/filter.
+  // Mirrors `employment_update`'s dryRun convention: the MCP-side
+  // preview is built from a placeholder skill set (`mergeable-skills`)
+  // rather than firing the apply-path read, preserving the
+  // zero-transport-in-dryRun invariant. The CLI surface fires the read
+  // for an accurate merged preview — see `core.profile.employment.skills`.
+  for (const op of ["add", "remove"] as const) {
+    const verb = op === "add" ? "Link" : "Unlink";
+    const idempotencyNote =
+      op === "add"
+        ? "Ids already linked to the entry are silently skipped — supplying only already-linked ids returns a no-op."
+        : "Ids not currently linked are silently dropped — supplying only un-linked ids returns a no-op.";
+    const refusalNote =
+      op === "remove"
+        ? " Refuses with VALIDATION_ERROR when the filtered set would leave the entry with zero skills — use `ttctl_profile_employment_remove` to drop the whole row instead."
+        : "";
+    server.registerTool(
+      `ttctl_profile_employment_skills_${op}`,
+      {
+        title: `${verb} catalog skills on an employment entry`,
+        description:
+          `${verb} one or more catalog ProfileSkillSet ids ` +
+          `${op === "add" ? "to" : "from"} an existing employment entry's skill set. ` +
+          `Convenience over the full-replace \`employment_update.skills\` path — caller passes ONLY the ids to ` +
+          `${op === "add" ? "add" : "remove"} and ttctl handles the merge. ${idempotencyNote}${refusalNote} ` +
+          `Discover ProfileSkillSet ids via \`ttctl_profile_skills_list\`.`,
+        inputSchema: {
+          employmentId: z.string().min(1).describe("employment id (V1-Employment-NNN)"),
+          skillSetIds: z
+            .array(z.string().min(1))
+            .min(1)
+            .describe(
+              "ProfileSkillSet ids (V1-ProfileSkillSet-NNN). Discover via `ttctl_profile_skills_list`. " +
+                "Same id surface as the row's read echo `Employment.skills[i].id`.",
+            ),
+          dryRun: DRY_RUN_FIELD,
+        },
+      },
+      async (input) => {
+        const auth = await ctx.resolveTokenForTool(`profile.employment.skills.${op}`);
+        if ("error" in auth) return auth.error;
+
+        if (input.dryRun === true) {
+          // Zero-network preview: the merged skills array is a
+          // placeholder because the apply path's read is skipped here.
+          // Honest about NOT showing the post-merge result; callers
+          // wanting the resolved set should use the CLI surface (fires
+          // the read) or call `ttctl_profile_employment_show` first.
+          const previewEmployment: Record<string, unknown> = {
+            experienceItems: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            position: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            skills: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            showViaToptal: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            toptalRelated: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            startDate: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            endDate: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            company: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            publicationPermit: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            employerId: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            industryIds: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+            managementExperience: profile.employment.DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER,
+          };
+          return dryRunResponse(
+            buildMcpDryRunPreview(
+              "UpdateEmployment",
+              "talent-profile",
+              { input: { employmentId: input.employmentId, employment: previewEmployment } },
+              auth.token,
+            ),
+          );
+        }
+
+        try {
+          const outcome =
+            op === "add"
+              ? await profile.employment.skills.add(auth.token, input.employmentId, {
+                  skillSetIds: input.skillSetIds,
+                })
+              : await profile.employment.skills.remove(auth.token, input.employmentId, {
+                  skillSetIds: input.skillSetIds,
+                });
+          // The apply-path service never returns a preview outcome.
+          if (outcome.kind === "preview") {
+            return presentToolError(
+              `profile.employment.skills.${op}`,
+              new Error("unexpected preview outcome on apply path"),
+            );
+          }
+          return jsonSuccess({
+            result: outcome.result,
+            ...(outcome.kind === "noop" ? { noop: true as const, reason: outcome.reason } : { noop: false as const }),
+          });
+        } catch (err) {
+          return presentToolError(`profile.employment.skills.${op}`, err);
+        }
+      },
+    );
+  }
+
   server.registerTool(
     "ttctl_profile_employment_employer_autocomplete",
     {
