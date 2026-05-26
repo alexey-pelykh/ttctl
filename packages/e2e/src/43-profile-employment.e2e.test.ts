@@ -118,24 +118,15 @@ describe("profile employment #344 read/write parity (live talent-profile, INFERR
       const sentinelReportingTo = `e2e reporting line ${ts}`;
 
       let createdId: string | undefined;
+      // Custom (non-catalog) row keeps the #344 parity test independent
+      // of catalog state; noEmployer + noWebsite is the #484 anchor pair.
       try {
-        // Per #395: `add()` now returns a discriminated `AddOutcome`.
-        // The sentinel `company` won't autocomplete-resolve, so we pass
-        // `employerId: "stub"` via the bypass path — but the apply path
-        // would then send the stub to the live server and get rejected
-        // with a USER_ERROR (server-side employerId-doesn't-exist
-        // validation). The downstream `errorCode(err) === "USER_ERROR"`
-        // catch in this test already handles that case — it's the
-        // same anti-pattern #394 will fix. Pre-#395 (when company was
-        // sent directly), the same USER_ERROR fired on `employerId:
-        // "You can't leave this empty"`. Now the failure mode shifts
-        // to autocomplete-0-match (`VALIDATION_ERROR`); we adapt by
-        // passing a real Toptal employer name so the autocomplete
-        // resolves transparently.
         const outcome = await profile.employment.add(token, {
-          company: "Toptal",
+          company: sentinelCompany,
           position: "E2E Engineer",
           startDate: 2020,
+          noEmployer: true,
+          noWebsite: true,
         });
         if (outcome.kind !== "created") throw new Error("unreachable: dryRun not set");
         const created = outcome.result;
@@ -151,8 +142,6 @@ describe("profile employment #344 read/write parity (live talent-profile, INFERR
 
         // Write the two scalar parity fields the input accepts without a
         // catalog lookup, then read them back.
-        // `sentinelCompany` is unused now that we autocomplete-resolve via "Toptal".
-        void sentinelCompany;
         const updated = await profile.employment.update(token, created.id, {
           publicationPermit: false,
           reportingTo: sentinelReportingTo,
