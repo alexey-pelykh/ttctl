@@ -162,21 +162,30 @@ describe("applications confirm with questions (live mobile-gateway, #411, #428)"
   it.skipIf(!e2eEnabled)(
     "`applications confirm --answers-file --pitch-file` (dry-run) echoes the parsed payload into the preview variables",
     async () => {
-      // Stage temp JSON files. ADR-008 § Decision Part 2 locks the
-      // wrapper shape; the inner content is Stage-1 opaque
-      // pass-through.
-      const tmp = mkdtempSync(join(tmpdir(), "ttctl-e2e-55-"));
+      // Fixture shapes match the recovered Zod input schemas tightened
+      // by #438 — matcher answers use { id, answer }; expertise answers
+      // use { questionId, other, subjectId }; PitchInput requires every
+      // nullable slot explicitly present (codegen `nullishBehavior:
+      // "nullable"`).
+      const tmp = mkdtempSync(join(tmpdir(), "ttctl-e2e-58-"));
       const answersPath = join(tmp, "answers.json");
       const pitchPath = join(tmp, "pitch.json");
-      writeFileSync(
-        answersPath,
-        JSON.stringify({
-          matcherAnswers: [{ questionId: "MQ-1", answer: "test-matcher-answer" }],
-          expertiseAnswers: [{ questionId: "EQ-1", answer: "test-expertise-answer" }],
-        }),
-        "utf8",
-      );
-      writeFileSync(pitchPath, JSON.stringify({ message: "test pitch message" }), "utf8");
+      const answersPayload = {
+        matcherAnswers: [{ id: "MQ-1", answer: "test-matcher-answer" }],
+        expertiseAnswers: [{ questionId: "EQ-1", other: "test-expertise-answer", subjectId: null }],
+      };
+      const pitchPayload = {
+        certificationPitchItems: null,
+        educationPitchItems: null,
+        employmentPitchItems: null,
+        industryPitchItems: null,
+        mentorship: "test pitch message",
+        portfolioPitchItems: null,
+        publicationPitchItems: null,
+        skillPitchItems: null,
+      };
+      writeFileSync(answersPath, JSON.stringify(answersPayload), "utf8");
+      writeFileSync(pitchPath, JSON.stringify(pitchPayload), "utf8");
 
       const result = await cli.run([
         "--dry-run",
@@ -204,13 +213,9 @@ describe("applications confirm with questions (live mobile-gateway, #411, #428)"
       // pass in confirm.ts (`narrowAnswersPayload` / `narrowPitchPayload`)
       // is what binds the JSON `matcherAnswers` key to the wire's
       // `matcherQuestionsAnswers` variable.
-      expect(payload.preview?.variables?.["matcherQuestionsAnswers"]).toEqual([
-        { questionId: "MQ-1", answer: "test-matcher-answer" },
-      ]);
-      expect(payload.preview?.variables?.["expertiseQuestionsAnswers"]).toEqual([
-        { questionId: "EQ-1", answer: "test-expertise-answer" },
-      ]);
-      expect(payload.preview?.variables?.["pitchInput"]).toEqual({ message: "test pitch message" });
+      expect(payload.preview?.variables?.["matcherQuestionsAnswers"]).toEqual(answersPayload.matcherAnswers);
+      expect(payload.preview?.variables?.["expertiseQuestionsAnswers"]).toEqual(answersPayload.expertiseAnswers);
+      expect(payload.preview?.variables?.["pitchInput"]).toEqual(pitchPayload);
     },
   );
 
