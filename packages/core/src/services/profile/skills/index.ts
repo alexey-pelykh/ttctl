@@ -16,19 +16,15 @@
  * | `list`           | `getSkillSetsWithConnectionsWithConnectionsCount`       |
  * | `autocomplete`   | `GET_SKILLS_FOR_AUTOCOMPLETE`                           |
  * | `readiness`      | `getSkillsReadiness`                                    |
- * | `add-connection` | `addProfileSkillSetConnection` (Pattern-6, #462)        |
- * | `remove-connection` | `removeProfileSkillSetConnection` (#463)             |
+ * | `add-connection` | `addProfileSkillSetConnection`                          |
+ * | `remove-connection` | `removeProfileSkillSetConnection`                    |
  *
- * **Cardinality (per issue #73, amended by #462 + #463)**: 19 raw
- * operations → 9 leaves. #462 promoted `addProfileSkillSetConnection`
- * from "folded into `add`" to a standalone leaf — connection semantics
- * (linking an existing skillSet to a portfolio / education / employment
- * / certification row) are materially distinct from creating a
- * skillSet, the input schema differs, and ADR-009 (ttctl) gates the
- * call with a `profile-capability` consent ceremony that does not apply
- * to plain `add`. #463 adds the matching `remove-connection` leaf —
- * per-edge unlink without removing the whole skill-set, completing the
- * Pattern-6 add/remove pair. Full mapping table:
+ * **Cardinality**: 19 raw operations → 9 leaves. `add-connection` and
+ * `remove-connection` are per-edge link/unlink ops — distinct from
+ * `add` / `rm` because they link an existing skill-set to a
+ * portfolio / education / employment / certification row, gated by the
+ * ADR-009 (ttctl) `profile-capability` consent ceremony. Full mapping
+ * table:
  *
  * - `ADD_PROFILE_SKILL_SET`                                            → `add`
  * - `REMOVE_PROFILE_SKILL_SET`, `RemoveProfileSkillSet`                → `rm`
@@ -1108,25 +1104,22 @@ export async function readiness(token: string, profileId: string): Promise<Skill
 }
 
 // -----------------------------------------------------------------------
-// add-connection — addProfileSkillSetConnection (Pattern-6, #462)
+// add-connection — addProfileSkillSetConnection
 // -----------------------------------------------------------------------
 
 /**
- * Connection-target taxonomy for {@link addConnection}. Mirrors the
- * talent_profile `SkillConnectionType` enum recovered from the read-side
- * `SkillConnections` fragment per
- * `research/notes/10-mutation-input-patterns.md` § Pattern 6. The enum
- * is NOT in the synthesized SDL — `addProfileSkillSetConnection` is in
- * `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` (`codegen.config.ts`), so no
- * generated `SkillConnectionType` exists. T1 disposition pins the
- * response shape via wire snapshot; the input enum stays here as the
- * authority until a live capture lands.
+ * Connection-target taxonomy for the CLI / MCP `--connection-type` flag.
+ * NOT sent on the wire — the server resolves the target from the Relay
+ * node id's type segment. The enum survives as a client-side UX guard:
+ * the caller declares the expected type, the service cross-checks
+ * against the connectionId prefix, mismatches surface as
+ * `VALIDATION_ERROR` before any wire call.
  */
 export type SkillConnectionType = "EMPLOYMENT" | "EDUCATION" | "PORTFOLIO_ITEM" | "CERTIFICATION";
 
 /**
  * Frozen list of permitted {@link SkillConnectionType} values — used by
- * the service's runtime validation and re-exported through the CLI / MCP
+ * the client-side cross-check and re-exported through the CLI / MCP
  * surfaces so `--help` text and Zod enums share one source of truth.
  */
 export const SKILL_CONNECTION_TYPES: readonly SkillConnectionType[] = Object.freeze([
@@ -1135,6 +1128,19 @@ export const SKILL_CONNECTION_TYPES: readonly SkillConnectionType[] = Object.fre
   "PORTFOLIO_ITEM",
   "CERTIFICATION",
 ]);
+
+const RELAY_PREFIX_TO_CONNECTION_TYPE: Readonly<Record<string, SkillConnectionType>> = Object.freeze({
+  Employment: "EMPLOYMENT",
+  Education: "EDUCATION",
+  Certification: "CERTIFICATION",
+  PortfolioItem: "PORTFOLIO_ITEM",
+});
+
+function inferConnectionTypeFromId(connectionId: string): SkillConnectionType | null {
+  const match = /^V1-([A-Za-z]+)-/.exec(connectionId);
+  if (!match) return null;
+  return RELAY_PREFIX_TO_CONNECTION_TYPE[match[1] ?? ""] ?? null;
+}
 
 /**
  * Per-domain consent ceremony for {@link addConnection}. Per
@@ -1147,28 +1153,16 @@ export const SKILL_CONNECTION_TYPES: readonly SkillConnectionType[] = Object.fre
  * JSON-sourced inputs (CLI / MCP / agents).
  */
 export interface AddSkillConnectionConsent {
-  /**
-   * MUST be `true` — acknowledges that this writes a recruiter-visible
-   * skill→entity link to the public profile. See ADR-009 (ttctl)
-   * § Decision Part 1 for the per-domain consent vocabulary.
-   */
   // write-only: ADR-009 (ttctl) per-domain consent literal — TTCtl-layer
   // gate field, never echoed by the wire.
   profileCapabilityConsentIssued: true;
 }
 
 /**
- * Caller-facing input for {@link addConnection}. Mirrors the Pattern-6
- * wire input `AddProfileSkillSetConnectionInput` from
- * `research/notes/10-mutation-input-patterns.md` § Pattern 6:
- *
- * ```
- * input AddProfileSkillSetConnectionInput {
- *   skillSetId: ID!
- *   connectionType: SkillConnectionType!
- *   connectionId: ID!
- * }
- * ```
+ * Caller-facing input for {@link addConnection}. The wire input is
+ * `{ skillSetId, connectionId }`; {@link connectionType} is a
+ * TTCtl-layer UX guard cross-checked against the connectionId Relay
+ * prefix, not sent on the wire.
  */
 export interface AddSkillConnectionFields {
   /**
@@ -1177,16 +1171,16 @@ export interface AddSkillConnectionFields {
    */
   skillSetId: string;
   /**
-   * Type of the target entity. Determines which row-class the
-   * {@link connectionId} resolves against. See {@link SkillConnectionType}
-   * for the enum members.
+   * Declared target type. NOT sent on the wire — cross-checked against
+   * the {@link connectionId} Relay prefix; mismatches throw
+   * `VALIDATION_ERROR`.
    */
   connectionType: SkillConnectionType;
   /**
-   * Target row id — must be one of the talent's own entities of the
-   * matching type. `V1-Employment-<n>` for `EMPLOYMENT`,
+   * Target row id — `V1-Employment-<n>` for `EMPLOYMENT`,
    * `V1-Education-<n>` for `EDUCATION`, `V1-Certification-<n>` for
-   * `CERTIFICATION`, `V1-PortfolioItem-<n>` for `PORTFOLIO_ITEM`.
+   * `CERTIFICATION`, `V1-PortfolioItem-<n>` for `PORTFOLIO_ITEM`. The
+   * Relay type segment is the wire-side discriminator.
    */
   connectionId: string;
 }
@@ -1285,61 +1279,39 @@ interface AddSkillSetConnectionData {
 
 /**
  * Link a `ProfileSkillSet` to a single employment / education /
- * certification / portfolio row — wire `addProfileSkillSetConnection`
- * (Pattern-6 per `research/notes/10-mutation-input-patterns.md`, #462).
+ * certification / portfolio row.
  *
  * Flow:
- *   1. **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain):
- *      refuses the call with `ConsentRequiredError("CONSENT_REQUIRED")`
- *      BEFORE any wire call when `input.profileCapabilityConsentIssued
- *      !== true`. Fires BEFORE the dry-run short-circuit so a probe
- *      with consent absent does NOT emit a preview for a call that
- *      would have been refused. The `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1`
- *      env-var bypasses the literal check for non-interactive CI / test
- *      contexts. See ADR-009 (ttctl) § Decision Part 1.
- *   2. **Input validation**: `skillSetId` / `connectionId` non-empty;
- *      `connectionType` ∈ {@link SKILL_CONNECTION_TYPES}.
- *   3. **Dry-run short-circuit**: when `options.dryRun === true`, emits
- *      a {@link DryRunPreview} with the prepared variables and returns
- *      `{ kind: "preview", preview }`. Zero network calls in the
- *      dry-run path.
- *   4. **Wire call**: issues `addProfileSkillSetConnection` against the
- *      talent-profile surface via `impersonatedTransport`.
- *   5. **Error mapping**: `payload.errors[]` non-empty OR
- *      `payload.success === false` surfaces as `USER_ERROR` with the
- *      server-supplied detail (e.g., "Connection already exists.",
- *      "Unknown connectionId.").
+ *   1. Consent gate (ADR-009 (ttctl) `profile-capability` domain) — fires
+ *      BEFORE the dry-run short-circuit.
+ *   2. Input validation: `skillSetId` / `connectionId` non-empty;
+ *      `connectionType` ∈ {@link SKILL_CONNECTION_TYPES}; the
+ *      `connectionId` Relay prefix matches the declared `connectionType`
+ *      (client-side guard — server discriminates from the Relay id
+ *      itself).
+ *   3. Dry-run short-circuit on `options.dryRun === true`.
+ *   4. Wire call: `addProfileSkillSetConnection` against the
+ *      talent-profile surface via `impersonatedTransport`. Wire
+ *      variables are `{ skillSetId, connectionId }`.
+ *   5. Error mapping: `payload.errors[]` non-empty OR
+ *      `payload.success === false` surfaces as `USER_ERROR`.
  *
- * **INFERRED wire shape** — see CLAUDE.md § Schema/contract validation
- * rule. The schema gap is twofold:
- *   - `AddProfileSkillSetConnectionInput` is not in the synthesized SDL
- *     (`{ _placeholder: String }` placeholder); shape recovered from
- *     `research/notes/10` § Pattern 6.
- *   - `AddProfileSkillSetConnectionPayload` exists in the SDL but its
- *     `skillSet` field is typed `Unknown`. The selection above
- *     (`{ id, connections { totalCount, nodes { ... on Node { id } } },
- *     success, notice, errors }`) mirrors the working `ADD_PROFILE_SKILL_SET`
- *     and `GET_SKILL_SET_QUERY` shapes for the same surface.
- *
- * **T1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track 2):
- * `addProfileSkillSetConnection` has no generated operation type → T1
- * (wire-shape snapshot). The committed snapshot at
+ * T1 disposition — `addProfileSkillSetConnection` has no generated
+ * operation type. The committed snapshot at
  * `packages/e2e/src/wire-snapshots/addProfileSkillSetConnection.snapshot.json`
- * (captured on the gated `TTCTL_E2E_ADD_SKILL_CONNECTION=…` run) is the
- * continuous drift defense.
+ * is the continuous drift defense.
  *
  * Errors:
  * - `ConsentRequiredError("CONSENT_REQUIRED")` when consent is absent.
  * - `SkillsError("VALIDATION_ERROR")` on empty `skillSetId` /
- *   `connectionId`, or on a `connectionType` outside
- *   {@link SKILL_CONNECTION_TYPES}.
+ *   `connectionId`, on a `connectionType` outside
+ *   {@link SKILL_CONNECTION_TYPES}, on a `connectionId` whose Relay
+ *   prefix is unrecognized, or on a prefix-vs-type mismatch.
  * - `SkillsError("USER_ERROR")` on a `success: false` / non-empty
- *   `errors[]` payload (unknown ids, ownership mismatch, duplicate
- *   connection).
+ *   `errors[]` payload.
  * - `SkillsError("UNKNOWN")` on a null/missing payload.
  * - `AuthRevokedError`, `Cf403Error`, plus standard
- *   `GRAPHQL_ERROR` / `NETWORK_ERROR` / `UNKNOWN` codes from the shared
- *   transport-error path.
+ *   `GRAPHQL_ERROR` / `NETWORK_ERROR` / `UNKNOWN` codes.
  */
 export async function addConnection(
   token: string,
@@ -1347,11 +1319,9 @@ export async function addConnection(
   consent: AddSkillConnectionConsent,
   options: AddSkillConnectionOptions = {},
 ): Promise<AddSkillConnectionOutcome> {
-  // Runtime consent gate — covers `as`-cast bypasses and JSON-sourced
-  // inputs from CLI/MCP/agents. The static type
-  // `profileCapabilityConsentIssued: true` narrows to compile-time-true,
-  // which would otherwise make this check look like dead code; the
-  // widening cast is load-bearing.
+  // Runtime gate covers `as`-cast bypasses and JSON-sourced inputs
+  // (CLI/MCP/agents) — the static `true` literal would otherwise make
+  // this look like dead code.
   ensureDestructiveConsent(
     "addProfileSkillSetConnection",
     "profile-capability",
@@ -1370,11 +1340,23 @@ export async function addConnection(
       `Invalid connectionType "${fields.connectionType}". Must be one of: ${SKILL_CONNECTION_TYPES.join(", ")}.`,
     );
   }
+  const inferredType = inferConnectionTypeFromId(fields.connectionId);
+  if (inferredType === null) {
+    throw new SkillsError(
+      "VALIDATION_ERROR",
+      `connectionId "${fields.connectionId}" does not match the expected Relay format (V1-Employment-<n> / V1-Education-<n> / V1-Certification-<n> / V1-PortfolioItem-<n>).`,
+    );
+  }
+  if (inferredType !== fields.connectionType) {
+    throw new SkillsError(
+      "VALIDATION_ERROR",
+      `connectionId "${fields.connectionId}" is a ${inferredType} but connectionType declared ${fields.connectionType}.`,
+    );
+  }
 
   const variables = {
     input: {
       skillSetId: fields.skillSetId,
-      connectionType: fields.connectionType,
       connectionId: fields.connectionId,
     },
   };
@@ -1507,10 +1489,9 @@ interface RemoveSkillSetConnectionData {
 }
 
 /**
- * Per-edge unlink (#463) — sibling of {@link addConnection}. Captured
- * wire input is `{ skillSetId, connectionId }` (no `connectionType` —
- * server discriminates from the Relay id; refutes prior Pattern-6
- * inference in `research/notes/10`).
+ * Per-edge unlink — sibling of {@link addConnection}. Wire input is
+ * `{ skillSetId, connectionId }`; the server discriminates the target
+ * from the Relay id.
  */
 export async function removeConnection(
   token: string,

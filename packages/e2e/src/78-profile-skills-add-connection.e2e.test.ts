@@ -2,46 +2,17 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `ttctl profile skills add-connection` (#462 — Pattern-6
- * `addProfileSkillSetConnection`).
+ * E2E coverage for `ttctl profile skills add-connection`. T1
+ * disposition; wire is `{ skillSetId, connectionId }` (`connectionType`
+ * is a client-side UX guard, not a wire field).
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
- * `addProfileSkillSetConnection` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`
- * (`codegen.config.ts`); both the input shape (`AddProfileSkillSetConnectionInput`
- * — `{ _placeholder: String }` in the synthesized SDL) and the response
- * shape (`AddProfileSkillSetConnectionPayload` — `{ profile: Unknown,
- * skillSet: Unknown }`) are gappy. The live wire is the only authority
- * on the Pattern-6 input from `research/notes/10` § Pattern 6 and the
- * payload selection mirroring the sibling `GetSkillSetWithConnections`.
+ * Always-on: dry-run preview + consent-missing refusal (no wire calls).
  *
- * Coverage:
- *
- *   - **Always-on**: dry-run preview (no wire call) + consent-missing
- *     refusal (no wire call). These pin the envelope shape, the
- *     consent-gate's `CONSENT_REQUIRED` code, the Pattern-6 wire input
- *     shape, and the operationName forwarding without touching real
- *     application state.
- *
- *   - **Gated DESTRUCTIVE positive path**: only runs when
- *     `TTCTL_E2E_ADD_SKILL_CONNECTION=<skillSetId>:<connectionType>:<connectionId>`
- *     is exported. The operator supplies a real
- *     `ProfileSkillSet` id + a matching entity id from their own
- *     profile (employment / education / certification / portfolio).
- *     Applying writes a new recruiter-visible link onto the public
- *     profile; the only undo via TTCtl is removing the whole skill-set
- *     (`profile skills rm` cascades the connections server-side).
- *     Only set the env var when you intend to actually link.
- *
- * **Wire-shape snapshot** (T1 per ADR-006 / `docs/wire-validation-routing.md`):
- * the gated positive path captures `addProfileSkillSetConnection.snapshot.json`
- * on first run with `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`; thereafter
- * `assertWireShapeStable(...)` runs on every `TTCTL_E2E=1` invocation
- * (gated by the env var — the snapshot can only be captured when the
- * operator opts into the destructive call).
- *
- * Disposition: **T1** (wire-shape snapshot). `addProfileSkillSetConnection`
- * is in the codegen-exclusion list, so no T2 Zod schema is generated;
- * `assertWireShapeStable` is the continuous wire-drift defense.
+ * Gated DESTRUCTIVE positive path: runs when
+ * `TTCTL_E2E_ADD_SKILL_CONNECTION=<skillSetId>:<connectionType>:<connectionId>`
+ * is exported. Captures `addProfileSkillSetConnection.snapshot.json` on
+ * first run with `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`; thereafter
+ * `assertWireShapeStable(...)` runs on every `TTCTL_E2E=1` invocation.
  */
 
 // e2e-covers: addProfileSkillSetConnection
@@ -102,7 +73,7 @@ function parseFixture(raw: string): ParsedFixture {
   };
 }
 
-describe("profile skills add-connection (live talent-profile, #462)", () => {
+describe("profile skills add-connection (live talent-profile)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 
@@ -158,7 +129,6 @@ describe("profile skills add-connection (live talent-profile, #462)", () => {
       expect(payload.preview?.transport).toBe("impersonated");
       expect(payload.preview?.variables?.input).toEqual({
         skillSetId: "V1-ProfileSkillSet-fake-dry-run",
-        connectionType: "EMPLOYMENT",
         connectionId: "V1-Employment-fake-dry-run",
       });
       expect(payload.preview?.headers?.["authorization"]).toBe("Token token=<redacted>");

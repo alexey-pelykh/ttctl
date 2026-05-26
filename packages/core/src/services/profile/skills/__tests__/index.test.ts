@@ -744,10 +744,10 @@ describe("skills.readiness", () => {
 });
 
 // -----------------------------------------------------------------------
-// addConnection — Pattern-6 addProfileSkillSetConnection (#462)
+// addConnection — addProfileSkillSetConnection
 // -----------------------------------------------------------------------
 
-describe("skills.addConnection (#462 — Pattern-6 addProfileSkillSetConnection)", () => {
+describe("skills.addConnection (addProfileSkillSetConnection)", () => {
   const CONSENT: AddSkillConnectionConsent = { profileCapabilityConsentIssued: true };
   const FIELDS = {
     skillSetId: "V1-ProfileSkillSet-1",
@@ -839,9 +839,27 @@ describe("skills.addConnection (#462 — Pattern-6 addProfileSkillSetConnection)
     expect(mocked).not.toHaveBeenCalled();
   });
 
+  it("refuses with VALIDATION_ERROR on an unrecognized connectionId Relay prefix (no wire call)", async () => {
+    const bad = { ...FIELDS, connectionId: "V2-Something-1" };
+    await expect(addConnection(TOKEN, bad, CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("V2-Something-1"),
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("refuses with VALIDATION_ERROR on a prefix-vs-type mismatch (no wire call)", async () => {
+    const bad = { ...FIELDS, connectionType: "EDUCATION" as const, connectionId: "V1-Employment-42" };
+    await expect(addConnection(TOKEN, bad, CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/V1-Employment-42.*EMPLOYMENT.*EDUCATION/),
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
   // -------- Dry-run short-circuit --------
 
-  it("emits a DryRunPreview with the prepared variables and makes no wire call", async () => {
+  it("emits a DryRunPreview with the prepared 2-field variables and makes no wire call", async () => {
     const outcome = await addConnection(TOKEN, FIELDS, CONSENT, { dryRun: true });
     expect(outcome.kind).toBe("preview");
     if (outcome.kind !== "preview") return;
@@ -851,7 +869,6 @@ describe("skills.addConnection (#462 — Pattern-6 addProfileSkillSetConnection)
     expect(outcome.preview.variables).toEqual({
       input: {
         skillSetId: "V1-ProfileSkillSet-1",
-        connectionType: "EMPLOYMENT",
         connectionId: "V1-Employment-42",
       },
     });
@@ -861,7 +878,7 @@ describe("skills.addConnection (#462 — Pattern-6 addProfileSkillSetConnection)
 
   // -------- Apply-path wire shape --------
 
-  it("dispatches addProfileSkillSetConnection against the talent-profile surface with the Pattern-6 variables", async () => {
+  it("dispatches addProfileSkillSetConnection with the 2-field input", async () => {
     reply({ body: ADD_CONNECTION_OK_BODY });
     await addConnection(TOKEN, FIELDS, CONSENT);
     const call = mocked.mock.calls[0]?.[0];
@@ -871,7 +888,6 @@ describe("skills.addConnection (#462 — Pattern-6 addProfileSkillSetConnection)
     expect(call?.body.variables).toEqual({
       input: {
         skillSetId: "V1-ProfileSkillSet-1",
-        connectionType: "EMPLOYMENT",
         connectionId: "V1-Employment-42",
       },
     });
