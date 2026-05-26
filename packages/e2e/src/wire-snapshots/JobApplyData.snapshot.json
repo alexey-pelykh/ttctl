@@ -1,0 +1,57 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-26T05:50:24.309Z",
+  "operationName": "JobApplyData",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "applyErrors": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "code": {
+              "kind": "string"
+            },
+            "message": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "canApply": {
+        "kind": "boolean"
+      },
+      "job": {
+        "kind": "object",
+        "fields": {
+          "hasRequiredApplicationPitch": {
+            "kind": "boolean"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "isCoaching": {
+            "kind": "boolean"
+          }
+        }
+      },
+      "rateValidation": {
+        "kind": "object",
+        "fields": {
+          "minRate": {
+            "kind": "string"
+          },
+          "rateStep": {
+            "kind": "number"
+          }
+        }
+      },
+      "suggestedRate": {
+        "kind": "string"
+      }
+    }
+  }
+}

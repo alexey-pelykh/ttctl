@@ -186,7 +186,15 @@ export async function callGatewayShared<T, E extends Error>(
     throw new AuthRevokedError("Session is invalid or expired.");
   }
   if (res.status < 200 || res.status >= 300) {
-    throw new errorFactory("UNKNOWN", `${operationName} returned HTTP ${res.status.toString()}`);
+    // #610: surface body.errors[0].message on non-2xx so wire breakages self-diagnose
+    // (HTTP 400s usually carry GRAPHQL_VALIDATION_FAILED details; discarding them
+    // forces operators to re-curl manually to identify the rejection).
+    const errBody = res.body as { errors?: GraphQLErrorEntry[] | null } | null;
+    const detail = errBody?.errors?.[0]?.message;
+    throw new errorFactory(
+      "UNKNOWN",
+      `${operationName} returned HTTP ${res.status.toString()}${detail !== undefined ? `: ${detail}` : ""}`,
+    );
   }
 
   const body = res.body as { data?: T | null; errors?: GraphQLErrorEntry[] | null } | null;
