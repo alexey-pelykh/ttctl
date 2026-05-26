@@ -135,7 +135,7 @@ describe("buildProfileSkillsCommand", () => {
   const cmd = buildProfileSkillsCommand();
   const subNames = cmd.commands.map((c) => c.name());
 
-  it("registers exactly the eight leaves the issue specifies (#73 + #462 add-connection)", () => {
+  it("registers exactly the nine leaves the issue specifies (#73 + #462 add-connection + #463 remove-connection)", () => {
     expect(subNames.sort()).toEqual([
       "add",
       "add-connection",
@@ -143,6 +143,7 @@ describe("buildProfileSkillsCommand", () => {
       "list",
       "readiness",
       "remove",
+      "remove-connection",
       "show",
       "update",
     ]);
@@ -159,6 +160,15 @@ describe("buildProfileSkillsCommand", () => {
         "--consent-profile-capability",
       ]),
     );
+  });
+
+  it("remove-connection leaf accepts --skill-set-id, --connection-id, --consent-profile-capability flags (#463 — NO --connection-type per captured wire)", () => {
+    const removeConn = cmd.commands.find((c) => c.name() === "remove-connection");
+    const flags = removeConn?.options.map((o) => o.long);
+    expect(flags).toEqual(
+      expect.arrayContaining(["--skill-set-id", "--connection-id", "--consent-profile-capability"]),
+    );
+    expect(flags).not.toContain("--connection-type");
   });
 
   it("declares `rm` as an alias on the `remove` leaf (per issue #72 convention)", () => {

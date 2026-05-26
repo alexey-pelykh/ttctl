@@ -322,6 +322,69 @@ async function runSkillsAddConnection(options: SkillsAddConnectionOptions): Prom
   });
 }
 
+interface SkillsRemoveConnectionOptions {
+  skillSetId?: string;
+  connectionId?: string;
+  consentProfileCapability?: boolean;
+  output: OutputFormat;
+}
+
+async function runSkillsRemoveConnection(options: SkillsRemoveConnectionOptions): Promise<void> {
+  const commandLabel = "profile skills remove-connection";
+  const format = options.output;
+
+  const skillSetId = options.skillSetId?.trim();
+  if (skillSetId === undefined || skillSetId.length === 0) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [{ code: "VALIDATION_ERROR", message: "Missing required flag: --skill-set-id." }],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): missing --skill-set-id.`,
+    });
+  }
+  const connectionId = options.connectionId?.trim();
+  if (connectionId === undefined || connectionId.length === 0) {
+    emitErrorAndExit({
+      operation: operationFor(commandLabel),
+      format,
+      errors: [{ code: "VALIDATION_ERROR", message: "Missing required flag: --connection-id." }],
+      prettySummary: `${commandLabel} failed (VALIDATION_ERROR): missing --connection-id.`,
+    });
+  }
+
+  const token = await loadTokenOrExit(commandLabel, format);
+  const dryRun = getCliDryRun();
+
+  const consent = {
+    profileCapabilityConsentIssued: options.consentProfileCapability ?? false,
+  } as unknown as profile.skills.RemoveSkillConnectionConsent;
+
+  let outcome: profile.skills.RemoveSkillConnectionOutcome;
+  try {
+    outcome = await profile.skills.removeConnection(token, { skillSetId, connectionId }, consent, { dryRun });
+  } catch (err) {
+    handleSkillsError(err, commandLabel, format);
+  }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: operationFor(commandLabel),
+      format,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const { result } = outcome;
+  emitUpdateSuccess({
+    operation: operationFor(commandLabel),
+    format,
+    updated: result,
+    prettySummary: `Unlinked connection ${connectionId} from skillSet ${result.skillSetId} (${result.connectionsCount.toString()} connection${result.connectionsCount === 1 ? "" : "s"} remaining).`,
+    notice: result.notice ?? undefined,
+  });
+}
+
 interface SkillsUpdateOptions {
   rating?: profile.skills.ProficiencyRating;
   experience?: string;
@@ -744,6 +807,34 @@ export function buildProfileSkillsCommand(): Command {
       )
       .action(async (options: SkillsAddConnectionOptions) => {
         await runSkillsAddConnection(options);
+      }),
+  );
+
+  markMutation(
+    skills
+      .command("remove-connection")
+      .description(
+        "Unlink a single connection from a ProfileSkillSet — per-edge sibling of `add-connection` (#463). Wire input is CAPTURED (`research/captures/web/inputs/RemoveProfileSkillSetConnectionInput.json`); no --connection-type flag — the server discriminates the target from the Relay id. Requires --consent-profile-capability per ADR-009 (ttctl). Discover the connection id via `profile skills show <skillSetId>`.",
+      )
+      .requiredOption(
+        "--skill-set-id <id>",
+        "ProfileSkillSet id (V1-ProfileSkillSet-NNN) — get via `profile skills list`",
+      )
+      .requiredOption(
+        "--connection-id <id>",
+        "Connection node id currently linked to the skill-set — V1-Employment-NNN / V1-Education-NNN / V1-Certification-NNN / V1-PortfolioItem-NNN. Get via `profile skills show <skillSetId>`.",
+      )
+      .option(
+        "--consent-profile-capability",
+        "REQUIRED — acknowledge that this removes a recruiter-visible skill→entity link from your public profile (ADR-009 (ttctl) profile-capability domain)",
+      )
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(async (options: SkillsRemoveConnectionOptions) => {
+        await runSkillsRemoveConnection(options);
       }),
   );
 

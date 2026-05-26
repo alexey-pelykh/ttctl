@@ -40,6 +40,7 @@ import { registerProfileSkillsAutocompleteTool } from "./profile_skills_autocomp
 import { registerProfileSkillsListTool } from "./profile_skills_list.js";
 import { registerProfileSkillsReadinessTool } from "./profile_skills_readiness.js";
 import { registerProfileSkillsRemoveTool } from "./profile_skills_remove.js";
+import { registerProfileSkillsRemoveConnectionTool } from "./profile_skills_remove_connection.js";
 import { registerProfileSkillsShowTool } from "./profile_skills_show.js";
 import { registerProfileSkillsUpdateTool } from "./profile_skills_update.js";
 import { registerProfileSpecializationsApplyTool } from "./profile_specializations_apply.js";
@@ -83,7 +84,7 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileBasicPhotoShowTool(server, ctx);
   registerProfileBasicPhotoUploadTool(server, ctx);
 
-  // profile.skills — 8 leaves (#73 + #462 add-connection)
+  // profile.skills — 9 leaves (#73 + #462 add-connection + #463 remove-connection)
   registerProfileSkillsAddTool(server, ctx);
   registerProfileSkillsRemoveTool(server, ctx);
   registerProfileSkillsUpdateTool(server, ctx);
@@ -92,6 +93,7 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   registerProfileSkillsAutocompleteTool(server, ctx);
   registerProfileSkillsReadinessTool(server, ctx);
   registerProfileSkillsAddConnectionTool(server, ctx);
+  registerProfileSkillsRemoveConnectionTool(server, ctx);
 
   // profile.industries / education / certifications / employment — 21 leaves (#74)
   registerIndustriesTools(server, ctx);

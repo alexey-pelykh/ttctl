@@ -13,7 +13,7 @@ import { registerAllTools } from "../index.js";
  * | Sub-domain          | Tools |
  * |---------------------|-------|
  * | basic (#73)         | 4 (show, update, photo_show, photo_upload) |
- * | skills (#73, +#462 add-connection) | 8 (add, remove, update, show, list, autocomplete, readiness, add-connection) |
+ * | skills (#73, +#462 add-connection, +#463 remove-connection) | 9 (add, remove, update, show, list, autocomplete, readiness, add-connection, remove-connection) |
  * | industries (#74, +show #342) | 6 (add, update, remove, show, list, autocomplete) |
  * | education (#74, +list #341)  | 6 (add, update, remove, show, highlight, list) |
  * | certifications (#74, +list #341) | 6 (add, update, remove, show, highlight, list) |
@@ -38,9 +38,10 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_basic_update",
   "ttctl_profile_basic_photo_show",
   "ttctl_profile_basic_photo_upload",
-  // profile.skills (#73 + #462 add-connection)
+  // profile.skills (#73 + #462 add-connection + #463 remove-connection)
   "ttctl_profile_skills_add",
   "ttctl_profile_skills_remove",
+  "ttctl_profile_skills_remove_connection",
   "ttctl_profile_skills_update",
   "ttctl_profile_skills_show",
   "ttctl_profile_skills_list",
@@ -237,7 +238,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (124 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (125 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

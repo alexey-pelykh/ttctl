@@ -34,10 +34,10 @@ const DRY_RUN_FIELD = z
  * surface (Cloudflare-protected, impersonated transport).
  *
  * **DESTRUCTIVE** (recruiter-visible state change): writes a new
- * skill→entity link onto the public profile. The reverse op
- * (`removeProfileSkillSetConnection`) exists on the wire but is NOT
- * wired in TTCtl yet — undo via `ttctl_profile_skills_remove` (whole
- * skill-set deletion cascades the connections server-side).
+ * skill→entity link onto the public profile. Reverse with
+ * `ttctl_profile_skills_remove_connection` (per-edge unlink, #463) or
+ * `ttctl_profile_skills_remove` (whole skill-set removal cascades all
+ * connections server-side).
  *
  * **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the
  * tool requires `profileCapabilityConsentIssued: true` on input. The
@@ -68,7 +68,7 @@ export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: T
       description: [
         "Link an existing `ProfileSkillSet` to one of your employment, education, certification, or portfolio rows via the `addProfileSkillSetConnection` Pattern-6 mutation. The link surfaces on your recruiter-visible public profile.",
         "",
-        "**DESTRUCTIVE**: this writes a new skill→entity connection onto your public profile. The per-edge unlink op (`removeProfileSkillSetConnection`) is not wired in TTCtl — undo via `ttctl_profile_skills_remove` (whole skill-set removal cascades the connections server-side).",
+        "**DESTRUCTIVE**: this writes a new skill→entity connection onto your public profile. Reverse with `ttctl_profile_skills_remove_connection` (per-edge unlink) or `ttctl_profile_skills_remove` (whole skill-set removal cascades all connections server-side).",
         "",
         "**Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the caller MUST set `profileCapabilityConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
         "",
