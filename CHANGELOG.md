@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.12] - 2026-05-26
+
+### Added
+
+- **`profile.employment.skills.add` / `profile.employment.skills.remove`:
+  per-skill additive wrappers over the full-replace `UpdateEmployment`
+  (#614).** Bulk profile uplift across many employments (the maintainer
+  carries 13 rows, the largest with 100+ skills) previously forced callers
+  to re-implement the read-merge-write bookkeeping ttctl already performs
+  internally — one merge script per additive op. Both leaves wrap
+  `update()`'s `buildUpdateEmploymentInput` merge path: read the current
+  row via `show()`, compute the merged (dedupe by id, preserve current
+  order) or filtered skills array, then fire one `UpdateEmployment`
+  mutation per row. Discriminated outcome (`updated | noop | preview`):
+  `add` returns `noop` when every supplied id is already linked (no wire
+  fire); `remove` returns `noop` when no supplied id matches the row AND
+  refuses with `VALIDATION_ERROR` when the filtered set would be empty
+  (Toptal server rejects `skills: []`, naming `profile.employment.remove`
+  as the row-level alternative); caller-supplied duplicates dedupe against
+  each other and against current state. Core: `profile.employment.skills`
+  namespace exporting `add(token, employmentId, skillIds, options)` and
+  `remove(...)`. CLI: `ttctl profile employment skills {add,remove} <id>
+--skill-id <id>` (repeatable). MCP: `ttctl_profile_employment_skills_{add,remove}`
+  using the existing `DRY_RUN_EMPLOYMENT_MERGE_PLACEHOLDER` for zero-wire
+  preview. Wire-shape disposition: Schema/contract rule **triggered**
+  (path `packages/core/src/services/profile/employment/**`) but introduces
+  no new GraphQL ops — both wrappers route through the existing
+  `UpdateEmployment` mutation; **Track 1 (existing snapshot)** —
+  `UpdateEmployment` snapshot owned by
+  `46-profile-employment-update-merge.e2e.test.ts`. Validated live
+  (`TTCTL_E2E=1`) via `packages/e2e/src/79-profile-employment-skills.e2e.test.ts`
+  (add → idempotent re-add → remove → idempotent re-remove →
+  refusal-on-empty).
+- **`profile.skills.remove-connection`: per-edge unlink of one
+  `ProfileSkillSet → entity` link via the `removeProfileSkillSetConnection`
+  mutation (#463).** Sibling to `profile.skills.add-connection` (#462 /
+  rc.11); removes one connection without cascading to the whole skill-set.
+  Wire input is **CAPTURED**
+  (`research/captures/web/inputs/RemoveProfileSkillSetConnectionInput.json`):
+  `{ skillSetId, connectionId }` — two fields, no `connectionType` (the
+  server discriminates the target from the Relay node id's base64 type
+  prefix; this refutes the prior Pattern-6 inference in
+  `research/notes/10`). Same ADR-009 `profile-capability` consent domain
+  (`profileCapabilityConsentIssued: true`). Core:
+  `profile.skills.removeConnection(token, fields, consent, options)`
+  returns `{ skillSetId, connectionsCount, connectionIds, notice }` with
+  the just-unlinked id absent from `connectionIds`; consent gate
+  (`CONSENT_REQUIRED` fires BEFORE dry-run); `USER_ERROR` mapping for
+  `success: false` / `errors[]`; `UNKNOWN` for null payload;
+  `AuthRevokedError` / `Cf403Error` propagated. CLI: `ttctl profile skills
+remove-connection --skill-set-id <id> --connection-id <id>
+--consent-profile-capability` (no `--connection-type` flag — locked at the
+  unit level by `expect(flags).not.toContain('--connection-type')` to
+  prevent regression to the 3-field wire shape). MCP:
+  `ttctl_profile_skills_remove_connection` with `destructiveHint: true`
+  and `profileCapabilityConsentIssued: z.literal(true)`. Wire-shape
+  disposition: Schema/contract rule **triggered** (new GraphQL op
+  `removeProfileSkillSetConnection` under
+  `packages/core/src/services/profile/**`, in
+  `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`); **Track 1** — snapshot file
+  `packages/e2e/src/wire-snapshots/removeProfileSkillSetConnection.snapshot.json`
+  is intentionally absent at PR-merge time and captured operator-driven
+  via `TTCTL_E2E_REMOVE_SKILL_CONNECTION=…:… TTCTL_UPDATE_WIRE_SNAPSHOTS=1`
+  post-merge (mirrors sibling #462). Validated live (`TTCTL_E2E=1`) via
+  `packages/e2e/src/80-profile-skills-remove-connection.e2e.test.ts`
+  (always-on dry-run + consent-missing paths; gated DESTRUCTIVE positive
+  path requires a populated skill-set with a linked target).
+
+### Changed
+
+- **`profile.skills.add-connection`: trim wire-extra `connectionType` and
+  add a Relay-prefix cross-check (#626).** The capture
+  `research/captures/web/inputs/AddProfileSkillSetConnectionInput.json`
+  sends only `{ skillSetId, connectionId }` (two fields) — the server
+  discriminates the target from the Relay node id's base64 type segment.
+  ttctl's previous send shape (three fields including `connectionType`)
+  was Pattern-6 inferred at #462; this PR aligns the wire to the captured
+  shape and keeps `--connection-type` at the CLI / MCP surface as a
+  client-side UX guard. New private `inferConnectionTypeFromId` helper +
+  `RELAY_PREFIX_TO_CONNECTION_TYPE` map cross-check the declared
+  `connectionType` against the `connectionId` Relay prefix; both an
+  unrecognized prefix and a prefix-vs-declared-type mismatch now throw
+  `VALIDATION_ERROR` BEFORE any wire call. Wire-shape disposition:
+  Schema/contract rule **triggered** (existing op, wire input shape
+  modified; touches `packages/core/src/services/profile/**`); **Track 1**
+  (`addProfileSkillSetConnection` in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`;
+  the response snapshot at
+  `packages/e2e/src/wire-snapshots/addProfileSkillSetConnection.snapshot.json`
+  is unchanged, and the request-side trim is asserted at the unit-test
+  level via `.toEqual` on the dry-run preview's `variables.input`).
+  **BC**: callers passing an unrecognized Relay prefix or a
+  prefix-vs-declared-type mismatch now surface `VALIDATION_ERROR` at the
+  service boundary instead of a `GRAPHQL_ERROR` from the live wire —
+  same end-state (operation refused), better diagnostics. Suite-wide
+  sweep dropped stale "Pattern-6 / INFERRED wire shape" claims from the
+  CLI `--help`, service / tool JSDoc, the `78-profile-skills-add-connection.e2e.test.ts`
+  header, and the `addProfileSkillSetConnection` row rationale in
+  `docs/wire-validation-routing.md`.
+
 ### Fixed
 
 - **`profile.specializations.show` exposes `operations.apply.callable` as
