@@ -1137,8 +1137,30 @@ const RELAY_PREFIX_TO_CONNECTION_TYPE: Readonly<Record<string, SkillConnectionTy
   PortfolioItem: "PORTFOLIO_ITEM",
 });
 
+const RELAY_NODE_ID_REGEX = /^V1-([A-Za-z]+)-/;
+
+// Toptal's `talent_profile` surface returns Relay node ids in their
+// base64-encoded "global id" form (e.g. `VjEtRWR1Y2F0aW9uLTYwNw` →
+// `V1-Education-607`), and the SPA sends them back on the wire in that
+// same encoded form — confirmed by the live capture at
+// `research/captures/web/inputs/AddProfileSkillSetConnectionInput.json`.
+// The validator below accepts either shape: decode-then-match for the
+// canonical encoded form callers receive from read tools, with a raw
+// fallback for callers (tests, scripts) that hold the decoded form.
+function decodeRelayNodeId(connectionId: string): string | null {
+  try {
+    const decoded = Buffer.from(connectionId, "base64").toString("utf8");
+    // Reject non-printable noise from accidental decode of an already-decoded id.
+    return /^[\x20-\x7E]+$/.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
 function inferConnectionTypeFromId(connectionId: string): SkillConnectionType | null {
-  const match = /^V1-([A-Za-z]+)-/.exec(connectionId);
+  const decoded = decodeRelayNodeId(connectionId);
+  const candidate = decoded !== null && RELAY_NODE_ID_REGEX.test(decoded) ? decoded : connectionId;
+  const match = RELAY_NODE_ID_REGEX.exec(candidate);
   if (!match) return null;
   return RELAY_PREFIX_TO_CONNECTION_TYPE[match[1] ?? ""] ?? null;
 }
@@ -1167,8 +1189,9 @@ export interface AddSkillConnectionConsent {
  */
 export interface AddSkillConnectionFields {
   /**
-   * `ProfileSkillSet` id (`V1-ProfileSkillSet-<n>`) — the skill being
-   * linked. Obtain via {@link list} / {@link show}.
+   * `ProfileSkillSet` id — the base64-encoded Relay node id from
+   * {@link list} / {@link show} (decoded form `V1-ProfileSkillSet-<n>`
+   * also accepted).
    */
   skillSetId: string;
   /**
@@ -1178,9 +1201,9 @@ export interface AddSkillConnectionFields {
    */
   connectionType: SkillConnectionType;
   /**
-   * Target row id — `V1-Employment-<n>` for `EMPLOYMENT`,
-   * `V1-Education-<n>` for `EDUCATION`, `V1-Certification-<n>` for
-   * `CERTIFICATION`, `V1-PortfolioItem-<n>` for `PORTFOLIO_ITEM`. The
+   * Target row id — the base64-encoded Relay node id from the matching
+   * read tool (decoded form `V1-Employment-<n>` / `V1-Education-<n>` /
+   * `V1-Certification-<n>` / `V1-PortfolioItem-<n>` also accepted). The
    * Relay type segment is the wire-side discriminator.
    */
   connectionId: string;
@@ -1298,9 +1321,11 @@ interface AddSkillSetConnectionData {
  *      `payload.success === false` surfaces as `USER_ERROR`.
  *
  * T1 disposition — `addProfileSkillSetConnection` has no generated
- * operation type. The committed snapshot at
+ * operation type. The wire-shape snapshot at
  * `packages/e2e/src/wire-snapshots/addProfileSkillSetConnection.snapshot.json`
- * is the continuous drift defense.
+ * is the continuous drift defense; capture is pending an operator E2E
+ * run with `TTCTL_E2E_ADD_SKILL_CONNECTION=<fixture>` and
+ * `TTCTL_UPDATE_WIRE_SNAPSHOTS=1`.
  *
  * Errors:
  * - `ConsentRequiredError("CONSENT_REQUIRED")` when consent is absent.
@@ -1345,7 +1370,10 @@ export async function addConnection(
   if (inferredType === null) {
     throw new SkillsError(
       "VALIDATION_ERROR",
-      `connectionId "${fields.connectionId}" does not match the expected Relay format (V1-Employment-<n> / V1-Education-<n> / V1-Certification-<n> / V1-PortfolioItem-<n>).`,
+      `connectionId "${fields.connectionId}" is not a recognized Relay node id. ` +
+        `Expected the base64-encoded global-id form returned by the matching list tool ` +
+        `(e.g. "VjEt…") or the decoded form V1-Employment-<n> / V1-Education-<n> / ` +
+        `V1-Certification-<n> / V1-PortfolioItem-<n>.`,
     );
   }
   if (inferredType !== fields.connectionType) {

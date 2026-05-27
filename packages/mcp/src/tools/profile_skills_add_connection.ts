@@ -43,12 +43,12 @@ export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: T
         "",
         "**Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the caller MUST set `profileCapabilityConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
         "",
-        "**Pre-flight discovery**:",
-        "  - `ttctl_profile_skills_list` → skillSetId (V1-ProfileSkillSet-NNN)",
-        "  - `ttctl_profile_employment_list` → V1-Employment-NNN (use connectionType=EMPLOYMENT)",
-        "  - `ttctl_profile_education_list` → V1-Education-NNN (use connectionType=EDUCATION)",
-        "  - `ttctl_profile_certifications_list` → V1-Certification-NNN (use connectionType=CERTIFICATION)",
-        "  - `ttctl_profile_portfolio_list` → V1-PortfolioItem-NNN (use connectionType=PORTFOLIO_ITEM)",
+        "**Pre-flight discovery** (list tools return the base64-encoded Relay node id — pass it through verbatim):",
+        "  - `ttctl_profile_skills_list` → skillSetId (encodes `V1-ProfileSkillSet-NNN`)",
+        "  - `ttctl_profile_employment_list` → encoded `V1-Employment-NNN` — use `connectionType=EMPLOYMENT`",
+        "  - `ttctl_profile_education_list` → encoded `V1-Education-NNN` — use `connectionType=EDUCATION`",
+        "  - `ttctl_profile_certifications_list` → encoded `V1-Certification-NNN` — use `connectionType=CERTIFICATION`",
+        "  - `ttctl_profile_portfolio_list` → encoded `V1-PortfolioItem-NNN` — use `connectionType=PORTFOLIO_ITEM`",
         "",
         "**Post-link verification**: `ttctl_profile_skills_show` returns the affected skill-set with `connectionsCount` incremented; this tool's own response carries the full `connectionIds[]` list including the just-added id.",
         "",
@@ -62,7 +62,7 @@ export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: T
           .string()
           .min(1)
           .describe(
-            "ProfileSkillSet id (V1-ProfileSkillSet-NNN). Obtain via `ttctl_profile_skills_list`. NOT the catalog Skill id.",
+            "ProfileSkillSet id — base64-encoded Relay node id from `ttctl_profile_skills_list` (encodes `V1-ProfileSkillSet-NNN`); the decoded form is also accepted. NOT the catalog Skill id.",
           ),
         connectionType: z
           .enum([...profile.skills.SKILL_CONNECTION_TYPES] as [
@@ -70,13 +70,13 @@ export function registerProfileSkillsAddConnectionTool(server: McpServer, ctx: T
             ...profile.skills.SkillConnectionType[],
           ])
           .describe(
-            "Target row class — must match the connectionId's entity type. EMPLOYMENT → V1-Employment-NNN, EDUCATION → V1-Education-NNN, CERTIFICATION → V1-Certification-NNN, PORTFOLIO_ITEM → V1-PortfolioItem-NNN.",
+            "Target row class — must match the connectionId's decoded entity type. EMPLOYMENT ↔ `V1-Employment-NNN`, EDUCATION ↔ `V1-Education-NNN`, CERTIFICATION ↔ `V1-Certification-NNN`, PORTFOLIO_ITEM ↔ `V1-PortfolioItem-NNN` (the encoded form decodes to one of these).",
           ),
         connectionId: z
           .string()
           .min(1)
           .describe(
-            "Target row id of the matching type — must be one of the talent's own entities. Use the matching `*_list` tool for that domain to discover ids.",
+            "Target row id (base64-encoded Relay node id) returned by the matching `*_list` tool. The decoded `V1-{Type}-NNN` form is also accepted.",
           ),
         profileCapabilityConsentIssued: z
           .literal(true)

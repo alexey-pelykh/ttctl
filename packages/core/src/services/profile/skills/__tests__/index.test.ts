@@ -857,6 +857,26 @@ describe("skills.addConnection (addProfileSkillSetConnection)", () => {
     expect(mocked).not.toHaveBeenCalled();
   });
 
+  // -------- Encoded-id acceptance (the canonical wire form) --------
+
+  it("accepts the base64-encoded Relay node id (the form read tools return) and ships it unchanged", async () => {
+    reply({ body: ADD_CONNECTION_OK_BODY });
+    const encoded = Buffer.from("V1-Employment-42").toString("base64");
+    await addConnection(TOKEN, { ...FIELDS, connectionId: encoded }, CONSENT);
+    expect(mocked.mock.calls[0]?.[0]?.body.variables).toEqual({
+      input: { skillSetId: "V1-ProfileSkillSet-1", connectionId: encoded },
+    });
+  });
+
+  it("refuses with VALIDATION_ERROR when the encoded id decodes to a wrong-type prefix", async () => {
+    const encodedEducation = Buffer.from("V1-Education-9").toString("base64");
+    await expect(addConnection(TOKEN, { ...FIELDS, connectionId: encodedEducation }, CONSENT)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/EDUCATION.*EMPLOYMENT/),
+    });
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
   // -------- Dry-run short-circuit --------
 
   it("emits a DryRunPreview with the prepared 2-field variables and makes no wire call", async () => {
