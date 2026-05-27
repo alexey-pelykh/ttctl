@@ -769,11 +769,11 @@ export function buildProfileSkillsCommand(): Command {
     skills
       .command("add-connection")
       .description(
-        "Link an existing ProfileSkillSet to one of your employment, education, certification, or portfolio rows. Requires --consent-profile-capability per ADR-009 (ttctl). Use `profile skills list` and `profile {employment,education,certifications,portfolio} list` to discover the ids.",
+        "Link an existing ProfileSkillSet to one of your employment, education, certification, or portfolio rows. Requires --consent-profile-capability per ADR-009 (ttctl). Discover the ids via `profile skills list` and `profile {employment,education,certifications,portfolio} list`; list output is the canonical base64-encoded Relay node id (decoded `V1-{Type}-NNN` form also accepted).",
       )
       .requiredOption(
         "--skill-set-id <id>",
-        "ProfileSkillSet id (V1-ProfileSkillSet-NNN) — get via `profile skills list`",
+        "ProfileSkillSet id — the base64-encoded Relay node id from `profile skills list` (decoded form `V1-ProfileSkillSet-NNN` also accepted)",
       )
       .addOption(
         new Option(
@@ -785,7 +785,7 @@ export function buildProfileSkillsCommand(): Command {
       )
       .requiredOption(
         "--connection-id <id>",
-        "Target row id — V1-Employment-NNN / V1-Education-NNN / V1-Certification-NNN / V1-PortfolioItem-NNN",
+        "Target row id — the base64-encoded Relay node id returned by the matching list command (e.g. `profile employment list`); the decoded `V1-{Type}-NNN` form is also accepted",
       )
       .option(
         "--consent-profile-capability",
@@ -805,15 +805,15 @@ export function buildProfileSkillsCommand(): Command {
     skills
       .command("remove-connection")
       .description(
-        "Unlink a single connection from a ProfileSkillSet — per-edge sibling of `add-connection` (#463). Wire input is CAPTURED (`research/captures/web/inputs/RemoveProfileSkillSetConnectionInput.json`); no --connection-type flag — the server discriminates the target from the Relay id. Requires --consent-profile-capability per ADR-009 (ttctl). Discover the connection id via `profile skills show <skillSetId>`.",
+        "Unlink a single connection from a ProfileSkillSet — per-edge sibling of `add-connection` (#463). Wire input is CAPTURED (`research/captures/web/inputs/RemoveProfileSkillSetConnectionInput.json`); no --connection-type flag — the server discriminates the target from the Relay id. Requires --consent-profile-capability per ADR-009 (ttctl). Discover the connection id via `profile skills show <skillSetId>`; show output is the canonical base64-encoded Relay node id (decoded `V1-{Type}-NNN` form also accepted).",
       )
       .requiredOption(
         "--skill-set-id <id>",
-        "ProfileSkillSet id (V1-ProfileSkillSet-NNN) — get via `profile skills list`",
+        "ProfileSkillSet id — the base64-encoded Relay node id from `profile skills list` (decoded form `V1-ProfileSkillSet-NNN` also accepted)",
       )
       .requiredOption(
         "--connection-id <id>",
-        "Connection node id currently linked to the skill-set — V1-Employment-NNN / V1-Education-NNN / V1-Certification-NNN / V1-PortfolioItem-NNN. Get via `profile skills show <skillSetId>`.",
+        "Connection node id currently linked to the skill-set — the base64-encoded Relay node id from `profile skills show <skillSetId>`; the decoded `V1-{Type}-NNN` form is also accepted",
       )
       .option(
         "--consent-profile-capability",

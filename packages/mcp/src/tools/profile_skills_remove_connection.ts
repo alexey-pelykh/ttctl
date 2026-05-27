@@ -42,8 +42,8 @@ export function registerProfileSkillsRemoveConnectionTool(server: McpServer, ctx
         "",
         "**Consent gate** (ADR-009 (ttctl) — `profile-capability` domain): the caller MUST set `profileCapabilityConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
         "",
-        "**Pre-flight discovery**:",
-        "  - `ttctl_profile_skills_list` → skillSetId (V1-ProfileSkillSet-NNN)",
+        "**Pre-flight discovery** (list tools return the base64-encoded Relay node id — pass it through verbatim):",
+        "  - `ttctl_profile_skills_list` → skillSetId (encodes `V1-ProfileSkillSet-NNN`)",
         "  - `ttctl_profile_skills_show` → connectionId from the skill-set's current `connections.nodes[].id` array",
         "",
         "**Post-unlink verification**: `ttctl_profile_skills_show` returns the affected skill-set with `connectionsCount` decremented; this tool's own response carries the remaining `connectionIds[]` list (the just-unlinked id is absent).",
@@ -58,13 +58,13 @@ export function registerProfileSkillsRemoveConnectionTool(server: McpServer, ctx
           .string()
           .min(1)
           .describe(
-            "ProfileSkillSet id (V1-ProfileSkillSet-NNN). Obtain via `ttctl_profile_skills_list`. NOT the catalog Skill id.",
+            "ProfileSkillSet id — base64-encoded Relay node id from `ttctl_profile_skills_list` (encodes `V1-ProfileSkillSet-NNN`); the decoded form is also accepted. NOT the catalog Skill id.",
           ),
         connectionId: z
           .string()
           .min(1)
           .describe(
-            "Connection node id currently linked to the skill-set — V1-Employment-NNN / V1-Education-NNN / V1-Certification-NNN / V1-PortfolioItem-NNN. Discover via `ttctl_profile_skills_show` (the read-side `connections.nodes[].id` array).",
+            "Connection node id currently linked to the skill-set — the base64-encoded Relay node id from `ttctl_profile_skills_show` (the read-side `connections.nodes[].id` array). The decoded `V1-{Type}-NNN` form is also accepted.",
           ),
         profileCapabilityConsentIssued: z
           .literal(true)
