@@ -1,0 +1,27 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T04:24:17.445Z",
+  "operationName": "GetInterviewNotes",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "interviewId": {
+        "kind": "string"
+      },
+      "interviewKind": {
+        "kind": "string"
+      },
+      "jobId": {
+        "kind": "string"
+      },
+      "notes": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      }
+    }
+  }
+}
