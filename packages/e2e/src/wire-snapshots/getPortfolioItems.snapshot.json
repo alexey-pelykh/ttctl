@@ -1,0 +1,120 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T05:12:54.335Z",
+  "operationName": "getPortfolioItems",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "accomplishment": {
+          "kind": "null"
+        },
+        "clientOrCompanyName": {
+          "kind": "null"
+        },
+        "coverImage": {
+          "kind": "null"
+        },
+        "description": {
+          "kind": "string"
+        },
+        "details": {
+          "kind": "null"
+        },
+        "engagement": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "files": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
+        },
+        "highlight": {
+          "kind": "boolean"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "industries": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "kind": {
+          "kind": "string"
+        },
+        "kpis": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
+        },
+        "link": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
+        "publicationPermit": {
+          "kind": "boolean"
+        },
+        "quotes": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
+        },
+        "showViaToptal": {
+          "kind": "boolean"
+        },
+        "skills": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "title": {
+          "kind": "string"
+        },
+        "toptalRelated": {
+          "kind": "boolean"
+        },
+        "websiteUrl": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}

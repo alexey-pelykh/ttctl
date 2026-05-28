@@ -1,0 +1,41 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T05:12:52.520Z",
+  "operationName": "GetSkillSetWithConnections",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "connectionsCount": {
+        "kind": "number"
+      },
+      "experience": {
+        "kind": "number"
+      },
+      "id": {
+        "kind": "string"
+      },
+      "position": {
+        "kind": "number"
+      },
+      "public": {
+        "kind": "boolean"
+      },
+      "rating": {
+        "kind": "string"
+      },
+      "skill": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "kind": "string"
+          },
+          "name": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}
