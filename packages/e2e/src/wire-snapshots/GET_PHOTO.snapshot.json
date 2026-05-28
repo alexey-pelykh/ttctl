@@ -1,0 +1,41 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T05:12:59.658Z",
+  "operationName": "GET_PHOTO",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "cropped": {
+        "kind": "object",
+        "fields": {
+          "height": {
+            "kind": "number"
+          },
+          "width": {
+            "kind": "number"
+          },
+          "x": {
+            "kind": "number"
+          },
+          "y": {
+            "kind": "number"
+          }
+        }
+      },
+      "default": {
+        "kind": "string"
+      },
+      "isResolutionSatisfied": {
+        "kind": "boolean"
+      },
+      "original": {
+        "kind": "string"
+      },
+      "small": {
+        "kind": "string"
+      }
+    }
+  }
+}

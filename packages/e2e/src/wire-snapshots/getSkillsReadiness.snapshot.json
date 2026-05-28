@@ -1,0 +1,27 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T05:12:57.670Z",
+  "operationName": "getSkillsReadiness",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "isExpertProficiencyCountSatisfied": {
+        "kind": "boolean"
+      },
+      "isHighlightedItemsCountAndExperienceSatisfied": {
+        "kind": "boolean"
+      },
+      "isItemsCountSatisfied": {
+        "kind": "boolean"
+      },
+      "isProficiencyNotSetCountSatisfied": {
+        "kind": "boolean"
+      },
+      "isProgrammingLanguageSatisfied": {
+        "kind": "boolean"
+      }
+    }
+  }
+}

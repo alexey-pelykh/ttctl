@@ -1,0 +1,21 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T05:12:55.994Z",
+  "operationName": "GET_SKILLS_FOR_AUTOCOMPLETE",
+  "surface": "talent-profile",
+  "transport": "impersonated",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "id": {
+          "kind": "string"
+        },
+        "name": {
+          "kind": "string"
+        }
+      }
+    }
+  }
+}
