@@ -354,6 +354,20 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
   it.skipIf(!e2eEnabled)(
     "highlightPortfolioItem round-trip on a sentinel (highlight on, highlight off, cleanup)",
     async () => {
+      // Per #542, Toptal caps highlights at 3. Pre-check rather than create
+      // a sentinel we'd be unable to highlight — the wire returns a generic
+      // "Something went wrong" error that doesn't identify the cap.
+      const preListResult = await cli.run(["profile", "portfolio", "list", "-o", "json"]);
+      expect(preListResult.exitCode).toBe(0);
+      const preListPayload = JSON.parse(preListResult.stdout) as { items?: { highlight?: boolean }[] };
+      const currentHighlights = (preListPayload.items ?? []).filter((it) => it.highlight === true).length;
+      if (currentHighlights >= 3) {
+        process.stderr.write(
+          `warning: test account has ${currentHighlights.toString()}/3 portfolio highlights set (Toptal cap, #542); highlight round-trip skipped\n`,
+        );
+        return;
+      }
+
       const sentinelTitle = `e2e-sentinel-highlight-${Date.now().toString()}`;
       const addResult = await cli.run([
         "profile",
