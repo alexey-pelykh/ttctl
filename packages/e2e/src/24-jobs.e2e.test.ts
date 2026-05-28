@@ -635,17 +635,13 @@ describe("jobs (live mobile-gateway, #138, #166, #183, #410, #530, #545, #546)",
     expect(result.stdout).toMatch(/Page 1 of \d+ \(per_page=5\)/);
   });
 
-  it.skipIf(!e2eEnabled)(
-    "--page on a non-paginated leaf (`engagements list`) fails with Commander's unknown-option error",
-    async () => {
-      // Per #183, pagination flags are declared PER paginating leaf.
-      // Post-#377 the applications leaf accepts --page / --per-page;
-      // engagements remains non-paginated until #375 lands. Commander
-      // emits its standard `error: unknown option` (exit 1) — no
-      // custom refusal machinery in the program.
-      const result = await cli.run(["engagements", "list", "--page", "1"]);
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toMatch(/error: unknown option '--page'/);
-    },
-  );
+  it.skipIf(!e2eEnabled)("engagements list pretty footer renders 'Page X of Y' when paginated", async () => {
+    const result = await cli.run(["engagements", "list", "--page", "1", "--per-page", "5"]);
+    expect(result.exitCode).toBe(0);
+    if (result.stdout.includes("No engagements") || result.stdout.includes("(no")) {
+      process.stderr.write("warning: test account has no engagements; pretty-footer assertion skipped\n");
+      return;
+    }
+    expect(result.stdout).toMatch(/Page 1 of \d+ \(per_page=5\)/);
+  });
 });
