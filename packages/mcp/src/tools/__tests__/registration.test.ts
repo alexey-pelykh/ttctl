@@ -70,13 +70,14 @@ const EXPECTED_TOOLS = [
   "ttctl_profile_certifications_show",
   "ttctl_profile_certifications_highlight",
   "ttctl_profile_certifications_list",
-  // employment (#74, +list #341, note: 7 tools — includes employer_autocomplete catalog leaf)
+  // employment (#74, +list #341, +reporting_to_autocomplete #468; 8 tools — includes employer_autocomplete + reporting_to_autocomplete catalog leaves)
   "ttctl_profile_employment_add",
   "ttctl_profile_employment_update",
   "ttctl_profile_employment_remove",
   "ttctl_profile_employment_show",
   "ttctl_profile_employment_highlight",
   "ttctl_profile_employment_employer_autocomplete",
+  "ttctl_profile_employment_reporting_to_autocomplete",
   "ttctl_profile_employment_list",
   // #614 — additive merge ops over #541's full-replace `employment.update.skills`.
   "ttctl_profile_employment_skills_add",

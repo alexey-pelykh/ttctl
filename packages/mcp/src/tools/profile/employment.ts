@@ -746,4 +746,40 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       }
     },
   );
+
+  server.registerTool(
+    "ttctl_profile_employment_reporting_to_autocomplete",
+    {
+      title: "Search reporting-to catalog",
+      description:
+        "Search Toptal's reporting-to name catalog by name prefix. Returns up to `limit` `{id,name}` suggestions for `Employment.reportingTo`.",
+      inputSchema: {
+        prefix: z.string().min(2).describe("name prefix"),
+        limit: z.number().int().min(1).max(50).default(10).describe("max results"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (input) => {
+      const auth = await ctx.resolveTokenForTool("profile.employment.reporting_to_autocomplete");
+      if ("error" in auth) return auth.error;
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GET_REPORTING_TO_AUTOCOMPLETE",
+            "talent-profile",
+            { name: input.prefix.trim(), limit: input.limit, profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER },
+            auth.token,
+          ),
+        );
+      }
+      try {
+        const suggestions = await profile.employment.reportingToAutocomplete(auth.token, input.prefix, {
+          limit: input.limit,
+        });
+        return jsonSuccess(suggestions);
+      } catch (err) {
+        return presentToolError("profile.employment.reporting_to_autocomplete", err);
+      }
+    },
+  );
 }

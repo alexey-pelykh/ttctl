@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (125 tools)", () => {
+  it("registers exactly the cumulative tool set (126 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -159,12 +159,13 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_profile_education_remove",
       "ttctl_profile_education_show",
       "ttctl_profile_education_update",
-      // #74 — profile.employment (9, includes employer_autocomplete, +list #341, +skills add/remove #614)
+      // #74 — profile.employment (10, includes employer_autocomplete + reporting_to_autocomplete #468, +list #341, +skills add/remove #614)
       "ttctl_profile_employment_add",
       "ttctl_profile_employment_employer_autocomplete",
       "ttctl_profile_employment_highlight",
       "ttctl_profile_employment_list",
       "ttctl_profile_employment_remove",
+      "ttctl_profile_employment_reporting_to_autocomplete",
       "ttctl_profile_employment_show",
       // #614 — additive merge ops over #541's full-replace `employment.update.skills`.
       "ttctl_profile_employment_skills_add",

@@ -1486,3 +1486,10 @@ export const skills = {
     return { kind: "updated", result: updated };
   },
 };
+
+// -----------------------------------------------------------------------
+// reporting-to-autocomplete (#468)
+// -----------------------------------------------------------------------
+// Separate file per AC; re-exported so the surface-coverage gate sees it.
+export { reportingToAutocomplete } from "./reporting-to-autocomplete.js";
+export type { ReportingToSuggestion } from "./reporting-to-autocomplete.js";

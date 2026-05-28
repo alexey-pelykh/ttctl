@@ -213,6 +213,20 @@ export function buildProfileEmploymentCommand(): Command {
       await runEmployerAutocomplete(query, options);
     });
 
+  employment
+    .command("reporting-to-autocomplete")
+    .description('Search the reporting-to name catalog (server-side suggestions for `reportingTo`; e.g. "Joh")')
+    .argument("<prefix>", "name prefix (minimum 2 characters)")
+    .option("--limit <n>", "max results (default 10)", "10")
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (prefix: string, options: { limit: string; output: OutputFormat }) => {
+      await runReportingToAutocomplete(prefix, options);
+    });
+
   // ----- skills sub-group (#614) ---------------------------------------
   // Additive merge ops on an employment row's catalog-skill set.
   // `employment update --skill-id ...` (#541) is full-replace; these
@@ -593,6 +607,24 @@ async function runEmployerAutocomplete(query: string, options: { limit: string; 
   });
 }
 
+async function runReportingToAutocomplete(
+  prefix: string,
+  options: { limit: string; output: OutputFormat },
+): Promise<void> {
+  const limit = parseLimitOrExit(options.limit, "profile employment reporting-to-autocomplete", options.output);
+  const token = await loadAuthTokenOrExit("profile employment reporting-to-autocomplete", options.output);
+  let suggestions: profile.employment.ReportingToSuggestion[];
+  try {
+    suggestions = await profile.employment.reportingToAutocomplete(token, prefix, { limit });
+  } catch (err) {
+    presentSubDomainError("profile employment reporting-to-autocomplete", err, options.output);
+  }
+  emitResult(wrapListEnvelope(suggestions), options.output, {
+    pretty: (data) => formatReportingToText(data.items),
+    table: (data) => formatReportingToTable(data.items),
+  });
+}
+
 async function runSkillsAdd(employmentId: string, options: { skillId: string[]; output: OutputFormat }): Promise<void> {
   await runEmploymentSkillsMutation({
     employmentId,
@@ -811,4 +843,14 @@ export function formatEmployersTable(suggestions: profile.employment.EmployerSug
   return suggestions
     .map((e) => `${e.id}\t${e.name}\t${e.city ?? ""}\t${e.country ?? ""}\t${e.website ?? ""}`)
     .join("\n");
+}
+
+export function formatReportingToText(suggestions: profile.employment.ReportingToSuggestion[]): string {
+  if (suggestions.length === 0) return "(no matches)";
+  return suggestions.map((s) => `${s.name}\n  id: ${s.id}`).join("\n\n");
+}
+
+export function formatReportingToTable(suggestions: profile.employment.ReportingToSuggestion[]): string {
+  if (suggestions.length === 0) return "(no matches)";
+  return suggestions.map((s) => `${s.id}\t${s.name}`).join("\n");
 }
