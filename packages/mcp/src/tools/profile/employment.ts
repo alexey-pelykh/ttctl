@@ -754,7 +754,7 @@ export function registerEmploymentTools(server: McpServer, ctx: ToolRegistration
       description:
         "Search Toptal's reporting-to name catalog by name prefix. Returns up to `limit` `{id,name}` suggestions for `Employment.reportingTo`.",
       inputSchema: {
-        prefix: z.string().min(2).describe("name prefix"),
+        prefix: z.string().trim().min(2).describe("name prefix"),
         limit: z.number().int().min(1).max(50).default(10).describe("max results"),
         dryRun: DRY_RUN_FIELD,
       },
