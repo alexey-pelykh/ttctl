@@ -210,6 +210,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
     industryIds: ["V1-Industry-stub"],
   },
   ttctl_profile_employment_employer_autocomplete: { query: "Google" },
+  ttctl_profile_employment_reporting_to_autocomplete: { prefix: "Joh" },
   ttctl_profile_employment_highlight: { id: "emp_123" },
   ttctl_profile_employment_list: {},
   ttctl_profile_employment_remove: { id: "emp_123" },
@@ -340,8 +341,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 125 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(125);
+  it("registers exactly 126 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(126);
   });
 
   it("every registered tool has a fixture", () => {
