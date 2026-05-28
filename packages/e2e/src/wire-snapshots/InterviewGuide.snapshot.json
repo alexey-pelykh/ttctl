@@ -1,0 +1,58 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T04:24:07.062Z",
+  "operationName": "InterviewGuide",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "guideId": {
+        "kind": "string"
+      },
+      "interviewId": {
+        "kind": "string"
+      },
+      "sections": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "identifier": {
+              "kind": "string"
+            },
+            "subtitle": {
+              "kind": "string"
+            },
+            "tips": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "content": {
+                    "kind": "string"
+                  },
+                  "hardcodedContent": {
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
+                  },
+                  "identifier": {
+                    "kind": "string"
+                  },
+                  "title": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "title": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

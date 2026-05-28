@@ -1,0 +1,116 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T04:24:12.264Z",
+  "operationName": "Interview",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "contacts": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "email": {
+              "kind": "string"
+            },
+            "fullName": {
+              "kind": "string"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "main": {
+              "kind": "boolean"
+            },
+            "phoneNumber": {
+              "kind": "string"
+            },
+            "position": {
+              "kind": "null"
+            },
+            "timeZone": {
+              "kind": "object",
+              "fields": {
+                "location": {
+                  "kind": "string"
+                },
+                "value": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "guideId": {
+        "kind": "string"
+      },
+      "id": {
+        "kind": "string"
+      },
+      "information": {
+        "kind": "string"
+      },
+      "initiator": {
+        "kind": "string"
+      },
+      "interviewTime": {
+        "kind": "string"
+      },
+      "interviewType": {
+        "kind": "string"
+      },
+      "job": {
+        "kind": "object",
+        "fields": {
+          "activityItemId": {
+            "kind": "string"
+          },
+          "id": {
+            "kind": "string"
+          }
+        }
+      },
+      "kind": {
+        "kind": "string"
+      },
+      "method": {
+        "kind": "object",
+        "fields": {
+          "conferenceUrl": {
+            "kind": "string"
+          },
+          "resource": {
+            "kind": "string"
+          },
+          "typeV2": {
+            "kind": "string"
+          }
+        }
+      },
+      "scheduledAtTimes": {
+        "kind": "array",
+        "item": {
+          "kind": "string"
+        }
+      },
+      "schedulingComment": {
+        "kind": "string"
+      },
+      "status": {
+        "kind": "string"
+      },
+      "talentNotes": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "updatedAt": {
+        "kind": "string"
+      }
+    }
+  }
+}
