@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-24T17:04:01.398Z",
+  "capturedAt": "2026-05-28T13:18:25.270Z",
   "operationName": "AvailabilityRequest",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -11,7 +11,7 @@
         "kind": "string"
       },
       "comment": {
-        "kind": "string"
+        "kind": "null"
       },
       "createdAt": {
         "kind": "string"

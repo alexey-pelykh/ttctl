@@ -1,0 +1,64 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T13:18:35.189Z",
+  "operationName": "AvailabilityRequestRejectReasons",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "fixed": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "customPlaceholder": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "isMandatory": {
+              "kind": "boolean"
+            },
+            "key": {
+              "kind": "string"
+            },
+            "value": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "flexible": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "customPlaceholder": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "isMandatory": {
+              "kind": "boolean"
+            },
+            "key": {
+              "kind": "string"
+            },
+            "value": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
