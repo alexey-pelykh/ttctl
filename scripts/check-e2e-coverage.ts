@@ -28,15 +28,17 @@
  *     positional argument (e.g. `callTalentProfile(token, "GetSkillSetWithConnections", ...)`
  *     in `services/profile/skills/index.ts`, or `callGateway(token, "Payments", ...)`
  *     in `services/payments/index.ts`) are detected via an allowlist of
- *     known helpers — see `HELPER_SIGNATURES`. Each helper declares its
- *     hardcoded surface (`talent-profile` for `callTalentProfile`,
- *     `mobile-gateway` for `callGateway`) so the surface walk-back is
- *     unnecessary for helper-wrapped sites. The function DEFINITION
- *     itself is skipped (the literal at arg-position 1 is the
- *     `operationName: string` parameter, not a string literal). Adding
- *     a new helper requires appending its name + surface to the
- *     allowlist below — this is a feature, not a bug, since a new
- *     helper crossing a surface boundary should force the maintainer
+ *     known helpers — see `HELPER_SIGNATURES`. Helpers come in two shapes:
+ *     **standard** (`callTalentProfile`, `callGateway`) hardcode a single
+ *     surface; **surface-first** (`callGatewayShared`, the shared transport
+ *     primitive) take the surface as a literal at arg 0 and the operation
+ *     name at arg 2, so the surface is read from the call site rather than
+ *     hardcoded. In either case, the surface walk-back is unnecessary for
+ *     helper-wrapped sites. The function DEFINITION itself is skipped
+ *     (the `operationName: string` parameter is a bare identifier, not a
+ *     string literal). Adding a new helper requires appending its name +
+ *     shape to the allowlist below — this is a feature, not a bug, since
+ *     a new helper crossing a surface boundary should force the maintainer
  *     to register it.
  *
  * Coverage declaration:
@@ -120,27 +122,36 @@ const EXEMPT_SEARCH_WINDOW = 5;
  * here so call-site scans can attribute the invocation without walking
  * into the helper body.
  *
- * The two helper names below cover the patterns currently shipped:
+ * The helper names below cover the call-site shapes currently shipped:
  *
- *   - `callTalentProfile` — three definitions in tree (`services/profile/shared.ts`
- *     exported helper used by industries / employment / education / certifications;
- *     local helpers in `services/profile/skills/index.ts` and
- *     `services/contracts/index.ts`). All target `talent-profile`.
- *   - `callGateway` — six local definitions across `services/payments`,
- *     `services/jobs`, `services/applications`, `services/engagements`,
- *     `services/availability`, `services/timesheet`. All target
+ *   - **standard** `(token, "OperationName", ...)` — surface hardcoded by
+ *     the helper. `callTalentProfile` (industries / employment / education /
+ *     certifications / skills / contracts wrappers) targets
+ *     `talent-profile`; `callGateway` (payments / jobs / applications /
+ *     engagements / availability / timesheet wrappers) targets
  *     `mobile-gateway`.
+ *   - **surface-first** `("surface", token, "OperationName", ...)` — the
+ *     surface is a literal at arg 0, read from the call site rather than
+ *     hardcoded, because the helper is surface-agnostic. `callGatewayShared`
+ *     (the shared transport primitive) is the member. Only direct
+ *     literal-operationName sites are detected (e.g. `specializations.show`'s
+ *     `GetTalentSpecializations`); per-service wrappers that forward a
+ *     VARIABLE operationName into `callGatewayShared` are not — their own
+ *     literal sites are already covered by the wrapper's `standard` entry,
+ *     so there is no double-count.
  *
- * A new helper requires appending an entry here. If the new helper
- * targets a different surface than the one already registered under
- * the same name, the scanner cannot distinguish call sites by file
- * alone — refactor the helper name to be surface-specific (e.g.
- * `callScheduler`) or fall back to inline `// e2e-exempt:` markers at
- * the call site.
+ * A new standard helper requires a `{ kind: "standard", surface }` entry; a
+ * new surface-agnostic primitive requires `{ kind: "surface-first" }`. If a
+ * standard helper could target multiple surfaces under one name, the scanner
+ * cannot distinguish call sites by file alone — make the name surface-specific
+ * (e.g. `callScheduler`) or use inline `// e2e-exempt:` markers.
  */
-const HELPER_SIGNATURES: ReadonlyMap<string, { surface: string }> = new Map([
-  ["callTalentProfile", { surface: "talent-profile" }],
-  ["callGateway", { surface: "mobile-gateway" }],
+type HelperSig = { readonly kind: "standard"; readonly surface: string } | { readonly kind: "surface-first" };
+
+const HELPER_SIGNATURES: ReadonlyMap<string, HelperSig> = new Map([
+  ["callTalentProfile", { kind: "standard", surface: "talent-profile" }],
+  ["callGatewayShared", { kind: "surface-first" }],
+  ["callGateway", { kind: "standard", surface: "mobile-gateway" }],
 ]);
 
 /**
@@ -313,6 +324,17 @@ const HELPER_NAME_RE = new RegExp(`\\b(${[...HELPER_SIGNATURES.keys()].map(escap
  */
 const HELPER_INVOKE_RE = /^\s*(?:<[^>]*>)?\s*\(\s*[^,)]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/;
 
+/**
+ * Companion to {@link HELPER_INVOKE_RE} for {@link HelperSig} `surface-first`
+ * helpers (e.g. `callGatewayShared`): `("surface", token, "OperationName", ...)`.
+ * Captures BOTH the surface literal at arg 0 (group 1) and the operation-name
+ * literal at arg 2 (group 2). A non-literal at either captured position
+ * (variable / expression / template literal) indicates a dynamic dispatch the
+ * scanner cannot resolve statically and is silently skipped.
+ */
+const HELPER_INVOKE_SURFACE_FIRST_RE =
+  /^\s*(?:<[^>]*>)?\s*\(\s*["']([a-z-]+)["']\s*,\s*[^,)]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/;
+
 function scanCoreSrc(absPath: string, relPath: string): FileScanResult {
   const lines = readSourceLines(absPath);
   if (lines === null) return { ops: [] };
@@ -436,13 +458,23 @@ function scanHelperInvocations(lines: readonly string[], inComment: readonly boo
       // subsequent line is stripped of line comments and joined with
       // `\n` so HELPER_INVOKE_RE can match the multi-line call shape.
       const snippet = buildHelperSnippet(lines, inComment, i, nameMatch.index + helperName.length);
-      const invokeMatch = HELPER_INVOKE_RE.exec(snippet);
-      if (invokeMatch === null) continue;
-      const opName = invokeMatch[1];
+      let opName: string | undefined;
+      let surface: string | null;
+      if (sig.kind === "surface-first") {
+        const m = HELPER_INVOKE_SURFACE_FIRST_RE.exec(snippet);
+        if (m === null) continue;
+        surface = m[1] ?? null;
+        opName = m[2];
+      } else {
+        const m = HELPER_INVOKE_RE.exec(snippet);
+        if (m === null) continue;
+        surface = sig.surface;
+        opName = m[1];
+      }
       if (opName === undefined) continue;
 
       const exempt = findExemptMarker(lines, i);
-      ops.push({ name: opName, surface: sig.surface, file: relPath, line: i + 1, exempt });
+      ops.push({ name: opName, surface, file: relPath, line: i + 1, exempt });
     }
   }
 
