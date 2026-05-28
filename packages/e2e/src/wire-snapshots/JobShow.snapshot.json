@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-23T20:49:12.747Z",
+  "capturedAt": "2026-05-28T13:17:07.476Z",
   "operationName": "JobShow",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -123,7 +123,7 @@
         }
       },
       "maxRate": {
-        "kind": "null"
+        "kind": "number"
       },
       "minimumHoursPerBillingCycle": {
         "kind": "null"
@@ -141,10 +141,10 @@
                 "kind": "object",
                 "fields": {
                   "communitySlackId": {
-                    "kind": "string"
+                    "kind": "null"
                   },
                   "email": {
-                    "kind": "string"
+                    "kind": "null"
                   },
                   "phoneNumber": {
                     "kind": "null"
@@ -161,12 +161,7 @@
                 "kind": "string"
               },
               "photo": {
-                "kind": "object",
-                "fields": {
-                  "small": {
-                    "kind": "string"
-                  }
-                }
+                "kind": "null"
               },
               "timeZone": {
                 "kind": "object",
@@ -183,18 +178,7 @@
                 }
               },
               "vacation": {
-                "kind": "object",
-                "fields": {
-                  "endDate": {
-                    "kind": "string"
-                  },
-                  "id": {
-                    "kind": "string"
-                  },
-                  "startDate": {
-                    "kind": "string"
-                  }
-                }
+                "kind": "null"
               }
             }
           },

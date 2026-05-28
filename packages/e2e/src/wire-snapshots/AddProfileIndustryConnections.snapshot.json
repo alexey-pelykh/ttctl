@@ -1,0 +1,77 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-28T13:18:32.501Z",
+  "operationName": "AddProfileIndustryConnections",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "employments": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "company": {
+              "kind": "string"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "industries": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "id": {
+                    "kind": "string"
+                  },
+                  "name": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "title": {
+              "kind": "null"
+            }
+          }
+        }
+      },
+      "notice": {
+        "kind": "null"
+      },
+      "portfolioItems": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "company": {
+              "kind": "null"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "industries": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "id": {
+                    "kind": "string"
+                  },
+                  "name": {
+                    "kind": "string"
+                  }
+                }
+              }
+            },
+            "title": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

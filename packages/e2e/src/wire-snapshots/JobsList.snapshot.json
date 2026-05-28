@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-24T14:37:51.042Z",
+  "capturedAt": "2026-05-28T13:17:08.061Z",
   "operationName": "JobsList",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -41,18 +41,7 @@
               "kind": "number"
             },
             "fixedRate": {
-              "kind": "nullable",
-              "inner": {
-                "kind": "object",
-                "fields": {
-                  "decimal": {
-                    "kind": "string"
-                  },
-                  "verbose": {
-                    "kind": "string"
-                  }
-                }
-              }
+              "kind": "null"
             },
             "id": {
               "kind": "string"

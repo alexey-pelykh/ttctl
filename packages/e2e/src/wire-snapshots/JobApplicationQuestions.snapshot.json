@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-24T12:29:02.215Z",
+  "capturedAt": "2026-05-28T13:17:37.338Z",
   "operationName": "JobApplicationQuestions",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -16,36 +16,7 @@
       "matcherQuestions": {
         "kind": "array",
         "item": {
-          "kind": "object",
-          "fields": {
-            "identifier": {
-              "kind": "string"
-            },
-            "inputType": {
-              "kind": "string"
-            },
-            "isMandatory": {
-              "kind": "boolean"
-            },
-            "options": {
-              "kind": "array",
-              "item": {
-                "kind": "unknown"
-              }
-            },
-            "prompt": {
-              "kind": "string"
-            },
-            "suggestedAnswer": {
-              "kind": "nullable",
-              "inner": {
-                "kind": "string"
-              }
-            },
-            "type": {
-              "kind": "string"
-            }
-          }
+          "kind": "unknown"
         }
       }
     }

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-18T18:25:18.635Z",
+  "capturedAt": "2026-05-28T13:18:17.805Z",
   "operationName": "Payments",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -91,7 +91,10 @@
               "kind": "number"
             },
             "paidAt": {
-              "kind": "string"
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
             },
             "paymentGroupId": {
               "kind": "null"

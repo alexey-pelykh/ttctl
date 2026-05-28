@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-23T18:25:00.000Z",
+  "capturedAt": "2026-05-28T13:18:29.117Z",
   "operationName": "GET_WORK_EXPERIENCE",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -24,22 +24,13 @@
             "kind": "object",
             "fields": {
               "city": {
-                "kind": "nullable",
-                "inner": {
-                  "kind": "string"
-                }
+                "kind": "string"
               },
               "country": {
-                "kind": "nullable",
-                "inner": {
-                  "kind": "string"
-                }
+                "kind": "string"
               },
               "employeeCount": {
-                "kind": "nullable",
-                "inner": {
-                  "kind": "number"
-                }
+                "kind": "number"
               },
               "id": {
                 "kind": "string"
@@ -83,7 +74,15 @@
           }
         },
         "engagement": {
-          "kind": "null"
+          "kind": "nullable",
+          "inner": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              }
+            }
+          }
         },
         "experienceItems": {
           "kind": "array",
@@ -112,18 +111,24 @@
           }
         },
         "isEnterpriseExperience": {
-          "kind": "boolean"
+          "kind": "nullable",
+          "inner": {
+            "kind": "boolean"
+          }
         },
         "managementExperience": {
-          "kind": "object",
-          "fields": {
-            "isLeadPosition": {
-              "kind": "boolean"
-            },
-            "reportsRange": {
-              "kind": "nullable",
-              "inner": {
-                "kind": "string"
+          "kind": "nullable",
+          "inner": {
+            "kind": "object",
+            "fields": {
+              "isLeadPosition": {
+                "kind": "boolean"
+              },
+              "reportsRange": {
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
               }
             }
           }
@@ -135,7 +140,21 @@
           "kind": "string"
         },
         "primaryGeography": {
-          "kind": "null"
+          "kind": "nullable",
+          "inner": {
+            "kind": "object",
+            "fields": {
+              "code": {
+                "kind": "string"
+              },
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
         },
         "publicationPermit": {
           "kind": "boolean"

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-21T16:42:55.757Z",
+  "capturedAt": "2026-05-28T13:17:52.193Z",
   "operationName": "UpdateEmployment",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -13,10 +13,50 @@
       "companyWebsite": {
         "kind": "string"
       },
+      "employer": {
+        "kind": "object",
+        "fields": {
+          "city": {
+            "kind": "string"
+          },
+          "country": {
+            "kind": "string"
+          },
+          "employeeCount": {
+            "kind": "number"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "industries": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "id": {
+                  "kind": "string"
+                },
+                "name": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "logoUrl": {
+            "kind": "null"
+          },
+          "name": {
+            "kind": "string"
+          }
+        }
+      },
       "employerId": {
         "kind": "string"
       },
       "endDate": {
+        "kind": "null"
+      },
+      "engagement": {
         "kind": "null"
       },
       "experienceItems": {
@@ -44,6 +84,9 @@
             }
           }
         }
+      },
+      "isEnterpriseExperience": {
+        "kind": "boolean"
       },
       "managementExperience": {
         "kind": "null"

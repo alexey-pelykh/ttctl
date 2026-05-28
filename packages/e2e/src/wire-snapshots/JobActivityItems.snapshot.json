@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-24T14:37:40.569Z",
+  "capturedAt": "2026-05-28T13:20:30.489Z",
   "operationName": "JobActivityItems",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -95,7 +95,18 @@
               "kind": "string"
             },
             "interview": {
-              "kind": "null"
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "id": {
+                    "kind": "string"
+                  }
+                }
+              }
             },
             "job": {
               "kind": "object",

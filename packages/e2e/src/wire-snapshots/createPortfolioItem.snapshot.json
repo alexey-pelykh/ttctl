@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-24T06:41:22.034Z",
+  "capturedAt": "2026-05-28T13:16:25.542Z",
   "operationName": "createPortfolioItem",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -109,7 +109,10 @@
           "kind": "boolean"
         },
         "websiteUrl": {
-          "kind": "null"
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
         }
       }
     }

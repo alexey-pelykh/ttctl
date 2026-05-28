@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-18T06:27:43.622Z",
+  "capturedAt": "2026-05-28T13:17:33.488Z",
   "operationName": "UpdateExternalProfiles",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -29,7 +29,7 @@
             "kind": "string"
           },
           "twitter": {
-            "kind": "null"
+            "kind": "string"
           },
           "updatedByTalentAt": {
             "kind": "string"
