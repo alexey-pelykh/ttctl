@@ -177,3 +177,23 @@ Honesty section. This ADR does **not**:
 - Schema/contract validation rule: `CLAUDE.md` § Schema/contract validation rule
 - Council convened 2026-05-22 (this ADR's authoring trigger): 5-agent panel — product-strategist, project-manager, technical-architect, security-architect, entrepreneur. Tech + security independently flagged ADR-009 as a prerequisite to unblocking 17 mutations under #258.
 - Work items implementing this ADR: the 17 mutation issues in the scope-pass — per-domain breakdown in § Context. Per-item AC, T1/T2 disposition, and behavioral scenarios live in those issue bodies; this ADR is the durable vocabulary record.
+
+## Amendments
+
+### 2026-05-29 — Add fifth domain `survey-submission` (#673)
+
+The original four-domain vocabulary (§ Decision Part 1) was locked against the 17 mutations from the 2026-05-20 scope pass (#427–#480). The **surveys** surface was excluded by design at that time (#427) and re-included later by epic **#671**, which reversed the exclusion. `SubmitSurvey` (#673) and `AddSurveyFeedback` (#674) are therefore INFERRED-destructive mutations that post-date the lock and have no domain assignment in the original table.
+
+**Decision**: add a fifth domain.
+
+| Domain              | TTCtl-layer Zod field           | TTCtl CLI flag                | Semantic                                                                              |
+| ------------------- | ------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `survey-submission` | `surveySubmissionConsentIssued` | `--consent-survey-submission` | Submitting answers / feedback to a pending survey (post-interview, NPS, engagement…). |
+
+The Zod primitive is `z.literal(true)`, consistent with Part 1. No supplementary factors (Part 2) — survey submission creates no external account binding.
+
+**Why the ceremony, not Part 3 light-destructive proportionality**: Part 3 reserves the literal-true ceremony for high-blast domains and gives lighter ops the DESTRUCTIVE marker only. Survey submission earns the ceremony despite a modest own-state blast because the irreversible write routes the talent's feedback to a **third party** — the interviewing client, the engagement, or Toptal itself. The threat model is an AI agent answering a satisfaction/feedback survey _on the user's behalf, addressed to their employer or client_, without explicit authorization. That recipient-facing, reputation-bearing, non-undoable property is what the consent gate guards — the same justification epic #671 cited in mandating a defensive consent gate (#258) for the two survey writes.
+
+This amendment follows the ADR's own provision (§ What We're NOT Solving): domain (re)assignment is "an amendment, not a re-litigation." Extending the vocabulary for a new mutation class admitted after the original lock is the same class of change.
+
+- Implementing work item: #673 (`SubmitSurvey`). Sibling #674 (`AddSurveyFeedback`) adopts the same `survey-submission` domain.

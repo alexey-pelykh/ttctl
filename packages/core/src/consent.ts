@@ -13,7 +13,7 @@
  * forces the caller (CLI flag, MCP input, agent loop) to explicitly opt in
  * before any wire call is issued.
  *
- * ## Four domains, four field names
+ * ## Five domains, five field names
  *
  * Per ADR-009 § Decision Part 1, each operational domain has a distinct
  * consent-field name so the consent ceremony is forensically distinct in
@@ -26,6 +26,13 @@
  * | `payment-routing`      | `paymentRoutingConsentIssued`       | `--consent-payment-routing`    |
  * | `profile-capability`   | `profileCapabilityConsentIssued`    | `--consent-profile-capability` |
  * | `timesheet-billing`    | `timesheetBillingConsentIssued`     | `--consent-timesheet-billing`  |
+ * | `survey-submission`    | `surveySubmissionConsentIssued`     | `--consent-survey-submission`  |
+ *
+ * `survey-submission` (#673) was added after the original four-domain
+ * lock: a survey submission is irreversible and routes the talent's
+ * feedback to the recipient (employer / client / Toptal), so an agent
+ * answering on the user's behalf warrants the ceremony. See the ADR-009
+ * amendment.
  *
  * The Zod primitive is `z.literal(true)` across all domains (preserved
  * from ADR-008's precedent). What varies is the FIELD NAME — which is
@@ -55,7 +62,7 @@
  * ## Env-var bypass for non-interactive contexts
  *
  * Setting `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1` ({@link CONSENT_ENV_VAR})
- * bypasses the consent-LITERAL check for all four domains. This is for
+ * bypasses the consent-LITERAL check for all domains. This is for
  * non-interactive CI / test contexts where the human-in-the-loop
  * ceremony is inappropriate. The bypass does NOT cover the
  * `idempotencyKey` + `accountIdentifierEcho` factors for payment-routing
@@ -112,7 +119,12 @@ import { TtctlError } from "./auth/errors.js";
  * (e.g. `--consent-profile-capability`). The corresponding Zod field
  * name (camelCase + `ConsentIssued`) is in {@link CONSENT_FIELD}.
  */
-export type ConsentDomain = "interview-action" | "payment-routing" | "profile-capability" | "timesheet-billing";
+export type ConsentDomain =
+  | "interview-action"
+  | "payment-routing"
+  | "profile-capability"
+  | "timesheet-billing"
+  | "survey-submission";
 
 /**
  * Per-domain Zod field name (camelCase). Maps {@link ConsentDomain} to
@@ -124,6 +136,7 @@ export const CONSENT_FIELD: Readonly<Record<ConsentDomain, string>> = Object.fre
   "payment-routing": "paymentRoutingConsentIssued",
   "profile-capability": "profileCapabilityConsentIssued",
   "timesheet-billing": "timesheetBillingConsentIssued",
+  "survey-submission": "surveySubmissionConsentIssued",
 });
 
 /**
