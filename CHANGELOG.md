@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.13] - 2026-05-29
+
+### Added
+
+- **`surveys`: new top-level domain for answering pending Toptal surveys
+  across `core` / `cli` / `mcp` (#671).** A talent can now list, answer,
+  and leave free-text feedback on pending surveys (e.g. `INTERVIEW_ENDED`
+  post-interview feedback, `NPS`, `ENGAGEMENT_ENDED`) without switching to
+  the Toptal portal. All three ops are hand-authored against the
+  mobile-gateway surface and route through **Track 1** wire-shape snapshots
+  (each op is in the codegen-exclusion list, so no generated Zod schema
+  exists). The two write ops are consent-gated behind a new ADR-009
+  `survey-submission` consent domain (`--consent-survey-submission` /
+  `surveySubmissionConsentIssued`, the 5th domain), since both are
+  irreversible (there is no un-answer wire op) and route content to a third
+  party.
+  - **`surveys.list`: read-only `PendingSurveys` query (#672).** Surfaces
+    each pending survey's `id`, `kind`, `title`, `isMandatory`,
+    `alreadyAnswered`, and `questions[]` (each with `id`, `label`, `note`,
+    `inputType`, and selectable `answers[]`) — everything an answer flow
+    consumes. Core: `surveys.list(token)`. CLI: `ttctl surveys list [-o
+pretty|json|yaml]`. MCP: `ttctl_surveys_list` (read-only, dryRun-capable).
+    Wire-shape disposition: Schema/contract rule **triggered** (new
+    hand-authored op; `Survey.kind` and `SurveyQuestion.note` are
+    `Unknown`-typed in the synthesized SDL); **Track 1** (committed
+    `packages/e2e/src/wire-snapshots/PendingSurveys.snapshot.json`, captured
+    from real wire data). Validated live (`TTCTL_E2E=1`, two runs) via
+    `packages/e2e/src/88-surveys-list.e2e.test.ts`; the live shape matched
+    the projected `Survey[]` contract.
+  - **`surveys.submit`: answer a pending survey via `SubmitSurvey`
+    (#673).** Resolves `kind` and per-question answer-option ids from the
+    pending list, so the caller supplies only `<surveyId>` and
+    `<questionId>=<value>` pairs. Core: `surveys.submit(token, fields,
+consent, options)` (consent gate, then resolve kind and option ids from
+    `PendingSurveys`, then the mutation, mapping `USER_ERROR` on `errors[]`
+    or `success:false`). CLI: `ttctl surveys submit <surveyId> --answer
+<qid>=<value>` (repeatable) `--consent-survey-submission`. MCP:
+    `ttctl_surveys_submit` (`destructiveHint`, consent literal, zero-network
+    `dryRun` preview). Wire-shape disposition: Schema/contract rule
+    **triggered** (hand-rolling `SurveyAnswerInput` is the inference act);
+    **Track 1** (committed `SubmitSurvey.snapshot.json`). Validated via the
+    always-on safe paths in `packages/e2e/src/89-surveys-submit.e2e.test.ts`
+    (consent-missing refusal and `NOT_FOUND` resolution, both exercising
+    live bearer auth and the gateway `PendingSurveys` read) plus a live
+    round-trip (2026-05-29) that submitted a real `INTERVIEW_ENDED` survey
+    and confirmed it dropped out of `pendingSurveys`; the gated DESTRUCTIVE
+    positive path (`TTCTL_E2E_SUBMIT_SURVEY`) automates the real submit for
+    opt-in operators.
+  - **`surveys.feedback`: free-text feedback via `AddSurveyFeedback`
+    (#674).** Mirrors `submit`, and accepts an explicit `--kind` to reach a
+    non-pending survey (e.g. already-answered — the drained-account escape
+    hatch). Reuses the `survey-submission` consent domain (no consent or ADR
+    change). Core: `surveys.addFeedback(...)` sends the portal-shape `{ kind,
+surveyId, feedback }` over the mobile gateway. CLI: `ttctl surveys feedback
+    <surveyId> --text <text>`. MCP: `ttctl_surveys_feedback`
+    (`destructiveHint`, consent literal, `dryRun` preview). Wire-shape
+    disposition: Schema/contract rule **triggered**; **Track 1** (committed
+    `AddSurveyFeedback.snapshot.json`). Satisfied by a **capture-based
+    disposition** rather than a fresh live round-trip — routing irreversible
+    third-party feedback is the exact harm the consent gate guards, and the
+    test account had no pending surveys. The `{ kind, surveyId, feedback }`
+    wire shape is established from the portal `AddSurveyFeedback` capture
+    (proves `kind` exists on the input type), the mobile `AddFeedbackToSurvey`
+    capture (omits `kind`, proving it optional on the shared input type), and
+    the #673 live transcript (the sibling `surveys.*` op accepts the
+    `kind`-bearing portal shape on the gateway). The always-on safe paths in
+    `packages/e2e/src/90-surveys-feedback.e2e.test.ts` exercise the live wire
+    now; the gated positive path (`TTCTL_E2E_ADD_SURVEY_FEEDBACK`) refreshes
+    the snapshot on first natural survey availability.
+- **`profile.employment.reportingToAutocomplete`: server-vetted autocomplete
+  for `Employment.reportingTo` (#468).** Read-only wrapper over the
+  talent-profile `GET_REPORTING_TO_AUTOCOMPLETE` query — given a name prefix,
+  returns the suggestions Toptal will accept for the `reportingTo` field. A
+  min-length prefix gate (whitespace-trimmed) fires BEFORE any profile-id
+  resolution or wire call. Core:
+  `profile.employment.reportingToAutocomplete(token, prefix, options?)`. CLI:
+  `ttctl profile employment reporting-to-autocomplete <prefix> [--limit N]`.
+  MCP: `ttctl_profile_employment_reporting_to_autocomplete`. Wire-shape
+  disposition: Schema/contract rule **triggered** (new hand-authored op under
+  `packages/core/src/services/profile/employment/**`, in
+  `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`); **Track 1**. Validated live
+  (`TTCTL_E2E=1`, 2/2) via
+  `packages/e2e/src/87-profile-employment-reporting-to-autocomplete.e2e.test.ts`
+  (HTTP 200, no GraphQL errors, parses correctly); the wire-shape snapshot is
+  **not yet captured** — the test account returned empty (`[]`) for every
+  candidate prefix (the account-feature-gated family), so
+  `assertWireShapeStable` auto-captures on the first run that yields a
+  suggestion.
+
+### Fixed
+
+- **`profile.skills.add-connection`: accept base64-encoded Relay node ids
+  (#646).** Regression from rc.12's `connectionType` trim (#626): the
+  client-side `inferConnectionTypeFromId` cross-check demanded the _decoded_
+  `V1-{Type}-NNN` form, but the canonical wire shape returned by every
+  `*.list` tool (and sent by the SPA) is the _encoded_ base64 form
+  (`VjEtRW1wbG95bWVudC0xMjM0NQ==`). Ids piped from `skills.list` /
+  `employment.list` / `education.list` / `certifications.list` /
+  `portfolio.list` were rejected client-side with `VALIDATION_ERROR` before
+  the wire call, so no working `connectionId` was reachable end-to-end. Fix
+  (Approach B, decode-then-fall-back-to-raw): a new `decodeRelayNodeId`
+  helper base64-decodes behind a printable-ASCII gate (encoded ids decode to
+  the Relay-shaped string; raw ids decode to non-printable noise and fall
+  through to the raw path), so both the encoded canonical form and the
+  decoded back-compat form cross-check correctly. The wire payload still
+  ships the caller's original input verbatim — no transformation. Sibling
+  description sweep across the `add-connection` and `remove-connection` CLI
+  help and MCP tool descriptions clarifies that `*.list` tools return the
+  encoded form. Wire-shape disposition: Schema/contract rule **triggered**
+  (touches `packages/core/src/services/profile/skills/**`), but this is a
+  client-side validator widening — the `AddProfileSkillSetConnectionInput {
+skillSetId, connectionId }` wire shape is unchanged; **Track 1**
+  (`addProfileSkillSetConnection` snapshot capture remains the pre-existing
+  deferred gap from #462 / #626).
+
 ## [v0.1.0-rc.12] - 2026-05-26
 
 ### Added
