@@ -105,7 +105,7 @@ async function discoverJobIdWithInterview(cli: CliClient): Promise<string | null
   return null;
 }
 
-describe("applications interview notes show (live mobile-gateway, #440)", () => {
+describe("applications interview notes show (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

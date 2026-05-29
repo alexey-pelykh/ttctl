@@ -94,7 +94,7 @@ async function fetchLinkableEngagementIds(token: string): Promise<string[]> {
   return [...new Set(ids)];
 }
 
-describe("profile employment engagementId write (#587)", () => {
+describe("profile employment engagementId write", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

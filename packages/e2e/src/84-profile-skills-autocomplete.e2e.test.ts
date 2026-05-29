@@ -44,7 +44,7 @@ async function resolveProfileId(token: string): Promise<string> {
   return profileId;
 }
 
-describe("profile skills autocomplete (live talent-profile, #656)", () => {
+describe("profile skills autocomplete (live talent-profile)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

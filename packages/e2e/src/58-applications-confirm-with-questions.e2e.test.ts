@@ -100,7 +100,7 @@ interface ConfirmPreviewEnvelope {
   updated?: unknown;
 }
 
-describe("applications confirm with questions (live mobile-gateway, #411, #428)", () => {
+describe("applications confirm with questions (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

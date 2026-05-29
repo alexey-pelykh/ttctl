@@ -90,7 +90,7 @@ function formatYmd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-describe("engagements breaks (live mobile-gateway, #155)", () => {
+describe("engagements breaks (live mobile-gateway)", () => {
   let cli: CliClient;
 
   beforeAll(() => {

@@ -60,7 +60,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("payments summary (live mobile-gateway, #448)", () => {
+describe("payments summary (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

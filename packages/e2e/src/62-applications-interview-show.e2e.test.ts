@@ -96,7 +96,7 @@ async function discoverInterviewId(cli: CliClient): Promise<string | null> {
   return null;
 }
 
-describe("applications interview show (live mobile-gateway, #439)", () => {
+describe("applications interview show (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

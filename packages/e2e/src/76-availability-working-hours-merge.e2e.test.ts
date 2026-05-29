@@ -29,7 +29,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("availability workingHours.set — snap-field preservation (#608)", () => {
+describe("availability workingHours.set — snap-field preservation", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

@@ -2,82 +2,38 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E regression coverage for `profile.employment.update`'s read-current+
- * merge fix (#394 — wire-broke meta-class #392).
+ * E2E regression coverage for `profile.employment.update`'s
+ * read-current+merge contract.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** — the fix
- * touches `packages/core/src/services/profile/employment/index.ts`, which
- * is one of the file-path triggers of the rule's code-review checklist.
- * The PR body declares `Schema/contract rule: triggered` and points at
- * this file as the live transcript.
+ * Contract under test: a partial update such as `{id, role}` must succeed
+ * against the live API. The apply path reads current state and merges the
+ * user-supplied subset on top, so the wire receives a complete
+ * `UpdateEmploymentInput` (otherwise GraphQL rejects on required-non-null
+ * fields AND Rails `.blank?` gates fire on `company`/`employerId`/
+ * `publicationPermit`/`industryIds`/`skills`).
  *
- * **Track 1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track 2):
- * `UpdateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` and has no
- * generated operation type → **T1** (wire-shape snapshot).
- * `assertWireShapeStable(...)` diffs the live response shape against the
- * committed `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json`.
- * The snapshot is generated on the first
- * `TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run.
+ * Track 1: `UpdateEmployment` is T1 — `assertWireShapeStable(...)` diffs
+ * the live response against `UpdateEmployment.snapshot.json`.
  *
- * Bug repro before the fix (recorded in #394's body verbatim):
- *
- * ```jsonc
- * {
- *   "tool": "ttctl_profile_employment_update",
- *   "args": {
- *     "id": "VjEtRW1wbG95bWVudC0xMjM0NTY7",
- *     "role": "Odoo Expert"
- *   }
- * }
- * ```
- *
- * Pre-fix the live API rejected the variables with
- * `Variable $input of type UpdateEmploymentInput! was provided invalid
- * value for employment.showViaToptal (Expected value to not be null), ...`
- * — four required-non-null GraphQL fields treated as null because the apply
- * path sent only the user-supplied subset (`{position: "Odoo Expert"}`).
- * The #394 live capture (2026-05-19) surfaced a second tier of server-side
- * Rails `.blank?` USER_ERROR gates that fire AFTER the GraphQL layer
- * accepts the input (`company`, `employerId`, `publicationPermit`,
- * `industryIds`, `skills`). The fix injects ALL of these from the
- * current row state.
- *
- * Coverage strategy (sentinel-based, mirrors `42-profile-external-show`'s
- * non-destructive round-trip pattern but uses an add/remove sentinel
- * because employment is row-oriented):
- *
- *   1. **Source cascade catalog refs** — a real `Skill.id` (sourced from
- *      an existing employment row, since `profile.skills.list()` returns
- *      `ProfileSkillSet` ids which the wire silently drops); an industry
- *      via `industries.autocomplete`; an `employerId` via
+ * Coverage (sentinel-based):
+ *   1. Source catalog refs — a real `Skill.id` (from an existing
+ *      employment row; `profile.skills.list()` returns `ProfileSkillSet`
+ *      ids which the wire silently drops), an industry via
+ *      `industries.autocomplete`, and an `employerId` via
  *      `employer-autocomplete`.
- *   2. **Add a sentinel row** via `add()` with the full required input.
- *   3. **Update with the MINIMAL `{position}` payload** that previously
- *      failed at the wire layer (`{id, role}` per the bug repro). The
- *      fix's read-current+merge logic injects experienceItems, skills,
- *      showViaToptal, startDate, company, publicationPermit, employerId,
- *      and industryIds from the sentinel's current state. The live call
- *      must succeed without GRAPHQL_ERROR / USER_ERROR.
- *   4. **Assert the position changed** on the update response.
- *   5. **`show()` to re-read** and assert the change persisted (the
- *      "round-trip" half of the schema/contract rule).
- *   6. **Snapshot the UpdateEmployment response shape (T1)**.
- *   7. **`try/finally` cleanup** removes the sentinel even on mid-
- *      assertion failure.
+ *   2. Add a sentinel row via `add()` with the full required input.
+ *   3. Update with the MINIMAL `{position}` payload — must succeed; the
+ *      merge injects experienceItems, skills, showViaToptal, startDate,
+ *      company, publicationPermit, employerId, and industryIds from
+ *      current.
+ *   4. Assert the position changed on the update response.
+ *   5. `show()` re-read — assert the change persisted (round-trip).
+ *   6. T1 snapshot on the update response.
+ *   7. `try/finally` cleanup removes the sentinel.
  *
- * **No silent-skip on USER_ERROR.** The sibling `43-profile-employment.
- * e2e.test.ts:159-165` swallows `USER_ERROR` and emits a stderr warning;
- * that anti-pattern was the call-out in #392's investigation memo (a
- * post-fix `USER_ERROR` would silently mask the very regression #394
- * fixes). This file intentionally does NOT propagate that pattern — any
- * error from `update()` (including `USER_ERROR`) propagates as a hard
- * test failure so the regression class stays loudly observable.
- *
- * **Fragment extensions in #394**: `EMPLOYMENT_FRAGMENT` now selects
- * `employer { id }` and `skills { nodes { id name } }`, so `update()`
- * can echo both through the merge. The `Employment` interface gained
- * `employerId: string | null` and `skills: { id; name }[]` fields to
- * surface them on the read side.
+ * No silent-skip on USER_ERROR: any error from `update()` propagates as
+ * a hard failure (a quiet USER_ERROR would mask the very regression
+ * class this test covers).
  */
 
 // e2e-covers: UpdateEmployment
@@ -93,11 +49,7 @@ import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-/**
- * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
- * Mirrors `42-profile-external-show.e2e.test.ts` and `43-profile-
- * employment.e2e.test.ts`.
- */
+/** Load the bearer captured by `globalSetup` into the shared sandbox YAML. */
 function loadSandboxBearer(sandboxConfigPath: string): string {
   const raw = readFileSync(sandboxConfigPath, "utf8");
   const parsed: unknown = parseYaml(raw);
@@ -108,7 +60,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile employment update — read-current+merge regression (#394)", () => {
+describe("profile employment update — read-current+merge regression", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

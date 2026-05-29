@@ -79,7 +79,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile skills #396 wire-shape-fixed add() (live talent-profile, formerly INVENTED shape)", () => {
+describe("profile skills wire-shape-fixed add() (live talent-profile, formerly INVENTED shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

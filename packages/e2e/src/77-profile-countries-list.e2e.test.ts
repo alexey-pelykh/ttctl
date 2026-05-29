@@ -38,7 +38,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
 
 // e2e-covers: getCountries
 
-describe("profile countries list (live talent-profile, #596)", () => {
+describe("profile countries list (live talent-profile)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

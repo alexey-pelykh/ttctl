@@ -60,7 +60,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile.employment.skills — additive merge wrappers (#614)", () => {
+describe("profile.employment.skills — additive merge wrappers", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

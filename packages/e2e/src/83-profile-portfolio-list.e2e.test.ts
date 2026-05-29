@@ -33,7 +33,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile portfolio list (live talent-profile, #655)", () => {
+describe("profile portfolio list (live talent-profile)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

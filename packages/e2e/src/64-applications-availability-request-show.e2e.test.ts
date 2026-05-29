@@ -111,7 +111,7 @@ async function discoverAvailabilityRequestId(cli: CliClient): Promise<string | n
   return null;
 }
 
-describe("applications availability-request show (live mobile-gateway, #442)", () => {
+describe("applications availability-request show (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

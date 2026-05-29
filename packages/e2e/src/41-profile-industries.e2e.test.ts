@@ -2,112 +2,33 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `ttctl profile industries` (#321).
+ * E2E coverage for `ttctl profile industries` — six operations against
+ * Cloudflare-protected `talent-profile`.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** — the
- * industries sub-domain has six operations against Cloudflare-protected
- * `talent-profile`. The originating bug (#321) was that the hand-rolled
- * `CreateIndustryProfile` / `UpdateIndustryProfile` documents selected
- * `industryProfile` and `notice` fields that don't exist on either
- * payload type per the synthesized schema (and the live API rejected
- * the entire mutation document).
+ * Coverage:
+ *   - Unconditional `list()` smoke (passes empty result; asserts wire-shape).
+ *   - `createIndustryProfile` + `listIndustryProfiles` + `updateIndustryProfile`
+ *     + `removeIndustryProfile` round-trip with a catalog-resolved title
+ *     (the mutation payloads carry `{ success, errors }` only — read back via
+ *     `list` to confirm the row persisted).
+ *   - T1 wire-shape snapshots for `list`, `show`, and `remove` projections.
+ *   - `autocomplete` smoke (wire-shape regression guard).
  *
- * Coverage strategy:
+ * Catalog-driven sentinel: the live API rejects free-text industry titles;
+ * the title must match a catalog entry from `industriesAutocomplete`. Test
+ * resolves the first match for "Software" at runtime.
  *
- *   - **`list()` document validation (#583 regression guard)** — an
- *     UNCONDITIONAL `industries.list` call (no seeding). The rc.9
- *     read-surface expansion (#553) selected the five `IndustryProfile`
- *     curation sub-fields as connections (`{ nodes { id } }`); they are
- *     plain lists of `IndustryProfileItem` (no `nodes` field), so the
- *     live API rejected the whole document at the validation layer and
- *     `industries list` was fully broken. Because every seed-dependent
- *     subtest below skips on this account (test-account-state issue),
- *     this unconditional guard is the only one that actually exercises
- *     `list()` live — empty result is acceptable (assert shape, not
- *     non-empty data).
+ * Idempotency: `try/finally` removes any seeded row even on mid-assertion
+ * failure. Because the title is a catalog entry shared with real industries,
+ * leaked rows are NOT visually distinct — the pre/post id-set diff guards
+ * against attributing existing rows to the seed.
  *
- *   - **`createIndustryProfile` + `listIndustryProfiles` +
- *     `updateIndustryProfile` + `removeIndustryProfile` round-trip**
- *     with a catalog-resolved title (the first match for "Software"
- *     from `industriesAutocomplete` — see the Catalog-driven sentinel
- *     note below). The mutation payloads only carry `{ success, errors }`
- *     — they do NOT echo the entity back. The CLI surface and the new
- *     e2e therefore read-back via `list` to assert the row landed; the
- *     `add` / `update` payload's `success: true` alone is necessary
- *     but not sufficient. The `try/finally` cleanup mirrors
- *     `36-profile-portfolio.e2e.test.ts` so a mid-test assertion
- *     failure still removes the seeded row.
- *
- *   - **List wire-shape** asserted via a `assertWireShapeStable`
- *     snapshot on the post-projection `IndustryProfile[]` returned by
- *     `industries.list`. Drift detection for the (currently unverified)
- *     list path; the snapshot is created on the first
- *     `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run and asserted thereafter.
- *
- *   - **Get wire-shape** asserted via `assertWireShapeStable` on the
- *     `industries.show(id)` result. Similar T1 snapshot defense.
- *
- *   - **Remove wire-shape** is functionally just a `success` envelope;
- *     the snapshot is captured against the projection (`string` — the
- *     returned id), which is structurally minimal but consistent with
- *     the project's snapshot pattern (consumer-visible shape, not raw
- *     wire). Drift would surface as a wire-rejection upstream.
- *
- *   - **Autocomplete regression** — `industries.autocomplete` is the
- *     only op that worked pre-#321. A smoke-test ensures the fix did
- *     not perturb its document shape.
- *
- * **Catalog-driven sentinel**: the live API rejects free-text industry
- * titles with a generic USER_ERROR; the title must match a catalog
- * entry returned by `industriesAutocomplete`. The test resolves a
- * stable catalog entry at runtime (the first match for "Software")
- * rather than hard-coding a name that the catalog might cull.
- *
- * **Live evidence captured 2026-05-16 (originating-incident replay)**:
- * pre-fix the originating CLI scenario `ttctl profile industries add
- * "Software" --connection "Engineer"` failed with `GRAPHQL_ERROR:
- * Field 'industryProfile' doesn't exist on type
- * 'CreateIndustryProfilePayload'` (wire-shape rejected by the server's
- * GraphQL validation layer). Post-fix the same invocation succeeds
- * past the wire-shape gate and the response is delivered cleanly. The
- * exact behavior beyond the wire-shape gate depends on test-account
- * state — see the round-trip test below for the catalog-driven
- * sentinel + business-gate-tolerant flow.
- *
- * **Test-account-state-tolerant round-trip**: the talent_profile
- * surface gates `createIndustryProfile` on a server-side check that
- * returns `USER_ERROR` with `code: "base"` and message "This action
- * is not allowed. Please refresh the page." when the signed-in
- * account is in an unseedable state (observed empirically on the
- * maintainer's profile 2026-05-16). The exact precondition is
- * undocumented but is unrelated to the wire-shape bug #321 actually
- * fixes — pre-fix the same call failed at the GraphQL validation
- * layer (BEFORE reaching the business gate), so the new error mode is
- * positive evidence that the wire-shape fix landed correctly. The
- * test treats the specific "This action is not allowed" USER_ERROR as
- * a graceful-skip condition (warning + skip the remainder), so it can
- * still surface true wire-shape regressions if they ever reappear.
- * When/if the test account becomes seedable, the full round-trip
- * runs.
- *
- * **Idempotency**: the `try/finally` cleanup removes any seeded row
- * even on mid-assertion failure (mirrors `36-profile-portfolio.e2e.test.ts`).
- * Because the title is a catalog entry (e.g. "Healthcare Software")
- * shared with the user's potential real industries, leaked rows are
- * NOT visually distinct in a manual `list` — the operator must check
- * for unexpected `IndustryProfile` rows post-run if a test crashed
- * outside the `try/finally`. The mutation's pre/post id-set diff also
- * guards against attributing existing rows to the seed.
- *
- * **Skip conditions** (silent — emit stderr warning, do not fail):
- *   - Catalog autocomplete returns zero matches for "Software" (the
- *     catalog was culled): subtest skipped.
- *   - `add` returns the specific "This action is not allowed"
- *     USER_ERROR (test-account-state issue, separate from #321):
- *     wire-shape gate is verified passed; round-trip subtest skipped.
- *   - Other USER_ERROR codes propagate as failures (the test is meant
- *     to surface anything that isn't the documented test-account-state
- *     issue).
+ * Skip conditions (stderr warning, no fail):
+ *   - Autocomplete returns zero matches: round-trip subtest skipped.
+ *   - `add` returns USER_ERROR `code: base` ("This action is not allowed.")
+ *     — test-account-state issue, unrelated to the wire-shape gate:
+ *     round-trip subtest skipped, wire-shape gate stays asserted.
+ *   - Other USER_ERROR codes propagate as failures.
  */
 
 // e2e-covers: CreateIndustryProfile, UpdateIndustryProfile, RemoveIndustryProfile, ListIndustryProfiles, GetIndustryProfile, GET_INDUSTRIES_FOR_AUTOCOMPLETE
@@ -174,7 +95,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile industries (live talent-profile, #321 wire-fix coverage)", () => {
+describe("profile industries (live talent-profile)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

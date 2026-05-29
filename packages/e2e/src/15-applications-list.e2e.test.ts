@@ -49,7 +49,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("applications list (live mobile-gateway, #377, #410, #530, #539, #547)", () => {
+describe("applications list (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

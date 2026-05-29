@@ -94,7 +94,7 @@ const URL_FIELDS = ["linkedin", "github", "website", "twitter", "behance", "drib
 const WRITABLE_URL_FIELDS = ["linkedin", "github", "website", "behance", "dribbble"] as const;
 type WritableUrlField = (typeof WRITABLE_URL_FIELDS)[number];
 
-describe("profile external show (live talent-profile, INFERRED wire shape, #343)", () => {
+describe("profile external show (live talent-profile, INFERRED wire shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

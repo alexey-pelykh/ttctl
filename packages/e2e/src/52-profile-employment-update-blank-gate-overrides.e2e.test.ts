@@ -2,84 +2,39 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `profile.employment.update` Rails `.blank?` gate override
- * params (#402).
+ * E2E coverage for `profile.employment.update` Rails `.blank?` gate
+ * override params.
  *
- * **Problem statement (#402)**: after #394's read-current+merge shipped in
- * rc.4, partial updates work ONLY for employment rows whose current state
- * has all Rails `.blank?`-gated fields set to non-blank values. Rows with
- * `publicationPermit: false` cannot be updated via ttctl — the merge
- * correctly preserves `false`, but the server's Rails `.blank?` check
- * treats `false` as empty and rejects with:
+ * Contract under test: `publicationPermit`, `showViaToptal`, and
+ * `toptalRelated` are exposed as optional update params. When supplied,
+ * the user value wins over the merged current state via
+ * `buildUpdateEmploymentInput`'s `{ ...merged, ...fields }`. When
+ * omitted, the prior read-current+merge behavior is preserved.
  *
- *     profile.employment.update failed (USER_ERROR):
- *     employment update rejected (publicationPermit): You can't leave this empty
+ * Coverage (sentinel-based):
+ *   1. Seed a row with `publicationPermit: true` (the create-side default
+ *      ensures non-blank starting state).
+ *   2. Update with explicit `publicationPermit: true` — expect success.
+ *   3. Update with explicit `publicationPermit: false` — expect
+ *      `USER_ERROR` matching the Rails `.blank?` gate pattern (the
+ *      rejection IS the assertion target).
+ *   4. Recover via `publicationPermit: true` override, then update with
+ *      no `publicationPermit` field — expect success (omit path).
+ *   5. Update with explicit `showViaToptal: true` + `toptalRelated: false`
+ *      — round-trip via `show()`. Proves the override surface works for
+ *      all 3 fields.
+ *   6. `try/finally` removes the sentinel even on assertion failure.
  *
- * **Fix (#402)**: surface `publicationPermit`, `showViaToptal`, and
- * `toptalRelated` as optional parameters on the MCP `employment_update`
- * tool. When supplied, the user value wins over the merged current state
- * via `buildUpdateEmploymentInput`'s `{ ...merged, ...fields }`. When
- * omitted, the rc.4 behavior is preserved (current-state merge).
+ * Track 1: `UpdateEmployment` is T1; the existing snapshot covers the
+ * response shape (input shape changes here don't affect it).
  *
- * **Coverage strategy (sentinel-based, mirrors `46-...-update-merge.e2e`)**:
- *
- *   1. Source catalog refs (employerId, industry, skills) for the sentinel.
- *   2. Add a `publicationPermit: true` sentinel via `add()` (the
- *      add()-side default ensures we have a non-blank starting state).
- *   3. **Scenario (c) wire-equivalent**: update with explicit
- *      `publicationPermit: true` override — expect success. Proves the
- *      override path threads correctly through the merge.
- *   4. **Scenario (b) wire-equivalent**: update with explicit
- *      `publicationPermit: false` override — expect `USER_ERROR` whose
- *      message matches the Rails `.blank?` gate pattern. Proves the
- *      server-side gate is real and the rejection surfaces cleanly.
- *      (Sending `publicationPermit: false` to the wire is wire-equivalent
- *      to scenario b: "current value is false + no override" — both put
- *      `publicationPermit: false` in the wire payload.)
- *   5. **Scenario (a)**: update with `publicationPermit: true` override
- *      again (recover the sentinel into a clean state), then update with
- *      NO `publicationPermit` field — expect success. Proves the
- *      rc.4-preserving "omit" path still works.
- *   6. **Sibling override proof — showViaToptal / toptalRelated**: update
- *      with explicit `showViaToptal: true` and `toptalRelated: false` —
- *      verify they round-trip through `show()`. Proves the new override
- *      surface works for all 3 fields, not just `publicationPermit`.
- *   7. `try/finally` cleanup removes the sentinel even on assertion
- *      failure.
- *
- * **Track 1 disposition**: `UpdateEmployment` is in
- * `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS` and remains on T1. The existing
- * `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json` is
- * response-shape only (`Employment` projection) — our changes alter the
- * INPUT shape (3 new optional fields the wire was already willing to
- * accept), not the response. The snapshot remains valid. We do NOT
- * re-assert `assertWireShapeStable` here because the 46-... sibling
- * already does, and adding a second snapshot point on the same op would
- * create snapshot churn risk without new coverage value.
- *
- * **Schema/contract rule disposition**: NOT triggered by file-path
- * (only `packages/mcp/...` modified). AC mandates this E2E regardless.
- *
- * **No silent-skip on USER_ERROR**: mirrors the 46-... discipline —
- * scenarios (a)/(c) propagate any error as a hard failure; scenario (b)
- * INTENTIONALLY catches `USER_ERROR` and asserts on its shape (because
- * the rejection is the assertion target).
- *
- * **#488 coverage gap acknowledgment**: this test exercises the INPUT-
- * side `.blank?` gate (scenarios a/b/c all start with a sentinel at
- * `publicationPermit: true`) but does NOT exercise the persisted-state
- * axis where a row currently at `false` is updated with explicit
- * `publicationPermit: true`. The #488 report empirically settled that
- * the server SILENTLY refuses to flip a `false`-current row to `true` —
- * the wire accepts the input, the mutation returns `ok`, and the
- * persisted value stays at `false`. Mirrors the `toptalRelated`
- * server-determined semantic documented in the sibling-override block
- * below. We cannot reliably construct a `false`-current sentinel via
- * ttctl (the create-path `.blank?` gate rejects `false`), so the
- * persisted-state axis is left to manual / live-account verification.
- * Field-semantic documentation lives in the MCP tool descriptions and
- * the per-field comment in
- * `packages/core/src/services/profile/employment/index.ts`.
+ * Coverage gap: this test exercises the input-side `.blank?` gate
+ * starting from a `publicationPermit: true` sentinel. It does NOT
+ * exercise the persisted-state axis where a row currently at `false` is
+ * updated to `true` — empirically the server silently refuses that flip
+ * (wire ok, persisted value stays at `false`). Cannot reliably construct
+ * a `false`-current sentinel via ttctl (the create-path `.blank?` gate
+ * rejects `false`), so that axis is left to manual verification.
  */
 
 // e2e-covers: UpdateEmployment
@@ -134,7 +89,7 @@ function errorMessage(err: unknown): string | undefined {
   return undefined;
 }
 
-describe("profile employment update — Rails `.blank?` gate override params (#402)", () => {
+describe("profile employment update — Rails `.blank?` gate override params", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

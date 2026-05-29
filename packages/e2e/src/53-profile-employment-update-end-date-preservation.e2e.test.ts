@@ -2,74 +2,35 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E regression coverage for #487 (wire-broke) — `employment_update`
- * silently nulled `endDate` on partial updates that did not supply `to`.
+ * E2E regression coverage for `employment.update` `endDate` preservation
+ * on partial updates.
  *
- * The reporter's empirical evidence: a batch of MCP
- * `ttctl_profile_employment_update` calls that touched only `industryIds`
- * + `publicationPermit` (no `to`) wiped the stored `endDate` on every
- * row that had one — converting "Year – Year" to "Year – Present" on
- * the public profile. The bug was structurally confirmed in
- * `buildUpdateEmploymentInput`: `endDate` was missing from the merge
- * object entirely, so the spread `{ ...merged, ...fields }` carried
- * `endDate` to the wire only when the caller supplied it; absence on
- * the wire meant the server null-set the field. Asymmetric with
- * `startDate` which has always been force-echoed.
+ * Contract under test: a partial update that does NOT supply `to` must
+ * preserve the row's existing `endDate`. Pre-fix the merge was missing
+ * `endDate`, so the wire received no value and the server null-set the
+ * field — converting "Year – Year" closed roles to "Year – Present" on
+ * the public profile.
  *
- * Fix scope: endDate-only force-echo. A broader generalization (echo
- * every read-side-surfaced field — `companyWebsite`, `noWebsite`,
- * `highlight`, `toptalRelated` joining the merge alongside endDate)
- * was attempted mid-PR and rolled back: echoing
- * `(companyWebsite, noWebsite)` on catalog-employer rows trips the
- * Rails anchor gate `(employerId): You should specify either employer
- * or company website` (same class as the #484 CREATE-side anchor
- * contract). `(highlight, toptalRelated)` were rolled back at the
- * same time, pending per-field live verification. The endDate-only
- * scope is the empirically-safe class on this surface; see the
- * helper-doc `Per-field caution on the broader force-echo class`
- * block in `packages/core/src/services/profile/employment/index.ts`
- * for the full attempt-and-rollback narrative.
+ * Scope: `endDate`-only force-echo. A broader generalization (echo every
+ * read-side-surfaced field) was attempted and rolled back because echoing
+ * `(companyWebsite, noWebsite)` on catalog-employer rows trips the Rails
+ * anchor gate. See the helper-doc block in `services/profile/employment/`
+ * for the per-field caution.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** — the
- * fix touches `packages/core/src/services/profile/employment/index.ts`,
- * which is a file-path trigger of the rule's code-review checklist.
- * The PR body declares `Schema/contract rule: triggered` and points
- * at this file as the live transcript.
+ * Track 1: `UpdateEmployment` snapshot stays stable through this test
+ * (the open-role sentinel in the sibling test exercises the snapshot;
+ * this test uses a closed-role sentinel but does not re-assert it).
  *
- * **Track 1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track
- * 2): `UpdateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`
- * and has no generated operation type → **T1** (wire-shape snapshot,
- * already at `packages/e2e/src/wire-snapshots/UpdateEmployment.snapshot.json`).
- * The UpdateEmployment snapshot stays stable through this PR — the
- * snapshot is asserted by `46-…` whose sentinel is an open role
- * (`endDate: null`); this test's sentinel carries a non-null endDate
- * but does NOT call `assertWireShapeStable`. No snapshot refresh is
- * required by #487.
+ * Coverage (sentinel-based):
+ *   1. Source catalog refs — real Skill id, industry, employer.
+ *   2. Add a sentinel row WITH `endDate` set (closed role).
+ *   3. Update an UNRELATED field (`publicationPermit`) — the exact shape
+ *      of the bug repro.
+ *   4. Assert both the wire echo and a fresh `show()` re-read keep the
+ *      original `endDate` (round-trip).
+ *   5. `try/finally` cleanup removes the sentinel.
  *
- * Coverage strategy (sentinel-based; mirrors the `46-…` try/finally
- * pattern):
- *
- *   1. **Source catalog refs** — real Skill id (sourced from an
- *      existing employment row), industry via autocomplete, employer
- *      via autocomplete (same protocol as 46-…).
- *   2. **Add a sentinel row WITH `endDate` set** (closed role: start
- *      2020, end 2022). The bug ONLY surfaces when the row has a non-
- *      null endDate at the time of the partial update.
- *   3. **Update an UNRELATED field** (`publicationPermit`) — the exact
- *      shape of the reporter's batch repro. No `to` / `current` flag
- *      in the input; if the merge regresses, the wire response shows
- *      `endDate: null` instead of `endDate: 2022`.
- *   4. **Assert `updated.endDate === 2022`** (the wire echo) AND
- *      `shown.endDate === 2022` via fresh `show()` (round-trip half of
- *      the schema/contract rule). Pre-fix BOTH assertions fail
- *      because the server null-set the field.
- *   5. **`try / finally` cleanup** removes the sentinel even on
- *      mid-assertion failure.
- *
- * **No silent-skip on USER_ERROR** — sibling-file pattern (see
- * `46-…` header). Any error from `update()` (including `USER_ERROR`)
- * propagates as a hard test failure; the regression class stays
- * loudly observable.
+ * No silent-skip on USER_ERROR — any error propagates as a hard failure.
  */
 
 // e2e-covers: UpdateEmployment
@@ -98,7 +59,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile employment update — endDate preservation regression (#487)", () => {
+describe("profile employment update — endDate preservation regression", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

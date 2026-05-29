@@ -2,83 +2,32 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `profile.employment.add` after the #395 employerId-
- * resolution rewrite.
+ * E2E coverage for `profile.employment.add` — `CreateEmployment` is a
+ * gappy-schema T1 op; the live API is the contract authority.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
- * `CreateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`
- * (`codegen.config.ts`), the schema is gappy
- * (`CreateEmploymentInput { _placeholder: String }`), and the input
- * shape was inferred from the captured browser curl in
- * `research/notes/10-mutation-input-patterns.md` / `research/captures/
- * web/inputs/UpdateEmploymentInput.json`. The live API is the only
- * authority on whether the autocomplete-resolved `employerId` matches
- * the server's `CreateEmploymentInput!` contract.
- *
- * **Originating bug (#395)**: pre-#395, `add({company, role, ...})`
- * passed `company` (free-text name) to the server's `CreateEmployment`
- * mutation. The server requires `employment.employerId` (catalog id,
- * not the company string) and rejected the call with
- * `USER_ERROR: employment add rejected (employerId): You can't leave
- * this empty`. The fix wires the existing `employerAutocomplete()`
- * (at `services/profile/employment/index.ts:399-415`) into `add()`
- * with disambiguation policy: 1 match = transparent use, 0 = nudge,
- * 2+ = candidate listing. An explicit `--employer-id` (CLI) /
- * `employerId` (MCP) bypasses autocomplete entirely.
- *
- * **Track 1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track 2):
- * `CreateEmployment` has no generated operation type → **T1** (wire-
- * shape snapshot). `assertWireShapeStable(...)` diffs the live response
- * shape against the committed snapshot at
- * `packages/e2e/src/wire-snapshots/CreateEmployment.snapshot.json`.
- *
- * **Cascade-of-required-fields discovery (#395 scope note)**: the live
- * capture for #395 surfaced FOUR additional required fields the
- * autocomplete fix did NOT resolve and which pre-existed independently:
+ * Required input fields the wire enforces independently of the
+ * autocomplete resolution:
  *   1. `publicationPermit: true` — server treats `false` as blank
- *      (Rails `.blank?` semantics on Boolean false).
- *   2. `experienceItems: [≥3 items, 50-250 chars each]`.
- *   3. `skills: [≥1 SkillRefInput]` — needs a catalog id reference.
- *   4. `industries: [≥1 industry catalog id]` — needs a catalog id ref.
+ *      (Rails `.blank?` on Boolean false).
+ *   2. `experienceItems`: ≥3 items, 50-250 chars each.
+ *   3. `skills`: ≥1 `SkillRefInput` (catalog id reference).
+ *   4. `industries`: ≥1 industry catalog id.
  *
- * Per the operator-locked scope ("Out of scope: revisiting the `add()`
- * static-defaults … unless the autocomplete wiring naturally exposes
- * them as wrong. Document the choice in the PR."), this PR ships ONLY
- * the employerId-resolution fix + a `publicationPermit: true` default
- * (the static-default the autocomplete wiring most naturally exposed).
- * The remaining 3 fields (experienceItems / skills / industries) need
- * new CLI/MCP surface flags + catalog integration — tracked as a
- * follow-up issue. The e2e tests in this file therefore supply those 3
- * fields explicitly via the EmploymentFields surface so the live
- * round-trip can complete.
+ * The CLI/MCP surface does NOT yet expose flags for 2-4; tests supply
+ * them via the EmploymentFields surface so the live round-trip can
+ * complete.
  *
  * Coverage:
- *   - **Round-trip with autocomplete-resolved company** (#395 core AC):
- *     apply `add({company: "Anthropic", role: ..., employerId omitted,
- *     skills + industries + experienceItems supplied})` against the
- *     live API. Asserts the autocomplete-resolution path closes the
- *     employerId gate (a `USER_ERROR` mentioning `employerId` would be
- *     a regression — surfaced as a hard failure).
- *   - **Bypass path with explicit employerId**: apply `add({company,
- *     role, employerId, ...full input})` where `employerId` is sourced
- *     from autocomplete (so the test doesn't hardcode IDs that could
- *     drift). Asserts the bypass path produces the same successful
- *     create.
- *   - **Wire-shape snapshot** (T1): the `Employment` returned by `add`
- *     is diffed against the committed snapshot.
+ *   - Round-trip with autocomplete-resolved `company`.
+ *   - Bypass path with explicit `employerId`.
+ *   - T1 wire-shape snapshot on the returned `Employment`.
  *
- * **Non-destructive design**: every created row is removed in `finally`
- * so the user's profile content is unchanged at end of test, even on
- * assertion failure.
- *
- * **NO USER_ERROR silent-skip anti-pattern**: unlike the original
- * `43-profile-employment.e2e.test.ts:159-165` (which #394 will fix),
- * this file does NOT skip on USER_ERROR. A USER_ERROR from
- * `CreateEmployment` with the message containing `employerId` is
- * precisely the #395 regression class — propagated as a hard failure.
- * Other USER_ERROR variants (e.g., the test account is feature-disabled
- * for employment add) are surfaced verbatim so the failure is
- * actionable, not hidden.
+ * Design invariants:
+ *   - Non-destructive: every created row is removed in `finally`.
+ *   - NO USER_ERROR silent-skip — a `USER_ERROR` mentioning `employerId`
+ *     is propagated as a hard failure (it would be a regression of the
+ *     autocomplete-resolution contract). Other USER_ERROR variants are
+ *     surfaced verbatim so failures stay actionable.
  */
 
 // e2e-covers: CreateEmployment, GET_EMPLOYERS_AUTOCOMPLETE, RemoveEmployment, UpdateEmployment
@@ -108,7 +57,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile employment #395 employerId-resolved add() (live talent-profile, INFERRED wire shape)", () => {
+describe("profile employment employerId-resolved add() (live talent-profile, INFERRED wire shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
@@ -325,98 +274,33 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
 });
 
 /**
- * E2E coverage for `profile.employment.add` with the #401 custom
- * (non-catalog) workplace path.
+ * E2E coverage for `profile.employment.add` on the custom (non-catalog)
+ * workplace path — `employerId: null` with a free-text `company` (what
+ * the Toptal "Add as new: <name>" UI sends; there is no `CreateEmployer`
+ * mutation).
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
- * `CreateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`, AND the
- * `employerId: null`-on-CREATE behaviour is an INFERRED contract: the
- * research note `research/captures/web/inputs/UpdateEmploymentInput.json`
- * documents nullable `employerId` for *Update* and the maintainer
- * clarified (2026-05-19, #401) that the Toptal "Add as new: <name>" UI
- * sends `employerId: null` with the free-text `company` (there is no
- * `CreateEmployer` mutation). The live API is the only authority on
- * whether `CreateEmployment` accepts `employerId: null`.
+ * URL-host determinism: when `companyWebsite` is a routable host, Toptal
+ * may auto-create or auto-link to a catalog Employer (id materializes,
+ * `employerId` no longer null). To keep the inferred CREATE contract
+ * holding deterministically, this test uses an RFC-2606 `.invalid` host
+ * so the server makes no catalog link — `employerId` stays null and
+ * `companyWebsite` round-trips verbatim.
  *
- * **Live-wire discovery #1 — URL-host catalog matching** (2026-05-19,
- * this E2E): a 3-run controlled investigation against the maintainer's
- * real Toptal profile, varying only the `companyWebsite` URL host (full
- * transcripts captured in PR #406's body):
- *   • `anthropic.com` (real, distinct host)        → server auto-creates
- *     a new Employer; `shown.employerId` is the new id; `https://` is
- *     stripped from `shown.companyWebsite`.
- *   • `example.com` (real, matches an existing Employer record on the
- *     test account's catalog)                       → row is LINKED to
- *     that pre-existing Employer id (reproducible: same id across two
- *     runs); `shown.companyWebsite` is garbled with the linked
- *     Employer's name (a Toptal-side display-merging quirk).
- *   • `nonexistent-*.invalid` (RFC-2606 non-routable TLD) → server
- *     makes NO catalog link; `shown.employerId` stays `null`;
- *     `shown.companyWebsite` round-trips verbatim.
+ * Axis-independence under test: `employerId: null` × `noWebsite: false` +
+ * `companyWebsite: <url>` — the variant the catalog-resolved sibling
+ * tests do NOT cover.
  *
- * The maintainer's "Add as new: <name>" description maps cleanly to
- * the third (`.invalid`) leg — no catalog interaction, null persists,
- * URL preserved. The auto-create / catalog-link behaviour for routable
- * hosts is Toptal product behaviour, NOT TTCtl's contract surface, and
- * is documented above for institutional memory but NOT asserted in
- * this test. This test deliberately uses an RFC-2606 `.invalid` URL so
- * the inferred CONTRACT holds deterministically — no branching, no
- * non-determinism, sharp assertions.
+ * Track 1 disposition: shares the committed `CreateEmployment.snapshot.json`
+ * with the sibling tests (only the REQUEST differs from the autocomplete
+ * path; the RESPONSE shape is invariant).
  *
- * **Live-wire discovery #2 — symmetric anchor gate on UPDATE** (2026-05-21,
- * #508; supersedes the earlier "WORM" framing from 2026-05-19):
- * `UpdateEmployment` on a noEmployer:true row succeeds when the
- * `(noWebsite, companyWebsite)` anchor pair from current is echoed
- * in the wire payload AND `employerId` is OMITTED entirely (not sent
- * as explicit null), mirror-symmetric to the #484 CREATE-side anchor
- * contract. Without the anchor pair (or with an explicit `employerId:
- * null` in the input), the Rails apply path falls through to the
- * `employer_id .blank?` validator with the misleading "employerId:
- * You can't leave this empty" error — the exact signature originally
- * framed as "WORM". The 2026-05-19 captures in
- * `research/notes/15-employment-custom-workplace-worm.md` varied only
- * the `employerId` axis (absent vs explicit null) and held the
- * anchor pair fixed-omitted (per the #487 PR rollback), so the gate's
- * actual axis was invisible to that experiment. Refuted empirically
- * 2026-05-21 by a web-UI capture showing `UpdateEmployment` succeeded
- * (`data.updateEmployment.success: true`) on a `noWebsite: true,
- * companyWebsite: null` noEmployer row with the anchor pair echoed
- * and `employerId` omitted; the #508 fix in
- * `packages/core/src/services/profile/employment/index.ts` enables
- * the echo on the `current.employerId === null` branch only
- * (catalog-employer rows continue to omit the pair per #487, where
- * echoing trips a DIFFERENT anchor gate). The lifecycle E2E coverage
- * lives on the #484 sibling (the captured shape's exact axis); the
- * URL-anchor axis (`noWebsite: false, companyWebsite: <url>`)
- * exercised by the #401 sibling has an additional URL-host
- * validation concern on UPDATE that the empirical evidence does
- * not yet cover and therefore stays CREATE-only there. The general
- * catalog-employer `update()` path is covered by the #394 sibling
- * E2E at `46-…-update-merge.e2e.test.ts`.
- *
- * **Axis-independence claim under test (#401)**: `employerId` and
- * `noWebsite` are ORTHOGONAL. The earlier single-capture co-occurrence
- * (custom AND website-less) implied a coupling that is not the wire
- * contract. This test deliberately exercises the
- * `employerId:null + noWebsite:false + companyWebsite:<url>` combination
- * — the variant the existing #395 captures do NOT cover — so the live
- * wire settles independence, not just the no-website case.
- *
- * **Track 1 disposition**: `CreateEmployment` has no generated operation
- * type → **T1**. The RESPONSE shape is invariant vs the #395
- * autocomplete path (only the REQUEST differs: `employerId:null` instead
- * of a resolved catalog id), so this shares the committed
- * `CreateEmployment.snapshot.json` with the sibling tests.
- *
- * **Non-destructive**: the created row is removed in `finally` so the
- * user's profile is unchanged at end of test, even on assertion failure.
- *
- * **NO USER_ERROR silent-skip**: a `USER_ERROR` mentioning `employerId`
- * from `CreateEmployment` is precisely the #401 contract-violation class
- * (the inferred null-employerId CREATE contract being wrong) —
- * propagated as a hard failure, never hidden.
+ * Design invariants:
+ *   - Non-destructive: created row is removed in `finally`.
+ *   - NO USER_ERROR silent-skip: `USER_ERROR` mentioning `employerId` is
+ *     propagated as a hard failure (it would be the contract-violation
+ *     class this test is meant to detect).
  */
-describe("profile employment #401 custom (non-catalog) workplace add() (live talent-profile, INFERRED null-employerId-on-CREATE contract; RFC-2606 non-routable host to bypass Toptal's URL-host catalog matching; update() OMITTED on this axis — covered on the #484 sibling per #508)", () => {
+describe("profile employment custom (non-catalog) workplace add() (live talent-profile, INFERRED wire shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
@@ -611,55 +495,27 @@ describe("profile employment #401 custom (non-catalog) workplace add() (live tal
 });
 
 /**
- * E2E coverage for `profile.employment.add` with the #484 custom-workplace-
- * without-website path.
+ * E2E coverage for `profile.employment.add` on the custom-workplace-
+ * WITHOUT-website path — `noEmployer:true + noWebsite:true +
+ * companyWebsite: undefined`.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
- * `CreateEmployment` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`, and the
- * `noWebsite:true + employerId:null + companyWebsite:undefined` field-
- * presence permutation is an INFERRED contract that the #401 E2E above
- * does NOT exercise (it only covers the `companyWebsite:<url>` anchor).
+ * The CREATE-side anchor contract: on the `noEmployer:true` path, the
+ * Rails server validates `employer_id` as `.blank?` UNLESS the row
+ * carries either (a) a `companyWebsite` URL signal OR (b) an explicit
+ * `noWebsite:true` "intentionally no website" signal. With neither
+ * anchor, the server falls through to demanding `employer_id`. Tests
+ * cover (a) on the sibling above and (b) here; ttctl refuses
+ * client-side when neither anchor is present.
  *
- * **Originating bug ([#484](https://github.com/alexey-pelykh/ttctl/issues/484))**:
- * a maintainer-reported wire-broke against rc.6's MCP surface. The MCP
- * call `ttctl_profile_employment_add { noEmployer: true, ... }` (without
- * `website`) sent `employerId: null` with neither `companyWebsite` nor
- * `noWebsite` populated. The live `talent_profile/graphql` server
- * rejected with `USER_ERROR: employment add rejected (employerId): You
- * can't leave this empty` — the same Rails `.blank?` gate that fires on
- * UPDATE for null-employerId rows (#401 / WORM note).
+ * Track 1 disposition: shares `CreateEmployment.snapshot.json` with the
+ * sibling tests — the RESPONSE shape is invariant across the anchor
+ * permutations.
  *
- * The empirical settlement (this E2E + the existing #401 sibling above):
- *   • `noEmployer:true + companyWebsite:".invalid" + noWebsite:false`
- *     → SUCCESS (existing #401 test — anchor leg (a): URL signal).
- *   • `noEmployer:true + noWebsite:true   + companyWebsite:undefined`
- *     → SUCCESS (THIS TEST — anchor leg (b): explicit no-website signal).
- *   • `noEmployer:true + companyWebsite:undefined + noWebsite:undefined`
- *     → FAILURE with Rails `.blank?` on `employerId` (the reporter's
- *     case; settled at the client layer by a VALIDATION_ERROR thrown
- *     BEFORE the wire — see `add()` in `services/profile/employment/`).
- *
- * **The CREATE-side anchor contract** (inferred from this trio): on the
- * `noEmployer:true` path, the Rails server validates `employer_id` as
- * `.blank?` UNLESS the row carries either (a) a `companyWebsite` URL
- * signal OR (b) an explicit `noWebsite:true` "intentionally no website"
- * signal. With neither anchor, the server falls through to demanding
- * `employer_id`. The reporter's MCP call (no `website` flag → no anchor)
- * tripped the latter; ttctl now refuses the call client-side with an
- * actionable message instead of letting the server return the confusing
- * `employerId: You can't leave this empty` error.
- *
- * **Track 1 disposition**: shares the committed `CreateEmployment.snapshot.json`
- * with #395 and #401 — the RESPONSE shape is invariant across these
- * three request-shape permutations.
- *
- * **Non-destructive**: created row is removed in `finally`.
- *
- * **NO USER_ERROR silent-skip**: a `USER_ERROR` mentioning `employerId`
- * is precisely the #484 contract-violation class — propagated as a hard
- * failure, never hidden.
+ * Design invariants: non-destructive (`finally` cleanup); NO
+ * USER_ERROR silent-skip on `employerId` (would be a contract-violation
+ * regression).
  */
-describe("profile employment #484/#508 custom workplace WITHOUT website add() lifecycle + #508 update() round-trip on a self-seeded noEmployer row", () => {
+describe("profile employment custom workplace WITHOUT website add() lifecycle + update() round-trip on a self-seeded noEmployer row", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

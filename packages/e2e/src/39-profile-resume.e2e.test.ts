@@ -68,7 +68,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("profile resume (live talent-profile, INFERRED wire shape, #318)", () => {
+describe("profile resume (live talent-profile, INFERRED wire shape)", () => {
   let cli: CliClient;
 
   beforeAll(() => {

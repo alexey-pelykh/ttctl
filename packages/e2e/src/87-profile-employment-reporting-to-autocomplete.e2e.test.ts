@@ -37,7 +37,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
 // Try a few — catalog may be empty for any single prefix on a given test account.
 const SNAPSHOT_CANDIDATES = ["Joh", "Smith", "Garcia", "Lee"];
 
-describe("profile employment reporting-to-autocomplete (live talent-profile, #468)", () => {
+describe("profile employment reporting-to-autocomplete (live talent-profile)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

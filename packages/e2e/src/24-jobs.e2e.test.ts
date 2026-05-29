@@ -70,7 +70,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("jobs (live mobile-gateway, #138, #166, #183, #410, #530, #545, #546)", () => {
+describe("jobs (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

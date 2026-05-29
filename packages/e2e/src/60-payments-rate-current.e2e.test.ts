@@ -34,7 +34,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("payments rate current (live mobile-gateway, #447)", () => {
+describe("payments rate current (live mobile-gateway)", () => {
   let cli: CliClient;
 
   beforeAll(() => {
