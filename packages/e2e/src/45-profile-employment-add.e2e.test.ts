@@ -189,7 +189,7 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
             "Designed infrastructure for large-scale model fine-tuning workflows and reproducibility tooling.",
             "Collaborated cross-functionally on safety evaluation, red-team analysis, and shipped artifacts.",
           ],
-          skills: [{ id: firstSkill.id, name: firstSkill.name ?? "skill" }],
+          skills: [{ id: firstSkill.skill.id, name: firstSkill.skill.name }],
           industryIds: [firstIndustry.id],
         });
         expect(outcome.kind).toBe("created");
@@ -299,7 +299,7 @@ describe("profile employment #395 employerId-resolved add() (live talent-profile
             "Server stores employment row keyed by the supplied employerId (not autocomplete-resolved).",
             "Bypass round-trip demonstrates the bypass path produces identical wire-success vs the autocomplete path.",
           ],
-          skills: [{ id: firstSkill.id, name: firstSkill.name ?? "skill" }],
+          skills: [{ id: firstSkill.skill.id, name: firstSkill.skill.name }],
           industryIds: [firstIndustry.id],
         });
         expect(outcome.kind).toBe("created");
@@ -514,7 +514,7 @@ describe("profile employment #401 custom (non-catalog) workplace add() (live tal
             "Validated that the free-text company name persists verbatim with no Toptal employer-catalog record.",
             "Confirmed the website axis is independent of the employer axis on the live CreateEmployment wire.",
           ],
-          skills: [{ id: firstSkill.id, name: firstSkill.name ?? "skill" }],
+          skills: [{ id: firstSkill.skill.id, name: firstSkill.skill.name }],
           industryIds: [firstIndustry.id],
         });
         expect(outcome.kind).toBe("created");
@@ -659,7 +659,7 @@ describe("profile employment #401 custom (non-catalog) workplace add() (live tal
  * is precisely the #484 contract-violation class — propagated as a hard
  * failure, never hidden.
  */
-describe("profile employment #484/#508 custom workplace WITHOUT website add() lifecycle + #508 update() against existing noEmployer row", () => {
+describe("profile employment #484/#508 custom workplace WITHOUT website add() lifecycle + #508 update() round-trip on a self-seeded noEmployer row", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
@@ -702,7 +702,7 @@ describe("profile employment #484/#508 custom workplace WITHOUT website add() li
             "Validated that the free-text company name persists verbatim when neither catalog nor URL anchor is present.",
             "Confirmed that an explicit noWebsite:true signal substitutes for companyWebsite as the server's anchor requirement.",
           ],
-          skills: [{ id: firstSkill.id, name: firstSkill.name ?? "skill" }],
+          skills: [{ id: firstSkill.skill.id, name: firstSkill.skill.name }],
           industryIds: [firstIndustry.id],
         });
         expect(outcome.kind).toBe("created");
@@ -734,24 +734,59 @@ describe("profile employment #484/#508 custom workplace WITHOUT website add() li
     },
   );
 
-  // #508 — UPDATE side of the anchor-pair contract. Verifies against
-  // the pre-existing noEmployer row that the 2026-05-21 capture
-  // succeeded on; the test restores the original position afterwards
-  // so the row state is unchanged.
+  // #508 — UPDATE side of the anchor-pair contract. Self-seeds a fresh
+  // noEmployer row (CreateEmployment with employerId:null + noWebsite:true
+  // anchor per #484), exercises update({position}) → show() round-trip,
+  // and removes the row in `finally`. Self-seeding lifts the historical
+  // manual-fixture requirement so the test is fully non-destructive and
+  // does not depend on pre-existing account state.
   it.skipIf(!e2eEnabled)(
-    "update({position}) succeeds against the pre-existing noEmployer row on the account (anchor-pair echo via buildUpdateEmploymentInput)",
+    "update({position}) succeeds against a self-seeded noEmployer row (anchor-pair echo via buildUpdateEmploymentInput)",
     async () => {
       const token = loadSandboxBearer(sandboxConfigPath);
-      const rows = await profile.employment.list(token);
-      const target = rows.find((r) => r.employerId === null && r.company === "TTCtl");
-      if (target === undefined) {
+
+      const basic = await profile.basic.show(token);
+      const basicShape = basic as unknown as { viewer?: { viewerRole?: { profile?: { id?: string } } } };
+      const profileId = basicShape.viewer?.viewerRole?.profile?.id;
+      if (profileId === undefined) {
+        throw new Error("Cannot extract profileId from basic.show response — test fixture needs adjustment.");
+      }
+      const skillsList = await profile.skills.list(token, profileId);
+      const firstSkill = skillsList[0];
+      const industryMatches = await profile.industries.autocomplete(token, "Software", 5);
+      const firstIndustry = industryMatches[0];
+      if (firstSkill === undefined || firstIndustry === undefined) {
         throw new Error(
-          "#508 PRECONDITION UNMET: no pre-existing noEmployer row with company === \"TTCtl\" was found on the test account. The 2026-05-21 capture row must be present; seed it via the web UI's 'Add as new: TTCtl' flow and re-run TTCTL_E2E=1.",
+          "#508 PRECONDITION UNMET: the test account lacks a skill and/or a catalog industry. Seed at least one of each and re-run TTCTL_E2E=1.",
         );
       }
-      const originalPosition = target.position;
-      const probePosition = `${originalPosition} (#508 probe ${Date.now().toString()})`;
+
+      const seedCompany = `TTCtl #508 self-seed ${Date.now().toString()}`;
+      const seedPosition = "Founder";
+      let createdId: string | undefined;
       try {
+        const outcome = await profile.employment.add(token, {
+          company: seedCompany,
+          position: seedPosition,
+          startDate: 2024,
+          noEmployer: true,
+          noWebsite: true,
+          experienceItems: [
+            "Self-seeded noEmployer row for the #508 update-side anchor-pair test.",
+            "Created and removed in the same test run; no manual UI fixture required.",
+            "Validates that update({position}) preserves the null employerId across the round-trip.",
+          ],
+          skills: [{ id: firstSkill.skill.id, name: firstSkill.skill.name }],
+          industryIds: [firstIndustry.id],
+        });
+        expect(outcome.kind).toBe("created");
+        if (outcome.kind !== "created") throw new Error("unreachable");
+        const target = outcome.result;
+        createdId = target.id;
+        expect(target.employerId).toBeNull();
+        expect(target.company).toBe(seedCompany);
+
+        const probePosition = `${seedPosition} (#508 probe ${Date.now().toString()})`;
         const updated = await profile.employment.update(token, target.id, { position: probePosition });
         expect(updated.id).toBe(target.id);
         expect(updated.position).toBe(probePosition);
@@ -759,7 +794,9 @@ describe("profile employment #484/#508 custom workplace WITHOUT website add() li
         const reshown = await profile.employment.show(token, target.id);
         expect(reshown.position).toBe(probePosition);
       } finally {
-        await profile.employment.update(token, target.id, { position: originalPosition });
+        if (createdId !== undefined) {
+          await profile.employment.remove(token, createdId);
+        }
       }
     },
   );
