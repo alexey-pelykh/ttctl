@@ -52,6 +52,7 @@ function buildStubCtx(): ToolRegistrationContext {
 
 const RESULT: surveys.SubmitSurveyResult = { notice: "Thanks!", pendingSurveys: [{ id: "sv-next" }] };
 const ANSWERS = [{ questionId: "q-1", value: "5" }];
+const FEEDBACK_RESULT: surveys.AddSurveyFeedbackResult = { notice: "Thanks!" };
 
 // ---------------------------------------------------------------------
 // Registration smoke
@@ -65,10 +66,11 @@ describe("ttctl_surveys_submit — registration", () => {
     registerSurveysTools(server, buildStubCtx());
   });
 
-  it("registers both surveys tools", () => {
+  it("registers all three surveys tools", () => {
     const internal = server as unknown as { _registeredTools: Record<string, RegisteredTool | undefined> };
     expect(internal._registeredTools["ttctl_surveys_list"]).toBeDefined();
     expect(internal._registeredTools["ttctl_surveys_submit"]).toBeDefined();
+    expect(internal._registeredTools["ttctl_surveys_feedback"]).toBeDefined();
   });
 
   it("registers the documented input fields", () => {
@@ -227,5 +229,119 @@ describe("ttctl_surveys_submit — consent gate (schema-side)", () => {
 
   it("rejects an empty answers array (min 1)", () => {
     expect(safeParse({ surveyId: "sv-1", answers: [], surveySubmissionConsentIssued: true })?.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------
+// ttctl_surveys_feedback — handler + schema-side consent gate
+// ---------------------------------------------------------------------
+
+describe("ttctl_surveys_feedback — handler", () => {
+  let server: McpServer;
+  let spy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    registerSurveysTools(server, buildStubCtx());
+    spy = vi.spyOn(surveys, "addFeedback");
+  });
+
+  afterEach(() => {
+    spy.mockRestore();
+  });
+
+  it("dryRun: emits the AddSurveyFeedback preview WITHOUT calling the core (zero-network)", async () => {
+    const handler = getRegisteredHandler(server, "ttctl_surveys_feedback");
+    const result = await handler({
+      surveyId: "sv-1",
+      feedback: "Great match!",
+      surveySubmissionConsentIssued: true,
+      dryRun: true,
+    });
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as {
+      ok: boolean;
+      preview: { operationName: string; surface: string; variables: Record<string, unknown> };
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.preview.operationName).toBe("AddSurveyFeedback");
+    expect(parsed.preview.surface).toBe("mobile-gateway");
+    expect(parsed.preview.variables).toEqual({ surveyId: "sv-1", feedback: "Great match!" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("dryRun: includes kind in the preview variables when provided", async () => {
+    const handler = getRegisteredHandler(server, "ttctl_surveys_feedback");
+    const result = await handler({
+      surveyId: "sv-1",
+      feedback: "Nice.",
+      kind: "MID_ENGAGEMENT",
+      surveySubmissionConsentIssued: true,
+      dryRun: true,
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as { preview: { variables: Record<string, unknown> } };
+    expect(parsed.preview.variables).toEqual({ surveyId: "sv-1", feedback: "Nice.", kind: "MID_ENGAGEMENT" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("apply path: threads args + consent into surveys.addFeedback and returns the result JSON", async () => {
+    spy.mockResolvedValue(FEEDBACK_RESULT);
+    const handler = getRegisteredHandler(server, "ttctl_surveys_feedback");
+    const result = await handler({ surveyId: "sv-1", feedback: "Great match!", surveySubmissionConsentIssued: true });
+    expect(spy).toHaveBeenCalledWith(
+      "stub-bearer-for-tests",
+      { surveyId: "sv-1", feedback: "Great match!" },
+      { surveySubmissionConsentIssued: true },
+    );
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as surveys.AddSurveyFeedbackResult;
+    expect(parsed).toEqual(FEEDBACK_RESULT);
+  });
+
+  it("apply path: threads the kind override into the service args", async () => {
+    spy.mockResolvedValue(FEEDBACK_RESULT);
+    const handler = getRegisteredHandler(server, "ttctl_surveys_feedback");
+    await handler({ surveyId: "sv-1", feedback: "Nice.", kind: "NPS", surveySubmissionConsentIssued: true });
+    expect(spy).toHaveBeenCalledWith(
+      "stub-bearer-for-tests",
+      { surveyId: "sv-1", feedback: "Nice.", kind: "NPS" },
+      { surveySubmissionConsentIssued: true },
+    );
+  });
+
+  it("maps SurveysError(NOT_FOUND) to a structured error envelope", async () => {
+    spy.mockRejectedValue(new surveys.SurveysError("NOT_FOUND", 'No pending survey with id "sv-x".'));
+    const handler = getRegisteredHandler(server, "ttctl_surveys_feedback");
+    const result = await handler({ surveyId: "sv-x", feedback: "x", surveySubmissionConsentIssued: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? "").toContain("(Code: NOT_FOUND)");
+  });
+});
+
+describe("ttctl_surveys_feedback — consent gate (schema-side)", () => {
+  let server: McpServer;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    registerSurveysTools(server, buildStubCtx());
+  });
+
+  function safeParse(input: unknown): { success: boolean } | undefined {
+    return getRegisteredTool(server, "ttctl_surveys_feedback").inputSchema?.safeParse?.(input);
+  }
+
+  it("rejects surveySubmissionConsentIssued: false", () => {
+    expect(safeParse({ surveyId: "sv-1", feedback: "x", surveySubmissionConsentIssued: false })?.success).toBe(false);
+  });
+
+  it("rejects a missing surveySubmissionConsentIssued", () => {
+    expect(safeParse({ surveyId: "sv-1", feedback: "x" })?.success).toBe(false);
+  });
+
+  it("accepts surveySubmissionConsentIssued: true", () => {
+    expect(safeParse({ surveyId: "sv-1", feedback: "x", surveySubmissionConsentIssued: true })?.success).toBe(true);
+  });
+
+  it("rejects an empty feedback string (min 1)", () => {
+    expect(safeParse({ surveyId: "sv-1", feedback: "", surveySubmissionConsentIssued: true })?.success).toBe(false);
   });
 });

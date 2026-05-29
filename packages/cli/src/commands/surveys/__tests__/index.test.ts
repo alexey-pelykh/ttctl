@@ -17,6 +17,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
     surveys: {
       ...actual.surveys,
       submit: vi.fn(),
+      addFeedback: vi.fn(),
     },
   };
 });
@@ -24,7 +25,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
 import { ConsentRequiredError, surveys } from "@ttctl/core";
 
 import { setCliConfigPath } from "../../../lib/config-context.js";
-import { boolMarker, formatSurveysTable, runSurveysSubmit } from "../index.js";
+import { boolMarker, formatSurveysTable, runSurveysFeedback, runSurveysSubmit } from "../index.js";
 
 const SURVEY: surveys.Survey = {
   id: "sv-1",
@@ -111,8 +112,10 @@ describe("formatSurveysTable", () => {
 // ---------------------------------------------------------------------------
 
 const MOCKED_SUBMIT = surveys.submit as ReturnType<typeof vi.fn>;
+const MOCKED_FEEDBACK = surveys.addFeedback as ReturnType<typeof vi.fn>;
 const TOKEN = "tok-surveys-submit";
 const RESULT: surveys.SubmitSurveyResult = { notice: null, pendingSurveys: [{ id: "sv-2" }] };
+const FEEDBACK_RESULT: surveys.AddSurveyFeedbackResult = { notice: null };
 
 function withConfigFile(): void {
   const dir = mkdtempSync(join(tmpdir(), "ttctl-surveys-submit-"));
@@ -137,6 +140,7 @@ beforeEach(() => {
   stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   MOCKED_SUBMIT.mockReset();
+  MOCKED_FEEDBACK.mockReset();
 });
 
 afterEach(() => {
@@ -228,6 +232,59 @@ describe("runSurveysSubmit", () => {
     MOCKED_SUBMIT.mockRejectedValueOnce(new surveys.SurveysError("NOT_FOUND", 'No pending survey with id "sv-x".'));
     await expect(
       runSurveysSubmit("sv-x", { answer: ["q-1=5"], consentSurveySubmission: true, output: "json" }),
+    ).rejects.toThrow("process.exit(1)");
+    expect(stdout()).toContain('"code":"NOT_FOUND"');
+  });
+});
+
+describe("runSurveysFeedback", () => {
+  it("threads text + consent and omits kind when not given", async () => {
+    MOCKED_FEEDBACK.mockResolvedValueOnce(FEEDBACK_RESULT);
+    await runSurveysFeedback("sv-1", { text: "Great match!", consentSurveySubmission: true, output: "json" });
+    expect(MOCKED_FEEDBACK).toHaveBeenCalledWith(
+      TOKEN,
+      { surveyId: "sv-1", feedback: "Great match!" },
+      { surveySubmissionConsentIssued: true },
+    );
+    const payload = stdout();
+    expect(payload).toContain('"ok":true');
+    expect(payload).toContain('"operation":"surveys.feedback"');
+  });
+
+  it("threads the --kind override into the service args", async () => {
+    MOCKED_FEEDBACK.mockResolvedValueOnce(FEEDBACK_RESULT);
+    await runSurveysFeedback("sv-1", {
+      text: "Nice.",
+      kind: "MID_ENGAGEMENT",
+      consentSurveySubmission: true,
+      output: "json",
+    });
+    expect(MOCKED_FEEDBACK).toHaveBeenCalledWith(
+      TOKEN,
+      { surveyId: "sv-1", feedback: "Nice.", kind: "MID_ENGAGEMENT" },
+      { surveySubmissionConsentIssued: true },
+    );
+  });
+
+  it("threads consentSurveySubmission=false verbatim (runtime gate is the service's job)", async () => {
+    MOCKED_FEEDBACK.mockRejectedValueOnce(
+      new ConsentRequiredError("AddSurveyFeedback", "survey-submission", "consent missing"),
+    );
+    await expect(
+      runSurveysFeedback("sv-1", { text: "x", consentSurveySubmission: false, output: "json" }),
+    ).rejects.toThrow("process.exit(1)");
+    expect(MOCKED_FEEDBACK).toHaveBeenCalledWith(
+      TOKEN,
+      { surveyId: "sv-1", feedback: "x" },
+      { surveySubmissionConsentIssued: false },
+    );
+    expect(stdout()).toContain('"code":"CONSENT_REQUIRED"');
+  });
+
+  it("surfaces a service SurveysError (NOT_FOUND) through the error envelope", async () => {
+    MOCKED_FEEDBACK.mockRejectedValueOnce(new surveys.SurveysError("NOT_FOUND", 'No pending survey with id "sv-x".'));
+    await expect(
+      runSurveysFeedback("sv-x", { text: "x", consentSurveySubmission: true, output: "json" }),
     ).rejects.toThrow("process.exit(1)");
     expect(stdout()).toContain('"code":"NOT_FOUND"');
   });

@@ -297,7 +297,12 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_visas_list: {},
   ttctl_profile_visas_remove: { id: "vs_123" },
   ttctl_profile_visas_update: { id: "vs_123", visaType: "B1" },
-  // surveys (2 — #672/#673; both dry-run paths are zero-transport)
+  // surveys (3 — #672/#673/#674; all dry-run paths are zero-transport)
+  ttctl_surveys_feedback: {
+    surveyId: "sv_123",
+    feedback: "Great experience.",
+    surveySubmissionConsentIssued: true,
+  },
   ttctl_surveys_list: {},
   ttctl_surveys_submit: {
     surveyId: "sv_123",
@@ -348,8 +353,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 128 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(128);
+  it("registers exactly 129 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(129);
   });
 
   it("every registered tool has a fixture", () => {

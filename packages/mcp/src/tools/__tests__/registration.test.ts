@@ -206,8 +206,10 @@ const EXPECTED_TOOLS = [
   "ttctl_payments_rate_questions",
   "ttctl_payments_rate_change",
   "ttctl_payments_summary",
-  // surveys (#672/#673) — 2 tools: list pending surveys (`PendingSurveys`)
-  // and submit answers (`SubmitSurvey`, consent-gated, destructive).
+  // surveys (#672/#673/#674) — 3 tools: list pending (`PendingSurveys`),
+  // submit answers (`SubmitSurvey`) and add free-text feedback
+  // (`AddSurveyFeedback`) — the two writes consent-gated + destructive.
+  "ttctl_surveys_feedback",
   "ttctl_surveys_list",
   "ttctl_surveys_submit",
 ];
@@ -243,7 +245,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (128 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (129 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

@@ -6,10 +6,11 @@
  * (post-interview `INTERVIEW_ENDED` feedback, NPS, engagement surveys,
  * etc.): listing them and submitting answers.
  *
- * | Leaf     | Operation        |
- * |----------|------------------|
- * | `list`   | `PendingSurveys` |
- * | `submit` | `SubmitSurvey`   |
+ * | Leaf       | Operation           |
+ * |------------|---------------------|
+ * | `list`     | `PendingSurveys`    |
+ * | `submit`   | `SubmitSurvey`      |
+ * | `feedback` | `AddSurveyFeedback` |
  *
  * **Routing**: the **mobile-gateway** surface
  * (`https://www.toptal.com/gateway/graphql/talent/graphql`) via
@@ -31,16 +32,11 @@
  * best-effort INFERRED until the gated `packages/e2e/src/88-surveys-list.e2e.test.ts`
  * passes against a live session (T1 wire-shape snapshot disposition).
  *
- * **`submit`** (`SubmitSurvey`) is the structured-answer write side, also
- * in the `*_KNOWN_UNTRUSTED_OPS` lists (disposition T1). Its
- * `SurveyAnswerInput` shape (`{ questionId, id, value }`) was verified by a
- * live round-trip (2026-05-29) before merge. It is consent-gated
- * (`survey-submission` domain, ADR-009): submission is irreversible and
- * routes feedback to a third party. `submit` consumes `list` to resolve the
- * survey `kind` and per-question answer-option ids.
- *
- * **Out of scope** (separate future capability): `surveys feedback`
- * (`AddSurveyFeedback`, #674 — the free-text write side).
+ * **`submit`** (`SubmitSurvey`) and **`feedback`** (`AddSurveyFeedback`) are the
+ * write sides — both T1 (`*_KNOWN_UNTRUSTED_OPS`), consent-gated on the shared
+ * `survey-submission` domain (ADR-009), irreversible, routed to a third party.
+ * `submit` resolves `kind` + answer-option ids from `list`; `feedback` resolves
+ * only `kind`, or takes an explicit one to reach a non-pending survey.
  */
 
 import type { z } from "zod";
@@ -542,4 +538,148 @@ export async function submit(
     .filter((s) => s.id.length > 0);
 
   return { notice: payload.notice ?? null, pendingSurveys };
+}
+
+// ---------------------------------------------------------------------
+// addFeedback — public types
+// ---------------------------------------------------------------------
+
+/** Input to {@link addFeedback}. `kind` is resolved from `list` when omitted. */
+export interface AddSurveyFeedbackArgs {
+  surveyId: string;
+  feedback: string;
+  kind?: string | undefined;
+}
+
+/** Consent for {@link addFeedback} — shares `submit`'s `survey-submission` domain (ADR-009). */
+export interface AddSurveyFeedbackConsent {
+  surveySubmissionConsentIssued: true;
+}
+
+/** Result of {@link addFeedback} — `addFeedback` returns only `MutationResult`. */
+export interface AddSurveyFeedbackResult {
+  notice: string | null;
+}
+
+// ---------------------------------------------------------------------
+// addFeedback — GraphQL operation. Portal `{kind,surveyId,feedback}` shape sent
+// via the mobile-gateway (as for the sibling SubmitSurvey); no `version` arg.
+// ---------------------------------------------------------------------
+
+const ADD_SURVEY_FEEDBACK_MUTATION = `mutation AddSurveyFeedback($kind: SurveyKindEnum!, $surveyId: ID!, $feedback: String!) {
+  surveys {
+    addFeedback(input: { kind: $kind, surveyId: $surveyId, feedback: $feedback }) {
+      success
+      notice
+      errors {
+        code
+        key
+        message
+      }
+    }
+  }
+}`;
+
+// ---------------------------------------------------------------------
+// addFeedback — wire shape
+// ---------------------------------------------------------------------
+
+interface WireAddFeedbackPayload {
+  success?: boolean | null;
+  notice?: string | null;
+  errors?: (WireSubmitUserError | null)[] | null;
+}
+
+interface AddSurveyFeedbackResponse {
+  surveys: { addFeedback: WireAddFeedbackPayload | null } | null;
+}
+
+// ---------------------------------------------------------------------
+// addFeedback — kind resolution
+// ---------------------------------------------------------------------
+
+interface ResolvedFeedback {
+  kind: string;
+  surveyId: string;
+  feedback: string;
+}
+
+/**
+ * Resolve {@link AddSurveyFeedbackArgs} into wire variables. An explicit `kind`
+ * skips the `list` read (feedback needs only kind+id+text), so it reaches a
+ * non-pending survey; otherwise `list` resolves the kind and gates a bogus id
+ * with `NOT_FOUND`. Pure read — no mutation, no consent gate.
+ */
+async function prepareFeedback(token: string, args: AddSurveyFeedbackArgs): Promise<ResolvedFeedback> {
+  if (args.feedback.trim() === "") {
+    throw new SurveysError("VALIDATION_ERROR", "Feedback text is required.");
+  }
+  if (args.kind !== undefined && args.kind !== "") {
+    return { kind: args.kind, surveyId: args.surveyId, feedback: args.feedback };
+  }
+  const pending = await list(token);
+  const survey = pending.find((s) => s.id === args.surveyId);
+  if (survey === undefined) {
+    throw new SurveysError(
+      "NOT_FOUND",
+      `No pending survey with id "${args.surveyId}". Run \`ttctl surveys list\`, or pass an explicit kind to add feedback to a non-pending survey.`,
+    );
+  }
+  if (survey.kind === null || survey.kind === "") {
+    throw new SurveysError(
+      "VALIDATION_ERROR",
+      `Could not resolve the kind for survey "${args.surveyId}"; pass an explicit kind.`,
+    );
+  }
+  return { kind: survey.kind, surveyId: args.surveyId, feedback: args.feedback };
+}
+
+// ---------------------------------------------------------------------
+// addFeedback — public API
+// ---------------------------------------------------------------------
+
+/**
+ * Add free-text feedback to a survey via `surveys.addFeedback` (mobile-gateway).
+ * Irreversible (no un-feedback op) and routed to a third party → gated by the
+ * `survey-submission` consent ceremony (ADR-009), which fires before any wire
+ * call. `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1` bypasses the literal check.
+ */
+// e2e-covers: AddSurveyFeedback
+export async function addFeedback(
+  token: string,
+  args: AddSurveyFeedbackArgs,
+  consent: AddSurveyFeedbackConsent,
+): Promise<AddSurveyFeedbackResult> {
+  ensureDestructiveConsent(
+    "AddSurveyFeedback",
+    "survey-submission",
+    consent as unknown as { readonly [key: string]: unknown },
+  );
+
+  const resolved = await prepareFeedback(token, args);
+
+  const data = await callGateway<AddSurveyFeedbackResponse>(token, "AddSurveyFeedback", ADD_SURVEY_FEEDBACK_MUTATION, {
+    kind: resolved.kind,
+    surveyId: resolved.surveyId,
+    feedback: resolved.feedback,
+  });
+
+  const payload = data.surveys?.addFeedback;
+  if (!payload) {
+    throw new SurveysError("UNKNOWN", "Add-survey-feedback response had no payload.");
+  }
+  const errors = (payload.errors ?? []).filter((e): e is WireSubmitUserError => e != null);
+  if (errors.length > 0) {
+    const first = errors[0];
+    const keyHint = first?.key ? ` (${first.key})` : "";
+    throw new SurveysError("USER_ERROR", `Survey feedback rejected${keyHint}: ${first?.message ?? "unknown error"}`);
+  }
+  if (payload.success === false) {
+    throw new SurveysError(
+      "USER_ERROR",
+      `Survey feedback reported success=false${payload.notice ? `: ${payload.notice}` : ""}`,
+    );
+  }
+
+  return { notice: payload.notice ?? null };
 }

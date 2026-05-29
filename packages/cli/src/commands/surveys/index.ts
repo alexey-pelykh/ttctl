@@ -16,14 +16,14 @@ import { loadAuthTokenOrExit } from "../profile/shared.js";
 /**
  * Build the `ttctl surveys` command tree:
  *
- * | Leaf     | Description                                          |
- * |----------|------------------------------------------------------|
- * | `list`   | List pending surveys (post-interview feedback, NPS…) |
- * | `submit` | Submit answers to a pending survey (irreversible)    |
+ * | Leaf       | Description                                          |
+ * |------------|------------------------------------------------------|
+ * | `list`     | List pending surveys (post-interview feedback, NPS…) |
+ * | `submit`   | Submit answers to a pending survey (irreversible)    |
+ * | `feedback` | Add free-text feedback to a survey (irreversible)    |
  *
- * `submit` consumes `list` to resolve the survey `kind` and per-question
- * answer-option ids; the remaining write leaf (`surveys feedback`,
- * `AddSurveyFeedback`) is a separate capability.
+ * Both writes resolve the survey `kind` from `list` (and `submit` the
+ * per-question answer-option ids); both are consent-gated on `survey-submission`.
  */
 export function buildSurveysCommand(): Command {
   const cmd = new Command("surveys").description(
@@ -64,6 +64,29 @@ export function buildSurveysCommand(): Command {
         options: { answer: string[]; kind?: string; consentSurveySubmission: boolean; output: OutputFormat },
       ) => {
         await runSurveysSubmit(surveyId, options);
+      },
+    );
+
+  cmd
+    .command("feedback <surveyId>")
+    .description("Add free-text feedback to a survey (IRREVERSIBLE — requires --consent-survey-submission)")
+    .requiredOption("-t, --text <text>", "the free-text feedback to add")
+    .option(
+      "--kind <kind>",
+      "survey kind override (resolved from `surveys list` when omitted; required to feedback a non-pending survey)",
+    )
+    .option("--consent-survey-submission", "acknowledge that this irreversibly sends your feedback to Toptal", false)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(
+      async (
+        surveyId: string,
+        options: { text: string; kind?: string; consentSurveySubmission: boolean; output: OutputFormat },
+      ) => {
+        await runSurveysFeedback(surveyId, options);
       },
     );
 
@@ -131,6 +154,41 @@ export async function runSurveysSubmit(
     format: options.output,
     updated: result,
     prettySummary: `Survey submitted. ${result.pendingSurveys.length.toString()} pending survey(s) remaining.`,
+    notice: result.notice ?? undefined,
+  });
+}
+
+/**
+ * Action handler for `ttctl surveys feedback`. Delegates to `surveys.addFeedback`
+ * (kind resolution + consent gate live there); emits the update envelope.
+ */
+export async function runSurveysFeedback(
+  surveyId: string,
+  options: { text: string; kind?: string; consentSurveySubmission: boolean; output: OutputFormat },
+): Promise<void> {
+  const token = await loadAuthTokenOrExit("surveys feedback", options.output);
+
+  let result: surveys.AddSurveyFeedbackResult;
+  try {
+    // Static type only permits the `true` literal; the runtime gate at the
+    // service entry covers the `false` case (operator omits the flag).
+    const consent = {
+      surveySubmissionConsentIssued: options.consentSurveySubmission,
+    } as unknown as { surveySubmissionConsentIssued: true };
+    const args: surveys.AddSurveyFeedbackArgs =
+      options.kind === undefined
+        ? { surveyId, feedback: options.text }
+        : { surveyId, feedback: options.text, kind: options.kind };
+    result = await surveys.addFeedback(token, args, consent);
+  } catch (err) {
+    handleSurveysError("surveys feedback", err, options.output);
+  }
+
+  emitUpdateSuccess({
+    operation: "surveys.feedback",
+    format: options.output,
+    updated: result,
+    prettySummary: `Feedback added to survey ${surveyId}.`,
     notice: result.notice ?? undefined,
   });
 }

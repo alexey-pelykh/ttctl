@@ -1,0 +1,15 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-29T00:00:00.000Z",
+  "operationName": "AddSurveyFeedback",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "notice": {
+        "kind": "null"
+      }
+    }
+  }
+}
