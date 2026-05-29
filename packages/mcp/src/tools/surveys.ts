@@ -150,6 +150,86 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
       }
     },
   );
+
+  server.registerTool(
+    "ttctl_surveys_feedback",
+    {
+      title: "Add free-text feedback to a survey (DESTRUCTIVE)",
+      description: [
+        "Add free-text feedback to one of the signed-in user's Toptal surveys (post-interview",
+        "`INTERVIEW_ENDED` feedback, NPS, engagement surveys, etc.) via the `AddSurveyFeedback` mutation.",
+        "",
+        "**DESTRUCTIVE & IRREVERSIBLE**: there is no un-feedback operation, and your feedback is",
+        "routed to a third party (the interviewing client, the engagement, or Toptal).",
+        "",
+        "**Consent gate** (ADR-009 (ttctl) — `survey-submission` domain, shared with submit): the caller",
+        "MUST set `surveySubmissionConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
+        "",
+        "The survey `kind` is resolved from `ttctl_surveys_list` automatically. Pass an explicit `kind`",
+        "to add feedback to a survey that is no longer pending (already answered).",
+        "",
+        "Set `dryRun: true` to preview the request (operationName + your feedback + redacted bearer) without",
+        "sending; kind resolution runs against the live survey only on the real call.",
+        "",
+        "Example user prompts that should map to this tool:",
+        '  - "Add a comment to my post-interview survey: the interviewer was great."',
+        '  - "Leave feedback on my engagement survey saying the project went smoothly."',
+      ].join("\n"),
+      inputSchema: {
+        surveyId: z.string().min(1).describe("Survey id from `ttctl_surveys_list`."),
+        feedback: z.string().min(1).describe("The free-text feedback to add."),
+        kind: z
+          .string()
+          .optional()
+          .describe(
+            "Survey kind override (e.g. INTERVIEW_ENDED). Resolved from `surveys list` when omitted; required for a non-pending survey.",
+          ),
+        surveySubmissionConsentIssued: z
+          .literal(true)
+          .describe(
+            "REQUIRED — MUST be `true`. Acknowledges this irreversibly sends feedback routed to a third party. See ADR-009 (ttctl) § Decision (survey-submission domain).",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+      annotations: {
+        destructiveHint: true,
+      },
+    },
+    async (input) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+
+      // Dry-run previews the intent only — it must not touch the network
+      // (kind resolution via `surveys list` is deferred to the real call).
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "AddSurveyFeedback",
+            "mobile-gateway",
+            {
+              surveyId: input.surveyId,
+              feedback: input.feedback,
+              ...(input.kind !== undefined ? { kind: input.kind } : {}),
+            },
+            auth.token,
+          ),
+        );
+      }
+
+      try {
+        const args: surveys.AddSurveyFeedbackArgs =
+          input.kind === undefined
+            ? { surveyId: input.surveyId, feedback: input.feedback }
+            : { surveyId: input.surveyId, feedback: input.feedback, kind: input.kind };
+        const result = await surveys.addFeedback(auth.token, args, {
+          surveySubmissionConsentIssued: input.surveySubmissionConsentIssued,
+        });
+        return successResponse(result);
+      } catch (err) {
+        return mapSurveysError(err);
+      }
+    },
+  );
 }
 
 interface ToolSuccessResponse {

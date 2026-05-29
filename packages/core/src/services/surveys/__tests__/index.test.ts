@@ -13,7 +13,7 @@ vi.mock("../../../transport.js", async () => {
   };
 });
 
-import { SurveysError, list, submit } from "../index.js";
+import { SurveysError, addFeedback, list, submit } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { ConsentRequiredError } from "../../../consent.js";
 import { stockTransport } from "../../../transport.js";
@@ -329,5 +329,98 @@ describe("surveys.submit", () => {
     await expect(
       submit(TOKEN, { surveyId: "sv-1", answers: [{ questionId: "q-1", value: "5" }] }, CONSENT),
     ).rejects.toMatchObject({ code: "USER_ERROR" });
+  });
+});
+
+describe("surveys.addFeedback", () => {
+  const CONSENT = { surveySubmissionConsentIssued: true as const };
+
+  function feedbackReply(payload: unknown): void {
+    replyStock({ data: { surveys: { addFeedback: payload } } });
+  }
+
+  function variablesAt(index: number): Record<string, unknown> {
+    const call = mockedStock.mock.calls[index];
+    if (!call) throw new Error(`expected a transport call at index ${index.toString()}`);
+    const { variables } = call[0].body;
+    if (variables === undefined) throw new Error("call carried no variables");
+    return variables;
+  }
+
+  it("resolves kind from list and returns the notice", async () => {
+    replyStock(viewerWith([SURVEY_FIXTURE]));
+    feedbackReply({ success: true, notice: null, errors: [] });
+
+    const result = await addFeedback(TOKEN, { surveyId: "sv-1", feedback: "Great match!" }, CONSENT);
+
+    expect(result).toEqual({ notice: null });
+    expect(variablesAt(1)).toEqual({ kind: "INTERVIEW_ENDED", surveyId: "sv-1", feedback: "Great match!" });
+  });
+
+  it("an explicit kind skips the list read (single wire call)", async () => {
+    feedbackReply({ success: true, notice: "Thanks!", errors: [] });
+
+    const result = await addFeedback(TOKEN, { surveyId: "sv-x", feedback: "Nice.", kind: "MID_ENGAGEMENT" }, CONSENT);
+
+    expect(result).toEqual({ notice: "Thanks!" });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+    expect(variablesAt(0)).toEqual({ kind: "MID_ENGAGEMENT", surveyId: "sv-x", feedback: "Nice." });
+  });
+
+  it("refuses without consent BEFORE any wire call", async () => {
+    vi.stubEnv("TTCTL_ALLOW_INFERRED_DESTRUCTIVE", "");
+    await expect(
+      addFeedback(TOKEN, { surveyId: "sv-1", feedback: "x" }, {
+        surveySubmissionConsentIssued: false,
+      } as unknown as { surveySubmissionConsentIssued: true }),
+    ).rejects.toBeInstanceOf(ConsentRequiredError);
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("bypasses the consent literal under TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1", async () => {
+    vi.stubEnv("TTCTL_ALLOW_INFERRED_DESTRUCTIVE", "1");
+    feedbackReply({ success: true, notice: null, errors: [] });
+    await expect(
+      addFeedback(TOKEN, { surveyId: "sv-1", feedback: "x", kind: "NPS" }, {
+        surveySubmissionConsentIssued: false,
+      } as unknown as { surveySubmissionConsentIssued: true }),
+    ).resolves.toEqual({ notice: null });
+  });
+
+  it("throws NOT_FOUND when the survey is not pending (kind omitted, no feedback call)", async () => {
+    replyStock(viewerWith([SURVEY_FIXTURE]));
+    await expect(addFeedback(TOKEN, { surveyId: "sv-missing", feedback: "x" }, CONSENT)).rejects.toMatchObject({
+      name: "SurveysError",
+      code: "NOT_FOUND",
+    });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws VALIDATION_ERROR for blank feedback BEFORE any wire call", async () => {
+    await expect(addFeedback(TOKEN, { surveyId: "sv-1", feedback: "   ", kind: "NPS" }, CONSENT)).rejects.toMatchObject(
+      { code: "VALIDATION_ERROR" },
+    );
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("maps server errors[] to USER_ERROR with the field key", async () => {
+    feedbackReply({
+      success: false,
+      notice: null,
+      errors: [{ code: "INVALID", key: "feedback", message: "Too long" }],
+    });
+    const err: unknown = await addFeedback(TOKEN, { surveyId: "sv-1", feedback: "x", kind: "NPS" }, CONSENT).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SurveysError);
+    expect(err).toMatchObject({ code: "USER_ERROR" });
+    expect((err as SurveysError).message).toContain("feedback");
+  });
+
+  it("maps success:false to USER_ERROR", async () => {
+    feedbackReply({ success: false, notice: "Nope", errors: [] });
+    await expect(addFeedback(TOKEN, { surveyId: "sv-1", feedback: "x", kind: "NPS" }, CONSENT)).rejects.toMatchObject({
+      code: "USER_ERROR",
+    });
   });
 });
