@@ -3720,7 +3720,7 @@ describe("applications.interviews.notes.update (#441)", () => {
     expect(mockedStock).not.toHaveBeenCalled();
   });
 
-  it("dryRun: previews the inferred wire request (talentNotes array, section ?? null) without issuing the mutation", async () => {
+  it("dryRun: previews the wire request (notes array, section ?? null) without issuing the mutation", async () => {
     const outcome = await interviews.notes.update(
       TOKEN,
       INT_ID,
@@ -3737,7 +3737,7 @@ describe("applications.interviews.notes.update (#441)", () => {
     expect(outcome.preview.variables).toMatchObject({
       interviewId: INT_ID,
       input: {
-        talentNotes: [
+        notes: [
           { section: "STRENGTHS", note: "Mention the AWS cert" },
           { section: null, note: "Ask about on-call rotation" },
         ],
@@ -3764,15 +3764,15 @@ describe("applications.interviews.notes.update (#441)", () => {
     expect(body.operationName).toBe("UpdateInterviewTalentNotes");
     expect(body.variables).toMatchObject({
       interviewId: INT_ID,
-      input: { talentNotes: [{ section: "STRENGTHS", note: "Mention the AWS cert" }] },
+      input: { notes: [{ section: "STRENGTHS", note: "Mention the AWS cert" }] },
     });
   });
 
   it("maps an omitted section to null in the wire input", async () => {
     reply({ body: updateNotesSuccessFixture([{ id: "n1", section: null, note: "freeform" }]) });
     await interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "freeform" }], interviewActionConsentIssued: true });
-    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: { input: { talentNotes: unknown[] } } };
-    expect(body.variables.input.talentNotes).toEqual([{ section: null, note: "freeform" }]);
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: { input: { notes: unknown[] } } };
+    expect(body.variables.input.notes).toEqual([{ section: null, note: "freeform" }]);
   });
 
   it("throws MUTATION_ERROR on success:false", async () => {

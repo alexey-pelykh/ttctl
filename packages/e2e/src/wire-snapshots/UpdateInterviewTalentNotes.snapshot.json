@@ -1,0 +1,35 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-29T09:46:38.113Z",
+  "operationName": "UpdateInterviewTalentNotes",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "interviewId": {
+        "kind": "string"
+      },
+      "notes": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "string"
+            },
+            "note": {
+              "kind": "string"
+            },
+            "section": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "notice": {
+        "kind": "null"
+      }
+    }
+  }
+}

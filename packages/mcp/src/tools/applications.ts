@@ -333,10 +333,11 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
   );
 
   // #441 — Interview notes update (sub-sub-namespace
-  // `applications.interviews.notes.update`). DESTRUCTIVE full-replace of
-  // the talent's prep notes via the portal-side `UpdateInterviewTalentNotes`
-  // mutation. **Input is the INTERVIEW id**, NOT the job id (the #440 read
-  // keys on the job id). Consent (ADR-009 `interview-action`):
+  // `applications.interviews.notes.update`). Append/upsert write (model
+  // UNDER INVESTIGATION, paused — see #441) of the talent's prep notes via
+  // the portal-side `UpdateInterviewTalentNotes` mutation. **Input is the
+  // INTERVIEW id**, NOT the job id (the #440 read keys on the job id).
+  // Consent (ADR-009 `interview-action`):
   // `interviewActionConsentIssued: true` is enforced at the Zod boundary
   // AND re-checked in the service layer. `destructiveHint: true` lets the
   // MCP host surface a confirmation. Dry-run delegates to the core dry-run
@@ -345,21 +346,17 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
   server.registerTool(
     "ttctl_applications_interview_notes_update",
     {
-      title: "Overwrite the talent's prep notes for an interview (DESTRUCTIVE)",
+      title: "Add a note to an interview's prep notes (inferred write — under investigation)",
       description: [
-        "Overwrite the talent's prep notes for one interview. Wraps the `UpdateInterviewTalentNotes` gateway-portal mutation.",
+        "Add a note to one interview's prep notes. Wraps the `UpdateInterviewTalentNotes` gateway-portal mutation.",
         "",
-        "**DESTRUCTIVE full-replace**: the supplied `notes` REPLACE the interview's entire note set — notes omitted from the array are dropped server-side. There is no append; pass the complete desired set.",
+        "⚠️ WRITE MODEL UNDER INVESTIGATION (#441) — paused. Live behavior: this APPENDS/upserts (it does NOT replace; an empty `notes` array is a no-op). The `section` you pass is not reliably honored — a guide-section note is created once, then further writes land in a freeform rich-text bucket (HTML-wrapped). There is NO delete, and created notes may be UNREMOVABLE (Toptal's own UI could not edit or delete them). Do not rely on this to set an exact note set.",
         "",
         "Input is the INTERVIEW id (the TalentInterview id), NOT the job id. The read counterpart `ttctl_applications_interview_notes_show` keys on the JOB id — they diverge. Discover the interview id via `ttctl_applications_interview_show` or the `interviewId` field returned by `ttctl_applications_interview_notes_show`.",
         "",
         "**Consent gate** (ADR-009 (ttctl) — `interview-action` domain): the caller MUST set `interviewActionConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
         "",
-        "Each note may carry a `section` (one of ASK_YOUR_CLIENT, GAPS, JOB_HIGHLIGHTS, POTENTIAL_QUESTIONS, PRO_TIPS, STRENGTHS) or omit it for an unsectioned note. Returns the server's post-update note set (the round-trip echo) plus any server notice.",
-        "",
-        "Example user prompts that should map to this tool:",
-        '  - "Set my prep notes for interview int_abc123 to: ask about the on-call rotation."',
-        '  - "Replace my interview notes with these points: …"',
+        "Returns the server's post-write note set (the round-trip echo) plus any server notice.",
       ].join("\n"),
       inputSchema: {
         interviewId: z
@@ -377,11 +374,13 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
             }),
           )
           .min(1)
-          .describe("The FULL replacement set of prep notes. REPLACES all existing notes for the interview."),
+          .describe(
+            "Notes to add. Appends/upserts — does NOT replace; an empty array is a no-op. `section` is not reliably honored (see the tool description).",
+          ),
         interviewActionConsentIssued: z
           .literal(true)
           .describe(
-            "REQUIRED — MUST be `true`. Acknowledges this destructive interview-action (full-replace of the interview's prep notes). See ADR-009 (ttctl) § Decision Part 1.",
+            "REQUIRED — MUST be `true`. Acknowledges this inferred, irreversible interview-action write (appends; created notes may be unremovable). See ADR-009 (ttctl) § Decision Part 1.",
           ),
         dryRun: DRY_RUN_FIELD,
       },

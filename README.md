@@ -32,7 +32,7 @@ Architectural friction in the codebase (sequential rate limits, single-credentia
 TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.io)) programmatic access to your own Toptal Talent profile:
 
 - **Profile** — view and update your talent profile (basic info, skills, employment, education, certifications, industries, portfolio, visas, resume, external links, reviews, photo)
-- **Applications** — review your activity items (applications, availability requests, interviews, engagement signals); per-status-group counts via `applications stats`; confirm / reject open Interest Requests via `applications confirm` / `applications reject`; fetch interview detail (interviewer, scheduled slot, agenda link, prep-guide ref) via `applications interview show <id>`; read your interview prep notes via `applications interview notes show <jobId>` (or overwrite them — destructive full-replace — via `applications interview notes update <interviewId> --consent-interview-action`); fetch availability-request detail (status, kind, recruiter Fixed rate, comment, lifecycle timestamps, job) via `applications availability-request show <id>`
+- **Applications** — review your activity items (applications, availability requests, interviews, engagement signals); per-status-group counts via `applications stats`; confirm / reject open Interest Requests via `applications confirm` / `applications reject`; fetch interview detail (interviewer, scheduled slot, agenda link, prep-guide ref) via `applications interview show <id>`; read your interview prep notes via `applications interview notes show <jobId>` (updating them via `applications interview notes update` is **experimental and not recommended** — the Toptal write API behaves unexpectedly); fetch availability-request detail (status, kind, recruiter Fixed rate, comment, lifecycle timestamps, job) via `applications availability-request show <id>`
 - **Engagements** — view current and past engagements; manage engagement breaks; per-status counts via `engagements stats`
 - **Jobs** — browse opportunities; manage saved / viewed / not-interested signals; configure search subscription; direct-apply via `jobs apply <id> --consent` (legal-compliance gate is mandatory). Add `--suggest-answers` to fetch your own historical answers to similar prior questions as advisory autocomplete suggestions (opt-in, off the critical apply path; failures degrade gracefully). The MCP tool `ttctl_jobs_apply_similar_answers` exposes the same surface to agents.
 - **Timesheets** — list, view, submit, and update timesheet billing cycles
@@ -334,7 +334,9 @@ The `<key>` comes from the server-localised inventory at `ttctl applications rej
 
 ## Interview prep notes
 
-Read your prep notes for an interview with `applications interview notes show <jobId>`. To change them, use `applications interview notes update` — a **destructive full-replace**: the notes you pass REPLACE the interview's entire note set, and any note you omit is dropped server-side. There is no append; pass the complete desired set every time.
+Read your prep notes for an interview with `applications interview notes show <jobId>`.
+
+> **⚠️ Updating notes is experimental and not recommended.** The `applications interview notes update` command exists, but the Toptal write API behaves unexpectedly: it **appends** rather than replaces, does not honor the section you pass (notes land in a free-form rich-text area, HTML-wrapped), and offers **no way to delete** — created notes could not be removed even from Toptal's own web UI. Treat the command as investigation-only until the behavior is understood.
 
 The update keys on the **interview id**, not the job id (the read sibling takes the job id — they diverge). Discover the interview id from `applications interview show <id>` or the `interviewId` field in `applications interview notes show <jobId>` output.
 
@@ -345,9 +347,9 @@ ttctl applications interview notes update <interview-id> \
   --consent-interview-action
 ```
 
-`--note` is repeatable and forms the full replacement set. `--section` is optional and pairs with the `--note` at the same position (one of `ASK_YOUR_CLIENT`, `GAPS`, `JOB_HIGHLIGHTS`, `POTENTIAL_QUESTIONS`, `PRO_TIPS`, `STRENGTHS`); trailing notes without a paired `--section` are unsectioned.
+`--note` is repeatable. `--section` is optional and pairs with the `--note` at the same position (one of `ASK_YOUR_CLIENT`, `GAPS`, `JOB_HIGHLIGHTS`, `POTENTIAL_QUESTIONS`, `PRO_TIPS`, `STRENGTHS`); trailing notes without a paired `--section` are unsectioned. Note the experimental caveat above — the section is not reliably honored server-side.
 
-`--consent-interview-action` is **required** — it acknowledges the destructive overwrite (per ADR-009's `interview-action` consent domain). Absence raises `CONSENT_REQUIRED` with no wire call issued; auto-filling it on your behalf is forbidden. The gate still applies under `--dry-run`. Prefer `--dry-run` to preview the wire payload before committing.
+`--consent-interview-action` is **required** — it acknowledges this irreversible interview-action write (per ADR-009's `interview-action` consent domain). Absence raises `CONSENT_REQUIRED` with no wire call issued; auto-filling it on your behalf is forbidden. The gate still applies under `--dry-run`. Prefer `--dry-run` to preview the wire payload before committing.
 
 ## MCP Integration
 

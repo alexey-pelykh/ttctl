@@ -190,7 +190,7 @@ describe("runApplicationsInterviewNotesUpdate (#441)", () => {
         surface: "mobile-gateway",
         transport: "stock",
         endpoint: "https://www.toptal.com/gateway/graphql/talent/graphql",
-        variables: { interviewId: "int-1", input: { talentNotes: [{ section: "GAPS", note: "a" }] } },
+        variables: { interviewId: "int-1", input: { notes: [{ section: "GAPS", note: "a" }] } },
         headers: { authorization: "Token token=<redacted>" },
       },
     });

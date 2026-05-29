@@ -420,8 +420,10 @@ function tipHeaderLine(tip: applications.InterviewGuideTip): string {
 
 /**
  * Action handler for `ttctl applications interview notes update <interviewId>` (#441).
- * DESTRUCTIVE full-replace of the talent's prep notes for one interview,
- * via the portal-side `UpdateInterviewTalentNotes` mutation.
+ * Append/upsert write of the talent's prep notes for one interview, via the
+ * portal-side `UpdateInterviewTalentNotes` mutation. Write model is UNDER
+ * INVESTIGATION and paused — see #441 (appends not replaces; created notes
+ * may be unremovable).
  *
  * **Input is the INTERVIEW id**, NOT the job id (the #440 read keys on the
  * job id). Discover it via `applications interview show <interviewId>` or
@@ -430,9 +432,9 @@ function tipHeaderLine(tip: applications.InterviewGuideTip): string {
  * `--note` is repeatable; `--section` is repeatable and pairs by position
  * (the Nth `--section` annotates the Nth `--note`). Fewer sections than
  * notes leaves trailing notes unsectioned; more sections than notes is a
- * `VALIDATION_ERROR`. The supplied notes REPLACE the interview's entire
- * note set, so `--consent-interview-action` (ADR-009) is required. Prefer
- * the global `--dry-run` to preview the wire payload first.
+ * `VALIDATION_ERROR`. `--consent-interview-action` (ADR-009) is required —
+ * the write is irreversible. Prefer the global `--dry-run` to preview the
+ * wire payload first.
  */
 export async function runApplicationsInterviewNotesUpdate(
   interviewId: string,
@@ -453,7 +455,7 @@ export async function runApplicationsInterviewNotesUpdate(
       errors: [
         {
           code: "VALIDATION_ERROR",
-          message: "At least one --note is required (this replaces the interview's entire note set).",
+          message: "At least one --note is required.",
           hint: 'Pass --note "<text>" (repeatable). Pair a note with a guide section via --section by position.',
         },
       ],

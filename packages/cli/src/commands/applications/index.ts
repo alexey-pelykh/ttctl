@@ -288,24 +288,24 @@ export function buildApplicationsCommand(): Command {
     });
 
   // #441 — Interview notes update (portal-side `UpdateInterviewTalentNotes`).
-  // Sub-sub-namespace `interview notes update <interviewId>` — DESTRUCTIVE
-  // full-replace of the talent's prep notes. **Input is the INTERVIEW id**
-  // (the mutation keys on `$interviewId: ID!`), diverging from `notes show`
-  // which keys on the JOB id. `markMutation` so the global `--dry-run`
-  // routes through the core dry-run path (the destructive write is never
-  // issued under preview).
+  // Sub-sub-namespace `interview notes update <interviewId>` — append/upsert
+  // write of the talent's prep notes (model UNDER INVESTIGATION, paused —
+  // see #441). **Input is the INTERVIEW id** (the mutation keys on
+  // `$interviewId: ID!`), diverging from `notes show` which keys on the JOB
+  // id. `markMutation` so the global `--dry-run` routes through the core
+  // dry-run path (the write is never issued under preview).
   markMutation(
     notesCmd
       .command("update")
       .description(
-        "Overwrite the talent's prep notes for an interview (DESTRUCTIVE full-replace; input is the INTERVIEW id, NOT the job id). Requires --consent-interview-action.",
+        "Add a note to an interview's prep notes (EXPERIMENTAL — appends, not recommended; input is the INTERVIEW id, NOT the job id). Requires --consent-interview-action.",
       )
       .argument(
         "<interviewId>",
         "TalentInterview id (discover via `applications interview show <interviewId>`)",
         parseIdArg,
       )
-      .requiredOption("--note <note...>", "note body (repeatable; the full set REPLACES all existing notes)")
+      .requiredOption("--note <note...>", "note body (repeatable; appended — does not replace existing notes)")
       .addOption(
         new Option(
           "--section <section...>",
@@ -314,7 +314,7 @@ export function buildApplicationsCommand(): Command {
       )
       .option(
         "--consent-interview-action",
-        "REQUIRED — acknowledge this destructive interview-action (full-replace of notes). See ADR-009.",
+        "REQUIRED — acknowledge this irreversible interview-action write. See ADR-009.",
       )
       .addOption(
         new Option("-o, --output <format>", "output format")

@@ -3,32 +3,29 @@
 
 /**
  * E2E coverage for `ttctl applications interview notes update <interviewId>`
- * (#441) — the `UpdateInterviewTalentNotes` gateway-portal mutation.
+ * (#441) — the `UpdateInterviewTalentNotes` (`interview.changeTalentNotes`)
+ * gateway-portal mutation.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** — the
- * input shape `{ talentNotes: [{ section, note }] }` is INFERRED from the
- * `GetInterviewNotes` response echo (section = guide-section identifier).
- * No generated type exists (the op is gateway-portal, codegen-excluded).
- * The wire format is best-effort until this file passes against a live
- * session; merge is gated on a passing local `TTCTL_E2E=1` run.
+ * STATUS: write side PAUSED pending active-interview reverse-engineering.
+ * Live runs against a real (passed) interview disproved the inferred model:
  *
- * **DESTRUCTIVE full-replace** — the supplied note set REPLACES the
- * interview's entire note set. The round-trip test below appends a
- * clearly-marked sentinel to the talent's existing notes, asserts the
- * mutation persisted (the response echo carries the sentinel), then
- * RESTORES the original notes in a `finally` so the account is left as
- * found. The round-trip only runs when a discovered interview already
- * carries ≥1 note (so the restore set is never empty — the wire's
- * handling of an empty `talentNotes` array is itself unverified).
+ *   - The mutation APPENDS — it does not replace. `notes: []` is a no-op.
+ *   - The `section` input is NOT honored as a guide-section selector: a
+ *     guide-section note (the 6-member enum) is created once when its section
+ *     is empty; subsequent writes redirect into a freeform `RICH_TEXT_NOTES`
+ *     bucket, HTML-wrapped (`<p>…</p>`). Only `RICH_TEXT_NOTES` is upsert-able.
+ *   - There is NO delete mutation, and a guide-section note, once created,
+ *     could not be removed via the API or the Toptal UI — it is permanent.
  *
- * **Input is the INTERVIEW id**, not the job id — discovered here via
- * `applications list` → `interview notes show <jobId>` → `interviewId`.
+ * HAZARD: every write creates unremovable state on a real account. The
+ * destructive round-trip below is `it.skip` and MUST stay skipped until the
+ * write is rebuilt against an ACTIVE interview from captured web traffic.
+ * Only the consent-gate probe (which makes no wire call) is safe to run.
  *
- * Disposition: **T1** (wire-shape snapshot). `UpdateInterviewTalentNotes`
- * is codegen-excluded, so no T2 Zod schema is generated; the snapshot at
- * `wire-snapshots/UpdateInterviewTalentNotes.snapshot.json` is the
- * continuous wire-drift defense. The first authenticated run with
- * `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` captures it.
+ * The shape that IS verified: input `{ notes: [{ section, note }] }` (the
+ * `{ talentNotes: [...] }` guess 400'd). Disposition T1; the snapshot at
+ * `wire-snapshots/UpdateInterviewTalentNotes.snapshot.json` records the
+ * captured response shape. Input is the INTERVIEW id, not the job id.
  */
 
 // e2e-covers: UpdateInterviewTalentNotes
@@ -72,11 +69,13 @@ function toInputNote(n: applications.InterviewTalentNote): applications.Intervie
 }
 
 /**
- * Find an interview carrying ≥1 prep note: scan `applications list` for a
- * row with an interview, then `interview notes show <jobId>` for its
- * interview id + current notes. `null` when none exists or discovery fails.
+ * Find an interview to round-trip: scan `applications list` for a row with
+ * an interview, then `interview notes show <jobId>` for its interview id +
+ * current notes (which MAY be empty — the round-trip then writes just the
+ * sentinel and restores to empty). `null` when no interview exists or
+ * discovery fails.
  */
-async function discoverInterviewWithNotes(
+async function discoverInterview(
   cli: CliClient,
 ): Promise<{ interviewId: string; original: applications.InterviewTalentNoteInput[] } | null> {
   const listed = await cli.run(["applications", "list", "-o", "json"]);
@@ -98,12 +97,7 @@ async function discoverInterviewWithNotes(
       interviewId?: string | null;
       notes?: applications.InterviewTalentNote[];
     };
-    if (
-      typeof proj.interviewId === "string" &&
-      proj.interviewId !== "" &&
-      Array.isArray(proj.notes) &&
-      proj.notes.length >= 1
-    ) {
+    if (typeof proj.interviewId === "string" && proj.interviewId !== "" && Array.isArray(proj.notes)) {
       return { interviewId: proj.interviewId, original: proj.notes.map(toInputNote) };
     }
   }
@@ -140,65 +134,76 @@ describe("applications interview notes update (live mobile-gateway)", () => {
     }
   });
 
-  // Destructive round-trip + wire snapshot. Appends a sentinel, asserts
-  // the live response echoes it (persisted), captures the T1 snapshot of
-  // the mutation response, then restores the original notes. Skips when
-  // the account has no interview carrying ≥1 note.
-  it.skipIf(!e2eEnabled)(
-    "round-trips UpdateInterviewTalentNotes (append sentinel, verify echo, restore) + wire snapshot",
-    async () => {
-      const discovered = await discoverInterviewWithNotes(cli);
-      if (discovered === null) {
-        process.stdout.write(
-          "[88-applications-interview-notes-update] No interview with ≥1 note on this account; skipping round-trip + snapshot.\n",
-        );
-        return;
-      }
-      const { interviewId, original } = discovered;
-      const token = loadSandboxBearer(sandboxConfigPath);
-      const writeSet: applications.InterviewTalentNoteInput[] = [
-        ...original,
-        { section: "STRENGTHS", note: SENTINEL_NOTE },
-      ];
+  // HAZARD — permanently `it.skip`. Live runs proved this mutation APPENDS
+  // and that guide-section notes are UNREMOVABLE (API + UI) once created, so
+  // the "restore the original set" cleanup below CANNOT work: a run leaves
+  // permanent debris on the interview. Kept (skipped) as the resume blueprint
+  // for when the write is rebuilt against an ACTIVE interview from captured
+  // web traffic (#441). Do NOT convert back to `skipIf(!e2eEnabled)`.
+  it.skip("round-trips UpdateInterviewTalentNotes (append sentinel, verify echo, restore) + wire snapshot", async () => {
+    const discovered = await discoverInterview(cli);
+    if (discovered === null) {
+      process.stdout.write(
+        "[88-applications-interview-notes-update] No interview on this account; skipping round-trip + snapshot.\n",
+      );
+      return;
+    }
+    const { interviewId, original } = discovered;
+    process.stdout.write(
+      `[88-applications-interview-notes-update] interview ${interviewId} has ${original.length.toString()} existing note(s); appending sentinel to capture wire.\n`,
+    );
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const writeSet: applications.InterviewTalentNoteInput[] = [
+      ...original,
+      { section: "STRENGTHS", note: SENTINEL_NOTE },
+    ];
 
+    try {
+      const outcome = await applications.interviews.notes.update(token, interviewId, {
+        notes: writeSet,
+        interviewActionConsentIssued: true,
+      });
+      expect(outcome.kind).toBe("applied");
+      if (outcome.kind !== "applied") return;
+      const applied = outcome.result;
+
+      // Persisted check: the live echo carries the sentinel body.
+      expect(applied.interviewId).toBe(interviewId);
+      expect(applied.notes.some((n) => n.note === SENTINEL_NOTE)).toBe(true);
+
+      // T1 wire-shape snapshot of the mutation response (the consumer
+      // shape). Captured on the first `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run.
+      expect(() =>
+        assertWireShapeStable({
+          operationName: "UpdateInterviewTalentNotes",
+          surface: "mobile-gateway",
+          transport: "stock",
+          response: applied,
+        }),
+      ).not.toThrow();
+    } finally {
+      // Resume-blueprint cleanup (DEAD on a real account — see the file
+      // header HAZARD: this restore CANNOT work, since the mutation appends
+      // and guide-section notes are unremovable). Retained to document the
+      // intended round-trip for when the write is rebuilt against an active
+      // interview. LOUD on failure so a stray sentinel never goes unnoticed.
       try {
-        const outcome = await applications.interviews.notes.update(token, interviewId, {
-          notes: writeSet,
+        const restored = await applications.interviews.notes.update(token, interviewId, {
+          notes: original,
           interviewActionConsentIssued: true,
         });
-        expect(outcome.kind).toBe("applied");
-        if (outcome.kind !== "applied") return;
-        const applied = outcome.result;
-
-        // Persisted check: the live echo carries the sentinel body.
-        expect(applied.interviewId).toBe(interviewId);
-        expect(applied.notes.some((n) => n.note === SENTINEL_NOTE)).toBe(true);
-
-        // T1 wire-shape snapshot of the mutation response (the consumer
-        // shape). Captured on the first `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` run.
-        expect(() =>
-          assertWireShapeStable({
-            operationName: "UpdateInterviewTalentNotes",
-            surface: "mobile-gateway",
-            transport: "stock",
-            response: applied,
-          }),
-        ).not.toThrow();
-      } finally {
-        // Restore the original note set so the account is left as found.
-        // Best-effort — a restore failure must not mask the round-trip
-        // result, but it MUST be loud so the operator can clean up.
-        try {
-          await applications.interviews.notes.update(token, interviewId, {
-            notes: original,
-            interviewActionConsentIssued: true,
-          });
-        } catch (restoreErr) {
-          process.stdout.write(
-            `[88-applications-interview-notes-update] WARNING: failed to restore original notes for interview ${interviewId}: ${String(restoreErr)}. The sentinel note may remain — remove it manually.\n`,
-          );
-        }
+        const sentinelRemains =
+          restored.kind === "applied" && restored.result.notes.some((n) => n.note === SENTINEL_NOTE);
+        process.stdout.write(
+          sentinelRemains
+            ? `[88-applications-interview-notes-update] WARNING: restore left the sentinel on interview ${interviewId} — remove it manually.\n`
+            : `[88-applications-interview-notes-update] restored interview ${interviewId} to ${original.length.toString()} note(s); sentinel cleared.\n`,
+        );
+      } catch (restoreErr) {
+        process.stdout.write(
+          `[88-applications-interview-notes-update] WARNING: failed to restore original notes for interview ${interviewId}: ${String(restoreErr)}. The sentinel note may remain — remove it manually.\n`,
+        );
       }
-    },
-  );
+    }
+  });
 });
