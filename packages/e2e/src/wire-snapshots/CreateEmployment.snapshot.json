@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-28T13:16:36.574Z",
+  "capturedAt": "2026-05-29T06:58:24.188Z",
   "operationName": "CreateEmployment",
   "surface": "talent-profile",
   "transport": "impersonated",
@@ -112,7 +112,15 @@
       "skills": {
         "kind": "array",
         "item": {
-          "kind": "unknown"
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "string"
+            },
+            "name": {
+              "kind": "string"
+            }
+          }
         }
       },
       "startDate": {
