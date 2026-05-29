@@ -1,0 +1,62 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-29T08:50:54.326Z",
+  "operationName": "PendingSurveys",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "alreadyAnswered": {
+          "kind": "boolean"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "isMandatory": {
+          "kind": "boolean"
+        },
+        "kind": {
+          "kind": "string"
+        },
+        "questions": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "answers": {
+                "kind": "array",
+                "item": {
+                  "kind": "unknown"
+                }
+              },
+              "id": {
+                "kind": "string"
+              },
+              "inputType": {
+                "kind": "string"
+              },
+              "isMandatory": {
+                "kind": "boolean"
+              },
+              "label": {
+                "kind": "string"
+              },
+              "note": {
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        },
+        "title": {
+          "kind": "string"
+        }
+      }
+    }
+  }
+}

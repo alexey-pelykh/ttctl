@@ -11,6 +11,7 @@ import { registerEngagementsTools } from "./engagements.js";
 import { registerInterestRequestsTools } from "./interest_requests.js";
 import { registerJobsTools } from "./jobs.js";
 import { registerPaymentsTools } from "./payments.js";
+import { registerSurveysTools } from "./surveys.js";
 import { registerTimesheetTools } from "./timesheet.js";
 import { registerCertificationsTools } from "./profile/certifications.js";
 import { registerCountriesTools } from "./profile/countries.js";
@@ -182,4 +183,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // show (BillingCycle.id detail) + submit (destructive: enters Toptal's
   // billing pipeline; LLM clients must confirm with the user first).
   registerTimesheetTools(server, ctx);
+
+  // surveys — 1 read-only leaf (#672). List the viewer's pending surveys
+  // (post-interview feedback, NPS, etc.) via `PendingSurveys`. First op
+  // in the new `surveys` domain; write side ships separately.
+  registerSurveysTools(server, ctx);
 }

@@ -206,6 +206,9 @@ const EXPECTED_TOOLS = [
   "ttctl_payments_rate_questions",
   "ttctl_payments_rate_change",
   "ttctl_payments_summary",
+  // surveys (#672) — 1 read-only tool: list the viewer's pending surveys
+  // (post-interview feedback, NPS, etc.) via the `PendingSurveys` query.
+  "ttctl_surveys_list",
 ];
 
 /**
@@ -239,7 +242,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (126 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (127 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);
