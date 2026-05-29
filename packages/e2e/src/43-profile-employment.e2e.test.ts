@@ -101,7 +101,7 @@ function errorCode(err: unknown): string | undefined {
   return undefined;
 }
 
-describe("profile employment #344 read/write parity (live talent-profile, INFERRED wire shape)", () => {
+describe("profile employment read/write parity (live talent-profile, INFERRED wire shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

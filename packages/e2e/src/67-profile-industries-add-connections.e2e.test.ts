@@ -2,70 +2,38 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `profile.industries.addConnections` (#465 — Pattern-6
- * connection helper for industries).
+ * E2E coverage for `profile.industries.addConnections` — gateway-portal
+ * Pattern-6 connection helper.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
- * `AddProfileIndustryConnections` is in `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`
- * (`codegen.config.ts`), the synthesized SDL declares only
- * `AddProfileIndustryConnectionsInput { _placeholder: String }` (gateway
- * schema gap), and the wire shape is recovered from the portal-bundle
- * decompile (`module-jobs.302f53cf.js` call site) — NOT a live capture.
- * The live API is the only authority on the contract.
+ * Wire shape (recovered from the portal-bundle decompile, not a live
+ * capture):
  *
- * **Wire shape verified from the decompile**:
- * ```
- * input: {
- *   profileId,
- *   industriesConnections: [{ industryId, profileItems: string[] }]
- * }
- * ```
+ *     input: {
+ *       profileId,
+ *       industriesConnections: [{ industryId, profileItems: string[] }]
+ *     }
  *
- * **Track 1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track 2):
- * gateway-portal `AddProfileIndustryConnections` has no generated
- * operation type (`AddProfileIndustryConnectionsInput` is a
- * placeholder-only synthesized type) → **T1** (wire-shape snapshot).
- * `assertWireShapeStable(...)` diffs the live response shape against the
- * committed snapshot at
- * `packages/e2e/src/wire-snapshots/AddProfileIndustryConnections.snapshot.json`.
- * The first authorized run (`TTCTL_UPDATE_WIRE_SNAPSHOTS=1`) writes the
- * baseline.
+ * Track 1: `AddProfileIndustryConnections` is T1 — snapshot at
+ * `wire-snapshots/AddProfileIndustryConnections.snapshot.json`.
  *
- * Coverage strategy:
+ * Coverage:
+ *   - Consent gate (ADR-009 `profile-capability`): without
+ *     `profileCapabilityConsentIssued: true` the runtime refuses BEFORE
+ *     any wire dispatch — assert `ConsentRequiredError`.
+ *   - Validation: empty `links`, empty `profileItems`, empty
+ *     `industryId` → `VALIDATION_ERROR` before dispatch.
+ *   - Live round-trip + snapshot: re-link an industry that is ALREADY
+ *     attached to one of the maintainer's employment rows. The mutation
+ *     is server-side idempotent so this is a semantic no-op — no
+ *     profile state is altered.
  *
- *   - **Consent gate** (ADR-009 (ttctl) — `profile-capability` domain):
- *     verified server-side-free by invoking `addConnections` without the
- *     literal `profileCapabilityConsentIssued: true`. The runtime gate
- *     refuses the call BEFORE any wire dispatch — assert
- *     `ConsentRequiredError("CONSENT_REQUIRED")` propagates.
+ * Re-linking (instead of seeding-and-leaking) because this operation has
+ * no inverse mutation surface in TTCtl yet; a fresh link would persist
+ * across runs. Re-linking the existing edge is the safe live exercise.
  *
- *   - **Validation gate**: empty `links` array, empty `profileItems`,
- *     and empty `industryId` are all refused server-side-free with
- *     `VALIDATION_ERROR` before any wire dispatch.
- *
- *   - **Live round-trip + wire-shape snapshot**: re-link an industry
- *     that is ALREADY attached to one of the maintainer's employment
- *     rows. The "Add" mutation is idempotent against an existing link
- *     (server-side dedupe), so the call is a semantic no-op — no foreign
- *     state is created on the profile. Snapshot the response.
- *
- * **Why we re-link instead of seeding-and-leaking**: this operation has
- * no inverse mutation in TTCtl (no `removeProfileIndustryConnections`
- * surface) — a fresh link would persist on the maintainer's profile
- * across runs. Re-linking an existing industry → employment edge is the
- * safe idempotent path that gives us a live response to snapshot
- * without altering profile state.
- *
- * **Skip conditions** (silent — emit stderr warning, do not fail):
- *   - User has no employment rows: subtest skipped.
- *   - User has no employments with any industry already linked: subtest
- *     skipped (we don't have a safe `industryId` to re-link without
- *     leaking state).
- *
- * **Catalog-driven sentinel disabled**: a fresh-link path that picks an
- * arbitrary autocomplete entry WOULD leak state because TTCtl has no
- * `removeProfileIndustryConnections` mutation to undo it. Re-linking the
- * existing edge is the only safe live exercise until that inverse ships.
+ * Skip conditions (stderr warning, no fail):
+ *   - User has no employment rows.
+ *   - No employment has any industry already linked (no safe id to re-link).
  */
 
 // e2e-covers: AddProfileIndustryConnections

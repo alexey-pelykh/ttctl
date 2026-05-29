@@ -79,7 +79,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile specializations show (live mobile-gateway, #466)", () => {
+describe("profile specializations show (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

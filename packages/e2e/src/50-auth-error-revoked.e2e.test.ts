@@ -48,7 +48,7 @@ import type { CliClient } from "./harness/index.js";
 const session = withFreshSession();
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("auth error: deliberately-revoked token (#77, isolated session)", () => {
+describe("auth error: deliberately-revoked token (isolated session)", () => {
   let cli: CliClient;
 
   beforeAll(() => {

@@ -43,7 +43,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
 // The five fields the live `ExternalProfilesInput` accepts (twitter excluded — #526).
 const WRITABLE_URL_FIELDS = ["linkedin", "github", "website", "behance", "dribbble"] as const;
 
-describe("profile external update — partial-merge verification (#606)", () => {
+describe("profile external update — partial-merge verification", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

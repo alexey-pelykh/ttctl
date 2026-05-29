@@ -90,7 +90,7 @@ async function resolveJobWithQuestions(token: string): Promise<string | null> {
   return null;
 }
 
-describe("jobs apply --suggest-answers (live mobile-gateway, #452)", () => {
+describe("jobs apply --suggest-answers (live mobile-gateway)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

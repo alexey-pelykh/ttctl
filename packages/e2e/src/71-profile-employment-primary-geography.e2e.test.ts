@@ -103,7 +103,7 @@ async function fetchCountries(token: string): Promise<CountryRow[]> {
   return body?.data?.countries ?? [];
 }
 
-describe("profile employment primaryGeography write (#586)", () => {
+describe("profile employment primaryGeography write", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

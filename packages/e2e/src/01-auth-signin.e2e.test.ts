@@ -41,7 +41,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("auth signin + profile (live Toptal, shared session, #66, #129)", () => {
+describe("auth signin + profile (live Toptal, shared session)", () => {
   let cli: CliClient;
 
   beforeAll(() => {

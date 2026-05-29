@@ -30,7 +30,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile employment update — highlight preservation (#607)", () => {
+describe("profile employment update — highlight preservation", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

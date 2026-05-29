@@ -2,58 +2,33 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * E2E coverage for `profile.basic.set` after the #393 read-merge rewrite.
+ * E2E coverage for `profile.basic.set`'s read-merge contract.
  *
- * **Mandatory per CLAUDE.md § Schema/contract validation rule** —
- * `UPDATE_BASIC_INFO` is in `TALENT_PROFILE_KNOWN_UNTRUSTED_OPS`
- * (`codegen.config.ts`), the schema is gappy
- * (`UpdateBasicInfoInput { _placeholder: String }`), and the input shape
- * was inferred from the captured browser curl in
- * `research/notes/10-mutation-input-patterns.md`. The live API is the
- * only authority on whether the merged input matches the server's
- * `UpdateBasicInfoInput!` contract.
+ * Contract under test: `UPDATE_BASIC_INFO` is a full-replacement
+ * contract — the server requires every non-null field in the input. The
+ * apply path reads current state via `getBasicInfo()` and merges
+ * user-supplied fields on top before sending. A partial input (anything
+ * less than the 9 required-non-null fields populated) returns
+ * GRAPHQL_ERROR.
  *
- * **Originating bug (#393)**: pre-#393, `set({bio, headline})` constructed
- * `{profileId, profile: {about?, quote?}}` only. The server rejected
- * the call with "Variable $input of type UpdateBasicInfoInput! was
- * provided invalid value for profile.fullName (Expected value to not be
- * null), profile.legalName (Expected value to not be null), …" on 9
- * required-non-null fields. The `talent_profile` API treats
- * `UPDATE_BASIC_INFO` as a **full-replacement contract** despite the JS
- * bundle's partial-input shape. The fix: read current state via
- * `getBasicInfo()` first, merge user-supplied fields over it, send the
- * full input. This E2E test is the post-merge regression defence.
- *
- * **Track 1 disposition** (per ADR-006 / CLAUDE.md § Track 1 vs Track 2):
- * `UPDATE_BASIC_INFO` has no generated operation type → **T1** (wire-shape
- * snapshot). `assertWireShapeStable(...)` diffs the live response shape
- * against the committed snapshot at
- * `packages/e2e/src/wire-snapshots/UPDATE_BASIC_INFO.snapshot.json`.
+ * Track 1: `UPDATE_BASIC_INFO` is T1 — `assertWireShapeStable(...)` diffs
+ * the response against `UPDATE_BASIC_INFO.snapshot.json`.
  *
  * Coverage:
- *   - **Round-trip** (#393 core AC): apply `set({bio, headline})` against
- *     the live API, then read back via `getBasicInfo()` and assert
- *     persisted values. The set MUST succeed — a `GRAPHQL_ERROR`
- *     "Expected value to not be null" on any of the 9 required fields
- *     means the read-merge regressed.
- *   - **Wire-shape snapshot** (T1): the `UpdateProfileResult` returned
- *     by `set()` is diffed against the committed snapshot.
+ *   - Round-trip `set({bio, headline})` → `getBasicInfo()` re-read; the
+ *     set MUST succeed (a `GRAPHQL_ERROR` on required-non-null fields
+ *     is the regression class this test defends).
+ *   - T1 snapshot on the `UpdateProfileResult` returned by `set()`.
  *
- * **Non-destructive design**: the test captures the current bio+headline
- * BEFORE the test runs, applies sentinel values, asserts persistence,
- * and restores the originals in `finally` — the user's profile content
- * is unchanged at end of test, even on assertion failure.
+ * Non-destructive: captures current bio + headline, applies sentinels,
+ * restores originals in `finally`.
  *
- * **Skip conditions** (silent — emit stderr warning, do not fail):
- *   - The current profile is missing one of the server-required fields
- *     (e.g. `fullName === null`): the read-merge would pass `null`
- *     verbatim and the server would reject. This is a test-account-state
- *     issue, not a wire-shape regression. Skip the subtest with a
- *     stderr warning.
- *   - `USER_ERROR` from the mutation (a server-side business gate):
- *     wire-shape gate already passed; skip the subtest.
- *   - A `GRAPHQL_ERROR` is NEVER skipped — that is precisely the
- *     regression class this file defends.
+ * Skip conditions (stderr warning, no fail):
+ *   - Current profile is missing one of the server-required fields
+ *     (e.g. `fullName === null`): test-account-state issue, the
+ *     read-merge would pass null verbatim. Subtest skipped.
+ *   - `USER_ERROR` (business gate, not wire-shape): subtest skipped.
+ *   - `GRAPHQL_ERROR` is NEVER skipped — propagates as a hard failure.
  */
 
 // e2e-covers: UPDATE_BASIC_INFO, GET_BASIC_INFO
@@ -69,13 +44,7 @@ import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-/**
- * Load the bearer captured by `globalSetup` into the shared sandbox YAML.
- * Mirrors the established pattern in
- * `42-profile-external-show.e2e.test.ts:71-79` and
- * `43-profile-employment.e2e.test.ts:79-87` — `ConfigLoadSchema`
- * validates the Form-D shape (`auth.token` present).
- */
+/** Load the bearer captured by `globalSetup` into the shared sandbox YAML. */
 function loadSandboxBearer(sandboxConfigPath: string): string {
   const raw = readFileSync(sandboxConfigPath, "utf8");
   const parsed: unknown = parseYaml(raw);
@@ -101,7 +70,7 @@ function errorCode(err: unknown): string | undefined {
   return undefined;
 }
 
-describe("profile basic #393 read-merge set() (live talent-profile, INFERRED wire shape)", () => {
+describe("profile basic read-merge set() (live talent-profile, INFERRED wire shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

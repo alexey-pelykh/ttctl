@@ -51,7 +51,7 @@ function parseFixture(raw: string): ParsedFixture {
   return { skillSetId, connectionId };
 }
 
-describe("profile skills remove-connection (live talent-profile, #463)", () => {
+describe("profile skills remove-connection (live talent-profile)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

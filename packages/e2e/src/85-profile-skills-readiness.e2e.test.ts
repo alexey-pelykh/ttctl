@@ -41,7 +41,7 @@ async function resolveProfileId(token: string): Promise<string> {
   return profileId;
 }
 
-describe("profile skills readiness (live talent-profile, #657)", () => {
+describe("profile skills readiness (live talent-profile)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

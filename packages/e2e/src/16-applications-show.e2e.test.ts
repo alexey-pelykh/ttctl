@@ -20,7 +20,7 @@ import type { CliClient } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
-describe("applications show (live mobile-gateway, #410, #539, #547)", () => {
+describe("applications show (live mobile-gateway)", () => {
   let cli: CliClient;
 
   beforeAll(() => {

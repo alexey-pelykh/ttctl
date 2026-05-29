@@ -54,7 +54,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("timesheet list (live mobile-gateway, #374)", () => {
+describe("timesheet list (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

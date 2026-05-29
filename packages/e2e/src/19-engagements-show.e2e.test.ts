@@ -47,7 +47,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("engagements show (live mobile-gateway, #546)", () => {
+describe("engagements show (live mobile-gateway)", () => {
   let cli: CliClient;
   let sandboxConfigPath: string;
 

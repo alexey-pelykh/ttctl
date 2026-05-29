@@ -86,7 +86,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile education list (live talent-profile, INFERRED wire shape, #556)", () => {
+describe("profile education list (live talent-profile, INFERRED wire shape)", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {

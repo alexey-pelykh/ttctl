@@ -4,85 +4,26 @@
 // e2e-covers: LogOut
 
 /**
- * Server-side LogOut wire-format E2E test (#180).
+ * Server-side `LogOut` wire-format E2E.
  *
- * Numeric prefix `97-` places this AFTER the adversarial `50-` case and
- * BEFORE the crash-injection (`98-`) and terminal smoke (`99-`) files.
- * Per the file-ordering invariant in `vitest.e2e.config.ts`, alphabetical
- * ordering is the logical run order: 50 < 97 < 98 < 99.
+ * Uses `withFreshSession()` (NOT `getSharedSession()`) so the deliberate
+ * LogOut is isolated to a per-file subdirectory under
+ * `<sandbox>/isolated-<id>/`. The shared session at `<sandbox>/.ttctl.yaml`
+ * is never touched.
  *
- * This file uses `withFreshSession()` (NOT `getSharedSession()`) so its
- * deliberate LogOut call is ISOLATED to a per-file subdirectory under
- * `<sandbox>/isolated-<id>/`. Sibling `getSharedSession()`-using files
- * (`01-`, `99-`) read the SHARED token at `<sandbox>/.ttctl.yaml` written
- * by `globalSetup`, which this file never touches.
- *
- * What this asserts:
- *
- *   1. `withFreshSession()` performs an isolated signin, leaving a valid
- *      bearer token in the per-file isolated YAML config.
- *   2. The test captures the bearer string from the isolated YAML BEFORE
- *      running signout so it can probe gateway state after LogOut.
- *   3. `ttctl auth signout --output=json` runs against the isolated config.
- *      The JSON output is asserted to be `status: "signed-out"` plus the
- *      post-#180 `serverLogOut: "logged-out"` (best case) — the LogOut
- *      mutation against `talent_profile/graphql` returned
- *      `data.logOut.success === true`.
- *   4. The isolated YAML's `auth.token` field is absent post-signout.
- *   5. **Regression-pinning assertion** (post-validate Finding 3): the
- *      captured bearer remains `{ status: "valid" }` against
- *      `getAuthStatus` immediately after LogOut. This pins the empirical
- *      bearer-invalidation scope (see Live Discovery below). When/if
- *      Toptal ever wires up server-side bearer revocation, this assertion
- *      will fail — that flip is an actionable test signal, not silent
- *      drift.
- *
- * **Live discovery (#180, 2026-05-12)**: the `LogOut` mutation against
- * `talent_profile/graphql` succeeds (`data.logOut.success === true`) but
- * does NOT invalidate the bearer for subsequent mobile-gateway calls. The
- * delayed-probe investigation captured at `.tmp/180-delayed-probe-report.json`
- * (one-off script `packages/e2e/scripts/180-delayed-probe.mjs`, not
- * committed) probed `core.getAuthStatus(capturedBearer)` at
- * t = 0, 30, 60, 180, 300 seconds post-LogOut against a freshly issued
- * bearer; the bearer remained `{ status: "valid" }` for the entire 5-minute
- * window. The schema/decompile evidence aligns: `LogOutInput` is empty
- * by design (`{ _placeholder: String }`), no alternative revocation
- * mutation exists on either surface, and `research/notes/01-overview.md`
- * § Logout flow describes Android client-side cleanup (token clear +
- * Apollo cache reset) rather than server-side bearer invalidation. The
- * original AC #1 of issue #180 ("the bearer is no longer valid against
- * ViewerVerify (401/403)") is therefore FALSIFIED by live evidence; the
- * issue's ACs are formally amended (see issue #180 maintainer comment)
- * to reflect that `LogOut` is defense-in-depth: it terminates the
- * web-session/cookie state on the talent_profile side, emits the audit-log
- * signal to Toptal, and remains a forward-compatible call site if Toptal
- * ever wires up server-side bearer revocation. The 24-72h aging-out
- * documented in CLAUDE.md § Auth Model remains the load-bearing
- * revocation defense.
- *
- * This test therefore asserts:
- *   - LogOut returns success (the mutation wire format works as inferred)
- *   - Local token is cleared
- *   - Bearer remains valid post-LogOut (regression-pinning — flips when
- *     Toptal changes their server-side behavior)
- *   - Idempotent re-run path
- *
- * Schema/contract rule (CLAUDE.md § Schema/contract validation rule): the
- * `LogOut` mutation's input is Pattern 7 (trivial empty) per
- * `research/notes/10-mutation-input-patterns.md`, and `LogOutPayload`'s
- * fields are typed as `Unknown` in the synthesized SDL — so the wire
- * shape is INFERRED. This test exercises the live wire format. The PR
- * description carries the live transcript including the bearer-still-
- * valid observation as documented evidence supporting the AC amendment.
- *
- * Timing-window scope: the regression-pinning assertion at step 5 probes
- * IMMEDIATELY after LogOut returns. The delayed-probe investigation cited
- * above extends the observation to 5 minutes; further timing investigation
- * (1h, 24h) is not in scope here — the documented 24-72h natural aging-out
- * is the load-bearing defense and would naturally invalidate any stale
- * bearer over that window.
- *
- * Skip-gate: `.skipIf(!e2eEnabled)` matches the suite-wide pattern.
+ * Asserts:
+ *   1. Signout returns `status: "signed-out"` + `serverLogOut: "logged-out"`
+ *      (LogOut mutation returned `data.logOut.success === true`).
+ *   2. The isolated YAML's `auth.token` field is absent post-signout.
+ *   3. Regression-pinning: the captured bearer remains
+ *      `{ status: "valid" }` against `getAuthStatus` immediately after
+ *      LogOut — see § Auth Model in CLAUDE.md for the empirical scope
+ *      of LogOut (terminates web-session state on talent_profile side;
+ *      does NOT invalidate the bearer for mobile-gateway calls; 24-72h
+ *      natural aging-out is the load-bearing revocation). If/when
+ *      Toptal wires up server-side bearer revocation, this assertion
+ *      flips — actionable signal, not silent drift.
+ *   4. Idempotent re-run path.
  */
 
 import { readFileSync } from "node:fs";
@@ -105,7 +46,7 @@ interface SignOutJsonResponse {
   message?: string;
 }
 
-describe("auth signout — server-side LogOut against live Toptal (#180, isolated session)", () => {
+describe("auth signout — server-side LogOut against live Toptal (isolated session)", () => {
   let cli: CliClient;
   let isolatedConfigPath: string;
   let capturedBearer: string;

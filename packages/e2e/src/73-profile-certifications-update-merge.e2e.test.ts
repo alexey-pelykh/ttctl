@@ -47,7 +47,7 @@ function loadSandboxBearer(sandboxConfigPath: string): string {
   return validated.auth.token;
 }
 
-describe("profile certifications update — read-current+merge regression (#605)", () => {
+describe("profile certifications update — read-current+merge regression", () => {
   let sandboxConfigPath: string;
 
   beforeAll(() => {
