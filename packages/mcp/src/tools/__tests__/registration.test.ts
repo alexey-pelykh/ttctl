@@ -117,14 +117,16 @@ const EXPECTED_TOOLS = [
   // countries (#596) — 1 read-only tool: Country/geography catalog lookup
   // (id-discovery companion to employment `primaryGeographyId`, #586).
   "ttctl_profile_countries_list",
-  // applications (#15, +#439, +#440, +#442, +#470) — 7 read-only tools at top-level
+  // applications (#15, +#439, +#440, +#441, +#442, +#470) — 8 tools at top-level
   // (#439 adds the interview-detail sub-namespace leaf; #440 adds the
-  // interview-notes sub-sub-namespace leaf; #442 adds the
+  // interview-notes-show sub-sub-namespace leaf; #441 adds the
+  // interview-notes-update DESTRUCTIVE sibling; #442 adds the
   // availability-request-detail sub-namespace leaf; #470 adds the
   // interview-prep-guide sub-sub-namespace leaf — sibling of notes).
   "ttctl_applications_availability_request_show",
   "ttctl_applications_interview_guide_show",
   "ttctl_applications_interview_notes_show",
+  "ttctl_applications_interview_notes_update",
   "ttctl_applications_interview_show",
   "ttctl_applications_list",
   "ttctl_applications_show",
@@ -239,7 +241,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (126 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (127 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

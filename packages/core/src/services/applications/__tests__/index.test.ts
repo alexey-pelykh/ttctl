@@ -19,6 +19,7 @@ import {
   AVAILABILITY_REQUEST_STATUSES,
   INTERVIEW_GUIDE_SECTION_IDENTIFIERS,
   INTERVIEW_GUIDE_TIP_IDENTIFIERS,
+  INTERVIEW_NOTE_SECTIONS,
   INTERVIEW_STATUSES,
   STATUS_GROUPS,
   ApplicationsError,
@@ -3662,5 +3663,153 @@ describe("applications.availabilityRequests.show (#442)", () => {
       "REJECTED",
       "WITHDRAWN",
     ]);
+  });
+});
+
+const INT_ID = "int_abc123";
+
+function updateNotesSuccessFixture(
+  notes: Array<{ id: string; section: string | null; note: string }>,
+  notice: string | null = null,
+): unknown {
+  return {
+    data: {
+      interview: {
+        __typename: "TalentInterview",
+        changeTalentNotes: {
+          __typename: "MutationResult",
+          success: true,
+          notice,
+          errors: null,
+          interview: {
+            __typename: "TalentInterview",
+            id: INT_ID,
+            talentNotes: notes.map((n) => ({ __typename: "InterviewTalentNote", ...n })),
+          },
+        },
+      },
+    },
+  };
+}
+
+describe("applications.interviews.notes.update (#441)", () => {
+  it("INTERVIEW_NOTE_SECTIONS exposes the 6 guide-section identifiers in declaration order", () => {
+    expect(INTERVIEW_NOTE_SECTIONS).toEqual([
+      "ASK_YOUR_CLIENT",
+      "GAPS",
+      "JOB_HIGHLIGHTS",
+      "POTENTIAL_QUESTIONS",
+      "PRO_TIPS",
+      "STRENGTHS",
+    ]);
+  });
+
+  it("refuses with CONSENT_REQUIRED and issues NO wire call when consent is absent", async () => {
+    await expect(interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "x" }] })).rejects.toMatchObject({
+      name: "ConsentRequiredError",
+      code: "CONSENT_REQUIRED",
+      domain: "interview-action",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("enforces consent even under dryRun (gate fires before the preview branch)", async () => {
+    await expect(
+      interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "x" }] }, { dryRun: true }),
+    ).rejects.toMatchObject({ code: "CONSENT_REQUIRED" });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("dryRun: previews the inferred wire request (talentNotes array, section ?? null) without issuing the mutation", async () => {
+    const outcome = await interviews.notes.update(
+      TOKEN,
+      INT_ID,
+      {
+        notes: [{ section: "STRENGTHS", note: "Mention the AWS cert" }, { note: "Ask about on-call rotation" }],
+        interviewActionConsentIssued: true,
+      },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") return;
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.operationName).toBe("UpdateInterviewTalentNotes");
+    expect(outcome.preview.variables).toMatchObject({
+      interviewId: INT_ID,
+      input: {
+        talentNotes: [
+          { section: "STRENGTHS", note: "Mention the AWS cert" },
+          { section: null, note: "Ask about on-call rotation" },
+        ],
+      },
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("applied: round-trips the server's echoed note set + notice", async () => {
+    reply({
+      body: updateNotesSuccessFixture([{ id: "n1", section: "STRENGTHS", note: "Mention the AWS cert" }], "Saved."),
+    });
+    const outcome = await interviews.notes.update(TOKEN, INT_ID, {
+      notes: [{ section: "STRENGTHS", note: "Mention the AWS cert" }],
+      interviewActionConsentIssued: true,
+    });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.result.interviewId).toBe(INT_ID);
+    expect(outcome.result.notice).toBe("Saved.");
+    expect(outcome.result.notes).toEqual([{ id: "n1", section: "STRENGTHS", note: "Mention the AWS cert" }]);
+
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { operationName: string; variables: Record<string, unknown> };
+    expect(body.operationName).toBe("UpdateInterviewTalentNotes");
+    expect(body.variables).toMatchObject({
+      interviewId: INT_ID,
+      input: { talentNotes: [{ section: "STRENGTHS", note: "Mention the AWS cert" }] },
+    });
+  });
+
+  it("maps an omitted section to null in the wire input", async () => {
+    reply({ body: updateNotesSuccessFixture([{ id: "n1", section: null, note: "freeform" }]) });
+    await interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "freeform" }], interviewActionConsentIssued: true });
+    const body = mockedStock.mock.calls[0]?.[0]?.body as { variables: { input: { talentNotes: unknown[] } } };
+    expect(body.variables.input.talentNotes).toEqual([{ section: null, note: "freeform" }]);
+  });
+
+  it("throws MUTATION_ERROR on success:false", async () => {
+    reply({
+      body: {
+        data: {
+          interview: {
+            changeTalentNotes: {
+              success: false,
+              notice: null,
+              errors: [{ code: "base", key: "invalid", message: "Notes too long" }],
+              interview: null,
+            },
+          },
+        },
+      },
+    });
+    await expect(
+      interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "x" }], interviewActionConsentIssued: true }),
+    ).rejects.toMatchObject({ name: "ApplicationsError", code: "MUTATION_ERROR" });
+  });
+
+  it("throws UNKNOWN when the changeTalentNotes payload is null", async () => {
+    reply({ body: { data: { interview: { changeTalentNotes: null } } } });
+    await expect(
+      interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "x" }], interviewActionConsentIssued: true }),
+    ).rejects.toMatchObject({ name: "ApplicationsError", code: "UNKNOWN" });
+  });
+
+  it("throws UNKNOWN when success:true but the interview echo is null", async () => {
+    reply({
+      body: {
+        data: { interview: { changeTalentNotes: { success: true, notice: null, errors: null, interview: null } } },
+      },
+    });
+    await expect(
+      interviews.notes.update(TOKEN, INT_ID, { notes: [{ note: "x" }], interviewActionConsentIssued: true }),
+    ).rejects.toMatchObject({ name: "ApplicationsError", code: "UNKNOWN" });
   });
 });

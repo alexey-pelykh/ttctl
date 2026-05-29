@@ -5,6 +5,7 @@ import { Command, InvalidArgumentError, Option } from "commander";
 
 import { applications } from "@ttctl/core";
 
+import { markMutation } from "../../lib/dry-run.js";
 import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
@@ -13,6 +14,7 @@ import { runApplicationsConfirm } from "./confirm.js";
 import {
   runApplicationsInterviewGuideShow,
   runApplicationsInterviewNotesShow,
+  runApplicationsInterviewNotesUpdate,
   runApplicationsInterviewShow,
 } from "./interview.js";
 import { runApplicationsList } from "./list.js";
@@ -284,6 +286,60 @@ export function buildApplicationsCommand(): Command {
     .action(async (jobId: string, options: { output: OutputFormat }) => {
       await runApplicationsInterviewNotesShow(jobId, options.output);
     });
+
+  // #441 — Interview notes update (portal-side `UpdateInterviewTalentNotes`).
+  // Sub-sub-namespace `interview notes update <interviewId>` — DESTRUCTIVE
+  // full-replace of the talent's prep notes. **Input is the INTERVIEW id**
+  // (the mutation keys on `$interviewId: ID!`), diverging from `notes show`
+  // which keys on the JOB id. `markMutation` so the global `--dry-run`
+  // routes through the core dry-run path (the destructive write is never
+  // issued under preview).
+  markMutation(
+    notesCmd
+      .command("update")
+      .description(
+        "Overwrite the talent's prep notes for an interview (DESTRUCTIVE full-replace; input is the INTERVIEW id, NOT the job id). Requires --consent-interview-action.",
+      )
+      .argument(
+        "<interviewId>",
+        "TalentInterview id (discover via `applications interview show <interviewId>`)",
+        parseIdArg,
+      )
+      .requiredOption("--note <note...>", "note body (repeatable; the full set REPLACES all existing notes)")
+      .addOption(
+        new Option(
+          "--section <section...>",
+          "guide section for the note at the same position (repeatable; pairs with --note by index)",
+        ).choices([...applications.INTERVIEW_NOTE_SECTIONS]),
+      )
+      .option(
+        "--consent-interview-action",
+        "REQUIRED — acknowledge this destructive interview-action (full-replace of notes). See ADR-009.",
+      )
+      .addOption(
+        new Option("-o, --output <format>", "output format")
+          .choices(OUTPUT_FORMATS)
+          .default("pretty" satisfies OutputFormat),
+      )
+      .action(
+        async (
+          interviewId: string,
+          options: {
+            note: string[];
+            section?: applications.InterviewNoteSection[];
+            consentInterviewAction?: boolean;
+            output: OutputFormat;
+          },
+        ) => {
+          await runApplicationsInterviewNotesUpdate(interviewId, {
+            note: options.note,
+            section: options.section ?? [],
+            consentInterviewAction: options.consentInterviewAction ?? false,
+            output: options.output,
+          });
+        },
+      ),
+  );
 
   // #470 — Interview prep guide (mobile-gateway `InterviewGuide`).
   // Sub-sub-namespace `interview guide show <interviewId>` for the

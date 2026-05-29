@@ -3,6 +3,8 @@
 
 import { applications } from "@ttctl/core";
 
+import { getCliDryRun } from "../../lib/dry-run.js";
+import { emitDryRunSuccess, emitErrorAndExit, emitUpdateSuccess } from "../../lib/envelopes.js";
 import { emitResult } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
@@ -414,4 +416,137 @@ function tipHeaderLine(tip: applications.InterviewGuideTip): string {
     return `• ${tip.title}`;
   }
   return "• (unnamed tip)";
+}
+
+/**
+ * Action handler for `ttctl applications interview notes update <interviewId>` (#441).
+ * DESTRUCTIVE full-replace of the talent's prep notes for one interview,
+ * via the portal-side `UpdateInterviewTalentNotes` mutation.
+ *
+ * **Input is the INTERVIEW id**, NOT the job id (the #440 read keys on the
+ * job id). Discover it via `applications interview show <interviewId>` or
+ * the `Interview id` line from `applications interview notes show <jobId>`.
+ *
+ * `--note` is repeatable; `--section` is repeatable and pairs by position
+ * (the Nth `--section` annotates the Nth `--note`). Fewer sections than
+ * notes leaves trailing notes unsectioned; more sections than notes is a
+ * `VALIDATION_ERROR`. The supplied notes REPLACE the interview's entire
+ * note set, so `--consent-interview-action` (ADR-009) is required. Prefer
+ * the global `--dry-run` to preview the wire payload first.
+ */
+export async function runApplicationsInterviewNotesUpdate(
+  interviewId: string,
+  opts: {
+    note: string[];
+    section: applications.InterviewNoteSection[];
+    consentInterviewAction: boolean;
+    output: OutputFormat;
+  },
+): Promise<void> {
+  const token = await loadAuthTokenOrExit("applications interview notes update", opts.output);
+  const dryRun = getCliDryRun();
+
+  if (opts.note.length === 0) {
+    emitErrorAndExit({
+      operation: "applications.interview.notes.update",
+      format: opts.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: "At least one --note is required (this replaces the interview's entire note set).",
+          hint: 'Pass --note "<text>" (repeatable). Pair a note with a guide section via --section by position.',
+        },
+      ],
+      prettySummary: "applications interview notes update failed (VALIDATION_ERROR): no --note supplied.",
+    });
+  }
+  if (opts.section.length > opts.note.length) {
+    emitErrorAndExit({
+      operation: "applications.interview.notes.update",
+      format: opts.output,
+      errors: [
+        {
+          code: "VALIDATION_ERROR",
+          message: `--section count (${opts.section.length.toString()}) exceeds --note count (${opts.note.length.toString()}); each --section pairs with the --note at the same position.`,
+          hint: "Supply at most one --section per --note; trailing notes without a paired --section are unsectioned.",
+        },
+      ],
+      prettySummary: "applications interview notes update failed (VALIDATION_ERROR): more --section than --note.",
+    });
+  }
+
+  const notes: applications.InterviewTalentNoteInput[] = opts.note.map((note, i) => {
+    const section = opts.section[i];
+    return section === undefined ? { note } : { section, note };
+  });
+
+  let outcome: applications.InterviewNotesUpdateOutcome;
+  try {
+    outcome = await applications.interviews.notes.update(
+      token,
+      interviewId,
+      { notes, interviewActionConsentIssued: opts.consentInterviewAction },
+      { dryRun },
+    );
+  } catch (err) {
+    handleApplicationsError("applications interview notes update", err, opts.output);
+  }
+
+  if (outcome.kind === "preview") {
+    emitDryRunSuccess({
+      operation: "applications.interview.notes.update",
+      format: opts.output,
+      preview: outcome.preview,
+    });
+    return;
+  }
+
+  const result = outcome.result;
+  emitUpdateSuccess({
+    operation: "applications.interview.notes.update",
+    format: opts.output,
+    updated: result,
+    prettySummary: `Updated ${result.notes.length.toString()} note(s) for interview ${result.interviewId}`,
+    prettyEntity: (data) => formatInterviewNotesUpdateResult(data),
+    notice: result.notice ?? undefined,
+  });
+}
+
+/**
+ * Render an {@link applications.InterviewNotesUpdateResult} as a sectioned
+ * notes block (the server's post-update echo). Pure — directly
+ * unit-testable. The server `notice`, when present, is rendered by the
+ * update envelope, not here.
+ *
+ * Layout:
+ *
+ *     Interview <interviewId>
+ *
+ *     Notes
+ *       [<section>] <note>
+ *
+ * When the update cleared all notes, prints:
+ *
+ *     Interview <interviewId>
+ *       (all prep notes cleared)
+ */
+export function formatInterviewNotesUpdateResult(result: applications.InterviewNotesUpdateResult): string {
+  const lines: string[] = [];
+
+  lines.push(`Interview ${result.interviewId}`);
+
+  if (result.notes.length === 0) {
+    lines.push("  (all prep notes cleared)");
+    return lines.join("\n");
+  }
+
+  lines.push("");
+  lines.push("Notes");
+  for (const n of result.notes) {
+    const section = n.section !== null && n.section !== "" ? `[${n.section}] ` : "";
+    const note = n.note ?? "";
+    lines.push(`  ${section}${note}`);
+  }
+
+  return lines.join("\n");
 }

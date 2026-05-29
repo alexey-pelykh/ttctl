@@ -7,7 +7,12 @@ import type { applications } from "@ttctl/core";
 
 import { formatAvailabilityRequestDetail } from "../availability-request.js";
 import { formatRespondPayload } from "../confirm.js";
-import { formatInterviewDetail, formatInterviewGuide, formatInterviewNotes } from "../interview.js";
+import {
+  formatInterviewDetail,
+  formatInterviewGuide,
+  formatInterviewNotes,
+  formatInterviewNotesUpdateResult,
+} from "../interview.js";
 import { formatApplicationsTable, formatDate, shortenStatusGroup } from "../list.js";
 import { formatRejectReasons } from "../reject-reasons.js";
 import { formatFixedRate } from "../shared.js";
@@ -662,6 +667,59 @@ describe("formatInterviewNotes (#440)", () => {
     );
     // Section prefix preserved; note body resolves to "".
     expect(out).toContain("[PRO_TIPS] ");
+  });
+});
+
+// ---------------------------------------------------------------------
+// `formatInterviewNotesUpdateResult` (#441)
+// ---------------------------------------------------------------------
+
+describe("formatInterviewNotesUpdateResult (#441)", () => {
+  function makeResult(
+    overrides: Partial<applications.InterviewNotesUpdateResult> = {},
+  ): applications.InterviewNotesUpdateResult {
+    return {
+      interviewId: "int-1",
+      notice: null,
+      notes: [
+        { id: "note-1", section: "GAPS", note: "Ask about scaling." },
+        { id: "note-2", section: "STRENGTHS", note: "Highlight prior client wins." },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("renders the post-update echo (header + sectioned notes block)", () => {
+    const out = formatInterviewNotesUpdateResult(makeResult());
+    expect(out).toContain("Interview int-1");
+    expect(out).toContain("Notes");
+    expect(out).toContain("[GAPS] Ask about scaling.");
+    expect(out).toContain("[STRENGTHS] Highlight prior client wins.");
+  });
+
+  it("renders the cleared-notes message when the update emptied the set", () => {
+    const out = formatInterviewNotesUpdateResult(makeResult({ notes: [] }));
+    expect(out).toBe("Interview int-1\n  (all prep notes cleared)");
+  });
+
+  it("renders unsectioned notes without the [section] prefix", () => {
+    const out = formatInterviewNotesUpdateResult(
+      makeResult({
+        notes: [
+          { id: "note-1", section: null, note: "Loose thought, no section." },
+          { id: "note-2", section: "", note: "Empty-string section also unsectioned." },
+        ],
+      }),
+    );
+    expect(out).toContain("  Loose thought, no section.");
+    expect(out).toContain("  Empty-string section also unsectioned.");
+    expect(out).not.toContain("[null]");
+    expect(out).not.toContain("[]");
+  });
+
+  it("does NOT render the server notice (the envelope owns that line)", () => {
+    const out = formatInterviewNotesUpdateResult(makeResult({ notice: "Saved 2 notes." }));
+    expect(out).not.toContain("Saved 2 notes.");
   });
 });
 

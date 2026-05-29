@@ -74,6 +74,7 @@ import {
   JobPositionAnswerInputSchema,
   PitchInputSchema,
 } from "../../__generated__/zod-schemas.js";
+import { ensureDestructiveConsent } from "../../consent.js";
 import { buildDryRunPreview } from "../../transport.js";
 import type { DryRunPreview } from "../../transport.js";
 import { callGatewayShared } from "../_shared/transport.js";
@@ -3920,6 +3921,236 @@ async function interviewsNotesShow(token: string, jobId: string): Promise<Interv
 }
 
 // ---------------------------------------------------------------------
+// Interview notes update (#441)
+//
+// `applications.interviews.notes.update(interviewId, input)` — overwrite
+// the talent's prep notes for one interview, via the portal-side
+// `UpdateInterviewTalentNotes` mutation (`interview(id).changeTalentNotes`).
+//
+// DESTRUCTIVE full-replace: the supplied note set REPLACES the
+// interview's entire `talentNotes` set — notes omitted from the input
+// are dropped server-side. Gated by the ADR-009 `interview-action`
+// consent ceremony (`interviewActionConsentIssued: true`).
+//
+// **Input shape is INFERRED.** `InterviewTalentNotesInput` is a
+// `_placeholder` schema gap in the synthesized SDL and no live payload
+// capture exists. The shape `{ talentNotes: [{ section, note }] }` is
+// inferred from (a) the mutation's own response echo
+// (`changeTalentNotes.interview.talentNotes { id section note }`) and
+// (b) `section` resolving to `InterviewGuideSectionIdentifierEnum`. The
+// mandatory live E2E (`TTCTL_E2E=1`) is the authority — if it reveals a
+// different wrapper key or element shape, the fix is localized to the
+// variable construction below.
+//
+// **id divergence from the read sibling**: this mutation keys on the
+// INTERVIEW id (`$interviewId: ID!`); the read (`GetInterviewNotes`)
+// keys on the JOB id. Discover the interview id via
+// `applications interview show <interviewId>` or the `interviewId`
+// echoed by `applications interview notes show <jobId>`.
+//
+// **T1 disposition**: `UpdateInterviewTalentNotes` is in
+// `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` (no codegen type). Wire shape is
+// pinned by `wire-snapshots/UpdateInterviewTalentNotes.snapshot.json`.
+// ---------------------------------------------------------------------
+
+/**
+ * The six `InterviewGuideSectionIdentifierEnum` members a talent note
+ * may be pinned under (mirrors {@link InterviewTalentNote.section}).
+ * Re-declared as a literal tuple so CLI choice-validation and the MCP
+ * `z.enum` share one source of truth without depending on codegen.
+ */
+export const INTERVIEW_NOTE_SECTIONS = [
+  "ASK_YOUR_CLIENT",
+  "GAPS",
+  "JOB_HIGHLIGHTS",
+  "POTENTIAL_QUESTIONS",
+  "PRO_TIPS",
+  "STRENGTHS",
+] as const;
+
+export type InterviewNoteSection = (typeof INTERVIEW_NOTE_SECTIONS)[number];
+
+/**
+ * One note in the replacement set passed to {@link interviewsNotesUpdate}.
+ * INFERRED element shape — see the section header.
+ */
+export interface InterviewTalentNoteInput {
+  /** Guide section the note is pinned under; null/omitted = unsectioned. */
+  section?: InterviewNoteSection | null;
+  /** The note body (plain text or Markdown — match the wire). */
+  note: string;
+}
+
+/**
+ * Input bag for {@link interviewsNotesUpdate}. Carries the full
+ * replacement note set plus the ADR-009 `interview-action` consent
+ * literal (read by {@link ensureDestructiveConsent} before any wire call).
+ */
+export interface InterviewNotesUpdateInput {
+  /**
+   * The FULL replacement set of talent notes. Full-replace semantics:
+   * notes omitted here are removed server-side; an empty array clears all.
+   */
+  notes: InterviewTalentNoteInput[];
+  /**
+   * ADR-009 `interview-action` consent literal. MUST be `true` to issue
+   * the destructive mutation (or set `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1`).
+   */
+  interviewActionConsentIssued?: boolean;
+}
+
+/**
+ * Apply-path echo from {@link interviewsNotesUpdate}. `notes` is the
+ * server's post-update note set (the `changeTalentNotes.interview.talentNotes`
+ * echo) — the round-trip verification surface, since the read sibling
+ * keys on a different id. `notice` is the optional server banner.
+ */
+export interface InterviewNotesUpdateResult {
+  interviewId: string;
+  notice: string | null;
+  notes: InterviewTalentNote[];
+}
+
+export interface InterviewNotesUpdateAppliedOutcome {
+  kind: "applied";
+  result: InterviewNotesUpdateResult;
+}
+
+export interface InterviewNotesUpdateDryRunPreviewOutcome {
+  kind: "preview";
+  preview: DryRunPreview;
+}
+
+export type InterviewNotesUpdateOutcome = InterviewNotesUpdateAppliedOutcome | InterviewNotesUpdateDryRunPreviewOutcome;
+
+interface WireChangeTalentNotesInterview {
+  id: string;
+  talentNotes?: (WireInterviewTalentNote | null)[] | null;
+}
+
+interface WireChangeTalentNotesPayload {
+  success?: boolean | null;
+  notice?: string | null;
+  errors?: MutationResultErrors[] | null;
+  interview?: WireChangeTalentNotesInterview | null;
+}
+
+interface UpdateInterviewTalentNotesResponse {
+  interview: {
+    changeTalentNotes: WireChangeTalentNotesPayload | null;
+  } | null;
+}
+
+// INFERRED `$input` shape — see section header. Authoritative wire spec
+// is the captured `UpdateInterviewTalentNotes.graphql`; the live E2E
+// validates the input body. Selection mirrors the read sibling's
+// `__typename`-annotated trim style.
+const UPDATE_INTERVIEW_TALENT_NOTES_MUTATION = `mutation UpdateInterviewTalentNotes($interviewId: ID!, $input: InterviewTalentNotesInput!) {
+  interview(id: $interviewId) {
+    __typename
+    changeTalentNotes(input: $input) {
+      __typename
+      success
+      notice
+      errors { __typename code key message }
+      interview { __typename id talentNotes { __typename id section note } }
+    }
+  }
+}`;
+
+/**
+ * Overwrite the talent's prep notes for one interview (#441).
+ *
+ * DESTRUCTIVE full-replace — see the section header. Gated by the
+ * ADR-009 `interview-action` consent ceremony: `input` MUST carry
+ * `interviewActionConsentIssued: true` (or `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1`).
+ *
+ * @param token        Captured bearer.
+ * @param interviewId  `TalentInterview.id` (NOT the job id). Bad id →
+ *                     HTTP 500 → `GRAPHQL_ERROR` per
+ *                     `project_toptal_wire_quirks`; no pre-validation.
+ * @param input        Replacement note set + consent literal.
+ * @param options      `{ dryRun }` — when true, returns a
+ *                     {@link DryRunPreview} of the EXACT wire request
+ *                     without issuing the mutation (consent gate still
+ *                     fires first).
+ *
+ * @throws `ConsentRequiredError` when consent is absent (before any wire call).
+ * @throws `ApplicationsError("MUTATION_ERROR")` on `success: false`.
+ * @throws `ApplicationsError("UNKNOWN")` on a null payload / null echo.
+ */
+export async function interviewsNotesUpdate(
+  token: string,
+  interviewId: string,
+  input: InterviewNotesUpdateInput,
+  options: DryRunOptions = {},
+): Promise<InterviewNotesUpdateOutcome> {
+  // Consent gate BEFORE any wire call — and before the dry-run branch, so
+  // a preview cannot bypass the ceremony. interview-action reads only the
+  // consent field, so a fresh literal satisfies the gate's index signature
+  // without an `as`-cast.
+  ensureDestructiveConsent("UpdateInterviewTalentNotes", "interview-action", {
+    interviewActionConsentIssued: input.interviewActionConsentIssued,
+  });
+
+  const variables: Record<string, unknown> = {
+    interviewId,
+    input: {
+      talentNotes: input.notes.map((n) => ({ section: n.section ?? null, note: n.note })),
+    },
+  };
+
+  if (options.dryRun === true) {
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "UpdateInterviewTalentNotes",
+          query: UPDATE_INTERVIEW_TALENT_NOTES_MUTATION,
+          variables,
+        },
+      }),
+    };
+  }
+
+  const data = await callGatewayNoViewer<UpdateInterviewTalentNotesResponse>(
+    token,
+    "UpdateInterviewTalentNotes",
+    UPDATE_INTERVIEW_TALENT_NOTES_MUTATION,
+    variables,
+  );
+  if (data.interview === null || data.interview.changeTalentNotes === null) {
+    throw new ApplicationsError("UNKNOWN", "UpdateInterviewTalentNotes returned a null payload.");
+  }
+  const payload = data.interview.changeTalentNotes;
+  if (payload.success !== true) {
+    throw new ApplicationsError(
+      "MUTATION_ERROR",
+      formatMutationErrors("UpdateInterviewTalentNotes failed", payload.errors),
+    );
+  }
+  const echoed = payload.interview;
+  if (echoed == null) {
+    throw new ApplicationsError(
+      "UNKNOWN",
+      "UpdateInterviewTalentNotes returned success but the interview echo was null.",
+    );
+  }
+  return {
+    kind: "applied",
+    result: {
+      interviewId: echoed.id,
+      notice: payload.notice ?? null,
+      notes: (echoed.talentNotes ?? [])
+        .filter((n): n is WireInterviewTalentNote => n != null)
+        .map((n) => ({ id: n.id, section: n.section ?? null, note: n.note ?? null })),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------
 // Interview guide (#470)
 //
 // `applications.interviews.guide.show(interviewId)` — read-only fetch of
@@ -4233,18 +4464,19 @@ async function interviewsGuideShow(token: string, interviewId: string): Promise<
 }
 
 /**
- * `applications.interviews.*` sub-namespace. Read-only leaves for
- * interview-detail access — sibling to the top-level activity-row
- * leaves on this module. Sub-namespace grouping pattern follows
+ * `applications.interviews.*` sub-namespace. Interview-detail access
+ * (read leaves) plus the talent-notes write — sibling to the top-level
+ * activity-row leaves on this module. Sub-namespace grouping pattern follows
  * `payments.rate.*` (#447) and `payments.payouts.*` / `payments.methods.*`
  * (#149); the plural form here matches `payouts` / `methods` for
  * collection-style namespaces.
  *
  * Sub-sub-namespaces:
- *   - `interviews.notes.*` (#440) — portal-side notes-focused projection.
- *     `notes.show(jobId)` is the lightweight read of the talent's prep
- *     notes for one job's interview, paired with the heavier
- *     `interviews.show(interviewId)` from #439.
+ *   - `interviews.notes.*` — portal-side notes leaves. `notes.show(jobId)`
+ *     (#440) is the lightweight read of the talent's prep notes for one
+ *     job's interview; `notes.update(interviewId, input)` (#441) is the
+ *     DESTRUCTIVE full-replace write (note the id divergence — show keys
+ *     on the job id, update on the interview id).
  *   - `interviews.guide.*` (#470) — mobile-gateway guide-content
  *     projection. `guide.show(interviewId)` is the read of the
  *     interview-prep guide (sections + tips). Paired with #439 —
@@ -4255,6 +4487,7 @@ export const interviews = {
   show: interviewsShow,
   notes: {
     show: interviewsNotesShow,
+    update: interviewsNotesUpdate,
   },
   guide: {
     show: interviewsGuideShow,

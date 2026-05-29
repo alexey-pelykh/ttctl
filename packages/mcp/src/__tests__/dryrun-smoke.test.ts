@@ -108,12 +108,17 @@ function buildSmokeCtx(token = "smoke_test_token"): ToolRegistrationContext {
  * Order: alphabetical by tool name to keep diffs reviewable.
  */
 const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
-  // applications (3 base + 1 interview_show #439 + 1 interview_notes_show #440 + 1 interview_guide_show #470 + 1 availability_request_show #442)
+  // applications (3 base + 1 interview_show #439 + 1 interview_notes_show #440 + 1 interview_notes_update #441 + 1 interview_guide_show #470 + 1 availability_request_show #442)
   ttctl_applications_list: {},
   ttctl_applications_show: { id: "act_123" },
   ttctl_applications_stats: {},
   ttctl_applications_interview_show: { id: "int_123" },
   ttctl_applications_interview_notes_show: { id: "job_123" },
+  ttctl_applications_interview_notes_update: {
+    interviewId: "int_123",
+    notes: [{ section: "STRENGTHS", note: "smoke note" }],
+    interviewActionConsentIssued: true,
+  },
   ttctl_applications_interview_guide_show: { id: "int_123" },
   ttctl_applications_availability_request_show: { id: "ar_123" },
   // availability (5)
@@ -341,8 +346,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 126 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(126);
+  it("registers exactly 127 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(127);
   });
 
   it("every registered tool has a fixture", () => {
