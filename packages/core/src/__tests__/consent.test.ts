@@ -8,7 +8,7 @@
  *   - Per-domain consent-literal check throws when missing / wrong type
  *   - Per-domain consent-literal check passes when set to `true`
  *   - Env-var bypass (`TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1`) covers the
- *     consent-literal check for all four domains
+ *     consent-literal check for all consent domains
  *   - Payment-routing CREATE_* additional factors (idempotencyKey +
  *     accountIdentifierEcho) are enforced
  *   - Env-var bypass does NOT cover the payment-routing CREATE_*
@@ -35,6 +35,7 @@ const ALL_DOMAINS: readonly ConsentDomain[] = [
   "payment-routing",
   "profile-capability",
   "timesheet-billing",
+  "survey-submission",
 ];
 
 const ORIGINAL_ENV: string | undefined = process.env[CONSENT_ENV_VAR];
@@ -93,6 +94,7 @@ describe("CONSENT_FIELD", () => {
       "payment-routing": "paymentRoutingConsentIssued",
       "profile-capability": "profileCapabilityConsentIssued",
       "timesheet-billing": "timesheetBillingConsentIssued",
+      "survey-submission": "surveySubmissionConsentIssued",
     });
   });
 

@@ -1,0 +1,26 @@
+{
+  "version": "1",
+  "capturedAt": "2026-05-29T00:00:00.000Z",
+  "operationName": "SubmitSurvey",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "notice": {
+        "kind": "null"
+      },
+      "pendingSurveys": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "id": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

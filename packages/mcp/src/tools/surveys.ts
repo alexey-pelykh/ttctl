@@ -59,6 +59,97 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
       }
     },
   );
+
+  server.registerTool(
+    "ttctl_surveys_submit",
+    {
+      title: "Submit answers to a pending survey (DESTRUCTIVE)",
+      description: [
+        "Submit structured answers to one of the signed-in user's pending Toptal surveys",
+        "(post-interview `INTERVIEW_ENDED` feedback, NPS, engagement surveys, etc.) via the",
+        "`SubmitSurvey` mutation.",
+        "",
+        "**DESTRUCTIVE & IRREVERSIBLE**: a submitted survey cannot be un-answered, and your",
+        "feedback is routed to a third party (the interviewing client, the engagement, or Toptal).",
+        "",
+        "**Consent gate** (ADR-009 (ttctl) — `survey-submission` domain): the caller MUST set",
+        "`surveySubmissionConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
+        "",
+        "**Pre-flight discovery** (`ttctl_surveys_list`): each pending survey carries `id`, `kind`, and",
+        "`questions[]`. For each question to answer, pass `{ questionId, value }`:",
+        "  - multiple-choice question (`answers[]` non-empty) → `value` is the chosen option's `value`",
+        "  - free-text question (`answers[]` empty) → `value` is the free text",
+        "The survey `kind` and per-question answer-option ids are resolved from `surveys list` automatically.",
+        "",
+        "Set `dryRun: true` to preview the request (operationName + your answers + redacted bearer) without",
+        "submitting; option-id and kind resolution run against the live survey only on the real call.",
+        "",
+        "Example user prompts that should map to this tool:",
+        '  - "Submit my post-interview survey: rate the interviewer 5 and say it matched well."',
+        '  - "Answer my pending NPS survey with a 9."',
+      ].join("\n"),
+      inputSchema: {
+        surveyId: z.string().min(1).describe("Pending survey id from `ttctl_surveys_list`."),
+        answers: z
+          .array(
+            z.object({
+              questionId: z.string().min(1).describe("SurveyQuestion id from `ttctl_surveys_list`."),
+              value: z.string().describe("Multiple-choice: the chosen option's `value`. Free-text: the answer text."),
+            }),
+          )
+          .min(1)
+          .describe("One entry per question being answered."),
+        kind: z
+          .string()
+          .optional()
+          .describe("Survey kind override (e.g. INTERVIEW_ENDED). Resolved from `surveys list` when omitted."),
+        surveySubmissionConsentIssued: z
+          .literal(true)
+          .describe(
+            "REQUIRED — MUST be `true`. Acknowledges this irreversibly submits answers routed to a third party. See ADR-009 (ttctl) § Decision (survey-submission domain).",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+      annotations: {
+        destructiveHint: true,
+      },
+    },
+    async (input) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+
+      // Dry-run previews the intent only — it must not touch the network
+      // (option-id / kind resolution via `surveys list` is deferred to the
+      // real call). Branch before that resolve + the service consent gate.
+      if (input.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "SubmitSurvey",
+            "mobile-gateway",
+            {
+              surveyId: input.surveyId,
+              answers: input.answers,
+              ...(input.kind !== undefined ? { kind: input.kind } : {}),
+            },
+            auth.token,
+          ),
+        );
+      }
+
+      try {
+        const args: surveys.SubmitSurveyArgs =
+          input.kind === undefined
+            ? { surveyId: input.surveyId, answers: input.answers }
+            : { surveyId: input.surveyId, answers: input.answers, kind: input.kind };
+        const result = await surveys.submit(auth.token, args, {
+          surveySubmissionConsentIssued: input.surveySubmissionConsentIssued,
+        });
+        return successResponse(result);
+      } catch (err) {
+        return mapSurveysError(err);
+      }
+    },
+  );
 }
 
 interface ToolSuccessResponse {
