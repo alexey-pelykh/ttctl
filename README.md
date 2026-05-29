@@ -54,11 +54,13 @@ The following Toptal Talent surfaces are out of scope **by design** — they ena
 - **Hire-me-page publishing** — public marketing page (one-time-action — not recurring profile state)
 - **Video pitches / TopChat (Twilio) / Zendesk integration** — Twilio- and Zendesk-backed surfaces (third-party-SDK — not part of the GraphQL surface TTCtl targets)
 - **Mobile-only widgets** — Story, MobileTopTip, MarketCondition (mobile-only-UI — no CLI equivalent value)
-- **Surveys / quizzes / questionnaires** — onboarding-terminal forms (one-time-action — not recurring profile state)
+- **Quizzes / questionnaires** — onboarding-terminal forms (one-time-action — not recurring profile state)
 - **Staff-side workflows** — `SEND_CONTRACTS`, testimonial publishing, snapshot history (staff-side — Toptal-staff surfaces, not talent-side)
 - **Talent-signal sourcing** — `CreateTalentSignal`, `GetTalentSignalSetup` (sourcing-side — recruiter / staff identifying talent, not talent-side)
 
 > **Note**: The `scheduler.toptal.com` surface (interview scheduling) is currently absent rather than out by design — deferred until reverse-engineering research closes.
+>
+> **Note**: **Surveys** (list pending surveys, submit structured answers, add free-text feedback — including post-interview `INTERVIEW_ENDED`) were previously out of scope and are now **re-included**; implementation is tracked in #671. The `surveys` commands will appear under [What It Does](#what-it-does) as they ship.
 
 See [What It Does](#what-it-does) above for the positive scope.
 
