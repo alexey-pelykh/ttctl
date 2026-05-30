@@ -26,9 +26,9 @@
  *
  * Routes through `impersonatedTransport` against the **portal** surface
  * (`talent-profile/graphql`), which is Cloudflare-protected. Chrome TLS
- * impersonation (chrome_146 profile) is required to pass the CDN
- * challenge — if the live run reports `Cf403Error`, the identity catalog
- * (per `tls-fingerprinting` skill) is stale and needs refreshing.
+ * impersonation is required to pass the CDN challenge — if the live run
+ * reports `Cf403Error`, the identity catalog (per `tls-fingerprinting`
+ * skill) is stale and needs refreshing.
  */
 
 // e2e-covers: GetContracts

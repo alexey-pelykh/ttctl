@@ -52,8 +52,8 @@ catalogs:
       specifier: ^0.19.0
       version: 0.19.0
     node-wreq:
-      specifier: ^2.2.1
-      version: 2.2.1
+      specifier: ^2.4.1
+      version: 2.4.1
     prettier:
       specifier: ^3.8.1
       version: 3.8.3
@@ -176,7 +176,7 @@ importers:
     dependencies:
       node-wreq:
         specifier: 'catalog:'
-        version: 2.2.1
+        version: 2.4.1
       proper-lockfile:
         specifier: 'catalog:'
         version: 4.1.2
@@ -1049,36 +1049,36 @@ packages:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
 
-  '@node-wreq/darwin-arm64@2.2.1':
-    resolution: {integrity: sha512-npWs2l6VeYyq+Ktx+eN/LtcFMY402tAHmbs/Yqaq9N6pKBN3v+Z+kSYaGl8dDpaNArpONKzzL8iXrc9zuXVlgg==}
+  '@node-wreq/darwin-arm64@2.4.1':
+    resolution: {integrity: sha512-CYZIZ7e2X9uCTHpv+9OhSMKAMSaBtaaf7Voo86gP3nK0T8WAiUf0nacnGtQTRbB5dc/70yIK4T9s4Ww90mfUKw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@node-wreq/darwin-x64@2.2.1':
-    resolution: {integrity: sha512-KWr+OqERjaFJGrnTVks4lQon8143/W2FHqTEwM6mSQCgdF2MnvwnDkyK9uh8QpQZALLzCpNUVGL8bT1JB9GgTw==}
+  '@node-wreq/darwin-x64@2.4.1':
+    resolution: {integrity: sha512-+TCtvm8+9rhwUM0pkC7w7x0as6qKALJ3BWVPLb79ppyIyk5SVdtOsYRcp4FwliTdC+BOVmhcMmuT+U3NaVv4vA==}
     cpu: [x64]
     os: [darwin]
 
-  '@node-wreq/linux-arm64-gnu@2.2.1':
-    resolution: {integrity: sha512-FwSamhP10nP4m/pKHoyjzaNaZTBmiJOnGfuQWguKLUjJORtSOjauJBwCI/lMsYSreshwkSRzvz4b/MfME8J7Vw==}
+  '@node-wreq/linux-arm64-gnu@2.4.1':
+    resolution: {integrity: sha512-oPJ4EA3OWpoa52hTAIT1xpg5C/mQ5I8iFHBM1ZXzcoB/D+r9zHeCqEj5hR7zMh29ixiCtL/7wXhmsu5s57yzMg==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@node-wreq/linux-x64-gnu@2.2.1':
-    resolution: {integrity: sha512-pV5DmIRuymniJnx/lflyYLn0+FhagAS31d6hq3Y/HYPTg5+4/u5xWW3MRG5qbaRg37Iey5Fkw1vTGN1TIuwfhg==}
+  '@node-wreq/linux-x64-gnu@2.4.1':
+    resolution: {integrity: sha512-zjfYO/Ne2qkatzj5hk6rpkvTF8j1eYfJ8E8DUG1Nd4KwsqOIdXi8D5PdQ9xunnK0D1VC4M+HMZd73Odua7DnSg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@node-wreq/linux-x64-musl@2.2.1':
-    resolution: {integrity: sha512-p3OaK62KgnVivjPjPfMNCKZGpyX1bvajpBzLRjGfu8Q3HzVOrtj4qnSyYaP3tTneEMHxv+LbOMpXlUq9ZPV1iQ==}
+  '@node-wreq/linux-x64-musl@2.4.1':
+    resolution: {integrity: sha512-Hz5rvRhYd4gKThKBIXSJaHlO6NaxRO4RFC0Z3biYFqJIy78s+E5cBUsCYrKk2kI3VfmlPQk5a2MayuQHvgVFgQ==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@node-wreq/win32-x64-msvc@2.2.1':
-    resolution: {integrity: sha512-OFaRRmuhQHhTmawrrW4rRhRCNwU0nPXvU3ozJxOw+OdviKnnH5Z7R7VgTpqsG8CINRf+cZCXWv11EZsYzGS5iQ==}
+  '@node-wreq/win32-x64-msvc@2.4.1':
+    resolution: {integrity: sha512-GKJEXRNvVzov1D75t4fkThsvf3ue3OOjmhhIeGT+S5mzNHIkwXO6lxD7FI4IoncGNvbHLvsBkzvyyi/QEA0G9g==}
     cpu: [x64]
     os: [win32]
 
@@ -2360,8 +2360,8 @@ packages:
   node-releases@2.0.38:
     resolution: {integrity: sha512-3qT/88Y3FbH/Kx4szpQQ4HzUbVrHPKTLVpVocKiLfoYvw9XSGOX2FmD2d6DrXbVYyAQTF2HeF6My8jmzx7/CRw==}
 
-  node-wreq@2.2.1:
-    resolution: {integrity: sha512-wVbAfkMWPhfP0bVp0TJWaiSqf0Fh6sdG+KTd8LhrhRMrSoDnvTR2tOjWg45EM0ViOMfjgWsnj9TasUmx5BUAiw==}
+  node-wreq@2.4.1:
+    resolution: {integrity: sha512-J3T1T9OXOmCneBQWJQObE1dxNEhQbs7z91x078RBs+hF3REPPAMlJEp2I+F7hfZm++lANLfZ64FB1lRKZwXpMg==}
     engines: {node: '>=20.0.0'}
     cpu: [x64, arm64]
     os: [darwin, linux, win32]
@@ -3872,22 +3872,22 @@ snapshots:
       '@tybys/wasm-util': 0.10.2
     optional: true
 
-  '@node-wreq/darwin-arm64@2.2.1':
+  '@node-wreq/darwin-arm64@2.4.1':
     optional: true
 
-  '@node-wreq/darwin-x64@2.2.1':
+  '@node-wreq/darwin-x64@2.4.1':
     optional: true
 
-  '@node-wreq/linux-arm64-gnu@2.2.1':
+  '@node-wreq/linux-arm64-gnu@2.4.1':
     optional: true
 
-  '@node-wreq/linux-x64-gnu@2.2.1':
+  '@node-wreq/linux-x64-gnu@2.4.1':
     optional: true
 
-  '@node-wreq/linux-x64-musl@2.2.1':
+  '@node-wreq/linux-x64-musl@2.4.1':
     optional: true
 
-  '@node-wreq/win32-x64-msvc@2.2.1':
+  '@node-wreq/win32-x64-msvc@2.4.1':
     optional: true
 
   '@nodelib/fs.scandir@2.1.5':
@@ -5142,14 +5142,14 @@ snapshots:
 
   node-releases@2.0.38: {}
 
-  node-wreq@2.2.1:
+  node-wreq@2.4.1:
     optionalDependencies:
-      '@node-wreq/darwin-arm64': 2.2.1
-      '@node-wreq/darwin-x64': 2.2.1
-      '@node-wreq/linux-arm64-gnu': 2.2.1
-      '@node-wreq/linux-x64-gnu': 2.2.1
-      '@node-wreq/linux-x64-musl': 2.2.1
-      '@node-wreq/win32-x64-msvc': 2.2.1
+      '@node-wreq/darwin-arm64': 2.4.1
+      '@node-wreq/darwin-x64': 2.4.1
+      '@node-wreq/linux-arm64-gnu': 2.4.1
+      '@node-wreq/linux-x64-gnu': 2.4.1
+      '@node-wreq/linux-x64-musl': 2.4.1
+      '@node-wreq/win32-x64-msvc': 2.4.1
 
   normalize-path@2.1.1:
     dependencies:

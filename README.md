@@ -462,7 +462,7 @@ The Toptal Talent platform exposes three GraphQL endpoints:
 TTCtl uses two transports:
 
 - **Stock** ([`undici`](https://github.com/nodejs/undici)) for the mobile gateway endpoint
-- **TLS-impersonating** ([`node-wreq`](https://www.npmjs.com/package/node-wreq) with the `chrome_146` profile) for the Cloudflare-protected endpoints
+- **TLS-impersonating** ([`node-wreq`](https://www.npmjs.com/package/node-wreq) with the `chrome_147` profile) for the Cloudflare-protected endpoints
 
 Authentication is **bearer-token based** (per ADR-005 in the private `ttctl/research` repo): TTCtl POSTs `EmailPasswordSignIn` in persisted-query mode (SHA-256 hash from a captured operations catalog), captures the returned session token, persists it back into the same `~/.ttctl.yaml` config under `auth.token` (atomic write, mode `0600`), and replays it as `Authorization: Token token=<X>` on every subsequent GraphQL request. Cookies are NOT used; Chrome TLS impersonation alone passes Cloudflare on the protected surfaces.
 

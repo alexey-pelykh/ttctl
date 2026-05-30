@@ -14,6 +14,7 @@ import {
   impersonatedTransport,
   RedirectError,
   stockTransport,
+  USER_AGENT,
 } from "../../../transport.js";
 import type { DryRunPreview, TransportResponse } from "../../../transport.js";
 import { SURFACE_ENDPOINTS } from "../../../types.js";
@@ -1777,9 +1778,7 @@ async function multipartImpersonatedFetch(
     origin: "https://talent.toptal.com",
     referer: "https://talent.toptal.com/",
     "sec-fetch-site": "same-site",
-    "user-agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "user-agent": USER_AGENT,
     "x-toptal-analytics-origin": "mobile",
   };
 

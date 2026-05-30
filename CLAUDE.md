@@ -965,11 +965,13 @@ The Toptal Talent platform exposes three GraphQL endpoints:
 TTCtl uses two transports in `packages/core/src/transport.ts`:
 
 - **Stock** (`undici`) for the mobile gateway
-- **Impersonated** (`node-wreq` with `chrome_146` profile, BoringSSL via Rust)
+- **Impersonated** (`node-wreq` with `chrome_147` profile, BoringSSL via Rust)
   for the Cloudflare-protected endpoints
 
-Pin both `User-Agent: Chrome/146` and `node-wreq` profile `chrome_146` together;
-identity-catalog freshness is critical (see `tls-fingerprinting` skill).
+The `User-Agent` Chrome version derives from the `node-wreq` profile
+(`IMPERSONATE_PROFILE` in `transport.ts` is the single source of truth), so a
+profile bump rotates the whole identity bundle. Identity-catalog freshness is
+critical (see `tls-fingerprinting` skill).
 
 ### Troubleshooting: Cloudflare 403
 

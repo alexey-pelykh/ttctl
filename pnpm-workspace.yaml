@@ -35,7 +35,7 @@ catalog:
   "cli-table3": "^0.6.5"
   yaml: "^2.9.0"
   undici: "^8.3.0"
-  "node-wreq": "^2.2.1"
+  "node-wreq": "^2.4.1"
   msw: "^2.10.5"
   "proper-lockfile": "^4.1.2"
   "@types/proper-lockfile": "^4.1.4"
@@ -43,3 +43,12 @@ catalog:
 
 allowBuilds:
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - "@node-wreq/darwin-arm64@2.4.1"
+  - "@node-wreq/darwin-x64@2.4.1"
+  - "@node-wreq/linux-arm64-gnu@2.4.1"
+  - "@node-wreq/linux-x64-gnu@2.4.1"
+  - "@node-wreq/linux-x64-musl@2.4.1"
+  - "@node-wreq/win32-x64-msvc@2.4.1"
+  - node-wreq@2.4.1

@@ -43,7 +43,7 @@ describe("impersonatedTransport", () => {
     mockedFetch.mockReset();
   });
 
-  it("POSTs to the talent-profile endpoint with the chrome_145 browser profile", async () => {
+  it("POSTs to the talent-profile endpoint with the impersonation profile", async () => {
     mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 200, body: '{"data":{"viewer":null}}' }) as never);
 
     const result = await impersonatedTransport({
@@ -64,11 +64,11 @@ describe("impersonatedTransport", () => {
     expect(result.body).toEqual({ data: { viewer: null } });
   });
 
-  it("uses chrome_145 as the IMPERSONATE_PROFILE constant", () => {
-    expect(IMPERSONATE_PROFILE).toBe("chrome_145");
+  it("uses chrome_147 as the IMPERSONATE_PROFILE constant", () => {
+    expect(IMPERSONATE_PROFILE).toBe("chrome_147");
   });
 
-  it("pairs the Chrome/145 user-agent string with the chrome_145 profile (coupled identity)", async () => {
+  it("derives the user-agent Chrome version from the impersonation profile (coupled identity)", async () => {
     mockedFetch.mockResolvedValueOnce(fakeResponse({ status: 200, body: "{}" }) as never);
 
     await impersonatedTransport({
@@ -76,8 +76,11 @@ describe("impersonatedTransport", () => {
       body: { operationName: "X" },
     });
 
+    // UA version is derived from IMPERSONATE_PROFILE, so assert the coupling
+    // (UA tracks the profile) rather than a literal that would drift on a bump.
+    const expectedMajor = IMPERSONATE_PROFILE.replace(/^chrome_/, "");
     const init = getCallInit();
-    expect(init.headers["user-agent"]).toContain("Chrome/145.0.0.0");
+    expect(init.headers["user-agent"]).toContain(`Chrome/${expectedMajor}.0.0.0`);
   });
 
   it("forwards the supplied authToken as Authorization: Token token=...", async () => {
