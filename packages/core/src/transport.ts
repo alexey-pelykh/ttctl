@@ -232,22 +232,26 @@ export function getRedirectLocation(status: number, headers: Record<string, stri
 }
 
 /**
- * TLS-impersonation profile. Pinned as a coupled pair with `USER_AGENT` —
- * see the `tls-fingerprinting` skill on identity-catalog freshness: WAFs
- * cross-validate the User-Agent string against the JA4 hash, so the profile
- * and UA must both name the same Chrome version. Bump them together when
- * `node-wreq` publishes a newer profile.
- *
- * Currently `chrome_145` because that is the freshest profile published in
- * `node-wreq@2.2.1`. The Rust upstream `wreq` crate has `chrome_146` in
- * its release-candidate stream but the Node bindings have not yet shipped a
- * matching release. Track upstream and bump.
+ * TLS-impersonation profile — the single source of truth for the Chrome
+ * identity. {@link USER_AGENT} derives its version from this constant so the
+ * UA and the TLS profile can never drift apart (WAFs cross-validate the
+ * User-Agent against the JA4 hash — see the `tls-fingerprinting` skill on
+ * identity-catalog freshness). Bump this alone when `node-wreq` ships a newer
+ * profile; the UA follows. Currently `chrome_147` (node-wreq@2.4.1 ceiling,
+ * one behind Chrome stable in the wild).
  */
-export const IMPERSONATE_PROFILE: BrowserProfile = "chrome_145";
+export const IMPERSONATE_PROFILE: BrowserProfile = "chrome_147";
 
-const USER_AGENT =
+/**
+ * Chrome User-Agent with the version derived from {@link IMPERSONATE_PROFILE}
+ * (see above) so the UA can't drift from the TLS profile. `COMMON_HEADERS`
+ * sends it explicitly on both the stock and impersonated paths; the photo-upload
+ * multipart path (`services/profile/basic`) imports it too rather than keeping a
+ * second hardcoded copy.
+ */
+export const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
+  `(KHTML, like Gecko) Chrome/${IMPERSONATE_PROFILE.replace(/^chrome_/, "")}.0.0.0 Safari/537.36`;
 
 const COMMON_HEADERS: Record<string, string> = {
   accept: "*/*",
