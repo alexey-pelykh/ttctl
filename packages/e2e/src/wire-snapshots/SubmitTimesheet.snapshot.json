@@ -197,6 +197,9 @@
                 "duration": {
                   "kind": "string"
                 },
+                "hours": {
+                  "kind": "string"
+                },
                 "isDayOff": {
                   "kind": "boolean"
                 },
@@ -205,6 +208,9 @@
                   "inner": {
                     "kind": "string"
                   }
+                },
+                "persisted": {
+                  "kind": "boolean"
                 }
               }
             }
