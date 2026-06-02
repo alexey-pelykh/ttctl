@@ -158,6 +158,7 @@ describe("applications interview show (live mobile-gateway)", () => {
       "schedulingComment",
       "method",
       "contacts",
+      "clientContactInfo",
       "guideId",
       "talentNotes",
       "job",
@@ -168,6 +169,18 @@ describe("applications interview show (live mobile-gateway)", () => {
     expect(Array.isArray(detail["scheduledAtTimes"])).toBe(true);
     expect(Array.isArray(detail["contacts"])).toBe(true);
     expect(Array.isArray(detail["talentNotes"])).toBe(true);
+
+    // clientContactInfo is null on INTERNAL interviews — assert shape only when present.
+    const cci = detail["clientContactInfo"];
+    if (cci !== null && cci !== undefined) {
+      expect(typeof (cci as { id?: unknown }).id).toBe("string");
+      const cf = (cci as { contactFields?: unknown }).contactFields;
+      if (cf !== null && cf !== undefined) {
+        for (const k of ["communitySlackId", "email", "phoneNumber", "skype"]) {
+          expect(k in (cf as Record<string, unknown>)).toBe(true);
+        }
+      }
+    }
   });
 
   // -------------------------------------------------------------------

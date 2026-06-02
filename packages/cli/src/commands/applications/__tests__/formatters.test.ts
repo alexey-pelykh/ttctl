@@ -459,6 +459,15 @@ describe("formatInterviewDetail (#439)", () => {
           timeZone: { value: "America/New_York", location: "New York, NY" },
         },
       ],
+      clientContactInfo: {
+        id: "cli-1",
+        contactFields: {
+          communitySlackId: "U12CLIENT",
+          email: "client@example.com",
+          phoneNumber: "+1-555-0199",
+          skype: "client.live",
+        },
+      },
       guideId: "gui-1",
       talentNotes: [{ id: "note-1", section: "GAPS", note: "Ask about scaling." }],
       job: { id: "job-1", activityItemId: "act-1" },
@@ -496,6 +505,12 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).toContain("Email:    recruiter@example.com");
     expect(out).toContain("TimeZone: New York, NY (America/New_York)");
 
+    expect(out).toContain("Client");
+    expect(out).toContain("Email:    client@example.com");
+    expect(out).toContain("Phone:    +1-555-0199");
+    expect(out).toContain("Slack:    U12CLIENT");
+    expect(out).toContain("Skype:    client.live");
+
     expect(out).toContain("Notes");
     expect(out).toContain("[GAPS] Ask about scaling.");
 
@@ -517,6 +532,7 @@ describe("formatInterviewDetail (#439)", () => {
         information: null,
         method: null,
         contacts: [],
+        clientContactInfo: null,
         talentNotes: [],
         guideId: null,
       }),
@@ -528,6 +544,7 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).not.toContain("Method");
     expect(out).not.toContain("Information");
     expect(out).not.toContain("Contacts");
+    expect(out).not.toContain("Client");
     expect(out).not.toContain("Notes");
     expect(out).not.toContain("Prep guide");
     // Scheduling block still shows (initiator + slots populated)
@@ -563,6 +580,26 @@ describe("formatInterviewDetail (#439)", () => {
     );
     expect(out).toContain("Contacts");
     expect(out).toContain("  ctc-anon");
+  });
+
+  it("renders the Client section with only the populated channels", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        clientContactInfo: {
+          id: "cli-2",
+          contactFields: { communitySlackId: null, email: "only@example.com", phoneNumber: null, skype: null },
+        },
+      }),
+    );
+    expect(out).toContain("Client");
+    expect(out).toContain("Email:    only@example.com");
+    expect(out).not.toContain("Slack:");
+    expect(out).not.toContain("Skype:");
+  });
+
+  it("omits the Client section when the client has no contact fields", () => {
+    const out = formatInterviewDetail(makeDetail({ clientContactInfo: { id: "cli-3", contactFields: null } }));
+    expect(out).not.toContain("Client");
   });
 
   it("handles a PHONE method (resource populated, conferenceUrl absent)", () => {

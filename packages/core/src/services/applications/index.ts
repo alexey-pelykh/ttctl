@@ -3468,6 +3468,20 @@ export interface InterviewJobRef {
   activityItemId: string | null;
 }
 
+/** Reachable client-side channels. */
+export interface InterviewClientContactFields {
+  communitySlackId: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  skype: string | null;
+}
+
+/** Client-side contact. `contactFields` is `null` when the client has no channels. */
+export interface InterviewClientContactInfo {
+  id: string;
+  contactFields: InterviewClientContactFields | null;
+}
+
 /**
  * Projected interview detail returned by `interviews.show()`. The shape
  * the CLI's pretty renderer and the MCP tool's JSON payload depend on.
@@ -3494,6 +3508,8 @@ export interface InterviewDetail {
   method: InterviewMethod | null;
   /** Interviewer contacts. Server-supplied order preserved. */
   contacts: InterviewContact[];
+  /** Client-side contact, distinct from {@link contacts}. `null` on INTERNAL interviews. */
+  clientContactInfo: InterviewClientContactInfo | null;
   /** Prep-guide id (presence indicator). Full guide is the `InterviewGuide` op, out of scope here. */
   guideId: string | null;
   /** Talent's own notes attached to the interview. Server order preserved. */
@@ -3521,6 +3537,18 @@ interface WireInterviewContact {
   position?: string | null;
   main?: boolean | null;
   timeZone?: WireInterviewTimeZone | null;
+}
+
+interface WireInterviewClientContactFields {
+  communitySlackId?: string | null;
+  email?: string | null;
+  phoneNumber?: string | null;
+  skype?: string | null;
+}
+
+interface WireInterviewClientContactInfo {
+  id: string;
+  contactFields?: WireInterviewClientContactFields | null;
 }
 
 interface WireInterviewMethod {
@@ -3565,6 +3593,8 @@ interface WireInterview {
   schedulingComment?: string | null;
   interviewMethod?: WireInterviewMethod | null;
   interviewContacts?: (WireInterviewContact | null)[] | null;
+  // Aliased on the wire as `clientContactInfo: client`.
+  clientContactInfo?: WireInterviewClientContactInfo | null;
   guide?: WireInterviewGuide | null;
   talentNotes?: (WireInterviewTalentNote | null)[] | null;
   job?: WireInterviewJobRef | null;
@@ -3617,6 +3647,17 @@ const INTERVIEW_QUERY = `query Interview($id: ID!) {
         position
         timeZone { __typename value location }
       }
+      clientContactInfo: client {
+        __typename
+        id
+        contactFields {
+          __typename
+          communitySlackId
+          email
+          phoneNumber
+          skype
+        }
+      }
       guide { __typename id }
       talentNotes {
         __typename
@@ -3652,6 +3693,21 @@ function projectInterviewContact(c: WireInterviewContact): InterviewContact {
   };
 }
 
+function projectInterviewClientContactInfo(c: WireInterviewClientContactInfo): InterviewClientContactInfo {
+  return {
+    id: c.id,
+    contactFields:
+      c.contactFields == null
+        ? null
+        : {
+            communitySlackId: c.contactFields.communitySlackId ?? null,
+            email: c.contactFields.email ?? null,
+            phoneNumber: c.contactFields.phoneNumber ?? null,
+            skype: c.contactFields.skype ?? null,
+          },
+  };
+}
+
 function projectInterviewDetail(w: WireInterview): InterviewDetail {
   return {
     id: w.id,
@@ -3674,6 +3730,7 @@ function projectInterviewDetail(w: WireInterview): InterviewDetail {
     contacts: (w.interviewContacts ?? [])
       .filter((c): c is WireInterviewContact => c != null)
       .map(projectInterviewContact),
+    clientContactInfo: w.clientContactInfo == null ? null : projectInterviewClientContactInfo(w.clientContactInfo),
     guideId: w.guide?.id ?? null,
     talentNotes: (w.talentNotes ?? [])
       .filter((n): n is WireInterviewTalentNote => n != null)
