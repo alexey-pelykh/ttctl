@@ -14,7 +14,7 @@ import { handleApplicationsError, loadAuthTokenOrExit } from "./shared.js";
  * line surfaced when the activity row has an associated interview).
  *
  * Pretty rendering is a sectioned multi-line block grouped into
- * Interview / Method / Contacts / Notes / Job. Sections with no data
+ * Interview / Method / Contacts / Client / Notes / Job. Sections with no data
  * (e.g. no contacts when the interviewer side hasn't populated them
  * yet) are omitted.
  *
@@ -69,6 +69,12 @@ export async function runApplicationsInterviewShow(id: string, output: OutputFor
  *         Email:    <email>
  *         Phone:    <phoneNumber>
  *         TimeZone: <location> (<value>)
+ *
+ *     Client                       // omitted unless a client channel is populated
+ *       Email:    <email>
+ *       Phone:    <phoneNumber>
+ *       Slack:    <communitySlackId>
+ *       Skype:    <skype>
  *
  *     Notes                        // omitted if no notes
  *       [<section>] <note>
@@ -151,6 +157,25 @@ export function formatInterviewDetail(item: applications.InterviewDetail): strin
         if (c.timeZone.value !== null && c.timeZone.value !== "") tzBits.push(`(${c.timeZone.value})`);
         if (tzBits.length > 0) lines.push(`    TimeZone: ${tzBits.join(" ")}`);
       }
+    }
+  }
+
+  // Omitted unless a channel is populated — a bare client id is not human-useful.
+  const clientFields = item.clientContactInfo?.contactFields ?? null;
+  if (clientFields !== null) {
+    const clientLines: string[] = [];
+    if (clientFields.email !== null && clientFields.email !== "") clientLines.push(`  Email:    ${clientFields.email}`);
+    if (clientFields.phoneNumber !== null && clientFields.phoneNumber !== "") {
+      clientLines.push(`  Phone:    ${clientFields.phoneNumber}`);
+    }
+    if (clientFields.communitySlackId !== null && clientFields.communitySlackId !== "") {
+      clientLines.push(`  Slack:    ${clientFields.communitySlackId}`);
+    }
+    if (clientFields.skype !== null && clientFields.skype !== "") clientLines.push(`  Skype:    ${clientFields.skype}`);
+    if (clientLines.length > 0) {
+      lines.push("");
+      lines.push("Client");
+      lines.push(...clientLines);
     }
   }
 

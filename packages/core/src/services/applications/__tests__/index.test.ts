@@ -2629,6 +2629,17 @@ describe("applications.interviews.show (#439)", () => {
           timeZone: { __typename: "TimeZone", value: "America/New_York", location: "New York, NY" },
         },
       ],
+      clientContactInfo: {
+        __typename: "TalentInterviewClient",
+        id: "client-1",
+        contactFields: {
+          __typename: "TalentInterviewClientContactFields",
+          communitySlackId: "U12CLIENT",
+          email: "client@example.com",
+          phoneNumber: "+1-555-0199",
+          skype: "client.live",
+        },
+      },
       guide: { __typename: "TalentInterviewGuide", id: "gui-1" },
       talentNotes: [
         {
@@ -2672,6 +2683,15 @@ describe("applications.interviews.show (#439)", () => {
       position: "Recruiter",
       main: true,
       timeZone: { value: "America/New_York", location: "New York, NY" },
+    });
+    expect(item.clientContactInfo).toEqual({
+      id: "client-1",
+      contactFields: {
+        communitySlackId: "U12CLIENT",
+        email: "client@example.com",
+        phoneNumber: "+1-555-0199",
+        skype: "client.live",
+      },
     });
     expect(item.guideId).toBe("gui-1");
     expect(item.talentNotes).toEqual([{ id: "note-1", section: "GAPS", note: "Ask about scaling." }]);
@@ -2720,11 +2740,21 @@ describe("applications.interviews.show (#439)", () => {
       schedulingComment: null,
       method: null,
       contacts: [],
+      clientContactInfo: null,
       guideId: null,
       talentNotes: [],
       job: null,
       updatedAt: null,
     });
+  });
+
+  it("projects clientContactInfo with null contactFields when the client has no channels", async () => {
+    const fixture = interviewFixture({ clientContactInfo: { __typename: "TalentInterviewClient", id: "client-2" } });
+    reply({
+      body: { data: { viewer: { id: "v1", interview: fixture } } },
+    });
+    const item = await interviews.show(TOKEN, INTERVIEW_ID);
+    expect(item.clientContactInfo).toEqual({ id: "client-2", contactFields: null });
   });
 
   it("drops null entries from contacts and talentNotes arrays (defensive against wire sparseness)", async () => {

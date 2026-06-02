@@ -1,12 +1,37 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-28T13:24:17.878Z",
+  "capturedAt": "2026-06-02T14:15:23.276Z",
   "operationName": "Interview",
   "surface": "mobile-gateway",
   "transport": "stock",
   "shape": {
     "kind": "object",
     "fields": {
+      "clientContactInfo": {
+        "kind": "object",
+        "fields": {
+          "contactFields": {
+            "kind": "object",
+            "fields": {
+              "communitySlackId": {
+                "kind": "null"
+              },
+              "email": {
+                "kind": "string"
+              },
+              "phoneNumber": {
+                "kind": "string"
+              },
+              "skype": {
+                "kind": "null"
+              }
+            }
+          },
+          "id": {
+            "kind": "string"
+          }
+        }
+      },
       "contacts": {
         "kind": "array",
         "item": {
@@ -28,7 +53,7 @@
               "kind": "string"
             },
             "position": {
-              "kind": "null"
+              "kind": "string"
             },
             "timeZone": {
               "kind": "object",
