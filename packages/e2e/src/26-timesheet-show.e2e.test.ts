@@ -84,6 +84,13 @@ describe("timesheet show (live mobile-gateway)", () => {
     expect("actualAgreement" in payload).toBe(true);
     // timesheetRecords MUST be an array (empty allowed)
     expect(Array.isArray(payload["timesheetRecords"])).toBe(true);
+    // Per-record projection (#684): when records are present, each carries
+    // the server-rendered `hours` and the `persisted` save-state flag.
+    const records = payload["timesheetRecords"] as Array<Record<string, unknown>>;
+    if (records.length > 0) {
+      expect("hours" in (records[0] ?? {})).toBe(true);
+      expect("persisted" in (records[0] ?? {})).toBe(true);
+    }
     // engagement.expectedHours is part of the detail projection
     const engagement = payload["engagement"] as Record<string, unknown> | undefined;
     expect(engagement).toBeDefined();

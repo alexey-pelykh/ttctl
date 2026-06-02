@@ -33,10 +33,10 @@ const DETAIL_FIXTURE: timesheet.TimesheetDetail = {
   timesheetUrl: "https://www.toptal.com/timesheet/bc-1",
   timesheetComment: "Worked on auth refactor",
   timesheetRecords: [
-    // `duration` is a string-encoded decimal in MINUTES (wire-empirical
-    // 2026-05-14, see TimesheetRecord docstring). 480.0 minutes = 8h.
-    { date: "2026-05-12", duration: "480.0", note: "auth refactor", isDayOff: false },
-    { date: "2026-05-13", duration: "0.0", note: null, isDayOff: true },
+    // `duration` is string-minutes (480.0 = 8h); `hours` is the
+    // server-rendered hour form the CLI renders verbatim.
+    { date: "2026-05-12", duration: "480.0", hours: "8.0", note: "auth refactor", isDayOff: false, persisted: true },
+    { date: "2026-05-13", duration: "0.0", hours: "0.0", note: null, isDayOff: true, persisted: true },
   ],
   actualAgreement: { applicationRate: "120.00", talentHourlyRate: "100.00", marketplaceMargin: "20.00" },
   engagement: {
@@ -130,12 +130,23 @@ describe("formatTimesheetDetail", () => {
     expect(out).toContain("Marketplace margin: 20.00");
   });
 
-  it("renders the records section with hours (formatted from duration in minutes)", () => {
+  it("renders the records section with the server-provided hours", () => {
     const out = formatTimesheetDetail(DETAIL_FIXTURE);
     expect(out).toContain("Records (2)");
-    expect(out).toContain("2026-05-12: 8.00h");
-    expect(out).toContain("2026-05-13: 0.00h [day off]");
+    expect(out).toContain("2026-05-12: 8.0h");
+    expect(out).toContain("2026-05-13: 0.0h [day off]");
     expect(out).toContain("auth refactor");
+  });
+
+  it("falls back to deriving hours from duration when server hours is null", () => {
+    const fixture: timesheet.TimesheetDetail = {
+      ...DETAIL_FIXTURE,
+      timesheetRecords: [
+        { date: "2026-05-14", duration: "450.0", hours: null, note: null, isDayOff: false, persisted: false },
+      ],
+    };
+    const out = formatTimesheetDetail(fixture);
+    expect(out).toContain("2026-05-14: 7.50h");
   });
 
   it("omits the comment section when null/empty", () => {
