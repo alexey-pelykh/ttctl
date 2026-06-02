@@ -32,7 +32,7 @@ Architectural friction in the codebase (sequential rate limits, single-credentia
 TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.io)) programmatic access to your own Toptal Talent profile:
 
 - **Profile** — view and update your talent profile (basic info, skills, employment, education, certifications, industries, portfolio, visas, resume, external links, reviews, photo)
-- **Applications** — review your activity items (applications, availability requests, interviews, engagement signals); per-status-group counts via `applications stats`; confirm / reject open Interest Requests via `applications confirm` / `applications reject`; fetch interview detail (interviewer, client-side contact, scheduled slot, agenda link, prep-guide ref) via `applications interview show <id>`; read your interview prep notes via `applications interview notes show <jobId>`; fetch availability-request detail (status, kind, recruiter Fixed rate, comment, lifecycle timestamps, job) via `applications availability-request show <id>`
+- **Applications** — review your activity items (applications, availability requests, interviews, engagement signals); per-status-group counts via `applications stats`; confirm / reject open Interest Requests via `applications confirm` / `applications reject`; fetch interview detail (interviewer with TopChat thread handle, client-side contact, scheduled slot, agenda link, prep-guide ref) via `applications interview show <id>`; read your interview prep notes via `applications interview notes show <jobId>`; fetch availability-request detail (status, kind, recruiter Fixed rate, comment, lifecycle timestamps, job) via `applications availability-request show <id>`
 - **Engagements** — view current and past engagements; manage engagement breaks; per-status counts via `engagements stats`
 - **Jobs** — browse opportunities; manage saved / viewed / not-interested signals; configure search subscription; direct-apply via `jobs apply <id> --consent` (legal-compliance gate is mandatory). Add `--suggest-answers` to fetch your own historical answers to similar prior questions as advisory autocomplete suggestions (opt-in, off the critical apply path; failures degrade gracefully). The MCP tool `ttctl_jobs_apply_similar_answers` exposes the same surface to agents.
 - **Timesheets** — list, view, submit, and update timesheet billing cycles
@@ -52,7 +52,8 @@ The following Toptal Talent surfaces are out of scope **by design** — they ena
 - **Referral flow** — send referral, claim reward, track referrer (abuse-prevention — programmatic referral generation is a spam vector)
 - **Become-client / consultations / coaching / gigs** — buyer-side workflows (client-onboarding — not talent-side profile management)
 - **Hire-me-page publishing** — public marketing page (one-time-action — not recurring profile state)
-- **Video pitches / TopChat (Twilio) / Zendesk integration** — Twilio- and Zendesk-backed surfaces (third-party-SDK — not part of the GraphQL surface TTCtl targets)
+- **Video pitches / Zendesk integration** — Twilio- and Zendesk-backed surfaces (third-party-SDK — not part of the GraphQL surface TTCtl targets)
+- **TopChat messaging surface** — messages and file downloads remain out of scope; only the per-interviewer discovery handle is surfaced via `applications interview show` (full surface tracked in #23)
 - **Mobile-only widgets** — Story, MobileTopTip, MarketCondition (mobile-only-UI — no CLI equivalent value)
 - **Quizzes / questionnaires** — onboarding-terminal forms (one-time-action — not recurring profile state)
 - **Staff-side workflows** — `SEND_CONTRACTS`, testimonial publishing, snapshot history (staff-side — Toptal-staff surfaces, not talent-side)

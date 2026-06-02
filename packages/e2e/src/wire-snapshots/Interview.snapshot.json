@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-06-02T14:15:23.276Z",
+  "capturedAt": "2026-06-02T16:29:55.513Z",
   "operationName": "Interview",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -63,6 +63,23 @@
                 },
                 "value": {
                   "kind": "string"
+                }
+              }
+            },
+            "topChatConversation": {
+              "kind": "object",
+              "fields": {
+                "id": {
+                  "kind": "string"
+                },
+                "slackChannelId": {
+                  "kind": "string"
+                },
+                "uploads": {
+                  "kind": "array",
+                  "item": {
+                    "kind": "unknown"
+                  }
                 }
               }
             }

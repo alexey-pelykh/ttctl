@@ -249,7 +249,7 @@ export function registerApplicationsTools(server: McpServer, ctx: ToolRegistrati
       description: [
         "Fetch a single interview by id (the TalentInterview id, NOT the activity item id).",
         "Returns the full interview detail: status, kind (EXTERNAL/INTERNAL), scheduled slots,",
-        "method (Zoom / phone / etc.), interviewer contacts, client-side contact, talent notes, and prep-guide id.",
+        "method (Zoom / phone / etc.), interviewer contacts (with TopChat thread handles), client-side contact, talent notes, and prep-guide id.",
         "",
         "Discover the id via `ttctl_applications_show` — the activity-row detail includes",
         "an `interview.id` field when one is associated.",

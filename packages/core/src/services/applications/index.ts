@@ -3412,6 +3412,25 @@ export interface InterviewTimeZone {
   location: string | null;
 }
 
+/** One file attached to a contact's TopChat conversation thread. */
+export interface InterviewTopChatUpload {
+  id: string;
+  filename: string | null;
+  url: string | null;
+}
+
+/**
+ * Discovery handle for the TopChat conversation thread on an interviewer
+ * contact: conversation id, Slack channel, and attached-file metadata. The
+ * full conversation surface (messages, downloads) is out of scope here.
+ */
+export interface InterviewTopChatConversation {
+  id: string;
+  /** From the conversation `service`, when it is a Slack service. */
+  slackChannelId: string | null;
+  uploads: InterviewTopChatUpload[];
+}
+
 /**
  * One interviewer-side contact (recruiter, client representative, etc.).
  * `main: true` flags the primary contact on the interview.
@@ -3424,6 +3443,7 @@ export interface InterviewContact {
   position: string | null;
   main: boolean | null;
   timeZone: InterviewTimeZone | null;
+  topChatConversation: InterviewTopChatConversation | null;
 }
 
 /**
@@ -3529,6 +3549,24 @@ interface WireInterviewTimeZone {
   location?: string | null;
 }
 
+interface WireInterviewTopChatUpload {
+  id: string;
+  filename?: string | null;
+  url?: string | null;
+}
+
+// `service` is a single-member union; the inline fragment on
+// TopChatConversationSlackService flattens to `channelId` at projection time.
+interface WireInterviewTopChatConversationService {
+  channelId?: string | null;
+}
+
+interface WireInterviewTopChatConversation {
+  id: string;
+  service?: WireInterviewTopChatConversationService | null;
+  uploads?: (WireInterviewTopChatUpload | null)[] | null;
+}
+
 interface WireInterviewContact {
   id: string;
   fullName?: string | null;
@@ -3537,6 +3575,7 @@ interface WireInterviewContact {
   position?: string | null;
   main?: boolean | null;
   timeZone?: WireInterviewTimeZone | null;
+  topChatConversation?: WireInterviewTopChatConversation | null;
 }
 
 interface WireInterviewClientContactFields {
@@ -3646,6 +3685,23 @@ const INTERVIEW_QUERY = `query Interview($id: ID!) {
         main
         position
         timeZone { __typename value location }
+        topChatConversation {
+          __typename
+          id
+          service {
+            __typename
+            ... on TopChatConversationSlackService {
+              __typename
+              channelId
+            }
+          }
+          uploads {
+            __typename
+            id
+            filename
+            url
+          }
+        }
       }
       clientContactInfo: client {
         __typename
@@ -3675,6 +3731,16 @@ const INTERVIEW_QUERY = `query Interview($id: ID!) {
   }
 }`;
 
+function projectInterviewTopChatConversation(c: WireInterviewTopChatConversation): InterviewTopChatConversation {
+  return {
+    id: c.id,
+    slackChannelId: c.service?.channelId ?? null,
+    uploads: (c.uploads ?? [])
+      .filter((u): u is WireInterviewTopChatUpload => u != null)
+      .map((u) => ({ id: u.id, filename: u.filename ?? null, url: u.url ?? null })),
+  };
+}
+
 function projectInterviewContact(c: WireInterviewContact): InterviewContact {
   return {
     id: c.id,
@@ -3690,6 +3756,8 @@ function projectInterviewContact(c: WireInterviewContact): InterviewContact {
             value: c.timeZone.value ?? null,
             location: c.timeZone.location ?? null,
           },
+    topChatConversation:
+      c.topChatConversation == null ? null : projectInterviewTopChatConversation(c.topChatConversation),
   };
 }
 
