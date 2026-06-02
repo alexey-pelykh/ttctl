@@ -2627,6 +2627,19 @@ describe("applications.interviews.show (#439)", () => {
           main: true,
           position: "Recruiter",
           timeZone: { __typename: "TimeZone", value: "America/New_York", location: "New York, NY" },
+          topChatConversation: {
+            __typename: "TopChatConversation",
+            id: "tcc-1",
+            service: { __typename: "TopChatConversationSlackService", channelId: "C0SLACK123" },
+            uploads: [
+              {
+                __typename: "TopChatUpload",
+                id: "up-1",
+                filename: "brief.pdf",
+                url: "https://files.example.com/brief.pdf",
+              },
+            ],
+          },
         },
       ],
       clientContactInfo: {
@@ -2683,6 +2696,11 @@ describe("applications.interviews.show (#439)", () => {
       position: "Recruiter",
       main: true,
       timeZone: { value: "America/New_York", location: "New York, NY" },
+      topChatConversation: {
+        id: "tcc-1",
+        slackChannelId: "C0SLACK123",
+        uploads: [{ id: "up-1", filename: "brief.pdf", url: "https://files.example.com/brief.pdf" }],
+      },
     });
     expect(item.clientContactInfo).toEqual({
       id: "client-1",
@@ -2755,6 +2773,50 @@ describe("applications.interviews.show (#439)", () => {
     });
     const item = await interviews.show(TOKEN, INTERVIEW_ID);
     expect(item.clientContactInfo).toEqual({ id: "client-2", contactFields: null });
+  });
+
+  it("projects contacts[*].topChatConversation: null thread, null service → null slackChannelId, sparse uploads", async () => {
+    const fixture = interviewFixture({
+      interviewContacts: [
+        {
+          __typename: "TalentInterviewContact",
+          id: "ctc-none",
+          fullName: "No Thread",
+          email: null,
+          phoneNumber: null,
+          main: false,
+          position: null,
+          timeZone: null,
+          topChatConversation: null,
+        },
+        {
+          __typename: "TalentInterviewContact",
+          id: "ctc-thread",
+          fullName: "Has Thread",
+          email: null,
+          phoneNumber: null,
+          main: false,
+          position: null,
+          timeZone: null,
+          topChatConversation: {
+            __typename: "TopChatConversation",
+            id: "tcc-2",
+            service: null,
+            uploads: [null, { __typename: "TopChatUpload", id: "up-2", filename: null, url: null }],
+          },
+        },
+      ],
+    });
+    reply({
+      body: { data: { viewer: { id: "v1", interview: fixture } } },
+    });
+    const item = await interviews.show(TOKEN, INTERVIEW_ID);
+    expect(item.contacts[0]?.topChatConversation).toBeNull();
+    expect(item.contacts[1]?.topChatConversation).toEqual({
+      id: "tcc-2",
+      slackChannelId: null,
+      uploads: [{ id: "up-2", filename: null, url: null }],
+    });
   });
 
   it("drops null entries from contacts and talentNotes arrays (defensive against wire sparseness)", async () => {

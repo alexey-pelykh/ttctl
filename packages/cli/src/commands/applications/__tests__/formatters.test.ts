@@ -457,6 +457,11 @@ describe("formatInterviewDetail (#439)", () => {
           position: "Recruiter",
           main: true,
           timeZone: { value: "America/New_York", location: "New York, NY" },
+          topChatConversation: {
+            id: "tcc-1",
+            slackChannelId: "C0SLACK123",
+            uploads: [{ id: "up-1", filename: "brief.pdf", url: "https://files.example.com/brief.pdf" }],
+          },
         },
       ],
       clientContactInfo: {
@@ -504,6 +509,9 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).toContain("(main) Recruiter Recruiterson — Recruiter");
     expect(out).toContain("Email:    recruiter@example.com");
     expect(out).toContain("TimeZone: New York, NY (America/New_York)");
+    expect(out).toContain("TopChat:  tcc-1");
+    expect(out).toContain("Slack channel: C0SLACK123");
+    expect(out).toContain("File: brief.pdf (https://files.example.com/brief.pdf)");
 
     expect(out).toContain("Client");
     expect(out).toContain("Email:    client@example.com");
@@ -574,6 +582,7 @@ describe("formatInterviewDetail (#439)", () => {
             position: null,
             main: null,
             timeZone: null,
+            topChatConversation: null,
           },
         ],
       }),
@@ -600,6 +609,53 @@ describe("formatInterviewDetail (#439)", () => {
   it("omits the Client section when the client has no contact fields", () => {
     const out = formatInterviewDetail(makeDetail({ clientContactInfo: { id: "cli-3", contactFields: null } }));
     expect(out).not.toContain("Client");
+  });
+
+  it("omits the per-contact TopChat block when the contact has no thread", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        contacts: [
+          {
+            id: "ctc-x",
+            fullName: "No Thread",
+            email: null,
+            phoneNumber: null,
+            position: null,
+            main: false,
+            timeZone: null,
+            topChatConversation: null,
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("Contacts");
+    expect(out).not.toContain("TopChat:");
+  });
+
+  it("renders a TopChat thread with no Slack channel, falling back to upload id when filename is null", () => {
+    const out = formatInterviewDetail(
+      makeDetail({
+        contacts: [
+          {
+            id: "ctc-y",
+            fullName: "Has Thread",
+            email: null,
+            phoneNumber: null,
+            position: null,
+            main: false,
+            timeZone: null,
+            topChatConversation: {
+              id: "tcc-9",
+              slackChannelId: null,
+              uploads: [{ id: "up-9", filename: null, url: null }],
+            },
+          },
+        ],
+      }),
+    );
+    expect(out).toContain("TopChat:  tcc-9");
+    expect(out).not.toContain("Slack channel:");
+    expect(out).toContain("File: up-9");
   });
 
   it("handles a PHONE method (resource populated, conferenceUrl absent)", () => {

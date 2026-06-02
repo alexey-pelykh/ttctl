@@ -157,6 +157,18 @@ export function formatInterviewDetail(item: applications.InterviewDetail): strin
         if (c.timeZone.value !== null && c.timeZone.value !== "") tzBits.push(`(${c.timeZone.value})`);
         if (tzBits.length > 0) lines.push(`    TimeZone: ${tzBits.join(" ")}`);
       }
+      if (c.topChatConversation !== null) {
+        const tc = c.topChatConversation;
+        lines.push(`    TopChat:  ${tc.id}`);
+        if (tc.slackChannelId !== null && tc.slackChannelId !== "") {
+          lines.push(`      Slack channel: ${tc.slackChannelId}`);
+        }
+        for (const u of tc.uploads) {
+          const name = u.filename !== null && u.filename !== "" ? u.filename : u.id;
+          const url = u.url !== null && u.url !== "" ? ` (${u.url})` : "";
+          lines.push(`      File: ${name}${url}`);
+        }
+      }
     }
   }
 

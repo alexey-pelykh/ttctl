@@ -16,6 +16,9 @@
  *     `applications list` → first row carrying a non-null `interview`
  *     presence indicator). Skipped via an explicit return when the test
  *     account has no interviews in its activity history.
+ *   - Per-contact `topChatConversation` discovery handle: key always
+ *     present; the populated sub-shape (slackChannelId, uploads) is
+ *     asserted only when a contact has an active thread (null otherwise).
  *   - Wire-shape snapshot assertion (T1 disposition; #439). Snapshot
  *     committed at `wire-snapshots/Interview.snapshot.json`.
  *
@@ -178,6 +181,26 @@ describe("applications interview show (live mobile-gateway)", () => {
       if (cf !== null && cf !== undefined) {
         for (const k of ["communitySlackId", "email", "phoneNumber", "skype"]) {
           expect(k in (cf as Record<string, unknown>)).toBe(true);
+        }
+      }
+    }
+
+    // Each contact carries a topChatConversation key, null unless the
+    // contact has an active TopChat thread, so the populated sub-shape
+    // (slackChannelId, uploads) is asserted only when present; otherwise
+    // it stays capture-inferred.
+    for (const contact of detail["contacts"] as Array<Record<string, unknown>>) {
+      expect("topChatConversation" in contact).toBe(true);
+      const tcc = contact["topChatConversation"];
+      if (tcc !== null && tcc !== undefined) {
+        const conv = tcc as Record<string, unknown>;
+        expect(typeof conv["id"]).toBe("string");
+        expect("slackChannelId" in conv).toBe(true);
+        expect(Array.isArray(conv["uploads"])).toBe(true);
+        for (const upload of conv["uploads"] as Array<Record<string, unknown>>) {
+          expect(typeof upload["id"]).toBe("string");
+          expect("filename" in upload).toBe(true);
+          expect("url" in upload).toBe(true);
         }
       }
     }
