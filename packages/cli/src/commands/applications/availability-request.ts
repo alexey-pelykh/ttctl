@@ -65,8 +65,8 @@ export async function runApplicationsAvailabilityRequestShow(id: string, output:
  *     Reject reason: <key>                        // #539; omitted if null
  *
  *     Job                                         // omitted if job is null
+ *       Title:  <title>                           // omitted if title is null/empty
  *       Job id: <id>
- *       Title:  <title>
  *       URL:    <url>
  *       Client: <fullName>
  *
@@ -125,8 +125,8 @@ export function formatAvailabilityRequestDetail(item: applications.AvailabilityR
   if (item.job !== null) {
     lines.push("");
     lines.push("Job");
-    lines.push(`  Job id: ${item.job.id}`);
     if (item.job.title !== null && item.job.title !== "") lines.push(`  Title:  ${item.job.title}`);
+    lines.push(`  Job id: ${item.job.id}`);
     if (item.job.url !== null && item.job.url !== "") lines.push(`  URL:    ${item.job.url}`);
     if (item.job.client?.fullName != null && item.job.client.fullName !== "") {
       lines.push(`  Client: ${item.job.client.fullName}`);

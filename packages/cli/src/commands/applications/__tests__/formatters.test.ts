@@ -818,8 +818,7 @@ describe("formatAvailabilityRequestDetail (#442)", () => {
     expect(out).toContain("  Recruiter note two.");
 
     expect(out).toContain("Job");
-    expect(out).toContain("Job id: job-1");
-    expect(out).toContain("Title:  Senior Engineer");
+    expect(out).toContain("  Title:  Senior Engineer\n  Job id: job-1");
     expect(out).toContain("URL:    https://www.toptal.com/jobs/job-1");
     expect(out).toContain("Client: Acme Inc.");
   });
