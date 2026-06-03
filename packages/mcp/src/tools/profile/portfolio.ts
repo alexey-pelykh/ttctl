@@ -84,7 +84,6 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
           .describe(
             "Server-gated boolean: the server's Rails `.blank?` gate rejects `false` on create with USER_ERROR (`code: blank, key: publicationPermit`) — pass `true` (the default) to satisfy the gate. The same field on Employment has a server-controlled persisted-state semantic (#488) where the caller-supplied value may not match what the server persists; Portfolio likely shares this semantic (uninvestigated). The field does NOT gate public listing on the resume.",
           ),
-        toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
         industryIds: z
@@ -149,7 +148,12 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
           .describe(
             "Server-gated boolean: input-side Rails `.blank?` gate rejects `false` on the wire with USER_ERROR (`code: blank, key: publicationPermit`) — pass `true` when updating a `false`-current item so other fields can be updated. The same field on Employment has a server-controlled persisted-state semantic (#488) where the caller-supplied value may not match what the server persists; Portfolio likely shares this semantic (uninvestigated). The field does NOT gate public listing on the resume.",
           ),
-        toptalRelated: z.boolean().optional().describe("Whether the work is Toptal-related"),
+        toptalRelated: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether the work is Toptal-related. Server-controlled on update: the wire accepts the field but the server determines the persisted value — supplying `true` against an arbitrary item reads back `false`. Rejected on the create input, so it cannot be set at create time.",
+          ),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
         highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
         industryIds: z

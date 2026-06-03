@@ -1254,6 +1254,36 @@ describe("portfolio.add", () => {
     });
   });
 
+  it("strips caller-supplied toptalRelated from the create wire (update-only field)", async () => {
+    stubProfileId("p1");
+    replyImpersonated({
+      body: {
+        data: {
+          createPortfolioItem: {
+            profile: { id: "p1", portfolioItems: { nodes: [PORTFOLIO_NODE] } },
+            success: true,
+            errors: null,
+          },
+        },
+      },
+    });
+
+    // The shared input type carries `toptalRelated` for update(), but
+    // `PortfolioItemCreateInput` rejects it — add() must drop it before the wire.
+    await add(TOKEN, {
+      title: "TR",
+      description: "explicit",
+      skills: [{ id: "sk-1", name: "TypeScript" }],
+      industryIds: ["ind-1"],
+      toptalRelated: true,
+    });
+
+    expect(mockedImpersonated).toHaveBeenCalledTimes(1);
+    const call = mockedImpersonated.mock.calls[0]?.[0] as TransportRequest;
+    const variables = call.body.variables as { input: { portfolioItem: Record<string, unknown> } };
+    expect(variables.input.portfolioItem).not.toHaveProperty("toptalRelated");
+  });
+
   it("surfaces VALIDATION_ERROR when no skills supplied and profile has zero skills", async () => {
     stubProfileId("p1");
     replyImpersonated({
@@ -1370,6 +1400,51 @@ describe("portfolio.update", () => {
     // defined on PortfolioItemUpdateInput".
     expect(variables.input.portfolioItem).not.toHaveProperty("kind");
     expect(variables.input.portfolioItem).not.toHaveProperty("coverImage");
+  });
+
+  it("preserves toptalRelated from current state on update (accepted by the update input)", async () => {
+    // Counterpart to add()'s strip: `toptalRelated` IS defined on the update
+    // input, so the read-modify-write merge must echo the current value rather
+    // than dropping it like kind/coverImage.
+    stubProfileId("p1");
+    replyImpersonated(
+      {
+        body: {
+          data: {
+            profile: {
+              id: "p1",
+              portfolioItems: {
+                nodes: [
+                  {
+                    ...PORTFOLIO_NODE,
+                    toptalRelated: true,
+                    skills: { nodes: [{ id: "sk-1", name: "TypeScript" }] },
+                    industries: { nodes: [{ id: "ind-1", name: "Software" }] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            updatePortfolioItem: {
+              profile: { id: "p1", portfolioItems: { nodes: [PORTFOLIO_NODE] } },
+              success: true,
+              errors: null,
+            },
+          },
+        },
+      },
+    );
+
+    await update(TOKEN, "pi1", { title: "New" });
+
+    const updateCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
+    const variables = updateCall.body.variables as { input: { portfolioItem: Record<string, unknown> } };
+    expect(variables.input.portfolioItem.toptalRelated).toBe(true);
   });
 });
 

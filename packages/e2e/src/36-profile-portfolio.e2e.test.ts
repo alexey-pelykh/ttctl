@@ -66,18 +66,31 @@
 // `assertWireShapeStable` — originating issue #314.
 
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 
+import { ConfigLoadSchema, impersonatedTransport, profile } from "@ttctl/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
 import type { CliClient } from "./harness/index.js";
 import { assertWireShapeStable } from "./wire-snapshots/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
+
+/** Load the bearer captured by `globalSetup` into the shared sandbox YAML. */
+function loadSandboxBearer(sandboxConfigPath: string): string {
+  const parsed: unknown = parseYaml(readFileSync(sandboxConfigPath, "utf8"));
+  const validated = ConfigLoadSchema.parse(parsed);
+  if (validated.auth.token === undefined || validated.auth.token === "") {
+    throw new Error(`No auth.token in sandbox config at ${sandboxConfigPath}`);
+  }
+  return validated.auth.token;
+}
 
 /**
  * Catalog Industry id for "Software" — required by `createPortfolioItem`
@@ -813,6 +826,92 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
           response: created,
         }),
       ).not.toThrow();
+    } finally {
+      const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
+      expect(cleanup.exitCode).toBe(0);
+    }
+  });
+
+  it.skipIf(!e2eEnabled)(
+    "toptalRelated is rejected on the create input but accepted on the update input (wire contract)",
+    async () => {
+      // Introspection-by-rejection: pair `toptalRelated` with a bogus profile /
+      // item id. GraphQL variable-coercion (where "Field is not defined" fires)
+      // runs BEFORE execution, so a rejected field surfaces cleanly AND nothing
+      // is created/updated; an accepted field falls through to a bogus-id
+      // execution error that never touches real data.
+      const token = loadSandboxBearer(getSharedSession().sandboxConfigPath);
+      const base = {
+        title: "ttctl-e2e-toptalRelated-wire-probe",
+        description: "x".repeat(200),
+        showViaToptal: true,
+        skills: [{ id: "BOGUS-E2E-SKILL", name: "probe" }],
+        industryIds: [],
+        toptalRelated: true,
+      };
+
+      const createRes = await impersonatedTransport({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "createPortfolioItem",
+          query:
+            "mutation createPortfolioItem($input: CreatePortfolioItemInput!) { createPortfolioItem(input: $input) { success errors { code key message } } }",
+          variables: { input: { profileId: "BOGUS-E2E-PROFILE", portfolioItem: { ...base, kind: "basic" } } },
+        },
+      });
+      // Create input does NOT define toptalRelated → variable-coercion rejection.
+      expect(JSON.stringify(createRes.body)).toMatch(
+        /portfolioItem\.toptalRelated.*Field is not defined on PortfolioItemCreateInput/,
+      );
+
+      const updateRes = await impersonatedTransport({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "updatePortfolioItem",
+          query:
+            "mutation updatePortfolioItem($input: UpdatePortfolioItemInput!) { updatePortfolioItem(input: $input) { success errors { code key message } } }",
+          variables: { input: { portfolioItemId: "BOGUS-E2E-ITEM", portfolioItem: base } },
+        },
+      });
+      // Update input DOES define toptalRelated → coercion passes; the only error
+      // is the bogus-id execution failure, never a "Field is not defined".
+      expect(JSON.stringify(updateRes.body)).not.toMatch(/Field is not defined/);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)("update accepts toptalRelated end-to-end and it round-trips as a boolean", async () => {
+    const token = loadSandboxBearer(getSharedSession().sandboxConfigPath);
+    const sentinelTitle = `e2e-sentinel-toptal-${Date.now().toString()}`;
+    const addResult = await cli.run([
+      "profile",
+      "portfolio",
+      "add",
+      "--title",
+      sentinelTitle,
+      "--industry-id",
+      SOFTWARE_INDUSTRY_ID,
+      "-o",
+      "json",
+    ]);
+    expect(addResult.exitCode).toBe(0);
+    const addPayload = JSON.parse(addResult.stdout) as { created?: PortfolioItemShape[] };
+    const sentinelId = (addPayload.created ?? []).find((it) => it.title === sentinelTitle)?.id;
+    expect(typeof sentinelId).toBe("string");
+    if (sentinelId === undefined) return;
+
+    try {
+      // The create path strips toptalRelated, so a fresh sentinel reads back the
+      // server's default. Supplying it on update must be accepted (the update
+      // input defines the field) and round-trip as a boolean. Whether the server
+      // honors the supplied value or controls it server-side (cf. employment) is
+      // informational — assert acceptance + boolean shape only, mirroring
+      // 52-…employment-update-blank-gate-overrides.
+      const updated = await profile.portfolio.update(token, sentinelId, { toptalRelated: true });
+      const item = updated.find((it) => it.id === sentinelId);
+      expect(item).toBeDefined();
+      expect(typeof item?.toptalRelated).toBe("boolean");
     } finally {
       const cleanup = await cli.run(["profile", "portfolio", "remove", sentinelId, "-o", "json"]);
       expect(cleanup.exitCode).toBe(0);
