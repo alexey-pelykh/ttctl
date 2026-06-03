@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-06-02T16:29:55.513Z",
+  "capturedAt": "2026-06-03T14:35:38.518Z",
   "operationName": "Interview",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -111,6 +111,9 @@
             "kind": "string"
           },
           "id": {
+            "kind": "string"
+          },
+          "title": {
             "kind": "string"
           }
         }

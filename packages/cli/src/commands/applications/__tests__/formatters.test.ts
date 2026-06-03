@@ -475,7 +475,7 @@ describe("formatInterviewDetail (#439)", () => {
       },
       guideId: "gui-1",
       talentNotes: [{ id: "note-1", section: "GAPS", note: "Ask about scaling." }],
-      job: { id: "job-1", activityItemId: "act-1" },
+      job: { id: "job-1", title: "Senior Backend Engineer", activityItemId: "act-1" },
       updatedAt: "2026-05-15T08:00:00Z",
       ...overrides,
     };
@@ -523,6 +523,7 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).toContain("[GAPS] Ask about scaling.");
 
     expect(out).toContain("Job");
+    expect(out).toContain("Title:       Senior Backend Engineer");
     expect(out).toContain("Job id:      job-1");
     expect(out).toContain("Activity id: act-1");
 
@@ -671,14 +672,15 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).not.toContain("Conference:");
   });
 
-  it("omits the Job activityItemId line when only job.id is present", () => {
+  it("omits the Job Title and activityItemId lines when only job.id is present", () => {
     const out = formatInterviewDetail(
       makeDetail({
-        job: { id: "job-2", activityItemId: null },
+        job: { id: "job-2", title: null, activityItemId: null },
       }),
     );
     expect(out).toContain("Job");
     expect(out).toContain("Job id:      job-2");
+    expect(out).not.toContain("Title:");
     expect(out).not.toContain("Activity id:");
     // No activity id ⇒ no reach footer (the command can't be constructed).
     expect(out).not.toContain("Full job context:");

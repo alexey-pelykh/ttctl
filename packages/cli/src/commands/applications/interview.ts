@@ -80,6 +80,7 @@ export async function runApplicationsInterviewShow(id: string, output: OutputFor
  *       [<section>] <note>
  *
  *     Job                          // omitted if job is null
+ *       Title:       <title>       // omitted if title is null/empty
  *       Job id:      <id>
  *       Activity id: <activityItemId>
  *
@@ -206,6 +207,9 @@ export function formatInterviewDetail(item: applications.InterviewDetail): strin
   if (item.job !== null) {
     lines.push("");
     lines.push("Job");
+    if (item.job.title !== null && item.job.title !== "") {
+      lines.push(`  Title:       ${item.job.title}`);
+    }
     lines.push(`  Job id:      ${item.job.id}`);
     if (item.job.activityItemId !== null) {
       lines.push(`  Activity id: ${item.job.activityItemId}`);
@@ -218,7 +222,7 @@ export function formatInterviewDetail(item: applications.InterviewDetail): strin
     lines.push(`  ID: ${item.guideId}`);
   }
 
-  // Job is trimmed to ids here (BY-DESIGN); surface where the full job detail lives.
+  // Job is trimmed to title + ids here (BY-DESIGN); surface where the full job detail lives.
   const activityItemId = item.job?.activityItemId ?? null;
   return withReachFooter(
     lines,
