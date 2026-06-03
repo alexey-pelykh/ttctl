@@ -3647,12 +3647,10 @@ interface InterviewResponse {
   } | null;
 }
 
-// Trimmed strict subset of the captured Interview op in
-// `research/graphql/gateway/operations/mobile/Interview.graphql`. The
-// captured doc selects via the `interviewWithJobActivityFields →
-// jobActivityItemData` cascade; this trim drops the activity-item
-// cascade (the caller already has the activity row from
-// `applications.show`) and keeps only the interview-specific selection.
+// Strict subset of the captured Interview op in
+// `research/graphql/gateway/operations/mobile/Interview.graphql`.
+// Authoritative wire shape is the captured doc; selection is the
+// projection contract (by-design trims documented on `interviewsShow`).
 // `statuses: ALL` keeps parity with the captured op so any interview
 // state is fetchable.
 const INTERVIEW_QUERY = `query Interview($id: ID!) {
@@ -3825,6 +3823,13 @@ function projectInterviewDetail(w: WireInterview): InterviewDetail {
  * detail once the user knows the id from `applications show
  * <activityId>` (the `Interview: <id>` line).
  *
+ * **BY-DESIGN wire trim**: the projection omits the captured op's
+ * `job → jobActivityItemData` cascade (~50 fields — title, skills,
+ * client, languages, jobTimeZone, statusV2, engagement, …), a heavy
+ * duplicate of the activity-row context; `job` is kept only as an
+ * id + activity-item back-pointer. Reach the full job context via
+ * `ttctl applications show <activityId>`.
+ *
  * @throws `ApplicationsError("NOT_FOUND")` when the id doesn't resolve
  *   to an interview the signed-in user can see, OR when the wire
  *   surfaces a `NOT_FOUND_MESSAGE_PATTERN`-matched GraphQL error
@@ -3952,15 +3957,12 @@ interface InterviewNotesResponse {
   } | null;
 }
 
-// Trimmed strict subset of the captured `GetInterviewNotes` op in
-// `research/graphql/gateway/operations/portal/GetInterviewNotes.graphql`.
-// The captured doc selects a heavy cascade (~25 types via `JobClient`,
-// `JobOperationsFragment`, `JobMatcherData`, `JobSkillV2Data`,
-// `JobIndustriesData`, etc.); this trim drops everything except the
-// notes-specific selection on
-// `viewer.job(id).activityItem.interview.{id, kind, talentNotes{…}}`.
-// Authoritative wire shape is the captured doc; selection is the
-// projection contract.
+// Strict subset of the captured `GetInterviewNotes` op in
+// `research/graphql/gateway/operations/portal/GetInterviewNotes.graphql`,
+// keeping only `viewer.job(id).activityItem.interview.{id, kind,
+// talentNotes{…}}`. Authoritative wire shape is the captured doc;
+// selection is the projection contract (by-design trims documented on
+// `interviewsNotesShow`).
 const GET_INTERVIEW_NOTES_QUERY = `query GetInterviewNotes($jobId: ID!) {
   viewer {
     __typename
@@ -3985,6 +3987,12 @@ const GET_INTERVIEW_NOTES_QUERY = `query GetInterviewNotes($jobId: ID!) {
  * job via the portal-side `GetInterviewNotes` query (#440). Sub-sub-
  * namespace leaf of `applications.interviews.*` — wraps the same
  * read-only path the portal matcher UI uses to load interview notes.
+ *
+ * **BY-DESIGN wire trim**: the projection omits the captured op's heavy
+ * job-context cascade (~25 types — `JobClient`, `JobOperationsFragment`,
+ * `JobMatcherData`, `JobSkillV2Data`, `JobIndustriesData`, …), keeping
+ * only the interview's notes. Reach the job context via
+ * `ttctl applications show <activityId>`.
  *
  * @param token   Captured bearer.
  * @param jobId   `TalentJob.id` (NOT the interview id). Discover via
@@ -4085,17 +4093,12 @@ async function interviewsNotesShow(token: string, jobId: string): Promise<Interv
 // `applications interview show`, then fetch content via `applications
 // interview guide show`.
 //
-// **Selection trim**: the captured op selects a heavy cascade
-// (~25 types via `interviewContacts` + `job → jobData` + `client` +
-// `mobileFeedbackForm`). This trim drops everything that's not
-// guide-specific — the caller already has the interviewer/job context
-// from `interview show`, and the feedback-form widget is out of scope
-// for a content-read leaf. The trim keeps only `viewer.interview(id).
-// guide.{id, sections[].{identifier, title, subtitle, tips[].{
-// identifier, title, content, hardcodedContent}}}`. Authoritative wire
-// shape is the captured doc; selection is the projection contract.
-// `statuses: ALL` keeps parity with the captured op so any interview
-// state's guide is fetchable.
+// **Selection trim**: keeps only `viewer.interview(id).guide.{id,
+// sections[].{identifier, title, subtitle, tips[].{identifier, title,
+// content, hardcodedContent}}}`. Authoritative wire shape is the
+// captured doc; selection is the projection contract (by-design trims
+// documented on `interviewsGuideShow`). `statuses: ALL` keeps parity
+// with the captured op so any interview state's guide is fetchable.
 // ---------------------------------------------------------------------
 
 /**
@@ -4287,6 +4290,13 @@ const INTERVIEW_GUIDE_QUERY = `query InterviewGuide($id: ID!) {
  * interview via the mobile-gateway `InterviewGuide` query (#470).
  * Sub-sub-namespace leaf of `applications.interviews.*` — wraps the
  * mobile-portal interview-prep view that talents use to prepare.
+ *
+ * **BY-DESIGN wire trim**: the projection omits two captured sub-trees —
+ * (1) the duplicate `viewer.interview` detail (interviewTime,
+ * interviewType, interviewContacts, job, client, schedulingComment),
+ * reachable via `ttctl applications interview show <interviewId>`; and
+ * (2) `mobileFeedbackForm(feature: INTERVIEW_GUIDE)`, a UI feedback
+ * prompt the CLI/MCP doesn't render. Keeps only the guide content.
  *
  * @param token        Captured bearer.
  * @param interviewId  `TalentInterview.id` (NOT the guide id). Discover
@@ -4657,16 +4667,14 @@ interface AvailabilityRequestResponse {
   } | null;
 }
 
-// Trimmed strict subset of the captured AvailabilityRequest op in
-// `research/graphql/gateway/operations/mobile/AvailabilityRequest.graphql`.
-// The captured doc selects `job { ...jobData }` (a ~25-type cascade
-// touching `Unknown`-typed positions) plus the `AvailabilityRequest`
-// gap fields; this trim keeps only the well-typed selection the CLI /
-// MCP renders. The `metadata` selection mirrors
-// `GET_AVAILABILITY_REQUEST_KIND_QUERY` — `__typename` per union variant
-// (drives {@link kindFromMetadataTypename}) plus `offeredHourlyRate` on
-// the Fixed variant. `job` is trimmed to the {@link ApplicationJobRef}
-// shape.
+// Strict subset of the captured AvailabilityRequest op in
+// `research/graphql/gateway/operations/mobile/AvailabilityRequest.graphql`,
+// keeping only the well-typed selection the CLI / MCP renders. The
+// `metadata` selection mirrors `GET_AVAILABILITY_REQUEST_KIND_QUERY` —
+// `__typename` per union variant (drives {@link kindFromMetadataTypename})
+// plus `offeredHourlyRate` on the Fixed variant. Authoritative wire
+// shape is the captured doc; selection is the projection contract
+// (by-design trims documented on `availabilityRequestsShow`).
 const AVAILABILITY_REQUEST_QUERY = `query AvailabilityRequest($id: ID!) {
   viewer {
     __typename
@@ -4769,6 +4777,12 @@ function projectAvailabilityRequestDetail(w: WireAvailabilityRequest): Availabil
  * <activityId>` (the `Availability request: <id>` line). The id is the
  * same `AvailabilityRequest.id` the #411 `confirm` / `reject` write-side
  * ops accept.
+ *
+ * **BY-DESIGN wire trim**: the projection omits the captured op's
+ * `job → jobData` cascade (~25 types, including `Unknown`-typed
+ * positions), keeping `job` only as the {@link ApplicationJobRef} shape
+ * (id, title, url, client). Reach the full job context via
+ * `ttctl applications show <activityId>`.
  *
  * @throws `ApplicationsError("NOT_FOUND")` when the id doesn't resolve
  *   to an availability request the signed-in user can see, OR when the
