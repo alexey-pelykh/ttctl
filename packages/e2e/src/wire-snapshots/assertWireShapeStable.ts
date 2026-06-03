@@ -14,9 +14,11 @@
  * Design notes:
  *
  *   - Diff vocabulary: `+` added field, `-` removed field, `~` type-changed
- *     field (which subsumes nullability and optionality flips — the wrappers
- *     are first-class `WireShape` kinds, so wrapper transitions surface as
- *     ordinary kind mismatches).
+ *     field. Nullability/optionality are DIRECTIONAL (#689): the snapshot is
+ *     the contract and the live shape need only inhabit it, so a narrower live
+ *     shape (null, or a bare `T`) does NOT drift against a snapshot
+ *     `nullable<T>` / `optional<T>` — but a broader live shape (snapshot `T`,
+ *     live `nullable<T>`) still surfaces as a `~` kind mismatch.
  *   - Path syntax: `parent.child` for objects; `parent[]` for "any element
  *     of an array" (arrays are unified per `captureWireShape`'s reduction,
  *     so element-level paths don't carry indices).
@@ -180,6 +182,20 @@ export function diffShapes(path: string, expected: WireShape, actual: WireShape)
 }
 
 function diffShapesInto(path: string, expected: WireShape, actual: WireShape, out: WireShapeDiffEntry[]): void {
+  // Directional tolerance (#689): the snapshot is the contract; the live shape
+  // need only INHABIT it. Peel optional/nullable wrappers for a narrower live
+  // inhabitant (a null or bare-T column that capture collapsed) — broader shapes drift.
+  if (expected.kind === "optional" && actual.kind !== "optional") {
+    diffShapesInto(path, expected.inner, actual, out);
+    return;
+  }
+  if (expected.kind === "nullable" && actual.kind === "null") {
+    return;
+  }
+  if (expected.kind === "nullable" && actual.kind !== "nullable") {
+    diffShapesInto(path, expected.inner, actual, out);
+    return;
+  }
   if (expected.kind !== actual.kind) {
     out.push({
       op: "~",
