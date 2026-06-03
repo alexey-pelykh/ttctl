@@ -3,7 +3,7 @@
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in TTCtl, please report it responsibly
-by emailing **oleksii@pelykh.com**. Do not open a public issue.
+by emailing **alexey.pelykh@gmail.com**. Do not open a public issue.
 
 You should receive a best-effort response within 7 days. Please include:
 
@@ -16,7 +16,7 @@ You should receive a best-effort response within 7 days. Please include:
 If you believe TTCtl is being misused against Toptal's platform — spam, mass automation, scraping of other talents' data, application bombing, engagement-signal manipulation, or any behavior violating Toptal's Terms of Service — please contact the maintainer:
 
 - **GitHub issue**: file at https://github.com/alexey-pelykh/ttctl/issues with label `abuse-report`.
-- **Email**: oleksii @ pelykh.consulting (best-effort response within 7 days).
+- **Email**: alexey.pelykh@gmail.com (best-effort response within 7 days).
 
 The maintainer takes platform-integrity concerns seriously and will investigate credible reports. TTCtl is designed for fair use against the user's own profile; the disclaimer (README + website) makes this scope explicit.
 
