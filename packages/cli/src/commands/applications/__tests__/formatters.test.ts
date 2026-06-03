@@ -528,6 +528,8 @@ describe("formatInterviewDetail (#439)", () => {
 
     expect(out).toContain("Prep guide");
     expect(out).toContain("  ID: gui-1");
+
+    expect(out).toContain("Full job context: ttctl applications show act-1");
   });
 
   it("omits per-field lines when their value is null (header + nullable subsections)", () => {
@@ -678,6 +680,8 @@ describe("formatInterviewDetail (#439)", () => {
     expect(out).toContain("Job");
     expect(out).toContain("Job id:      job-2");
     expect(out).not.toContain("Activity id:");
+    // No activity id ⇒ no reach footer (the command can't be constructed).
+    expect(out).not.toContain("Full job context:");
   });
 });
 
@@ -709,9 +713,10 @@ describe("formatInterviewNotes (#440)", () => {
     expect(out).toContain("Notes");
     expect(out).toContain("[GAPS] Ask about scaling.");
     expect(out).toContain("[STRENGTHS] Highlight prior client wins.");
+    expect(out).toContain("Full interview detail: ttctl applications interview show int-1");
   });
 
-  it("renders the no-interview-attached message when interviewId is null", () => {
+  it("renders the no-interview-attached message when interviewId is null (no reach footer)", () => {
     const out = formatInterviewNotes(makeNotes({ interviewId: null, interviewKind: null, notes: [] }));
     expect(out).toBe("Interview notes for job job-1\n  (no interview attached to this job)");
   });
@@ -722,6 +727,7 @@ describe("formatInterviewNotes (#440)", () => {
     expect(out).toContain("Interview kind: EXTERNAL");
     expect(out).toContain("(no prep notes)");
     expect(out).not.toContain("[GAPS]");
+    expect(out).toContain("Full interview detail: ttctl applications interview show int-1");
   });
 
   it("omits the kind line when interviewKind is null but interview exists", () => {
@@ -1082,17 +1088,21 @@ describe("formatInterviewGuide (#470)", () => {
     expect(out).toContain("[PRO_TIPS] Toptal interview tips");
     expect(out).toContain("• BE_PRESENTABLE — Dress professionally");
     expect(out).toContain("Wear business-casual attire.");
+    expect(out).toContain("Full interview detail: ttctl applications interview show int-1");
   });
 
-  it("renders the no-guide-attached message when guideId is null", () => {
+  it("renders the no-guide-attached message when guideId is null (reach footer still appears)", () => {
     const out = formatInterviewGuide(makeGuide({ guideId: null, sections: [] }));
-    expect(out).toBe("Interview guide for interview int-1\n  (no guide attached to this interview)");
+    expect(out).toBe(
+      "Interview guide for interview int-1\n  (no guide attached to this interview)\n\nFull interview detail: ttctl applications interview show int-1",
+    );
   });
 
   it("renders the no-sections message when guide exists but sections is empty", () => {
     const out = formatInterviewGuide(makeGuide({ sections: [] }));
     expect(out).toContain("Guide id: gui-1");
     expect(out).toContain("(guide has no sections)");
+    expect(out).toContain("Full interview detail: ttctl applications interview show int-1");
   });
 
   it("renders the no-tips message for a section with no tips", () => {

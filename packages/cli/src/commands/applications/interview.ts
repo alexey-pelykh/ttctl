@@ -85,6 +85,8 @@ export async function runApplicationsInterviewShow(id: string, output: OutputFor
  *
  *     Prep guide                   // omitted if guideId is null
  *       ID: <guideId>
+ *
+ *     Full job context: ttctl applications show <activityId>   // omitted when no activity id
  */
 export function formatInterviewDetail(item: applications.InterviewDetail): string {
   const lines: string[] = [];
@@ -216,7 +218,12 @@ export function formatInterviewDetail(item: applications.InterviewDetail): strin
     lines.push(`  ID: ${item.guideId}`);
   }
 
-  return lines.join("\n");
+  // Job is trimmed to ids here (BY-DESIGN); surface where the full job detail lives.
+  const activityItemId = item.job?.activityItemId ?? null;
+  return withReachFooter(
+    lines,
+    activityItemId !== null ? `Full job context: ttctl applications show ${activityItemId}` : null,
+  );
 }
 
 /**
@@ -268,7 +275,10 @@ export async function runApplicationsInterviewNotesShow(jobId: string, output: O
  *     Notes
  *       [<section>] <note>                        // grouped by section
  *
- * When the job has no attached interview, prints:
+ *     Full interview detail: ttctl applications interview show <interviewId>
+ *
+ * When the job has no attached interview, prints (no reach footer — no
+ * interview id to point at):
  *
  *     Interview notes for job <jobId>
  *       (no interview attached to this job)
@@ -290,6 +300,9 @@ export function formatInterviewNotes(item: applications.InterviewNotesProjection
     return lines.join("\n");
   }
 
+  // Interview detail is trimmed from the notes view; surface where it lives.
+  const reach = `Full interview detail: ttctl applications interview show ${item.interviewId}`;
+
   lines.push(`  Interview id:   ${item.interviewId}`);
   if (item.interviewKind !== null) {
     lines.push(`  Interview kind: ${item.interviewKind}`);
@@ -298,7 +311,7 @@ export function formatInterviewNotes(item: applications.InterviewNotesProjection
   if (item.notes.length === 0) {
     lines.push("");
     lines.push("  (no prep notes)");
-    return lines.join("\n");
+    return withReachFooter(lines, reach);
   }
 
   lines.push("");
@@ -309,7 +322,7 @@ export function formatInterviewNotes(item: applications.InterviewNotesProjection
     lines.push(`  ${section}${note}`);
   }
 
-  return lines.join("\n");
+  return withReachFooter(lines, reach);
 }
 
 /**
@@ -368,19 +381,27 @@ export async function runApplicationsInterviewGuideShow(interviewId: string, out
  *           Template:
  *             <multi-line hardcodedContent, indented>
  *
- * When no guide is attached, prints:
+ *     Full interview detail: ttctl applications interview show <interviewId>
+ *
+ * When no guide is attached, prints (the reach footer still appears — the
+ * interview id is always known):
  *
  *     Interview guide for interview <interviewId>
  *       (no guide attached to this interview)
+ *
+ *     Full interview detail: ttctl applications interview show <interviewId>
  */
 export function formatInterviewGuide(item: applications.InterviewGuideProjection): string {
   const lines: string[] = [];
 
   lines.push(`Interview guide for interview ${item.interviewId}`);
 
+  // Interview detail is trimmed from the guide view; surface where it lives.
+  const reach = `Full interview detail: ttctl applications interview show ${item.interviewId}`;
+
   if (item.guideId === null) {
     lines.push("  (no guide attached to this interview)");
-    return lines.join("\n");
+    return withReachFooter(lines, reach);
   }
 
   lines.push(`  Guide id: ${item.guideId}`);
@@ -388,7 +409,7 @@ export function formatInterviewGuide(item: applications.InterviewGuideProjection
   if (item.sections.length === 0) {
     lines.push("");
     lines.push("  (guide has no sections)");
-    return lines.join("\n");
+    return withReachFooter(lines, reach);
   }
 
   for (const section of item.sections) {
@@ -424,7 +445,7 @@ export function formatInterviewGuide(item: applications.InterviewGuideProjection
     }
   }
 
-  return lines.join("\n");
+  return withReachFooter(lines, reach);
 }
 
 function sectionHeaderLine(section: applications.InterviewGuideSection): string {
@@ -451,4 +472,16 @@ function tipHeaderLine(tip: applications.InterviewGuideTip): string {
     return `• ${tip.title}`;
   }
   return "• (unnamed tip)";
+}
+
+/**
+ * Append a blank-line-separated sibling-reach footer (when non-null), then join.
+ * Pretty-only — `json`/`yaml` emit the raw projection unchanged.
+ */
+function withReachFooter(lines: string[], footer: string | null): string {
+  if (footer !== null) {
+    lines.push("");
+    lines.push(footer);
+  }
+  return lines.join("\n");
 }
