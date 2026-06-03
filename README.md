@@ -52,7 +52,7 @@ The following Toptal Talent surfaces are out of scope **by design** — they ena
 - **Referral flow** — send referral, claim reward, track referrer (abuse-prevention — programmatic referral generation is a spam vector)
 - **Become-client / consultations / coaching / gigs** — buyer-side workflows (client-onboarding — not talent-side profile management)
 - **Hire-me-page publishing** — public marketing page (one-time-action — not recurring profile state)
-- **Video pitches / Zendesk integration** — Twilio- and Zendesk-backed surfaces (third-party-SDK — not part of the GraphQL surface TTCtl targets)
+- **Video pitches / Zendesk integration** — Ziggeo/CameraTag- and Zendesk-backed surfaces (third-party-SDK — not part of the GraphQL surface TTCtl targets)
 - **TopChat messaging surface** — messages and file downloads remain out of scope; only the per-interviewer discovery handle is surfaced via `applications interview show` (full surface tracked in #23)
 - **Mobile-only widgets** — Story, MobileTopTip, MarketCondition (mobile-only-UI — no CLI equivalent value)
 - **Quizzes / questionnaires** — onboarding-terminal forms (one-time-action — not recurring profile state)
