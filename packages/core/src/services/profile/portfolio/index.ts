@@ -106,6 +106,11 @@ export interface PortfolioItemInput {
   accomplishment?: string;
   publicationPermit?: boolean;
   clientOrCompanyName?: string;
+  /**
+   * Update-only on the wire: `PortfolioItemCreateInput` rejects it while the
+   * update input accepts it — so `add()` strips it and `update()` echoes it.
+   * Server-controlled on update: supplying a value does not change the read-back.
+   */
   toptalRelated?: boolean;
   showViaToptal?: boolean;
   highlight?: boolean;
@@ -1155,6 +1160,9 @@ export async function add(token: string, input: PortfolioItemAddInput): Promise<
     // identically to `null` for this field).
     skills: resolvedSkills,
   };
+  // `PortfolioItemCreateInput` rejects this update-only field (verified live);
+  // the shared input type carries it only for `update()`.
+  delete portfolioItem.toptalRelated;
   const variables: { input: CreatePortfolioItemInput } = {
     input: { profileId, portfolioItem },
   };
