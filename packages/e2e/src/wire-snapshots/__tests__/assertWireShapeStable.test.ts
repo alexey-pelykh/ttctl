@@ -110,6 +110,49 @@ describe("assertWireShapeStable — match path", () => {
       }),
     ).not.toThrow();
   });
+
+  // #689: a degenerate live subject — a `nullable<T>` field null in EVERY
+  // array element (and a null top-level field) this run — collapses under
+  // capture to `{kind:"null"}`, yet must still inhabit the richer committed
+  // `nullable<string>` contract rather than drifting on account-data state.
+  it("does not drift when nullable fields are null in every record (degenerate subject, #689)", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("GetTimesheet", {
+        kind: "object",
+        fields: {
+          timesheetComment: { kind: "nullable", inner: { kind: "string" } },
+          records: {
+            kind: "array",
+            item: {
+              kind: "object",
+              fields: {
+                date: { kind: "string" },
+                note: { kind: "nullable", inner: { kind: "string" } },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetTimesheet",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response: {
+          timesheetComment: null,
+          records: [
+            { date: "2026-05-01", note: null },
+            { date: "2026-05-02", note: null },
+          ],
+        },
+        snapshotDir: dir,
+        env: {},
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("assertWireShapeStable — drift path", () => {
@@ -208,34 +251,6 @@ describe("assertWireShapeStable — drift path", () => {
     expect(error?.code).toBe("drift");
     expect(error?.diff).toEqual([{ op: "~", path: "duration", expected: "number", actual: "string" }]);
     expect(error?.message).toContain("~ duration: number → string");
-  });
-
-  it("treats nullable→required transition as a `~` entry (wrapper-kind mismatch)", () => {
-    writeFixtureSnapshot(
-      dir,
-      buildSnapshot("Op", {
-        kind: "object",
-        fields: { note: { kind: "nullable", inner: { kind: "string" } } },
-      }),
-    );
-
-    let error: WireSnapshotAssertionError | undefined;
-    try {
-      assertWireShapeStable({
-        operationName: "Op",
-        surface: "mobile-gateway",
-        transport: "stock",
-        response: { note: "always-present" },
-        snapshotDir: dir,
-        env: {},
-      });
-    } catch (e) {
-      error = e as WireSnapshotAssertionError;
-    }
-
-    expect(error?.code).toBe("drift");
-    expect(error?.diff).toEqual([{ op: "~", path: "note", expected: "nullable<string>", actual: "string" }]);
-    expect(error?.message).toContain("~ note: nullable<string> → string");
   });
 
   it("treats required→nullable transition as a `~` entry (drift in the opposite direction)", () => {
@@ -603,6 +618,52 @@ describe("diffShapes / renderShape / formatDiffEntry — unit", () => {
       },
     );
     expect(entries.map((e) => e.path)).toEqual(["alpha", "beta", "zeta"]);
+  });
+});
+
+describe("diffShapes — directional wrapper tolerance (#689)", () => {
+  // A narrower live shape (null / bare T) inhabits a nullable/optional snapshot; a broader one drifts.
+  const STR: WireShape = { kind: "string" };
+  const NULLABLE_STR: WireShape = { kind: "nullable", inner: { kind: "string" } };
+  const OPTIONAL_STR: WireShape = { kind: "optional", inner: { kind: "string" } };
+
+  it("null inhabits nullable<T> (all-null degenerate column)", () => {
+    expect(diffShapes("", NULLABLE_STR, { kind: "null" })).toEqual([]);
+  });
+
+  it("bare T inhabits nullable<T> (all-non-null degenerate column)", () => {
+    expect(diffShapes("", NULLABLE_STR, STR)).toEqual([]);
+  });
+
+  it("bare T inhabits optional<T> (field present in every element this run)", () => {
+    expect(diffShapes("", OPTIONAL_STR, STR)).toEqual([]);
+  });
+
+  it("null inhabits optional<nullable<T>> (layered wrapper peel)", () => {
+    expect(diffShapes("", { kind: "optional", inner: NULLABLE_STR }, { kind: "null" })).toEqual([]);
+  });
+
+  it("bare object inhabits nullable<object> by peeling into the object body", () => {
+    const obj: WireShape = { kind: "object", fields: { a: { kind: "string" } } };
+    expect(diffShapes("", { kind: "nullable", inner: obj }, obj)).toEqual([]);
+  });
+
+  it("does NOT tolerate a broader live shape: snapshot string, live nullable<string> drifts", () => {
+    expect(diffShapes("", STR, NULLABLE_STR)).toEqual([
+      { op: "~", path: "<root>", expected: "string", actual: "nullable<string>" },
+    ]);
+  });
+
+  it("does NOT tolerate null against a non-nullable contract: snapshot string, live null drifts", () => {
+    expect(diffShapes("", STR, { kind: "null" })).toEqual([
+      { op: "~", path: "<root>", expected: "string", actual: "null" },
+    ]);
+  });
+
+  it("still flags an inner type change under a tolerated wrapper: nullable<string> vs number", () => {
+    expect(diffShapes("", NULLABLE_STR, { kind: "number" })).toEqual([
+      { op: "~", path: "<root>", expected: "string", actual: "number" },
+    ]);
   });
 });
 

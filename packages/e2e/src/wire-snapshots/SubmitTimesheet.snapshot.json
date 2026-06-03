@@ -178,7 +178,10 @@
             "kind": "string"
           },
           "timesheetComment": {
-            "kind": "string"
+            "kind": "nullable",
+            "inner": {
+              "kind": "string"
+            }
           },
           "timesheetOverdue": {
             "kind": "boolean"

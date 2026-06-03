@@ -53,7 +53,18 @@ The body is the `WireShape` discriminated union from `captureWireShape`:
 - **Objects** — `{ kind: "object", fields: { <name>: <WireShape> } }` with field names sorted alphabetically (deterministic diffs)
 - **Arrays** — `{ kind: "array", item: <WireShape> }` where `item` is the **unified** shape across elements
 - **Nullable** — `{ kind: "nullable", inner: <WireShape> }` when a field is `null` in some samples but typed in others
+- **Optional** — `{ kind: "optional", inner: <WireShape> }` when a field is present in some array elements but absent in others
 - **Unknown** — `{ kind: "unknown" }` for empty arrays only
+
+The comparator treats `nullable` / `optional` as a **directional contract**:
+the snapshot is the richer shape the live run must _inhabit_. A live run
+whose data is degenerate for a wrapped field — e.g. a `nullable<string>`
+column that is `null` in every record this cycle (captured as `null`), or
+typed in every record (captured as a bare `string`) — does NOT drift. A live
+shape _broader_ than the snapshot (snapshot `string`, live `nullable<string>`)
+still drifts: that is a genuine wire change. Corollary: a genuinely nullable
+field MUST be declared `nullable<T>` in the snapshot — a bare-`T` snapshot
+still (correctly) drifts on a live `null`.
 
 ## What does NOT go in a snapshot
 
@@ -221,7 +232,9 @@ schema-drift evidence).
 ### Triage a failing snapshot test
 
 Without the update env var, drift surfaces as a structured diff —
-`+` added, `-` removed, `~` type / nullability changed:
+`+` added, `-` removed, `~` type changed (or a nullability/optionality
+_broadening_ — see the directional contract above; a degenerate live
+subject does not drift):
 
 ```sh
 TTCTL_E2E=1 pnpm test:e2e -- -t <OpName>
