@@ -2665,6 +2665,7 @@ describe("applications.interviews.show (#439)", () => {
       job: {
         __typename: "TalentJob",
         id: "job-1",
+        title: "Senior Backend Engineer",
         activityItem: { __typename: "TalentJobActivityItem", id: "act-1" },
       },
       updatedAt: "2026-05-15T08:00:00Z",
@@ -2713,7 +2714,7 @@ describe("applications.interviews.show (#439)", () => {
     });
     expect(item.guideId).toBe("gui-1");
     expect(item.talentNotes).toEqual([{ id: "note-1", section: "GAPS", note: "Ask about scaling." }]);
-    expect(item.job).toEqual({ id: "job-1", activityItemId: "act-1" });
+    expect(item.job).toEqual({ id: "job-1", title: "Senior Backend Engineer", activityItemId: "act-1" });
     expect(item.updatedAt).toBe("2026-05-15T08:00:00Z");
 
     const call = mockedStock.mock.calls[0]?.[0];

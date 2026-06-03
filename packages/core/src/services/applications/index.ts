@@ -3477,13 +3477,15 @@ export interface InterviewTalentNote {
 }
 
 /**
- * Back-pointer to the parent job + activity item. Presence indicators
- * only — the CLI surfaces them as discovery hints (`applications show
- * <activityId>` to drill into the full activity row).
+ * Back-pointer to the parent job + activity item, plus the job `title`
+ * for at-a-glance identification (#696). The heavy `jobActivityItemData`
+ * cascade stays trimmed — drill in via `applications show <activityId>`.
  */
 export interface InterviewJobRef {
   /** `TalentJob.id`. */
   id: string;
+  /** `TalentJob.title` — human-readable job title. `null` when the wire elides it. */
+  title: string | null;
   /** `TalentJobActivityItem.id` for the activity row containing this interview. */
   activityItemId: string | null;
 }
@@ -3608,6 +3610,7 @@ interface WireInterviewGuide {
 
 interface WireInterviewJobRef {
   id: string;
+  title?: string | null;
   activityItem?: { id: string } | null;
 }
 
@@ -3722,6 +3725,7 @@ const INTERVIEW_QUERY = `query Interview($id: ID!) {
       job {
         __typename
         id
+        title
         activityItem { __typename id }
       }
       updatedAt
@@ -3810,6 +3814,7 @@ function projectInterviewDetail(w: WireInterview): InterviewDetail {
         ? null
         : {
             id: w.job.id,
+            title: w.job.title ?? null,
             activityItemId: w.job.activityItem?.id ?? null,
           },
     updatedAt: w.updatedAt ?? null,
@@ -3823,11 +3828,11 @@ function projectInterviewDetail(w: WireInterview): InterviewDetail {
  * detail once the user knows the id from `applications show
  * <activityId>` (the `Interview: <id>` line).
  *
- * **BY-DESIGN wire trim**: the projection omits the captured op's
- * `job → jobActivityItemData` cascade (~50 fields — title, skills,
- * client, languages, jobTimeZone, statusV2, engagement, …), a heavy
- * duplicate of the activity-row context; `job` is kept only as an
- * id + activity-item back-pointer. Reach the full job context via
+ * **BY-DESIGN wire trim (title OVERRIDE, #696)**: `job` carries id,
+ * `title`, and an activity-item back-pointer; the heavy
+ * `job → jobActivityItemData` cascade (~50 fields — skills, client,
+ * languages, jobTimeZone, statusV2, engagement, …), a duplicate of the
+ * activity-row context, stays trimmed. Reach the full job context via
  * `ttctl applications show <activityId>`.
  *
  * @throws `ApplicationsError("NOT_FOUND")` when the id doesn't resolve
