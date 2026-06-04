@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UPLOAD_CATEGORIES, decodeFileUploadInput, validateUploadPath } from "../tools/file-upload.js";
 
@@ -262,6 +263,109 @@ describe("validateUploadPath — path-prefix sandbox (defense-in-depth, issue #2
       if (result === null) continue;
       expect(result.isError).toBe(true);
     }
+  });
+});
+
+describe("validateUploadPath — symlink resolution (defense-in-depth)", () => {
+  // A symlink staged inside the sandbox can point at a file outside it
+  // (`~/Documents/innocent.pdf -> ~/.ssh/id_rsa`); `path.resolve` only
+  // collapses `..` and does not follow links, so the gate must realpath.
+  //
+  // Real on-disk symlinks are required, so the sandbox prefixes are
+  // re-anchored at a temp "home" via an `os.homedir` spy. The temp root is
+  // canonicalized with `realpathSync` up front so the prefixes match
+  // `realpath()` output where the temp dir is itself a symlink (macOS
+  // `/var -> /private/var`).
+  const symlinkSupported = ((): boolean => {
+    let probe: string | undefined;
+    try {
+      probe = fs.mkdtempSync(path.join(os.tmpdir(), "ttctl-symlink-probe-"));
+      const target = path.join(probe, "t");
+      fs.writeFileSync(target, "x");
+      fs.symlinkSync(target, path.join(probe, "l"));
+      return true;
+    } catch {
+      // Windows without Developer Mode / admin → EPERM. Skip the
+      // symlink-dependent cases; the non-symlink cases below still run.
+      return false;
+    } finally {
+      if (probe !== undefined) fs.rmSync(probe, { recursive: true, force: true });
+    }
+  })();
+
+  let fakeHome: string;
+
+  beforeEach(() => {
+    fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ttctl-fake-home-")));
+    fs.mkdirSync(path.join(fakeHome, "Documents"));
+    fs.mkdirSync(path.join(fakeHome, "Downloads"));
+    fs.mkdirSync(path.join(fakeHome, "secret"));
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it.runIf(symlinkSupported)(
+    "refuses a sandbox-internal symlink whose target is outside the sandbox (the bypass this closes)",
+    () => {
+      // ~/secret/id_rsa.pdf: allowed extension (`.pdf`), but the real
+      // location is outside ~/Documents|Downloads|Desktop.
+      const secret = path.join(fakeHome, "secret", "id_rsa.pdf");
+      fs.writeFileSync(secret, "PRIVATE KEY");
+      const link = path.join(fakeHome, "Documents", "innocent.pdf");
+      fs.symlinkSync(secret, link);
+      const result = validateUploadPath(link, UPLOAD_CATEGORIES.resume);
+      expect(result).not.toBeNull();
+      if (result === null) return;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("outside of the MCP upload sandbox");
+      expect(result.content[0].text).toContain("symlink");
+    },
+  );
+
+  it.runIf(symlinkSupported)("refuses a symlinked intermediate directory pointing outside the sandbox", () => {
+    // ~/Documents/sub -> ~/secret ; upload ~/Documents/sub/data.pdf.
+    const realTarget = path.join(fakeHome, "secret", "data.pdf");
+    fs.writeFileSync(realTarget, "secret");
+    fs.symlinkSync(path.join(fakeHome, "secret"), path.join(fakeHome, "Documents", "sub"));
+    const viaDirLink = path.join(fakeHome, "Documents", "sub", "data.pdf");
+    const result = validateUploadPath(viaDirLink, UPLOAD_CATEGORIES.resume);
+    expect(result).not.toBeNull();
+    if (result === null) return;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("outside of the MCP upload sandbox");
+  });
+
+  it.runIf(symlinkSupported)(
+    "still allows a symlink whose target is inside the sandbox (benign cross-dir link)",
+    () => {
+      // ~/Documents/link.pdf -> ~/Downloads/real.pdf — both in-sandbox.
+      const realInside = path.join(fakeHome, "Downloads", "real.pdf");
+      fs.writeFileSync(realInside, "resume");
+      const link = path.join(fakeHome, "Documents", "link.pdf");
+      fs.symlinkSync(realInside, link);
+      const result = validateUploadPath(link, UPLOAD_CATEGORIES.resume);
+      expect(result).toBeNull();
+    },
+  );
+
+  it("allows a regular (non-symlink) file inside the sandbox after real-path resolution", () => {
+    const real = path.join(fakeHome, "Documents", "resume.pdf");
+    fs.writeFileSync(real, "resume");
+    const result = validateUploadPath(real, UPLOAD_CATEGORIES.resume);
+    expect(result).toBeNull();
+  });
+
+  it("allows a non-existent in-sandbox path (gate checks location, not existence)", () => {
+    // realpath throws ENOENT; the gate falls back to the lexical path,
+    // which is inside the sandbox → allowed. The service produces a clean
+    // file-not-found error on read. (Symlink exfil requires the target to
+    // EXIST, in which case realpath succeeds and the prior cases catch it.)
+    const result = validateUploadPath(path.join(fakeHome, "Documents", "nope.pdf"), UPLOAD_CATEGORIES.resume);
+    expect(result).toBeNull();
   });
 });
 

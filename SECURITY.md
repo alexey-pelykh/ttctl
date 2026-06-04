@@ -54,22 +54,22 @@ The following gates fire at runtime — they are documented here because the
 auditable surface area depends on them being known to security-conscious
 operators, not just resident in the code:
 
-| Gate                                                             | Defends Against                                                           | Source                                    |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------- |
-| File mode `0o600` on persist                                     | Co-tenant read of bearer                                                  | `packages/core/src/configWriter.ts`       |
-| Refuse-load on world-writable mode                               | TOCTOU credential swap                                                    | `packages/core/src/config.ts`             |
-| Refuse-write on symlink                                          | Swap-target attack                                                        | `packages/core/src/configWriter.ts`       |
-| Refuse-write under sync-root prefix                              | Bearer replicating to iCloud / Dropbox / OneDrive / Google Drive / Box    | `packages/core/src/configWriter.ts`       |
-| Mtime drift detection                                            | Concurrent write or backup-restore racing the write window                | `packages/core/src/configWriter.ts`       |
-| Cross-process advisory lock (proper-lockfile)                    | Two ttctl processes interleaving auth writes                              | `packages/core/src/configLock.ts`         |
-| Bearer rescue on persist failure                                 | Silent loss of captured bearer on read-only FS / full disk                | `packages/core/src/configWriter.ts`       |
-| Bearer-pattern leakage scanner in CI                             | Accidental commit of `user_<24hex>_<20alnum>` strings                     | `scripts/check-secret-leakage.ts`         |
-| Single-source-of-truth redaction module                          | Drift between runtime debug logger and lint scanner                       | `packages/core/src/lib/redact.ts`         |
-| `--debug` bearer-absence enforcement at runtime AND test         | Bearer ever appearing in any allowlisted debug record shape               | `packages/core/src/lib/redact.ts` + tests |
-| Crash-path bearer scrub (uncaughtException + unhandledRejection) | Captured bearer leaking through a crash log on the way out of the process | `packages/cli/src/crash-handlers.ts`      |
-| MCP path-capture-on-startup                                      | Mid-session env-var shifts retargeting reads/writes                       | `packages/mcp/src/server.ts`              |
-| MCP file-upload path-prefix sandbox                              | Prompt-injection exfiltration of files outside the upload sandbox         | `packages/mcp/src/tools/file-upload.ts`   |
-| MCP file-upload extension allowlist                              | Prompt-injection exfiltration of extensionless / non-document secrets     | `packages/mcp/src/tools/file-upload.ts`   |
+| Gate                                                             | Defends Against                                                                                                   | Source                                    |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| File mode `0o600` on persist                                     | Co-tenant read of bearer                                                                                          | `packages/core/src/configWriter.ts`       |
+| Refuse-load on world-writable mode                               | TOCTOU credential swap                                                                                            | `packages/core/src/config.ts`             |
+| Refuse-write on symlink                                          | Swap-target attack                                                                                                | `packages/core/src/configWriter.ts`       |
+| Refuse-write under sync-root prefix                              | Bearer replicating to iCloud / Dropbox / OneDrive / Google Drive / Box                                            | `packages/core/src/configWriter.ts`       |
+| Mtime drift detection                                            | Concurrent write or backup-restore racing the write window                                                        | `packages/core/src/configWriter.ts`       |
+| Cross-process advisory lock (proper-lockfile)                    | Two ttctl processes interleaving auth writes                                                                      | `packages/core/src/configLock.ts`         |
+| Bearer rescue on persist failure                                 | Silent loss of captured bearer on read-only FS / full disk                                                        | `packages/core/src/configWriter.ts`       |
+| Bearer-pattern leakage scanner in CI                             | Accidental commit of `user_<24hex>_<20alnum>` strings                                                             | `scripts/check-secret-leakage.ts`         |
+| Single-source-of-truth redaction module                          | Drift between runtime debug logger and lint scanner                                                               | `packages/core/src/lib/redact.ts`         |
+| `--debug` bearer-absence enforcement at runtime AND test         | Bearer ever appearing in any allowlisted debug record shape                                                       | `packages/core/src/lib/redact.ts` + tests |
+| Crash-path bearer scrub (uncaughtException + unhandledRejection) | Captured bearer leaking through a crash log on the way out of the process                                         | `packages/cli/src/crash-handlers.ts`      |
+| MCP path-capture-on-startup                                      | Mid-session env-var shifts retargeting reads/writes                                                               | `packages/mcp/src/server.ts`              |
+| MCP file-upload path-prefix sandbox (symlink-resolving)          | Prompt-injection exfiltration of files outside the upload sandbox, including via in-sandbox symlinks pointing out | `packages/mcp/src/tools/file-upload.ts`   |
+| MCP file-upload extension allowlist                              | Prompt-injection exfiltration of extensionless / non-document secrets                                             | `packages/mcp/src/tools/file-upload.ts`   |
 
 The sync-root list (iCloud Drive, Dropbox, OneDrive, Google Drive, Box) is
 documented in [README § Sync-root exclusion](README.md#sync-root-exclusion).
@@ -235,8 +235,10 @@ attacks:
    local files (`~/.ssh/id_rsa`, `~/.aws/credentials`, etc.) and uploads
    them to Toptal under the operator's own bearer-trusted channel. Two
    defense-in-depth gates apply at the MCP layer for every file-upload
-   tool: a **path-prefix sandbox** that refuses reads outside
-   `~/Documents`, `~/Downloads`, and `~/Desktop`, and a per-tool
+   tool: a **path-prefix sandbox** that resolves the supplied path to its
+   real on-disk location — collapsing `..` and following symlinks — and
+   refuses reads whose real location is outside `~/Documents`,
+   `~/Downloads`, and `~/Desktop`; and a per-tool
    **extension allowlist** that refuses non-image extensions for photo /
    portfolio-cover uploads, non-document extensions for resume uploads,
    and explicitly excludes secret-correlated extensions
@@ -244,7 +246,11 @@ attacks:
    `id_rsa`) from the broadest portfolio-attachment allowlist. The
    threat-model anchor — `ttctl_profile_resume_upload({ filePath:
 "~/.ssh/id_rsa" })` — fails both gates and never reaches the apply
-   path. The sandbox can be bypassed by setting
+   path. Because the sandbox resolves symlinks, the same refusal applies
+   to a link staged _inside_ the sandbox that points out
+   (`~/Documents/innocent.pdf → ~/.ssh/id_rsa`): the link is refused, not
+   silently followed. A symlink whose real target stays inside the
+   sandbox is still accepted. The sandbox can be bypassed by setting
    `TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY=1` in the MCP server's environment
    (extension allowlist still applies); MCP operators staging upload
    candidates outside the default safe directories may opt in.

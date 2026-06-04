@@ -55,7 +55,7 @@ attacker-readable** unless documented otherwise.
 | Threat                                                                | Covered by                                                                            |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Bearer / cookie leak in error / crash output                          | `#207` + [`packages/core/src/lib/redact.ts`] (server-side scrub)                      |
-| Local file exfiltration via `*_upload` tools' `filePath`              | `#221` (path sandbox + extension allowlist)                                           |
+| Local file exfiltration via `*_upload` tools' `filePath`              | `#221` (path sandbox + extension allowlist); `#707` (sandbox resolves symlinks)       |
 | State-change prompt injection on mutating tools                       | [`SECURITY.md` § MCP Trust Model] (input-side variant 1) + `dryRun` review affordance |
 | Process-level trust (any process spawning `ttctl mcp`)                | [`SECURITY.md` § MCP Trust Model] (transport section)                                 |
 | MCP-host hardening (Claude Desktop / Code / Cursor / Windsurf config) | Host vendors — outside our control                                                    |
