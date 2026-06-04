@@ -25,7 +25,7 @@ import type { GraphQLRequest, ToptalSurface } from "./types.js";
  *
  * Empirically, Chrome TLS impersonation alone passes Cloudflare on the
  * surfaces TTCtl currently uses (`talent-profile`, `scheduler`) — see
- * `hq/engineering/adr/ADR-005-auth-model.md`. A 403 here therefore
+ * ADR-005 in the private `ttctl/research` repo. A 403 here therefore
  * means Cloudflare has flipped a feature flag (e.g. activated a Turnstile
  * challenge or a new bot-management heuristic) that we don't currently
  * handle. There is no documented manual workaround; the user is asked to
@@ -280,7 +280,7 @@ export interface TransportRequest {
    * GraphQL services use to authenticate. Empirically validated as the
    * sole auth mechanism on both the mobile gateway and the
    * Cloudflare-protected `talent-profile` surface (see issue #59 and
-   * `hq/engineering/adr/ADR-005-auth-model.md`).
+   * ADR-005 in the private `ttctl/research` repo).
    */
   authToken?: string;
   /**

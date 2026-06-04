@@ -27,8 +27,8 @@ This is NOT a coordinated-disclosure channel for security vulnerabilities; for t
 ### Credential Handling
 
 TTCtl authenticates against the Toptal Talent platform using a **bearer
-session token** issued by `EmailPasswordSignIn` (per
-`hq/engineering/adr/ADR-005-auth-model.md`). The token is replayed on every
+session token** issued by `EmailPasswordSignIn` (per ADR-005 in the private
+`ttctl/research` repo). The token is replayed on every
 GraphQL request as `Authorization: Token token=<X>` — cookies are NOT used.
 
 Credentials and the captured bearer live in a single config file

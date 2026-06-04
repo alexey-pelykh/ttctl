@@ -135,7 +135,7 @@ export function resolveCredentials(auth: AuthCredentials): Credentials {
  * The next authenticated call (e.g. `auth status`) is the de-facto session
  * verifier — we do NOT issue a redundant Viewer probe inside `signIn` itself.
  *
- * See `hq/engineering/adr/ADR-005-auth-model.md` for the cross-surface
+ * See ADR-005 in the private `ttctl/research` repo for the cross-surface
  * auth model and `research/notes/02-auth-and-clients.md` for the empirical
  * evidence behind it.
  *

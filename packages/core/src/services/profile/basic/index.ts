@@ -269,7 +269,7 @@ interface ProfileShowResponse {
  * surface (`https://www.toptal.com/gateway/graphql/talent/graphql`).
  *
  * Authenticates via `Authorization: Token token=<token>` (the canonical
- * Toptal auth mechanism — see `hq/engineering/adr/ADR-005-auth-model.md`).
+ * Toptal auth mechanism — see ADR-005 in the private `ttctl/research` repo).
  * The mobile-gateway is plain HTTPS — no Cloudflare, no TLS impersonation
  * required (empirically validated in `research/notes/13-getviewer-empirical-shape.md`).
  *
