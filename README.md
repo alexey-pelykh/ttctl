@@ -39,6 +39,7 @@ TTCtl gives you (and your AI assistants, via [MCP](https://modelcontextprotocol.
 - **Availability** — view and update working hours and allocated weekly hours
 - **Contracts** — view talent-level contracts (Toptal Direct, MSA, etc.)
 - **Payments** — view payout history, aggregate payment totals (`payments summary`), and payment methods; show current hourly rate via `payments rate current` (lightweight) or the unified `payments rate show` projection; submit rate-change requests
+- **Surveys** — list pending surveys, submit structured answers, and add free-text feedback on post-interview / NPS prompts; submissions and feedback are irreversible and consent-gated
 - **Auth** — bootstrap config, sign in, check status, sign out
 
 Surfaces are gated to read-heavy / personal use. Operations that would enable mass automation against the platform are deliberately not exposed.
@@ -60,8 +61,6 @@ The following Toptal Talent surfaces are out of scope **by design** — they ena
 - **Talent-signal sourcing** — `CreateTalentSignal`, `GetTalentSignalSetup` (sourcing-side — recruiter / staff identifying talent, not talent-side)
 
 > **Note**: The `scheduler.toptal.com` surface (interview scheduling) is currently absent rather than out by design — deferred until reverse-engineering research closes.
->
-> **Note**: **Surveys** (list pending surveys, submit structured answers, add free-text feedback — including post-interview `INTERVIEW_ENDED`) were previously out of scope and are now **re-included**; implementation is tracked in #671. The `surveys` commands will appear under [What It Does](#what-it-does) as they ship.
 
 See [What It Does](#what-it-does) above for the positive scope.
 

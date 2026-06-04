@@ -23,7 +23,7 @@ Requires **Node.js ≥ 22.19.0**, ESM only.
 
 ## API Surface
 
-- `buildProgram()` — returns a `commander` [`Command`](https://github.com/tj/commander.js) with every sub-command registered: `profile`, `applications`, `engagements`, `availability`, `jobs`, `timesheet`, `contracts`, `payments`, `auth`. Honors the global flags `--config`, `--output`, `--json`, `--yaml`, `--dry-run`, `--verbose`, `--debug` (run `ttctl --help` for details; see the project README's [Configuration](https://github.com/alexey-pelykh/ttctl#configuration) section for `--config` precedence).
+- `buildProgram()` — returns a `commander` [`Command`](https://github.com/tj/commander.js) with every sub-command registered: `profile`, `applications`, `engagements`, `availability`, `jobs`, `timesheet`, `contracts`, `payments`, `surveys`, `auth`. Honors the global flags `--config`, `--output`, `--json`, `--yaml`, `--dry-run`, `--verbose`, `--debug` (run `ttctl --help` for details; see the project README's [Configuration](https://github.com/alexey-pelykh/ttctl#configuration) section for `--config` precedence).
 - `presentTtctlError`, `exitCodeForTtctlError`, `formatTtctlErrorMessage` — typed-error rendering for embedders that want CLI-shaped exit codes and stderr messages.
 - Re-exports `TtctlError`, `ConfigError`, `ConfigErrorCode` from `@ttctl/core` so embedders can `instanceof`-check error types without taking a direct `@ttctl/core` dependency.
 
