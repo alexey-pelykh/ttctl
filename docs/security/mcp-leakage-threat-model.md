@@ -315,7 +315,7 @@ and a primary OWASP LLM Top 10 (2025) reference.
 
 ## 5. Per-Tool Response Shape Audit
 
-99 tools total. Grouped by sub-domain. Two severity columns — **Inj** (Tampering, T3/T4
+102 tools audited. Grouped by sub-domain. Two severity columns — **Inj** (Tampering, T3/T4
 risk) and **Dis** (Information Disclosure, T1/T2/T7 risk) — because mitigations differ.
 
 **Legend**:
@@ -517,13 +517,34 @@ names appear in the engagement context. Severity Medium on both axes.
 
 **Notes**: structured-only schedule data; minimal exposure on both axes.
 
+### surveys (3 tools)
+
+| tool               | surface | dir | xuser                            | pii_self                          | pii_other | inj     | dis  |
+| ------------------ | ------- | --- | -------------------------------- | --------------------------------- | --------- | ------- | ---- |
+| `surveys_list`     | MG      | R   | **Toptal** (survey questions)    | employment (survey participation) | none      | **Med** | Low  |
+| `surveys_submit`   | MG      | M   | **Toptal** (confirmation notice) | none                              | none      | **Med** | Info |
+| `surveys_feedback` | MG      | M   | **Toptal** (confirmation notice) | none                              | none      | **Med** | Info |
+
+**Notes**: `surveys_list` returns Toptal-authored survey content (`title`, `questions[].label`,
+`questions[].note`, `answers[].label`, `answers[].note`) — semi-trusted free-text authored by
+Toptal's survey infrastructure, not by the counterparty directly. Injection severity **Medium**
+(same tier as `profile_skills_readiness` and `profile_external_*` advisory tools). The response
+does not surface interviewer / PM / client names; survey `kind` implies an engagement or
+interview context but the projected fields carry no third-party identifiers. Disclosure Low.
+
+`surveys_submit` and `surveys_feedback` are consent-gated **DESTRUCTIVE** mutations (ADR-009
+`survey-submission` domain, `destructiveHint: true`). Mutation responses return only a brief
+server-issued confirmation — `{ notice, pendingSurveys[] }` and `{ notice }` respectively.
+The `notice` field is a short Toptal-authored confirmation string; injection risk **Medium**
+(Toptal-authored free-text → same axis as `surveys_list`). No PII in either mutation response.
+
 ### Audit summary
 
-| Tier           | Inj-rated tools                                                                                                                                                                                                                                                           | Dis-rated tools                                                                                                                                                                                                                                          |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **High**       | `applications_list` / `_show`, `engagements_show`, `engagements_breaks_list`, `jobs_list` / `_show`                                                                                                                                                                       | `applications_list` / `_show`, `engagements_list`, `engagements_show`, `payments_payouts_list` / `_show`, `payments_methods_list` / `_show`, `payments_rate_show`, `profile_visas_*`                                                                     |
-| **Medium**     | `profile_skills_readiness`, `profile_external_*` (4 of 6: `_custom_requirements_show`, `_readiness`, `_recommendations`, `_advanced_wizard_show`), `profile_reviews_list`, `engagements_list`, `jobs_saved` / `viewed` / `not_interested_list`, `payments_rate_questions` | `profile_basic_*`, `profile_education_*`, `profile_employment_*`, `profile_portfolio_*`, `profile_resume_*`, `profile_reviews_list`, `engagements_breaks_list`, `jobs_list` / `_show`, `payments_rate_change`, `timesheet_*`, `contracts_list` / `_show` |
-| **Low / Info** | balance                                                                                                                                                                                                                                                                   | balance                                                                                                                                                                                                                                                  |
+| Tier           | Inj-rated tools                                                                                                                                                                                                                                                                                                                 | Dis-rated tools                                                                                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **High**       | `applications_list` / `_show`, `engagements_show`, `engagements_breaks_list`, `jobs_list` / `_show`                                                                                                                                                                                                                             | `applications_list` / `_show`, `engagements_list`, `engagements_show`, `payments_payouts_list` / `_show`, `payments_methods_list` / `_show`, `payments_rate_show`, `profile_visas_*`                                                                     |
+| **Medium**     | `profile_skills_readiness`, `profile_external_*` (4 of 6: `_custom_requirements_show`, `_readiness`, `_recommendations`, `_advanced_wizard_show`), `profile_reviews_list`, `engagements_list`, `jobs_saved` / `viewed` / `not_interested_list`, `payments_rate_questions`, `surveys_list`, `surveys_submit`, `surveys_feedback` | `profile_basic_*`, `profile_education_*`, `profile_employment_*`, `profile_portfolio_*`, `profile_resume_*`, `profile_reviews_list`, `engagements_breaks_list`, `jobs_list` / `_show`, `payments_rate_change`, `timesheet_*`, `contracts_list` / `_show` |
+| **Low / Info** | balance                                                                                                                                                                                                                                                                                                                         | balance                                                                                                                                                                                                                                                  |
 
 **No tool returns auth-bearing material in response payload** (T1 verdict).
 
@@ -730,7 +751,8 @@ trust-boundary diagram if a host's posture changes category (e.g. local → vend
 
 - **Issues**: [#265 (this issue)](https://github.com/alexey-pelykh/ttctl/issues/265),
   [#207 (closed — server-side scrub)](https://github.com/alexey-pelykh/ttctl/issues/207),
-  [#221 (closed — file-upload sandbox)](https://github.com/alexey-pelykh/ttctl/issues/221)
+  [#221 (closed — file-upload sandbox)](https://github.com/alexey-pelykh/ttctl/issues/221),
+  [#725 (surveys\_\* tools added to §5)](https://github.com/alexey-pelykh/ttctl/issues/725)
 - **Project files**: [`SECURITY.md`](../../SECURITY.md),
   [`packages/mcp/src/tools/_shared.ts`](../../packages/mcp/src/tools/_shared.ts),
   [`packages/mcp/src/diagnostic.ts`](../../packages/mcp/src/diagnostic.ts),
