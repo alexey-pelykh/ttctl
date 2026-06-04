@@ -1160,12 +1160,12 @@ export async function add(token: string, input: PortfolioItemAddInput): Promise<
     // identically to `null` for this field).
     skills: resolvedSkills,
   };
-  // `PortfolioItemCreateInput` rejects these update-only / highlight-only fields
-  // (verified live via introspection-by-rejection — see #645 for toptalRelated,
-  // #693 for highlight). The shared input type carries them for `update()` /
-  // `highlight()` only.
+  // `PortfolioItemCreateInput` rejects this update-only field (verified live);
+  // the shared input type carries it only for `update()`. It is the ONLY
+  // rejected optional field — `highlight`, `accomplishment`,
+  // `clientOrCompanyName`, and `websiteUrl` are all accepted on create
+  // (live probe, #693).
   delete portfolioItem.toptalRelated;
-  delete portfolioItem.highlight;
   const variables: { input: CreatePortfolioItemInput } = {
     input: { profileId, portfolioItem },
   };
