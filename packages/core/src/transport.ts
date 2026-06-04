@@ -98,6 +98,64 @@ export class Cf403PersistentError extends TtctlError {
 }
 
 /**
+ * Thrown when `node-wreq`'s native TLS-impersonation binding cannot be loaded
+ * for the current platform/arch.
+ *
+ * `node-wreq` ships its Rust binary as optional dependencies for a fixed set of
+ * targets. Two real-world targets have no prebuilt binary: Alpine/musl on ARM64
+ * (`linux-arm64-musl`) and Windows on ARM (`win32-arm64`). Because the binaries
+ * are OPTIONAL deps and TTCtl declares no `os`/`cpu`/`libc`, install SUCCEEDS on
+ * those platforms — the failure only surfaces when `node-wreq` lazily loads its
+ * binding on the first Cloudflare-protected call and throws a low-level
+ * `Error`. Stock mobile-gateway calls (`undici`) keep working, so without this
+ * translation the user sees confusing partial breakage (issue #708).
+ *
+ * {@link impersonatedFetch} catches that low-level Error and throws this typed
+ * one so the CLI / MCP surfaces render a single actionable message naming the
+ * platform and the supported set (mirroring {@link Cf403Error}). The original
+ * `node-wreq` Error is preserved as `cause`. See the README "Supported
+ * platforms" section.
+ */
+export class NativeModuleUnavailableError extends TtctlError {
+  override readonly name = "NativeModuleUnavailableError";
+  readonly code = "NATIVE_MODULE_UNAVAILABLE";
+  readonly recovery =
+    "TTCtl's native TLS-impersonation module has no prebuilt binary for this platform/architecture. " +
+    'Alpine/musl on ARM64 and Windows on ARM are not yet supported — see the README "Supported platforms" ' +
+    "section. If you are on a supported platform, reinstall TTCtl to fetch the native binary; if it persists, " +
+    "file an issue at https://github.com/alexey-pelykh/ttctl/issues with your platform and architecture.";
+
+  constructor(
+    public readonly platform: string,
+    public readonly arch: string,
+    options?: { cause?: unknown },
+  ) {
+    super(NativeModuleUnavailableError.formatMessage(platform, arch), options);
+  }
+
+  static formatMessage(platform: string, arch: string): string {
+    return [
+      `Failed to load TTCtl's native TLS-impersonation module (node-wreq) for ${platform}-${arch}.`,
+      "",
+      "This operation talks to a Cloudflare-protected Toptal surface, which requires a prebuilt native " +
+        "TLS-impersonation binary. None is available for your platform/architecture.",
+      "",
+      "Supported platforms:",
+      "  - macOS:   x64 (Intel), arm64 (Apple Silicon)",
+      "  - Linux:   x64 (glibc and musl/Alpine), arm64 (glibc only)",
+      "  - Windows: x64",
+      "",
+      "Not yet supported: Alpine/musl on ARM64 (linux-arm64-musl), Windows on ARM (win32-arm64).",
+      "",
+      "Mobile-gateway operations still work here; only Cloudflare-protected operations (profile editing) " +
+        "need the native module. If you ARE on a supported platform, the binary may have failed to install — " +
+        "reinstall TTCtl. If the problem persists, file an issue at https://github.com/alexey-pelykh/ttctl/issues " +
+        "with your platform and architecture.",
+    ].join("\n");
+  }
+}
+
+/**
  * Thrown when the scheduler bearer token has expired.
  *
  * **Scaffolded for post-v1 scheduler-surface coverage.** TTCtl currently
@@ -487,6 +545,39 @@ export async function stockTransport(req: TransportRequest): Promise<TransportRe
 }
 
 /**
+ * Recognise `node-wreq`'s native-binding load failure. `node-wreq` throws a
+ * plain `Error` (not a typed class) from its lazy `getBinding()` resolver with
+ * one of two messages — `Unsupported platform: …` (target absent from its
+ * platform map) or `Failed to load native module …` (target present but the
+ * platform package failed to `require`). Matching the message is the only
+ * signal available; pinned to `node-wreq@2.4.1`'s wording (`dist/native/binding.js`).
+ */
+function isNativeModuleLoadError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes("Failed to load native module") || err.message.includes("Unsupported platform");
+}
+
+/**
+ * `node-wreq.fetch` wrapper that translates a native-binding load failure into
+ * a typed {@link NativeModuleUnavailableError}. Every impersonated call site
+ * routes through this so an unsupported platform (Alpine/musl ARM64, Windows
+ * ARM) gets one actionable message instead of a raw "Failed to load native
+ * module" stack (issue #708). All other errors propagate unchanged. Exported so
+ * the photo-upload multipart path (`services/profile/basic`) shares the same
+ * translation rather than re-implementing it.
+ */
+export const impersonatedFetch: typeof wreqFetch = async (input, init) => {
+  try {
+    return await wreqFetch(input, init);
+  } catch (err) {
+    if (isNativeModuleLoadError(err)) {
+      throw new NativeModuleUnavailableError(process.platform, process.arch, { cause: err });
+    }
+    throw err;
+  }
+};
+
+/**
  * Impersonated HTTP via `node-wreq` (Rust + BoringSSL). Used for the
  * Cloudflare-protected `talent-profile` and `scheduler` surfaces.
  *
@@ -525,7 +616,7 @@ export async function impersonatedTransport(req: TransportRequest): Promise<Tran
   const body = JSON.stringify(req.body);
 
   return executeWithResilience(req, url, async (signal, startMs) => {
-    const res = await wreqFetch(url, {
+    const res = await impersonatedFetch(url, {
       method: "POST",
       headers,
       body,
@@ -730,7 +821,7 @@ export async function impersonatedMultipartTransport(req: MultipartTransportRequ
     // a fresh stream each time, so a retry of an aborted upload does not
     // attempt to replay an already-consumed body.
     const formData = buildGraphQLMultipart(req.body, req.files, req.map);
-    const res = await wreqFetch(url, {
+    const res = await impersonatedFetch(url, {
       method: "POST",
       headers,
       body: formData,
