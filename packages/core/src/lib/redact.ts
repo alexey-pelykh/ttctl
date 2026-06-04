@@ -43,8 +43,8 @@ export const REDACTED = "***REDACTED***" as const;
  * stateful per-instance).
  *
  * The bearer shape is `user_<24hex>_<20alnum>` — the canonical output of
- * Toptal's `EmailPasswordSignIn` mutation (per
- * `hq/engineering/adr/ADR-005-auth-model.md`). Anchored to character
+ * Toptal's `EmailPasswordSignIn` mutation (per ADR-005 in the
+ * private `ttctl/research` repo). Anchored to character
  * class boundaries: the `user_` literal prefix is TTCtl-specific (no false
  * positives against unrelated `user_` strings in test data), the 24-hex +
  * 20-alphanumeric pair is the empirically observed shape.
