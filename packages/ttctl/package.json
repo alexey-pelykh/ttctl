@@ -39,9 +39,9 @@
     "access": "public"
   },
   "scripts": {
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "clean": "rm -rf dist *.tsbuildinfo",
     "prepack": "cp ../../LICENSE ../../THIRD-PARTY-NOTICES.md .",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "lint": "eslint src/",
