@@ -28,7 +28,7 @@ Requires **Node.js ≥ 22.19.0**, ESM only.
 - **Auth** — `signIn`, `signOut`, `getAuthStatus`, `resolveCredentials`, `SignInError`, `AuthRevokedError`, `TtctlError`
 - **Transport** — `stockTransport` (mobile gateway), `impersonatedTransport` / `impersonatedMultipartTransport` (Chrome-TLS impersonation for Cloudflare-protected surfaces), `callSurface`, `Cf403Error`, `Cf403PersistentError`, `RedirectError` (no-follow redirect policy, issue #268), `SchedulerBearerExpired`, `IMPERSONATE_PROFILE`, `getRedirectLocation`, `buildDryRunPreview`, `buildGraphQLMultipart`
 - **Resilience** — `TransportError`, `readTransportConfig`, `resetTransportConfigCache`
-- **Service namespaces** — `profile`, `applications`, `contracts`, `engagements`, `availability`, `jobs`, `payments`, `timesheet`
+- **Service namespaces** — `profile`, `applications`, `contracts`, `engagements`, `availability`, `jobs`, `payments`, `surveys`, `timesheet`
 - **1Password** — `resolveOnePasswordReference`, `OnePasswordError`
 - **Diagnostics** — `setDiagnosticLogger` / `getDiagnosticLogger` / `resetDiagnosticLogger`, `logTransportRequest`, `logTransportResponse`
 - **Redaction** — `redactBody`, `redactHeaders`, `containsBearerToken`, `BEARER_PATTERN`, `BEARER_PATTERN_SOURCE`, `SECRET_BODY_FIELD_NAMES`, `SECRET_HEADER_NAMES`
