@@ -4,6 +4,11 @@
 build/
 .tmp/
 
+# Per-package copies of root LICENSE / THIRD-PARTY-NOTICES.md, created by each
+# package's prepack at pack/publish time (the root copies are tracked).
+/packages/*/LICENSE
+/packages/*/THIRD-PARTY-NOTICES.md
+
 # Toptal session state (project-local; XDG path is also gitignored by being outside the repo)
 session.cookies
 .ttctl/
