@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -268,5 +269,58 @@ describe("MCP file-upload tools — defense-in-depth path/extension gate (#221)"
       assertGateRefusal(result);
       expect(result.content[0]?.text).toContain('extension "<none>"');
     });
+  });
+
+  describe("Symlink resolution", () => {
+    // Tool-layer anchor: a prompt-injected `filePath` that is a symlink
+    // inside the sandbox but points at a secret outside it must be refused
+    // before the apply path runs. Sandbox prefixes are re-anchored at a
+    // temp home (canonicalized so prefixes match realpath on macOS
+    // `/var -> /private/var`). Real symlinks → skip where unsupported.
+    const symlinkSupported = ((): boolean => {
+      let probe: string | undefined;
+      try {
+        probe = fs.mkdtempSync(path.join(os.tmpdir(), "ttctl-anchor-probe-"));
+        const t = path.join(probe, "t");
+        fs.writeFileSync(t, "x");
+        fs.symlinkSync(t, path.join(probe, "l"));
+        return true;
+      } catch {
+        return false;
+      } finally {
+        if (probe !== undefined) fs.rmSync(probe, { recursive: true, force: true });
+      }
+    })();
+
+    let fakeHome: string;
+
+    beforeEach(() => {
+      fakeHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ttctl-anchor-home-")));
+      fs.mkdirSync(path.join(fakeHome, "Documents"));
+      fs.mkdirSync(path.join(fakeHome, "secret"));
+      vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    });
+
+    afterEach(() => {
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    });
+
+    it.runIf(symlinkSupported)(
+      "ttctl_profile_resume_upload refuses a sandbox symlink targeting a secret (apply path never runs)",
+      async () => {
+        const secret = path.join(fakeHome, "secret", "leak.pdf");
+        fs.writeFileSync(secret, "PRIVATE KEY");
+        const link = path.join(fakeHome, "Documents", "resume.pdf");
+        fs.symlinkSync(secret, link);
+        registerResumeTools(server, buildAuthSuccessCtx());
+        const handler = getToolHandler(server, "ttctl_profile_resume_upload");
+        // If the gate wrongly allowed this, the apply path would call the
+        // mocked profile.resume.upload, which throws — surfacing as
+        // (Code: UNKNOWN), not the VALIDATION_ERROR assertGateRefusal wants.
+        const result = await handler({ filePath: link }, {});
+        assertGateRefusal(result);
+        expect((result as ToolErrorShape).content[0]?.text).toContain("outside of the MCP upload sandbox");
+      },
+    );
   });
 });

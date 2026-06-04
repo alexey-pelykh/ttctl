@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -210,9 +211,18 @@ function validateExtension(filenameOrPath: string, category: UploadCategory): To
 }
 
 /**
- * Validate `filePath` against the path-prefix sandbox. Resolves the
- * path first (normalises `..`, makes it absolute) so traversal attempts
- * like `~/Documents/../.ssh/id_rsa` collapse before the prefix check.
+ * Validate `filePath` against the path-prefix sandbox.
+ *
+ * The path is resolved to its true on-disk location — `path.resolve`
+ * collapses `..`, then `fs.realpathSync` follows symlinks (final
+ * component AND intermediate directories) — BEFORE the prefix check.
+ * Without symlink resolution a link staged inside the sandbox
+ * (`~/Documents/innocent.pdf -> ~/.ssh/id_rsa`) passes the gate and the
+ * service reads the link target. On a realpath error (ENOENT etc.) the
+ * lexical path is used: a path realpath cannot resolve is one the
+ * service's `readFile` cannot read either, so there is nothing to
+ * exfiltrate — but a non-existent path outside the sandbox is still
+ * refused. The link is REFUSED, never silently followed.
  *
  * Sibling-name guard: the comparison requires `resolved === prefix` OR
  * `resolved.startsWith(prefix + path.sep)`, so `~/Documents_secret/`
@@ -225,16 +235,25 @@ function validateSandbox(filePath: string): ToolErrorResponse | null {
   if (isSandboxBypassed()) {
     return null;
   }
-  const resolved = path.resolve(filePath);
+  const lexical = path.resolve(filePath);
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync(lexical);
+  } catch {
+    resolved = lexical;
+  }
   const prefixes = safePathPrefixes();
   const isAllowed = prefixes.some((prefix) => resolved === prefix || resolved.startsWith(prefix + path.sep));
   if (isAllowed) {
     return null;
   }
+  const viaSymlink = resolved !== lexical;
   return validationError(
     [
       `Refusing to read file outside of the MCP upload sandbox.`,
-      `Resolved path: "${resolved}".`,
+      viaSymlink
+        ? `Path "${lexical}" resolves through a symlink to "${resolved}", which is outside the sandbox.`
+        : `Resolved path: "${resolved}".`,
       `Allowed prefixes: ${prefixes.join(", ")}.`,
       `Set ${SANDBOX_BYPASS_ENV}=1 in the MCP server's environment to override (extension allowlist still applies).`,
     ].join(" "),
