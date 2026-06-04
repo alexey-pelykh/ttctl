@@ -54,7 +54,7 @@ The body is the `WireShape` discriminated union from `captureWireShape`:
 - **Arrays** — `{ kind: "array", item: <WireShape> }` where `item` is the **unified** shape across elements
 - **Nullable** — `{ kind: "nullable", inner: <WireShape> }` when a field is `null` in some samples but typed in others
 - **Optional** — `{ kind: "optional", inner: <WireShape> }` when a field is present in some array elements but absent in others
-- **Unknown** — `{ kind: "unknown" }` for empty arrays only
+- **Unknown** — `{ kind: "unknown" }` for empty arrays (and the rare mismatched-element-kind collapse)
 
 The comparator treats `nullable` / `optional` as a **directional contract**:
 the snapshot is the richer shape the live run must _inhabit_. A live run
@@ -65,6 +65,13 @@ shape _broader_ than the snapshot (snapshot `string`, live `nullable<string>`)
 still drifts: that is a genuine wire change. Corollary: a genuinely nullable
 field MUST be declared `nullable<T>` in the snapshot — a bare-`T` snapshot
 still (correctly) drifts on a live `null`.
+
+The same direction governs arrays: an **empty** live array (captured as
+`array<unknown>`) inhabits any snapshot `array<T>` — zero elements cannot
+contradict an element contract. A populated live array carries a concrete
+item shape and is compared normally, and a degenerate _snapshot_
+(`array<unknown>`) still drifts against populated live data — the remedy is
+re-capturing the snapshot from a populated subject.
 
 ## What does NOT go in a snapshot
 

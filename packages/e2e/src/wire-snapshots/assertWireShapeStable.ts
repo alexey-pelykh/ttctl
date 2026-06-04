@@ -18,7 +18,10 @@
  *     the contract and the live shape need only inhabit it, so a narrower live
  *     shape (null, or a bare `T`) does NOT drift against a snapshot
  *     `nullable<T>` / `optional<T>` — but a broader live shape (snapshot `T`,
- *     live `nullable<T>`) still surfaces as a `~` kind mismatch.
+ *     live `nullable<T>`) still surfaces as a `~` kind mismatch. The same
+ *     direction governs arrays (#692): an empty live array (captured as
+ *     `array<unknown>`) inhabits any snapshot `array<T>`, while a degenerate
+ *     snapshot item still drifts against populated live data.
  *   - Path syntax: `parent.child` for objects; `parent[]` for "any element
  *     of an array" (arrays are unified per `captureWireShape`'s reduction,
  *     so element-level paths don't carry indices).
@@ -233,6 +236,13 @@ function diffShapesInto(path: string, expected: WireShape, actual: WireShape, ou
     }
     case "array": {
       const actualArr = actual as Extract<WireShape, { kind: "array" }>;
+      // Directional tolerance (#692): an empty live array captures as
+      // `array<unknown>` and cannot contradict any element contract. Gated on
+      // the LIVE side only — a degenerate snapshot item still drifts against
+      // populated live data (the remedy is re-capturing the snapshot).
+      if (actualArr.item.kind === "unknown") {
+        return;
+      }
       const itemPath = path === "" ? "[]" : `${path}[]`;
       diffShapesInto(itemPath, expected.item, actualArr.item, out);
       return;
