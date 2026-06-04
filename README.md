@@ -70,6 +70,30 @@ See [What It Does](#what-it-does) above for the positive scope.
 - A **Toptal Talent** profile (you must be a Toptal talent to use this — it has no value to anyone else)
 - Recommended: **[1Password CLI](https://developer.1password.com/docs/cli/get-started/)** (`op`) for credential resolution
 
+### Supported platforms
+
+TTCtl uses [`node-wreq`](https://www.npmjs.com/package/node-wreq) for Chrome
+TLS-fingerprint impersonation on the Cloudflare-protected surfaces (profile
+editing). That transport ships as a prebuilt native binary, available for:
+
+| OS      | Architecture           | libc          | Supported  |
+| ------- | ---------------------- | ------------- | ---------- |
+| macOS   | x64 (Intel)            | —             | ✅         |
+| macOS   | arm64 (Apple Silicon)  | —             | ✅         |
+| Linux   | x64                    | glibc         | ✅         |
+| Linux   | x64                    | musl (Alpine) | ✅         |
+| Linux   | arm64                  | glibc         | ✅         |
+| Linux   | arm64                  | musl (Alpine) | ❌ not yet |
+| Windows | x64                    | —             | ✅         |
+| Windows | arm64 (Windows on ARM) | —             | ❌ not yet |
+
+On an unsupported platform, `npm install -g ttctl` still **succeeds** (the
+native binary is an optional dependency) and mobile-gateway commands keep
+working — but any Cloudflare-protected command (anything that edits your
+profile) fails with a clear `NATIVE_MODULE_UNAVAILABLE` error naming your
+platform and this supported set. If you need one of the two not-yet-supported
+targets, please [open an issue](https://github.com/alexey-pelykh/ttctl/issues).
+
 ## Installation
 
 ```sh

@@ -56,6 +56,7 @@ export {
   Cf403PersistentError,
   DRY_RUN_REDACTED_AUTHORIZATION,
   IMPERSONATE_PROFILE,
+  NativeModuleUnavailableError,
   RedirectError,
   SchedulerBearerExpired,
   buildDryRunPreview,

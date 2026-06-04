@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import { fetch as wreqFetch } from "node-wreq";
-
 import type { ProfileShowQuery } from "../../../__generated__/gateway.js";
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { logTransportRequest, logTransportResponse } from "../../../lib/diagnostic-log.js";
@@ -11,6 +9,7 @@ import {
   Cf403Error,
   getRedirectLocation,
   IMPERSONATE_PROFILE,
+  impersonatedFetch,
   impersonatedTransport,
   RedirectError,
   stockTransport,
@@ -1742,8 +1741,9 @@ async function resolvePhotoBinary(input: PhotoUploadInput): Promise<ResolvedPhot
  * Test injection: callers can pass an alternate `fetch` implementation
  * via the `fetchOverride` parameter on the public {@link photoUpload}
  * function (see {@link _setMultipartFetchForTesting}). Production never
- * sets the override; the fallback `wreqFetch` import resolves at module
- * load time.
+ * sets the override; the fallback {@link impersonatedFetch} resolves at
+ * module load time and carries the unsupported-platform translation
+ * (issue #708) so this path surfaces the same typed error as the JSON one.
  */
 /**
  * Diagnostic-log context for `multipartImpersonatedFetch`. The caller
@@ -1766,7 +1766,7 @@ async function multipartImpersonatedFetch(
   logContext: MultipartLogContext,
 ): Promise<TransportResponse> {
   const url = SURFACE_ENDPOINTS["talent-profile"];
-  const fetchImpl = multipartFetchOverride ?? wreqFetch;
+  const fetchImpl = multipartFetchOverride ?? impersonatedFetch;
 
   // Mirror COMMON_HEADERS minus the JSON content-type; node-wreq's FormData
   // body sets multipart/form-data; boundary=... itself. The "x-toptal-..."
