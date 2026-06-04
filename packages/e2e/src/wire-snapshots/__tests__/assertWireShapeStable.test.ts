@@ -757,8 +757,10 @@ describe("diffShapes — empty-array directional tolerance (#692)", () => {
 
   it("known limit: a mixed-kind populated array also captures item `unknown` and is tolerated", () => {
     // captureWireShape(["x", 1]) collapses to array<unknown> — indistinguishable
-    // from empty at the shape level. GraphQL list fields are homogeneous, so
-    // this false-accept vector is accepted as the cost of the empty-array fix.
+    // from empty at the shape level. Custom-scalar lists ([JSON]-style; the
+    // schema exposes Scalars.Unknown) CAN be heterogeneous on the wire, but the
+    // vector is rare and low-value to detect — this false-accept is accepted as
+    // the cost of the empty-array fix.
     expect(captureWireShape(["x", 1])).toEqual(EMPTY_ARRAY);
     expect(diffShapes("", ARRAY_OF_STRING, captureWireShape(["x", 1]))).toEqual([]);
   });

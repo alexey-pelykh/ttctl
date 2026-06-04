@@ -58,12 +58,13 @@ pnpm dev              # Watch mode
 
 `pnpm lint` is the single canonical pre-push gate — it bundles
 `pnpm format:check` (Prettier) with the ESLint pass, repo-local lints
-(`lint:root`), and the secret-leakage / e2e-coverage / dep-confusion
-checks. Running `pnpm lint` before pushing catches every check that CI
-enforces in its lint-class steps. `pnpm format:check` remains a separate
-script so it can be invoked standalone (e.g. by CI's first step at
-`.github/workflows/ci.yml`, or by editor save hooks); use `pnpm format`
-to auto-fix.
+(`lint:root`), and the repo `check-*` gates (secret-leakage,
+e2e-coverage, surface-coverage, dep-confusion, write-read-symmetry,
+merge-completeness, snapshot-degeneracy). Running `pnpm lint` before
+pushing catches every check that CI enforces in its lint-class steps.
+`pnpm format:check` remains a separate script so it can be invoked
+standalone (e.g. by CI's first step at `.github/workflows/ci.yml`, or by
+editor save hooks); use `pnpm format` to auto-fix.
 
 ## Conventions
 
@@ -375,6 +376,34 @@ talent-profile sibling of `UpdateWorkingHours` that ttctl uses on the
 gateway surface). Helper-name allowlist mirrors `HELPER_SIGNATURES` in
 `check-e2e-coverage.ts` and must be kept in sync manually when a new
 transport helper is added.
+
+### Snapshot degeneracy gate (degenerate-contract visibility)
+
+`scripts/check-snapshot-degeneracy.ts` (wired into `pnpm lint`) makes
+re-capture debt in the committed wire-snapshot corpus visible (#735).
+`captureWireShape` collapses an empty (or mixed-kind) array to
+`array<unknown>` — a committed snapshot carrying that shape asserts
+nothing about element shape, and the drift that prompts re-capture
+(#692) only fires when a live E2E run happens to hit a populated
+cycle. The script walks git-tracked
+`packages/e2e/src/wire-snapshots/*.snapshot.json` files and reports
+every `array` node whose item — after peeling `nullable`/`optional`
+wrappers — is `unknown`, using the `assertWireShapeStable` path syntax
+(`a.b[]`).
+
+- **Exempt** a known-unpopulatable column (feature-gated on the
+  capture account — e.g. portfolio file upload) in the sidecar
+  registry `packages/e2e/src/wire-snapshots/degeneracy-exemptions.json`
+  (`{ "<OpName>": { "<path>": "<reason>" } }`; reason mandatory,
+  surfaces in the report). The registry is a sidecar rather than an
+  in-snapshot field because snapshots are regenerated wholesale under
+  `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` and exemptions must survive
+  re-capture. Stale entries (no matching degenerate node) are
+  reported and fail strict mode.
+- **Default mode** is warn-only (exit 0). Set
+  `SNAPSHOT_DEGENERACY_STRICT=1` (or pass `--strict`) to fail on
+  non-exempt degenerate nodes once the corpus is triaged. Sibling
+  pattern to the other `check-*` strict switches.
 
 ### Wire-shape snapshots
 
