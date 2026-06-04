@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declarationMap": false
+  },
+  "exclude": ["**/*.test.ts", "**/*.e2e.test.ts", "**/__tests__/**"],
+  "references": [{ "path": "../cli" }, { "path": "../mcp" }]
+}
