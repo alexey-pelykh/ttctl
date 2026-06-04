@@ -23,7 +23,7 @@ catalog:
   eslint-config-prettier: "^10.1.8"
   "@tony.ganchev/eslint-plugin-header": "^3.3.3"
   "@modelcontextprotocol/sdk": "^1.28.0"
-  "@graphql-codegen/cli": "^7.0.0"
+  "@graphql-codegen/cli": "^7.1.2"
   "@graphql-codegen/add": "^7.0.0"
   graphql-codegen-typescript-validation-schema: "^0.19.0"
   graphql: "^16.14.0"
