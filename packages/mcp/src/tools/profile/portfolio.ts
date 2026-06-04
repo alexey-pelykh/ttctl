@@ -85,7 +85,6 @@ export function registerPortfolioTools(server: McpServer, ctx: ToolRegistrationC
             "Server-gated boolean: the server's Rails `.blank?` gate rejects `false` on create with USER_ERROR (`code: blank, key: publicationPermit`) — pass `true` (the default) to satisfy the gate. The same field on Employment has a server-controlled persisted-state semantic (#488) where the caller-supplied value may not match what the server persists; Portfolio likely shares this semantic (uninvestigated). The field does NOT gate public listing on the resume.",
           ),
         showViaToptal: z.boolean().optional().describe("Whether the item should be visible via Toptal"),
-        highlight: z.boolean().optional().describe("Whether to mark this item as a highlight"),
         industryIds: z
           .array(z.string())
           .min(1)
