@@ -19,7 +19,7 @@ End users should install the [`ttctl`](https://www.npmjs.com/package/ttctl) umbr
 npm install @ttctl/core
 ```
 
-Requires **Node.js ≥ 24**, ESM only.
+Requires **Node.js ≥ 22.19.0**, ESM only.
 
 ## API Surface
 
