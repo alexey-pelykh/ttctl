@@ -23,7 +23,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD-PARTY-NOTICES.md"
   ],
   "keywords": [
     "toptal-talent",
@@ -36,7 +37,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "prepack": "cp ../../LICENSE .",
+    "prepack": "cp ../../LICENSE ../../THIRD-PARTY-NOTICES.md .",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
