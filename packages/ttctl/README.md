@@ -19,7 +19,7 @@ Or run directly with npx:
 npx ttctl --help
 ```
 
-Requires **Node.js ≥ 24**.
+Requires **Node.js ≥ 22.19.0**.
 
 ## What's in this package
 

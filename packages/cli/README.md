@@ -19,7 +19,7 @@ This package is published separately for **embedders** who want to mount the Com
 npm install @ttctl/cli
 ```
 
-Requires **Node.js ≥ 24**, ESM only.
+Requires **Node.js ≥ 22.19.0**, ESM only.
 
 ## API Surface
 
