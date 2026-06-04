@@ -918,6 +918,97 @@ describe("profile portfolio (live talent-profile, INFERRED wire shape)", () => {
     }
   });
 
+  it.skipIf(!e2eEnabled)(
+    "highlight is rejected on the create input but accepted on the update input (wire contract)",
+    async () => {
+      // Introspection-by-rejection: pair `highlight` with a bogus profile /
+      // item id. GraphQL variable-coercion (where "Field is not defined" fires)
+      // runs BEFORE execution, so a rejected field surfaces cleanly AND nothing
+      // is created/updated; an accepted field falls through to a bogus-id
+      // execution error that never touches real data.
+      //
+      // `highlight` has a dedicated `highlightPortfolioItem` mutation, matching
+      // the `toptalRelated` pattern from #645. The create input rejects it;
+      // `add()` strips it (#693).
+      const token = loadSandboxBearer(getSharedSession().sandboxConfigPath);
+      const base = {
+        title: "ttctl-e2e-highlight-wire-probe",
+        description: "x".repeat(200),
+        showViaToptal: true,
+        skills: [{ id: "BOGUS-E2E-SKILL", name: "probe" }],
+        industryIds: [],
+        highlight: true,
+      };
+
+      const createRes = await impersonatedTransport({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "createPortfolioItem",
+          query:
+            "mutation createPortfolioItem($input: CreatePortfolioItemInput!) { createPortfolioItem(input: $input) { success errors { code key message } } }",
+          variables: { input: { profileId: "BOGUS-E2E-PROFILE", portfolioItem: { ...base, kind: "basic" } } },
+        },
+      });
+      // Create input does NOT define highlight → variable-coercion rejection.
+      expect(JSON.stringify(createRes.body)).toMatch(
+        /portfolioItem\.highlight.*Field is not defined on PortfolioItemCreateInput/,
+      );
+
+      const updateRes = await impersonatedTransport({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "updatePortfolioItem",
+          query:
+            "mutation updatePortfolioItem($input: UpdatePortfolioItemInput!) { updatePortfolioItem(input: $input) { success errors { code key message } } }",
+          variables: { input: { portfolioItemId: "BOGUS-E2E-ITEM", portfolioItem: base } },
+        },
+      });
+      // Update input DOES define highlight → coercion passes; the only error
+      // is the bogus-id execution failure, never a "Field is not defined".
+      expect(JSON.stringify(updateRes.body)).not.toMatch(/Field is not defined/);
+    },
+  );
+
+  it.skipIf(!e2eEnabled)(
+    "accomplishment, clientOrCompanyName, and websiteUrl are accepted on the create input (wire contract)",
+    async () => {
+      // Confirm that the MCP add tool's optional text fields (not in the CLI
+      // add command) are accepted by PortfolioItemCreateInput. If any were
+      // rejected by variable coercion, the "Field is not defined" error would
+      // name the specific field.
+      const token = loadSandboxBearer(getSharedSession().sandboxConfigPath);
+      const res = await impersonatedTransport({
+        surface: "talent-profile",
+        authToken: token,
+        body: {
+          operationName: "createPortfolioItem",
+          query:
+            "mutation createPortfolioItem($input: CreatePortfolioItemInput!) { createPortfolioItem(input: $input) { success errors { code key message } } }",
+          variables: {
+            input: {
+              profileId: "BOGUS-E2E-PROFILE",
+              portfolioItem: {
+                title: "ttctl-e2e-optional-fields-probe",
+                description: "x".repeat(200),
+                showViaToptal: true,
+                kind: "basic",
+                skills: [{ id: "BOGUS-E2E-SKILL", name: "probe" }],
+                industryIds: [],
+                accomplishment: "probe accomplishment",
+                clientOrCompanyName: "probe client",
+                websiteUrl: "https://probe.example",
+              },
+            },
+          },
+        },
+      });
+      // None of these fields is rejected by variable coercion.
+      expect(JSON.stringify(res.body)).not.toMatch(/Field is not defined/);
+    },
+  );
+
   /**
    * `uploadPortfolioFile` wire shape is empirically verified correct
    * (`UploadPortfolioFileInput` accepts only `profileId` and `file` — every
