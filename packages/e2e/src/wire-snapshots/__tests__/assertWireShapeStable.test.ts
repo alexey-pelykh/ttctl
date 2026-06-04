@@ -15,6 +15,7 @@ import {
   formatDiffEntry,
   renderShape,
 } from "../assertWireShapeStable.js";
+import { captureWireShape } from "../captureWireShape.js";
 import type { WireShape, WireSnapshot } from "../captureWireShape.js";
 
 /**
@@ -148,6 +149,41 @@ describe("assertWireShapeStable — match path", () => {
             { date: "2026-05-02", note: null },
           ],
         },
+        snapshotDir: dir,
+        env: {},
+      }),
+    ).not.toThrow();
+  });
+
+  // #692: an array-of-objects column empty THIS run captures as
+  // `array<unknown>` and must still inhabit the committed `array<object>`
+  // contract — e.g. a pending billing cycle with zero logged records.
+  it("does not drift when an array-of-objects column is empty this run (degenerate subject, #692)", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("GetTimesheet", {
+        kind: "object",
+        fields: {
+          timesheetRecords: {
+            kind: "array",
+            item: {
+              kind: "object",
+              fields: {
+                date: { kind: "string" },
+                duration: { kind: "string" },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetTimesheet",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response: { timesheetRecords: [] },
         snapshotDir: dir,
         env: {},
       }),
@@ -664,6 +700,67 @@ describe("diffShapes — directional wrapper tolerance (#689)", () => {
     expect(diffShapes("", NULLABLE_STR, { kind: "number" })).toEqual([
       { op: "~", path: "<root>", expected: "string", actual: "number" },
     ]);
+  });
+
+  it("still flags an inner type change when both sides are nullable: nullable<string> vs nullable<number>", () => {
+    expect(diffShapes("", NULLABLE_STR, { kind: "nullable", inner: { kind: "number" } })).toEqual([
+      { op: "~", path: "<root>", expected: "string", actual: "number" },
+    ]);
+  });
+});
+
+describe("diffShapes — empty-array directional tolerance (#692)", () => {
+  // An empty live array captures as `array<unknown>` (no elements to infer
+  // from) and cannot contradict any element contract — it inhabits every
+  // snapshot `array<T>`. A populated live array carries a concrete item
+  // shape and is compared normally.
+  const ARRAY_OF_OBJECT: WireShape = {
+    kind: "array",
+    item: { kind: "object", fields: { date: { kind: "string" }, duration: { kind: "string" } } },
+  };
+  const ARRAY_OF_STRING: WireShape = { kind: "array", item: { kind: "string" } };
+  const EMPTY_ARRAY: WireShape = { kind: "array", item: { kind: "unknown" } };
+
+  it("empty live array inhabits array<object> (zero-record degenerate column)", () => {
+    expect(diffShapes("", ARRAY_OF_OBJECT, EMPTY_ARRAY)).toEqual([]);
+  });
+
+  it("empty live array inhabits array<T> for primitive and wrapped element contracts", () => {
+    expect(diffShapes("", ARRAY_OF_STRING, EMPTY_ARRAY)).toEqual([]);
+    expect(
+      diffShapes("", { kind: "array", item: { kind: "nullable", inner: { kind: "string" } } }, EMPTY_ARRAY),
+    ).toEqual([]);
+  });
+
+  it("empty live array inhabits a nullable<array<T>> contract (composes with wrapper peel)", () => {
+    expect(diffShapes("", { kind: "nullable", inner: ARRAY_OF_OBJECT }, EMPTY_ARRAY)).toEqual([]);
+  });
+
+  it("empty NESTED live array inhabits the inner element contract (recursive application)", () => {
+    // Live `[[]]` captures as array<array<unknown>>.
+    expect(diffShapes("", { kind: "array", item: ARRAY_OF_STRING }, { kind: "array", item: EMPTY_ARRAY })).toEqual([]);
+  });
+
+  it("does NOT tolerate a populated live array with a regressed element shape", () => {
+    expect(diffShapes("", ARRAY_OF_OBJECT, ARRAY_OF_STRING)).toEqual([
+      { op: "~", path: "[]", expected: "object", actual: "string" },
+    ]);
+  });
+
+  it("does NOT tolerate the reverse direction: degenerate snapshot array<unknown> vs populated live", () => {
+    // A snapshot captured from an empty cycle must keep drifting against real
+    // data — the remedy is re-capturing it from a populated subject.
+    expect(diffShapes("", EMPTY_ARRAY, ARRAY_OF_STRING)).toEqual([
+      { op: "~", path: "[]", expected: "unknown", actual: "string" },
+    ]);
+  });
+
+  it("known limit: a mixed-kind populated array also captures item `unknown` and is tolerated", () => {
+    // captureWireShape(["x", 1]) collapses to array<unknown> — indistinguishable
+    // from empty at the shape level. GraphQL list fields are homogeneous, so
+    // this false-accept vector is accepted as the cost of the empty-array fix.
+    expect(captureWireShape(["x", 1])).toEqual(EMPTY_ARRAY);
+    expect(diffShapes("", ARRAY_OF_STRING, captureWireShape(["x", 1]))).toEqual([]);
   });
 });
 
