@@ -253,6 +253,18 @@ TTCTL_E2E=1 pnpm test:e2e -- -t <OpName>
   against the sibling `../research/` schema with the diff and decide
   whether to fix the typed client, update the snapshot, or both.
 
+### Triage degenerate array items
+
+`pnpm check-snapshot-degeneracy` (part of `pnpm lint`) reports every
+committed snapshot whose `array` shape carries an `unknown` item — the
+column was empty (or mixed-kind) at capture time, so the contract says
+nothing about element shape. Remedy: re-capture from a populated
+subject (update workflow above), or — for columns that can never
+populate on the capture account (feature-gated) — add an entry with a
+mandatory reason to
+[`degeneracy-exemptions.json`](./degeneracy-exemptions.json) (format
+documented in `scripts/check-snapshot-degeneracy.ts`).
+
 ## Manual review checklist (for snapshot PRs)
 
 When reviewing a PR that adds or updates a `*.snapshot.json` file in
