@@ -9,11 +9,18 @@ kept in sync with these files manually.
 
 | File                         | Purpose                                                                                                                                                                                                                                 |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `main-protection.json`       | Active production ruleset for `refs/heads/main`. Requires the `CI` status check, rebase-only merges, linear history.                                                                                                                    |
+| `main-protection.json`       | Active production ruleset for `refs/heads/main`. Requires the `CI` and `Schema/Contract Rule Disposition` status checks, rebase-only merges, linear history.                                                                            |
 | `main-protection-no-ci.json` | Emergency variant of `main-protection.json` with the `required_status_checks` rule removed. For use when CI is unavailable and a maintainer must merge a fix manually. Re-apply `main-protection.json` immediately after the emergency. |
 
 Both files declare `"name": "main-protection"` — applying one replaces the
 other on GitHub.
+
+> `main-protection.json` lists both `CI` and `Schema/Contract Rule Disposition`
+> as required status checks. The latter is redundant — `ci.yml`'s `ci-gate` (the
+> `CI` check) already aggregates it via `needs:` — but it is kept here to match
+> the deployed ruleset exactly, so the verify diff below stays empty and a
+> disaster-recovery re-apply reproduces the live posture. Remove it from this
+> file only if you also remove it from the deployed ruleset.
 
 ## Apply a ruleset (push local → GitHub)
 
