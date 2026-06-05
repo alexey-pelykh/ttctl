@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-28T13:17:42.817Z",
+  "capturedAt": "2026-06-05T08:38:33.000Z",
   "operationName": "JobApplicationRateInsight",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -8,10 +8,16 @@
     "kind": "object",
     "fields": {
       "estimatedRevenue": {
-        "kind": "null"
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
       },
       "estimatedRevenueExplanation": {
-        "kind": "null"
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
       },
       "kind": {
         "kind": "string"
