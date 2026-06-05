@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "capturedAt": "2026-05-28T13:17:07.476Z",
+  "capturedAt": "2026-06-05T08:38:33.000Z",
   "operationName": "JobShow",
   "surface": "mobile-gateway",
   "transport": "stock",
@@ -95,7 +95,10 @@
             "kind": "string"
           },
           "hoursOverlap": {
-            "kind": "null"
+            "kind": "nullable",
+            "inner": {
+              "kind": "number"
+            }
           },
           "verbose": {
             "kind": "string"
@@ -123,7 +126,10 @@
         }
       },
       "maxRate": {
-        "kind": "number"
+        "kind": "nullable",
+        "inner": {
+          "kind": "number"
+        }
       },
       "minimumHoursPerBillingCycle": {
         "kind": "null"
@@ -141,13 +147,22 @@
                 "kind": "object",
                 "fields": {
                   "communitySlackId": {
-                    "kind": "null"
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
                   },
                   "email": {
-                    "kind": "null"
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
                   },
                   "phoneNumber": {
-                    "kind": "null"
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
                   },
                   "skype": {
                     "kind": "null"
@@ -161,7 +176,15 @@
                 "kind": "string"
               },
               "photo": {
-                "kind": "null"
+                "kind": "nullable",
+                "inner": {
+                  "kind": "object",
+                  "fields": {
+                    "small": {
+                      "kind": "string"
+                    }
+                  }
+                }
               },
               "timeZone": {
                 "kind": "object",
