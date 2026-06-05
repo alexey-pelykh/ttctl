@@ -1,1 +1,44 @@
-{}
+{
+  "AvailabilityRequest": {
+    "matcherQuestions[].options": "Matcher options are empty/heterogeneous across this account's availability requests; they collapse to unknown under cross-question unification."
+  },
+  "GetInterviewNotes": {
+    "notes": "Talent interview notes are append-only with no write surface on web or mobile; the array never populates on this account."
+  },
+  "GetTalentSpecializations": {
+    "[].operations.apply.messages": "Apply is cleanly callable for this account's specializations; gating messages are absent."
+  },
+  "Interview": {
+    "contacts[].topChatConversation.uploads": "Interview TopChat threads on this account carry zero attachments.",
+    "talentNotes": "Talent interview notes are append-only with no write surface on web or mobile; the array never populates on this account."
+  },
+  "JobActivityItem": {
+    "breaks": "No engagement breaks recorded on this account's activity items; breaks populates only when a break exists."
+  },
+  "JobApplicationQuestions": {
+    "expertiseQuestions": "The captured eligible job's application form is matcher-only; no expertise questions exist.",
+    "matcherQuestions[].options": "Nested options collapse to unknown under cross-question unification (mixed dropdown/free-text); the matcherQuestions item shape itself was re-captured."
+  },
+  "JobShow": {
+    "contacts": "Job contacts attach later in the funnel than this account's jobs reach."
+  },
+  "Payments": {
+    "items[].memorandums": "No credit-note/adjustment memorandums on this account's invoices."
+  },
+  "PendingSurveys": {
+    "[].questions[].answers": "Captured pending surveys carry free-text questions; multiple-choice answer-options are absent."
+  },
+  "SimilarJobQuestionAnswers": {
+    "[].suggestions": "No prior reusable answers to suggest from on this account (no eligible jobs with similar answers)."
+  },
+  "createPortfolioItem": {
+    "[].files": "uploadPortfolioFile is server-gated off this account (empty supported-types on every content type).",
+    "[].kpis": "No portfolio items carry KPIs on this account.",
+    "[].quotes": "No portfolio items carry quotes on this account."
+  },
+  "getPortfolioItems": {
+    "[].files": "uploadPortfolioFile is server-gated off this account (empty supported-types on every content type).",
+    "[].kpis": "No portfolio items carry KPIs on this account.",
+    "[].quotes": "No portfolio items carry quotes on this account."
+  }
+}
