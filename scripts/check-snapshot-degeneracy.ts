@@ -330,7 +330,7 @@ function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; te
 
   if (degenerateCount > 0) {
     lines.push(
-      `\n  remedy: re-capture from a populated subject (TTCTL_UPDATE_WIRE_SNAPSHOTS=1) or exempt with a reason in ${EXEMPTIONS_FILE}`,
+      `\n  remedy: re-capture from a populated subject (TTCTL_UPDATE_WIRE_SNAPSHOTS=1), or — for columns that cannot populate on the capture account (feature-gated, append-only, account-empty) — exempt with a reason in ${EXEMPTIONS_FILE}`,
     );
   }
 
@@ -341,6 +341,7 @@ function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; te
     header = `check-snapshot-degeneracy: ${String(degenerateCount)} degenerate array<unknown> node(s) across ${String(affected)} snapshot(s)`;
   }
   const exemptedNote = exemptedCount > 0 ? `, ${String(exemptedCount)} exempted` : "";
+  const parseErrorNote = parseErrors > 0 ? `, ${String(parseErrors)} unparseable` : "";
   const registryNote =
     report.registryIssues.length > 0 ? `, ${String(report.registryIssues.length)} registry issue(s)` : "";
   const mode = strict ? "strict" : "warn";
@@ -348,7 +349,7 @@ function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; te
   const fails = degenerateCount > 0 || report.registryIssues.length > 0 || parseErrors > 0;
   return {
     exitCode: strict && fails ? 1 : 0,
-    text: `${header}${exemptedNote}${registryNote} [${mode}]${lines.join("\n")}\n`,
+    text: `${header}${exemptedNote}${parseErrorNote}${registryNote} [${mode}]${lines.join("\n")}\n`,
   };
 }
 
