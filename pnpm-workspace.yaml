@@ -17,7 +17,7 @@ catalog:
   vitest: "^4.1.1"
   "@vitest/coverage-v8": "^4.1.1"
   "@eslint/js": "^10.0.1"
-  eslint: "^10.4.0"
+  eslint: "^10.4.1"
   prettier: "^3.8.1"
   typescript-eslint: "^8.59.4"
   eslint-config-prettier: "^10.1.8"
