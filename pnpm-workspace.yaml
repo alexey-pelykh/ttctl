@@ -29,7 +29,7 @@ catalog:
   graphql: "^16.14.0"
   zod: "^4.4.3"
   commander: "^15.0.0"
-  turbo: "^2.9.14"
+  turbo: "^2.9.16"
   typedoc: "^0.28.18"
   "@clack/prompts": "^1.4.0"
   "cli-table3": "^0.6.5"
