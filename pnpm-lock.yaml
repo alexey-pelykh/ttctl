@@ -13,8 +13,8 @@ catalogs:
       specifier: ^10.0.1
       version: 10.0.1
     '@graphql-codegen/add':
-      specifier: ^7.0.0
-      version: 7.0.0
+      specifier: ^7.0.1
+      version: 7.0.1
     '@graphql-codegen/cli':
       specifier: ^7.1.2
       version: 7.1.2
@@ -97,7 +97,7 @@ importers:
         version: 10.0.1(eslint@10.4.1(jiti@2.6.1))
       '@graphql-codegen/add':
         specifier: 'catalog:'
-        version: 7.0.0(graphql@16.14.0)
+        version: 7.0.1(graphql@16.14.0)
       '@graphql-codegen/cli':
         specifier: 'catalog:'
         version: 7.1.2(@types/node@25.6.0)(graphql@16.14.0)(typescript@6.0.3)
@@ -607,12 +607,6 @@ packages:
   '@fastify/busboy@3.2.0':
     resolution: {integrity: sha512-m9FVDXU3GT2ITSe0UaMA5rU3QkfC/UXtCU8y0gSN/GugTqtVldOBWIB5V6V3sbmenVZUIpU6f+mPEO2+m5iTaA==}
 
-  '@graphql-codegen/add@7.0.0':
-    resolution: {integrity: sha512-fQGlUQd0BpoevCTOKi3b7M+kuXCI13udXmJrIh1QMtTCLXUTYGgsubNVcPLr0cVjVwyBK/ZRgwtxdCmkVXqTwQ==}
-    engines: {node: '>=16'}
-    peerDependencies:
-      graphql: ^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0
-
   '@graphql-codegen/add@7.0.1':
     resolution: {integrity: sha512-kWw6RMu9ysBw1wcgcgf9mOnswc5M3ekOApDTiaJC/UZNTEYins01srZHYTP7z3P/WlGGC844BRtjwh3U2kNd/A==}
     engines: {node: '>=16'}
@@ -654,12 +648,6 @@ packages:
 
   '@graphql-codegen/plugin-helpers@6.3.0':
     resolution: {integrity: sha512-Auc+/B7okDx9+pVgLVliZtZLYh6iltWXlnzzM+bRE+zh1T4r3hKbnr8xAmtT937ArfSgk5GHcQHr8LfPYnrRBg==}
-    engines: {node: '>=16'}
-    peerDependencies:
-      graphql: ^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0
-
-  '@graphql-codegen/plugin-helpers@7.0.0':
-    resolution: {integrity: sha512-w7Oa8fH8B1ID9yFoV7qfmKdBxQtjfSHmHffJx6bOhgKyEbD6xVSplK+J6O2sefY5GUdCSx0F+tupBYQjJ7kyvg==}
     engines: {node: '>=16'}
     peerDependencies:
       graphql: ^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0
@@ -3268,12 +3256,6 @@ snapshots:
 
   '@fastify/busboy@3.2.0': {}
 
-  '@graphql-codegen/add@7.0.0(graphql@16.14.0)':
-    dependencies:
-      '@graphql-codegen/plugin-helpers': 7.0.0(graphql@16.14.0)
-      graphql: 16.14.0
-      tslib: 2.8.1
-
   '@graphql-codegen/add@7.0.1(graphql@16.14.0)':
     dependencies:
       '@graphql-codegen/plugin-helpers': 7.0.1(graphql@16.14.0)
@@ -3367,15 +3349,6 @@ snapshots:
     dependencies:
       '@graphql-tools/utils': 11.1.0(graphql@16.14.0)
       change-case-all: 1.0.15
-      common-tags: 1.8.2
-      graphql: 16.14.0
-      import-from: 4.0.0
-      tslib: 2.8.1
-
-  '@graphql-codegen/plugin-helpers@7.0.0(graphql@16.14.0)':
-    dependencies:
-      '@graphql-tools/utils': 11.1.0(graphql@16.14.0)
-      change-case-all: 2.1.0
       common-tags: 1.8.2
       graphql: 16.14.0
       import-from: 4.0.0
