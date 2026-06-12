@@ -42,12 +42,18 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm license-check
-      - run: pnpm test ${{ matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && '-- -- --coverage' || '' }}
+      # Coverage leg runs root-level vitest (not turbo) so the root coverage config
+      # applies — flags passed through turbo never reach vitest as options (#760).
+      - run: pnpm ${{ matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && 'test:coverage' || 'test' }}
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && env.CODECOV_TOKEN_PRESENT == 'true'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          # Pins the CLI the action downloads at runtime. Dependabot bumps the action
+          # SHA above but never this input — bump manually when revisiting.
+          version: v11.2.8
+          fail_ci_if_error: true
 
   doc-surface:
     name: Doc Surface Attestation
