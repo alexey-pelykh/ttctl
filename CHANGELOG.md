@@ -216,6 +216,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@graphql-codegen/add` 7.0.0 → 7.0.1 (#719), `@graphql-codegen/cli`
   7.0.0 → 7.1.2 (#712), `vitest` and `@vitest/coverage-v8` 4.1.5 → 4.1.8
   (#720, #721), `actions/checkout` 6.0.2 → 6.0.3 (#711).
+- Override transitive `shell-quote` to `^1.8.4` (GHSA-w7jw-789q-3m8p,
+  critical, reachable via `@graphql-codegen/cli`). The release-time
+  `pnpm audit --audit-level=high` gate flagged the freshly published
+  advisory and blocked the first rc.14 publish attempt; the override
+  re-resolves the locked 1.8.3 to the patched line.
 
 ## [v0.1.0-rc.13] - 2026-05-29
 
