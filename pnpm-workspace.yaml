@@ -36,7 +36,7 @@ catalog:
   "@clack/prompts": "^1.5.1"
   "cli-table3": "^0.6.5"
   yaml: "^2.9.0"
-  undici: "^8.3.0"
+  undici: "^8.4.1"
   "node-wreq": "^2.4.1"
   msw: "^2.10.5"
   "proper-lockfile": "^4.1.2"
