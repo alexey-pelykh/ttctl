@@ -27,11 +27,6 @@ jobs:
         # value declared in every package.json's "engines.node" field.
         node-version: ["22", "24"]
     runs-on: ${{ matrix.os }}
-    env:
-      # Presence flag only — the token itself is step-scoped to the upload step's
-      # `with:` so third-party code in install/test never sees it (steps.if can't
-      # read the secrets context, hence the env indirection).
-      CODECOV_TOKEN_PRESENT: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -42,14 +37,42 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm license-check
-      # Coverage leg runs root-level vitest (not turbo) so the root coverage config
-      # applies — flags passed through turbo never reach vitest as options (#760).
-      - run: pnpm ${{ matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && 'test:coverage' || 'test' }}
+      - run: pnpm test
+
+  coverage:
+    name: Coverage
+    # GitHub hard-caps id-token to `read` in fork and Dependabot contexts — that
+    # cap is the security boundary; this gate just skips those runs cleanly so
+    # their CI stays green. PR leg: pull_request.user.login (not github.actor)
+    # keeps the guard stable when a maintainer re-runs a Dependabot PR's
+    # workflow. Push leg: actor guard covers `@dependabot merge`-driven pushes,
+    # which run id-token-capped; the canary defers to the next human push.
+    if: >-
+      (github.event_name == 'push' && github.actor != 'dependabot[bot]') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # id-token: write — Codecov OIDC upload ONLY (#761; replaces the long-lived
+    # CODECOV_TOKEN). Job-scoped so the test matrix never holds token-minting
+    # capability. If any second system ever trusts this repo's GitHub OIDC
+    # issuer, move that trust to a dedicated workflow per ADR-010.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+        with:
+          node-version: "24"
+      - run: pnpm build
+      # Root-level vitest (not turbo) so the root coverage config applies —
+      # flags passed through turbo never reach vitest as options (#760).
+      - run: pnpm test:coverage
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && env.CODECOV_TOKEN_PRESENT == 'true'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
           # Pins the CLI the action downloads at runtime. Dependabot bumps the action
           # SHA above but never this input — bump manually when revisiting.
           version: v11.2.8
@@ -283,6 +306,7 @@ jobs:
     permissions: {}
     needs:
       - ci
+      - coverage
       - doc-surface
       - schema-contract-disposition
     runs-on: ubuntu-latest
@@ -291,6 +315,11 @@ jobs:
       - run: |
           if [[ "${{ needs.ci.result }}" != "success" ]]; then
             echo "CI failed: ${{ needs.ci.result }}"
+            exit 1
+          fi
+          # coverage is skipped in fork/Dependabot contexts (id-token capped to read there).
+          if [[ "${{ needs.coverage.result }}" != "success" && "${{ needs.coverage.result }}" != "skipped" ]]; then
+            echo "coverage failed: ${{ needs.coverage.result }}"
             exit 1
           fi
           # doc-surface is PR-only; on push to main it is skipped (acceptable).
