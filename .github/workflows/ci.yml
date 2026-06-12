@@ -28,7 +28,10 @@ jobs:
         node-version: ["22", "24"]
     runs-on: ${{ matrix.os }}
     env:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      # Presence flag only — the token itself is step-scoped to the upload step's
+      # `with:` so third-party code in install/test never sees it (steps.if can't
+      # read the secrets context, hence the env indirection).
+      CODECOV_TOKEN_PRESENT: ${{ secrets.CODECOV_TOKEN != '' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -41,10 +44,10 @@ jobs:
       - run: pnpm license-check
       - run: pnpm test ${{ matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && '-- -- --coverage' || '' }}
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && env.CODECOV_TOKEN != ''
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '24' && env.CODECOV_TOKEN_PRESENT == 'true'
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
         with:
-          token: ${{ env.CODECOV_TOKEN }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   doc-surface:
     name: Doc Surface Attestation
