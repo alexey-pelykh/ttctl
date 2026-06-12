@@ -17,7 +17,7 @@
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "typecheck": "turbo run typecheck",
-    "lint": "pnpm format:check && turbo run lint && pnpm lint:root && pnpm check-secret-leakage && pnpm check-e2e-coverage && pnpm check-surface-coverage && pnpm check-dep-confusion && pnpm check-write-read-symmetry && pnpm check-merge-completeness && pnpm check-snapshot-degeneracy",
+    "lint": "pnpm format:check && turbo run lint && pnpm lint:root && pnpm check-secret-leakage && pnpm check-e2e-coverage && pnpm check-surface-coverage && pnpm check-dep-confusion && pnpm check-write-read-symmetry && pnpm check-merge-completeness && pnpm check-snapshot-degeneracy && pnpm check-readme-verbs",
     "lint:root": "eslint eslint.config.js vitest.config.ts vitest.e2e.config.ts codegen.config.ts scripts/",
     "license-check": "node scripts/check-licenses.js",
     "check-secret-leakage": "tsx scripts/check-secret-leakage.ts",
@@ -27,6 +27,7 @@
     "check-write-read-symmetry": "tsx scripts/check-write-read-symmetry.ts",
     "check-merge-completeness": "tsx scripts/check-merge-completeness.ts",
     "check-snapshot-degeneracy": "tsx scripts/check-snapshot-degeneracy.ts --strict",
+    "check-readme-verbs": "tsx scripts/check-readme-verbs.ts --strict",
     "codegen": "graphql-codegen --config codegen.config.ts",
     "dev": "turbo run dev"
   },
