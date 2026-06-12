@@ -97,7 +97,7 @@ export interface SurveyAnswerOption {
 /**
  * A single survey question. `inputType` describes how the answer is
  * collected (e.g. a rating scale, free text); `answers` enumerates the
- * selectable options (empty for free-text questions). Downstream
+ * selectable options (empty for free-text and checkbox questions). Downstream
  * `surveys submit` / `surveys feedback` consume `id` + `inputType` +
  * `answers[].value` to build a valid response.
  */
@@ -302,8 +302,8 @@ export interface SurveyAnswerInput {
 /**
  * A caller-supplied answer before resolution. For a multiple-choice
  * question the `value` is matched against the question's answer options to
- * recover the option id; for a free-text question it is sent verbatim.
- * {@link buildSurveyAnswers} performs the resolution.
+ * recover the option id; a free-text value is sent verbatim and a checkbox
+ * takes `"true"`/`"false"`. {@link buildSurveyAnswers} performs the resolution.
  */
 export interface RawSurveyAnswer {
   questionId: string;
@@ -401,13 +401,22 @@ interface SubmitSurveyResponse {
 // ---------------------------------------------------------------------
 
 /**
+ * `SurveyQuestion.inputType` for a boolean checkbox question — carries no
+ * answer options yet requires a stringified-boolean value (e.g. the mandatory
+ * "This interview didn't occur." question on an `INTERVIEW_ENDED` survey).
+ */
+const CHECKBOX_INPUT_TYPE = "CHECKBOX";
+
+/**
  * Resolve caller-supplied {@link RawSurveyAnswer}s against a {@link Survey}
  * into wire {@link SurveyAnswerInput}s. A question carrying answer options
  * (multiple-choice) has its `value` matched against an option's `value` and
- * the option `id` attached; an option-less question (free-text) sends the
- * `value` verbatim with a `null` id. Throws `SurveysError(VALIDATION_ERROR)`
- * for an unknown question id or a value matching no option of a
- * multiple-choice question.
+ * the option `id` attached; an option-less question sends the `value` with a
+ * `null` id — verbatim for free-text, or `"true"`/`"false"` for a checkbox
+ * ({@link CHECKBOX_INPUT_TYPE}, which has no options but accepts only a
+ * stringified boolean). Throws `SurveysError(VALIDATION_ERROR)` for an unknown
+ * question id, a value matching no option of a multiple-choice question, or a
+ * non-boolean checkbox value.
  */
 function buildSurveyAnswers(survey: Survey, raw: RawSurveyAnswer[]): SurveyAnswerInput[] {
   return raw.map((answer) => {
@@ -416,6 +425,17 @@ function buildSurveyAnswers(survey: Survey, raw: RawSurveyAnswer[]): SurveyAnswe
       throw new SurveysError("VALIDATION_ERROR", `Survey ${survey.id} has no question "${answer.questionId}".`);
     }
     if (question.answers.length === 0) {
+      if (question.inputType === CHECKBOX_INPUT_TYPE) {
+        const normalized = answer.value.trim().toLowerCase();
+        if (normalized !== "true" && normalized !== "false") {
+          const labelHint = question.label === null ? "" : ` (${question.label})`;
+          throw new SurveysError(
+            "VALIDATION_ERROR",
+            `Checkbox question "${answer.questionId}"${labelHint} accepts only "true" or "false", got "${answer.value}".`,
+          );
+        }
+        return { questionId: answer.questionId, id: null, value: normalized };
+      }
       return { questionId: answer.questionId, id: null, value: answer.value };
     }
     const option = question.answers.find((o) => o.value === answer.value);
@@ -462,6 +482,19 @@ async function prepareSubmission(token: string, args: SubmitSurveyArgs): Promise
     throw new SurveysError(
       "NOT_FOUND",
       `No pending survey with id "${args.surveyId}". Run \`ttctl surveys list\` to see pending surveys.`,
+    );
+  }
+  // Mandatory questions omitted from `args.answers` are NULLED server-side and
+  // rejected with an opaque inclusion error (e.g. the `INTERVIEW_ENDED`
+  // `occurred` checkbox, #754). Fail loud and client-side, naming each gap.
+  const unanswered = survey.questions.filter(
+    (q) => q.isMandatory === true && !args.answers.some((a) => a.questionId === q.id),
+  );
+  if (unanswered.length > 0) {
+    const names = unanswered.map((q) => (q.label === null ? `"${q.id}"` : `"${q.id}" (${q.label})`)).join(", ");
+    throw new SurveysError(
+      "VALIDATION_ERROR",
+      `Survey "${args.surveyId}" has unanswered mandatory question(s): ${names}. Run \`ttctl surveys list\` to see all questions.`,
     );
   }
   const kind = args.kind ?? survey.kind;
