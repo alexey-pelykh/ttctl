@@ -60,7 +60,7 @@ pnpm dev              # Watch mode
 `pnpm format:check` (Prettier) with the ESLint pass, repo-local lints
 (`lint:root`), and the repo `check-*` gates (secret-leakage,
 e2e-coverage, surface-coverage, dep-confusion, write-read-symmetry,
-merge-completeness, snapshot-degeneracy). Running `pnpm lint` before
+merge-completeness, snapshot-degeneracy, readme-verbs). Running `pnpm lint` before
 pushing catches every check that CI enforces in its lint-class steps.
 `pnpm format:check` remains a separate script so it can be invoked
 standalone (e.g. by CI's first step at `.github/workflows/ci.yml`, or by
@@ -404,6 +404,38 @@ wrappers — is `unknown`, using the `assertWireShapeStable` path syntax
   `SNAPSHOT_DEGENERACY_STRICT=1` (or pass `--strict`) to fail on
   non-exempt degenerate nodes once the corpus is triaged. Sibling
   pattern to the other `check-*` strict switches.
+
+### README verb gate (docs-drift defense)
+
+`scripts/check-readme-verbs.ts` (wired into `pnpm lint`) is the
+structural CI-time defense against the **#751 drift class**: a README
+"What It Does" bullet claiming a verb or command that no CLI command
+registers (docs shipped ahead of — or outliving — their feature; #431
+closed while prerequisite #458 was still open).
+
+Detection scope: the bold bullets between `## What It Does` and
+`### Out of scope` in `README.md`. Two mechanically-checkable claim
+kinds per bullet: backtick command paths (`payments rate show` — every
+path segment must be a registered `.command("...")` token in that
+domain's `packages/cli/src/commands/<domain>/**` tree, token-set
+matched) and leading bare-verb lists ("list, view, and submit" —
+mapped through a curated verb→command alias vocabulary, e.g.
+view→show, sign in→signin; the alias map's keys DEFINE what is
+mechanically checkable). Tokenized text outside that vocabulary,
+non-command backticks (flags, `ttctl_*` MCP tool names), and bullet
+prose past the leading verb clause are reported as unchecked —
+visible, never silently dropped.
+
+- **Exempt** a deliberate prose bullet by placing
+  `<!-- readme-verbs-exempt: <reason> -->` on the line directly above
+  it. The reason is mandatory and surfaces in the report; a marker
+  with no following bullet fails strict mode.
+- **Default mode** is warn-only (exit 0). Set `README_VERBS_STRICT=1`
+  (or pass `--strict`) to fail on missing-command claims, structural
+  parse errors, or marker issues. Unlike most siblings, the
+  package.json wiring passes `--strict` from day one — the README
+  baseline is clean post-#751, so there is no warn-phase gap to pay
+  down.
 
 ### Wire-shape snapshots
 
