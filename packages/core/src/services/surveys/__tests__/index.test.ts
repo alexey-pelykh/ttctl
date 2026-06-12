@@ -49,6 +49,37 @@ const SURVEY_FIXTURE = {
   ],
 };
 
+// INTERVIEW_ENDED shape with a mandatory CHECKBOX question (the #754 case):
+// `answers: []` (no option vocabulary), value is a stringified boolean.
+const SURVEY_WITH_CHECKBOX = {
+  __typename: "Survey",
+  id: "sv-ie",
+  kind: "INTERVIEW_ENDED",
+  title: "How was your interview?",
+  isMandatory: true,
+  alreadyAnswered: false,
+  questions: [
+    {
+      __typename: "SurveyQuestion",
+      id: "q-rate",
+      label: "Rate the interviewer",
+      note: null,
+      isMandatory: true,
+      inputType: "RATING",
+      answers: [{ __typename: "SurveyAnswerOption", id: "a-5", label: "Great", note: null, value: "5" }],
+    },
+    {
+      __typename: "SurveyQuestion",
+      id: "q-occurred",
+      label: "This interview didn't occur.",
+      note: null,
+      isMandatory: true,
+      inputType: "CHECKBOX",
+      answers: [],
+    },
+  ],
+};
+
 function viewerWith(surveys: unknown[]): unknown {
   return { data: { viewer: { __typename: "Viewer", id: "viewer-1", pendingSurveys: surveys } } };
 }
@@ -292,9 +323,77 @@ describe("surveys.submit", () => {
 
   it("throws VALIDATION_ERROR for an unknown question id", async () => {
     replyStock(viewerWith([SURVEY_FIXTURE]));
+    // Answer the mandatory q-1 too, so the unknown-id path (not the
+    // completeness check) is what rejects.
     await expect(
-      submit(TOKEN, { surveyId: "sv-1", answers: [{ questionId: "q-nope", value: "5" }] }, CONSENT),
+      submit(
+        TOKEN,
+        {
+          surveyId: "sv-1",
+          answers: [
+            { questionId: "q-1", value: "5" },
+            { questionId: "q-nope", value: "5" },
+          ],
+        },
+        CONSENT,
+      ),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("sends a checkbox answer as a stringified boolean with id null (case-insensitive in, lowercase out)", async () => {
+    replyStock(viewerWith([SURVEY_WITH_CHECKBOX]));
+    submitReply({ success: true, notice: null, errors: [], viewer: { id: "viewer-1", pendingSurveys: [] } });
+
+    await submit(
+      TOKEN,
+      {
+        surveyId: "sv-ie",
+        answers: [
+          { questionId: "q-rate", value: "5" },
+          { questionId: "q-occurred", value: "False" },
+        ],
+      },
+      CONSENT,
+    );
+
+    expect(submitVariables()).toMatchObject({
+      answers: [
+        { questionId: "q-rate", id: "a-5", value: "5" },
+        { questionId: "q-occurred", id: null, value: "false" },
+      ],
+    });
+  });
+
+  it("throws VALIDATION_ERROR for a non-boolean checkbox value (no submit call)", async () => {
+    replyStock(viewerWith([SURVEY_WITH_CHECKBOX]));
+    await expect(
+      submit(
+        TOKEN,
+        {
+          surveyId: "sv-ie",
+          answers: [
+            { questionId: "q-rate", value: "5" },
+            { questionId: "q-occurred", value: "maybe" },
+          ],
+        },
+        CONSENT,
+      ),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(mockedStock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws VALIDATION_ERROR naming an unanswered mandatory question (no submit call) — #754", async () => {
+    replyStock(viewerWith([SURVEY_WITH_CHECKBOX]));
+    const err: unknown = await submit(
+      TOKEN,
+      { surveyId: "sv-ie", answers: [{ questionId: "q-rate", value: "5" }] },
+      CONSENT,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SurveysError);
+    expect(err).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((err as SurveysError).message).toContain("q-occurred");
+    // The SubmitSurvey mutation is never issued — only the `list` read ran.
+    expect(mockedStock).toHaveBeenCalledTimes(1);
   });
 
   it("throws VALIDATION_ERROR for empty answers BEFORE any wire call", async () => {

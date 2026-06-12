@@ -32,8 +32,9 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
         "",
         "Each survey carries `id`, `kind` (e.g. INTERVIEW_ENDED, NPS, ENGAGEMENT_ENDED), `title`,",
         "`isMandatory`, `alreadyAnswered`, and `questions[]`. Each question carries `id`, `label`,",
-        "`inputType`, `isMandatory`, and the selectable `answers[]` (`id` / `label` / `value`) —",
-        "everything needed to drive a future survey-answer flow.",
+        "`inputType`, `isMandatory`, and the selectable `answers[]` (`id` / `label` / `value`). The",
+        "`inputType` drives the answer value: multiple-choice/radio picks an `answers[]` value, a",
+        '`CHECKBOX` question (empty `answers[]`) takes `"true"`/`"false"`, free-text takes raw text.',
         "",
         "Read-only — listing never mutates survey state.",
         "",
@@ -76,9 +77,13 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
         "`surveySubmissionConsentIssued: true`. Auto-filling without explicit user direction is FORBIDDEN.",
         "",
         "**Pre-flight discovery** (`ttctl_surveys_list`): each pending survey carries `id`, `kind`, and",
-        "`questions[]`. For each question to answer, pass `{ questionId, value }`:",
-        "  - multiple-choice question (`answers[]` non-empty) → `value` is the chosen option's `value`",
-        "  - free-text question (`answers[]` empty) → `value` is the free text",
+        "`questions[]`. Answer EVERY question with `isMandatory: true` — omitting one is rejected. For",
+        "each question pass `{ questionId, value }`, keyed off its `inputType`:",
+        "  - multiple-choice (`answers[]` non-empty) → `value` is the chosen option's `value`",
+        '  - checkbox (`inputType: CHECKBOX`, `answers[]` empty) → `value` is `"true"` or `"false"`. Read',
+        '    the question `label` to know what `"true"` asserts (label "This interview didn\'t occur." →',
+        '    `"true"` means it did NOT occur). NEVER guess a checkbox value — submission is irreversible.',
+        "  - free-text (`answers[]` empty, non-checkbox) → `value` is the free text",
         "The survey `kind` and per-question answer-option ids are resolved from `surveys list` automatically.",
         "",
         "Set `dryRun: true` to preview the request (operationName + your answers + redacted bearer) without",
@@ -94,7 +99,11 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
           .array(
             z.object({
               questionId: z.string().min(1).describe("SurveyQuestion id from `ttctl_surveys_list`."),
-              value: z.string().describe("Multiple-choice: the chosen option's `value`. Free-text: the answer text."),
+              value: z
+                .string()
+                .describe(
+                  "Multiple-choice: the chosen option's `value`. Checkbox: `true` or `false`. Free-text: the answer text.",
+                ),
             }),
           )
           .min(1)

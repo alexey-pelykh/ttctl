@@ -33,7 +33,10 @@
  * `TTCTL_E2E_SUBMIT_SURVEY_ANSWERS="q1=v1,q2=v2"`). The operator opts in by
  * supplying a REAL pending survey they actually want to answer. Submitting
  * is irreversible. The path calls the core service directly so the response
- * can feed `assertWireShapeStable`.
+ * can feed `assertWireShapeStable`. For an `INTERVIEW_ENDED` survey, include
+ * every mandatory question — the `CHECKBOX` "didn't occur" question takes
+ * `true`/`false` (e.g. `q-occurred=false` when the interview did occur). This
+ * is the run that confirms the live `occurred` value contract (#754).
  *
  * **Wire-shape snapshot** (T1 per ADR-006 / `docs/wire-validation-routing.md`):
  * `wire-snapshots/SubmitSurvey.snapshot.json` is committed as a static
