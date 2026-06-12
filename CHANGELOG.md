@@ -7,6 +7,216 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.14] - 2026-06-12
+
+### Added
+
+- **`applications interview show`: surface the client-side contact block
+  (`clientContactInfo`) (#682).** The captured Android `Interview` doc
+  carries the client's `contactFields` (Slack id, email, phone, Skype),
+  but ttctl's `INTERVIEW_QUERY` and projection trimmed them. The
+  client-side contact — distinct from the interviewer/recruiter-side
+  `contacts[]` — is now selected and projected on `InterviewDetail`, and
+  the CLI renders a `Client` section after `Contacts`, omitted unless at
+  least one channel is populated. MCP: `ttctl_applications_interview_show`
+  auto-inherits the field (the tool JSON-serializes the full projection).
+  Wire-shape disposition: Schema/contract rule **triggered** (selection
+  extension on the hand-authored `Interview` op); **Track 1**
+  (`packages/e2e/src/wire-snapshots/Interview.snapshot.json` refreshed —
+  the live run captured the field populated on an external interview).
+  Validated live (`TTCTL_E2E=1`) via
+  `packages/e2e/src/62-applications-interview-show.e2e.test.ts`.
+- **`applications interview show`: surface
+  `contacts[*].topChatConversation` (#683).** The per-contact TopChat
+  discovery handle — selected by the captured Android `Interview.graphql`
+  but trimmed from ttctl, the per-contact twin of #682. Each
+  `InterviewContact` now carries `topChatConversation` (`id`,
+  `slackChannelId` flattened from the `TopChatConversationSlackService`
+  inline fragment, and `uploads[]` with `id` / `filename` / `url`), and
+  the CLI renders a per-contact `TopChat:` block under `Contacts`.
+  Discovery handle only — #23 owns the full TopChat surface (messages,
+  downloads). Wire-shape disposition: Schema/contract rule **triggered**
+  (the conversation/upload sub-shape is INFERRED from the captured doc;
+  the synthesized schema grounds only
+  `TopChatConversationSlackService.channelId`); **Track 1** (`Interview`
+  snapshot refreshed). Validated live (`TTCTL_E2E=1`): the wire returned a
+  populated thread (`id` and `slackChannelId` confirmed as strings);
+  `uploads` was empty on the live thread, so the upload-item shape stays
+  capture-inferred until a populated capture lands.
+- **`timesheet show`: surface `TimesheetRecord.hours` and `persisted`
+  (#684).** Both fields are carried by the captured `TimesheetRecord`
+  fragment but were trimmed from ttctl's ops and projection — the last
+  member of the #559 op-vs-projection spike batch (siblings #682 / #683).
+  Core: `TimesheetRecord` gains `hours: string | null` (server-rendered
+  hour string, sibling to `duration`) and `persisted: boolean | null`
+  (save-state flag); both the `TimesheetDetails` query and the
+  `SubmitTimesheet` mutation select them, so `show` and `submit` both
+  surface them; MCP auto-inherits. CLI: `timesheet show` renders the
+  server `hours` verbatim and derives from `duration` minutes only when
+  null — present-hours rows now render the server form (`8.0h`) instead
+  of the computed `8.00h`. Wire-shape disposition: Schema/contract rule
+  **triggered** (INFERRED fragment fields — the #275 duration-unit-bug
+  class); **Track 1** (`TimesheetDetails` and `SubmitTimesheet` snapshots
+  refreshed, hand-preserving `note: nullable<string>` against an all-null
+  cycle). Validated live (read-only, mobile gateway): `hours` returned as
+  a string and `persisted` as a boolean across 15 records.
+- **Interview read ops: sibling-reach footers (CLI) and tool-description
+  hints (MCP) (#694).** The three interview read ops (`interview show` /
+  `interview notes show` / `interview guide show`) trim heavy job-context
+  cascades BY-DESIGN (#685) but never said where the full context lives.
+  Each pretty render now ends with a discovery footer naming the sibling
+  command that carries it (`interview show` points at
+  `ttctl applications show <activityItemId>`; `notes show` / `guide show`
+  point at `ttctl applications interview show <interviewId>`), suppressed
+  when the target id is absent; the three MCP tool descriptions gain a
+  matching sentence.
+  Pretty-only — `json` / `yaml` output is byte-unchanged.
+  `availability-request show` is deliberately excluded (it already renders
+  the job context inline).
+- **`applications interview show`: inline `job.title` (#696).** Approach B
+  of #694 — a user could see an interview but not tell which job it was
+  for without a second `applications show` call. Adds `title` to the
+  `Interview` op's `job` selection and renders a null-guarded `Title:`
+  line in the CLI `Job` section; the MCP payload carries the field
+  automatically. Re-evaluated per the #480 BY-DESIGN-to-OVERRIDE protocol:
+  a single-field override of the #685 job-cascade trim — the heavy
+  `jobActivityItemData` cascade (roughly 50 fields) stays trimmed and
+  reachable via `applications show <activityItemId>`. Wire-shape
+  disposition: Schema/contract rule **triggered** (selecting `title`
+  directly on `interview.job` is a hand-authored selection extension);
+  **Track 1** (`Interview.snapshot.json` gains `job.title: string` and
+  nothing else — verified surgically, not blind-regenerated). Validated
+  live (`TTCTL_E2E=1`, update and assert modes both 3/3) via e2e file 62;
+  `job.title` returned as a non-null string.
+
+### Changed
+
+- **TLS impersonation bumped to `chrome_147`; the User-Agent now derives
+  from the profile (#38).** `node-wreq` catalog `^2.2.1` → `^2.4.1` (the
+  first release shipping a `chrome_147` profile); `IMPERSONATE_PROFILE`
+  `chrome_145` → `chrome_147`. `USER_AGENT` now derives its Chrome major
+  from `IMPERSONATE_PROFILE` instead of a second hardcoded literal, so the
+  UA and the TLS fingerprint can no longer drift — a profile bump rotates
+  the whole identity bundle. The photo-upload multipart path previously
+  hardcoded its own `Chrome/145.0.0.0` UA (a live cross-layer mismatch);
+  it now imports the shared constant. Verified live against the
+  Cloudflare-protected `talent_profile` portal (`TTCTL_E2E=1`, read-only
+  contracts file, 3/3) — no `Cf403Error` with the `chrome_147`
+  fingerprint. Schema/contract rule **NOT triggered** (no wire-format
+  change; the tracked-path edit is a pure UA-constant refactor).
+- **`applications availability-request show`: the `Job` section leads with
+  `Title:` (#699).** Reorders the section to lead with the human-readable
+  title (then `Job id:` / `URL:` / `Client:`), matching the Title-first
+  order `interview show` adopted in #696. Pretty-render only — field
+  content, alignment, and the `json` / `yaml` projection are unchanged.
+- **Published tarballs drop compiled test fixtures and orphaned sourcemaps
+  (#701).** Surfaced by the 0.1.0 release-readiness audit (CROSS-1).
+  `@ttctl/core` shipped 20 compiled test-fixture files under
+  `dist/__tests__/**`, and every published package shipped `.js.map` and
+  `.d.ts.map` files referencing a `src/` tree absent from the tarball
+  (orphaned — zero debugging value; 224 of `@ttctl/cli`'s 452 files). A
+  per-package `tsconfig.build.json` (build-only; the default
+  `tsconfig.json` stays untouched so type-aware ESLint keeps seeing the
+  fixtures) excludes `**/__tests__/**` and disables `sourceMap` /
+  `declarationMap`. `.d.ts` declarations are preserved — consumers keep
+  full types. `npm pack --dry-run`: core 216 → 100 files, cli 452 → 228.
+  The sourcemap omission is a recorded, reversible 0.1.0 policy decision.
+- **`THIRD-PARTY-NOTICES.md` ships in all four published packages
+  (#705).** `node-wreq` prebuilt binaries statically link `wreq`
+  (Apache-2.0) and BoringSSL (Apache-2.0) plus a permissive Rust crate
+  graph, and upstream ships no `LICENSE` / `NOTICE` files in the binary
+  subpackages — as an AGPL redistributor, TTCtl inherits the
+  notice-preservation obligation. A root `THIRD-PARTY-NOTICES.md` records
+  the verified licenses and is copied into every published tarball via
+  `prepack` (and listed in `files`), alongside `LICENSE`.
+
+### Fixed
+
+- **`profile.portfolio.add`: strip update-only `toptalRelated` from the
+  create wire (#645).** The MCP add tool advertised `toptalRelated` and
+  `add()` forwarded it onto the create wire, but `PortfolioItemCreateInput`
+  rejects the field (`Field is not defined`) — any add supplying it
+  failed. A live bogus-id probe settled the asymmetry: create REJECTS the
+  field while update ACCEPTS it, and on update the value is
+  server-controlled (supplying `true` reads back `false`, mirroring
+  Employment #402 / #508). `add()` now strips `toptalRelated` from the
+  create payload; the MCP add tool drops it from its input schema;
+  `update()` keeps it with a server-controlled doc note. The follow-up
+  secondary-field audit (#693) probed the remaining optional create fields
+  live and settled them as ACCEPTED (`highlight`, `accomplishment`,
+  `clientOrCompanyName`, `websiteUrl`) — `toptalRelated` stays the only
+  rejected optional create field. (#693's interim `highlight` strip was
+  refuted by the live probe and reverted within this release window — no
+  net behavior change for `highlight`.) Wire-shape disposition:
+  Schema/contract rule **triggered**; **Track 1** (`createPortfolioItem`
+  snapshot unchanged). Validated live (`TTCTL_E2E=1`; 12/12 in the final
+  #693 run of `packages/e2e/src/36-profile-portfolio.e2e.test.ts`,
+  re-confirming the `toptalRelated` rejection and update round-trip).
+- **`node-wreq` native-module load failure surfaces an actionable typed
+  error, and the supported-platform matrix is documented (#708).** On
+  platforms where `node-wreq` ships no prebuilt binary (`linux-arm64-musl`,
+  `win32-arm64`), `npm i -g ttctl` succeeds — the binaries are optional
+  dependencies — and the FIRST Cloudflare-protected (`talent-profile`)
+  call threw a raw `Failed to load native module` error while
+  mobile-gateway calls kept working. A new `impersonatedFetch` wrapper
+  translates the load failure into `NativeModuleUnavailableError`
+  (`TtctlError` subclass, code `NATIVE_MODULE_UNAVAILABLE`) naming the
+  live platform-arch pair, the supported set, and the two known gaps; all
+  three impersonated `node-wreq` call sites route through it, the stock
+  `undici` path is untouched (mobile-gateway commands keep working), and
+  the README gains a supported-platforms matrix plus a drift-guard test
+  that fails loudly if a future `node-wreq` bump rewords the load-failure
+  messages the detector matches. Schema/contract rule **NOT triggered**
+  (pure error-handling wrapper; no wire-format change).
+- **`surveys.submit`: require mandatory answers client-side and model the
+  CHECKBOX value vocabulary (#754).** A mandatory `INTERVIEW_ENDED`
+  CHECKBOX question ("This interview didn't occur.") was unanswerable
+  through ttctl: `surveys list` surfaced no value vocabulary for it
+  (`answers: []`), and omitting it was rejected opaquely server-side
+  (`(occurred): is not included in the list`). `prepareSubmission` now
+  rejects unanswered `isMandatory` questions BEFORE any wire call, naming
+  each (id and label), and `buildSurveyAnswers` validates an option-less
+  CHECKBOX value as `"true"` / `"false"` (case-insensitive in, lowercase
+  out, `id: null`) — the serialization the decompiled Android client uses
+  (`String.valueOf(boolean)`). The wire format needed no change; the gap
+  was vocabulary and completeness. CLI and MCP document the checkbox
+  vocabulary and surface each question's `label`. Wire-shape disposition:
+  Schema/contract rule **triggered** (inferred input contract); **Track
+  1** (`SubmitSurvey` response snapshot unchanged). Live-confirmed
+  2026-06-12 via the gated positive path (`TTCTL_E2E_SUBMIT_SURVEY`) — a
+  real `INTERVIEW_ENDED` round-trip confirmed the unchecked-maps-to-
+  `"false"`-maps-to-`occurred` contract.
+
+### Security
+
+- **MCP file-upload sandbox resolves symlinks before the prefix check,
+  closing an exfiltration bypass (#707).** The path-prefix sandbox used
+  `path.resolve` — logical `..` normalization only — so a symlink staged
+  inside the sandbox pointing out (`~/Documents/innocent.pdf` to
+  `~/.ssh/id_rsa`) with an allowed extension passed both defense-in-depth
+  gates, and the upload path would read the link TARGET — arbitrary-file
+  exfiltration to the operator's Toptal profile on a successful prompt
+  injection (audit ref: security M1). `validateSandbox` now resolves the
+  real on-disk location with `fs.realpathSync` (final component AND
+  intermediate-dir symlinks) before the prefix check and refuses when the
+  real location is outside `~/Documents` / `~/Downloads` / `~/Desktop` —
+  refused, not silently followed; a symlink whose real target stays inside
+  the sandbox is still accepted. On a realpath error the gate falls back
+  to the lexical path (a path `realpath` cannot resolve is one `readFile`
+  cannot read either). The `TTCTL_MCP_FILE_UPLOAD_ALLOW_ANY=1` bypass and
+  the extension allowlist are unchanged. Unit-level TDD: the bypass tests
+  were RED against the pre-fix gate, GREEN after.
+
+### Dependencies
+
+- Bump `commander` 14.0.3 → 15.0.0 (#713), `@clack/prompts` 1.4.0 → 1.5.1
+  (#714), `node-wreq` ^2.2.1 → ^2.4.1 (#681, the `chrome_147` bump above),
+  `turbo` 2.9.14 → 2.9.16 (#715), `tsx` 4.22.3 → 4.22.4 (#716), `eslint`
+  10.4.0 → 10.4.1 (#717), `typescript-eslint` 8.59.4 → 8.60.1 (#718),
+  `@graphql-codegen/add` 7.0.0 → 7.0.1 (#719), `@graphql-codegen/cli`
+  7.0.0 → 7.1.2 (#712), `vitest` and `@vitest/coverage-v8` 4.1.5 → 4.1.8
+  (#720, #721), `actions/checkout` 6.0.2 → 6.0.3 (#711).
+
 ## [v0.1.0-rc.13] - 2026-05-29
 
 ### Added
