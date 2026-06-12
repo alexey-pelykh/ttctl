@@ -7,8 +7,10 @@ autoInstallPeers: true
 linkWorkspacePackages: true
 
 # Close fast-uri CVEs via MCP SDK (#223). ^3.1.2 forces re-resolution; ^3.0.0 would let locked 3.1.0 stay.
+# Close shell-quote GHSA-w7jw-789q-3m8p (critical) via @graphql-codegen/cli; locked 1.8.3 is vulnerable.
 overrides:
   fast-uri: "^3.1.2"
+  shell-quote: "^1.8.4"
 
 catalog:
   # Pinned to ~6.0 (patch-only) until typescript-eslint relaxes peer ceiling (<6.1.0 as of 8.59.2)
