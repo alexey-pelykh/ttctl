@@ -384,6 +384,47 @@ gh release download v<version> --pattern '*.cdx.json' --repo alexey-pelykh/ttctl
 osv-scanner --sbom ttctl-<version>.cdx.json
 ```
 
+#### Transitive advisories — present-but-unreachable disposition
+
+`npm audit` / `pnpm audit --prod` reports 9 advisories (8 moderate, 1
+low) on a fresh install. All 9 are transitive through
+`@modelcontextprotocol/sdk`'s HTTP/SSE transport stack — `hono` (via
+`@hono/node-server`), `express`, `express-rate-limit`, `qs` (via
+`body-parser`), and `ip-address`. ttctl's MCP server uses the **stdio
+transport exclusively**: `packages/mcp/src/server.ts` imports only
+`server/mcp.js` and `server/stdio.js`, never `server/sse.js` or
+`server/streamableHttp.js`. Those HTTP-transport modules — and their
+`hono` / `express` / `qs` / `ip-address` dependencies — never enter
+ttctl's runtime module graph, and every one of the 9 advisories requires
+an active HTTP request handler. They are therefore
+**present-but-unreachable** in ttctl's deployment.
+
+Each is pinned by GHSA in [`pnpm-workspace.yaml`](pnpm-workspace.yaml)
+under `auditConfig.ignoreGhsas` — per-GHSA, so a _new_ advisory in any of
+these packages still surfaces. The release audit gate
+(`pnpm audit --audit-level=high`, `.github/workflows/release.yml`) fails
+publishes only on high/critical; these are moderate/low and do not gate
+today. The allowlist records the unreachable disposition and keeps local
+`pnpm audit` output clean — it is **not** a gate-unblocking mechanism. The
+full per-advisory triage and the override-vs-allowlist policy live in
+[ADR-011](hq/engineering/adr/ADR-011-npm-audit-transitive-disposition.md).
+
+**Re-review the allowlist when any of these occur** — the paths can become
+reachable, or the disposition stale, without ttctl's own code changing:
+
+1. ttctl adds any HTTP / SSE / Streamable MCP transport (the suppressed
+   paths become reachable).
+2. `@modelcontextprotocol/sdk` takes a major-version bump — re-verify that
+   `hono` / `express` / `qs` / `ip-address` still hang off the HTTP
+   transport subtree only (`pnpm why <pkg>`), not a path stdio reaches.
+3. A new dependency pulls any of these packages into an executed path (the
+   same GHSA can become reachable via a different consumer).
+4. A listed advisory escalates to high/critical or lands in CISA KEV — an
+   ignored GHSA is suppressed even at the release gate, so an escalation
+   would be silently swallowed.
+5. At each release cut, prune entries whose package or advisory no longer
+   applies — the compensating control for (4).
+
 ### Recommendations
 
 - Store credentials via 1Password references (Form A) rather than literal
