@@ -8,7 +8,10 @@
     "kind": "object",
     "fields": {
       "guideId": {
-        "kind": "string"
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
       },
       "interviewId": {
         "kind": "string"

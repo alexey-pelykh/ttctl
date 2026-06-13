@@ -201,7 +201,21 @@
                 }
               },
               "vacation": {
-                "kind": "null"
+                "kind": "nullable",
+                "inner": {
+                  "kind": "object",
+                  "fields": {
+                    "endDate": {
+                      "kind": "string"
+                    },
+                    "id": {
+                      "kind": "string"
+                    },
+                    "startDate": {
+                      "kind": "string"
+                    }
+                  }
+                }
               }
             }
           },
