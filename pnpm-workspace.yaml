@@ -8,9 +8,31 @@ linkWorkspacePackages: true
 
 # Close fast-uri CVEs via MCP SDK (#223). ^3.1.2 forces re-resolution; ^3.0.0 would let locked 3.1.0 stay.
 # Close shell-quote GHSA-w7jw-789q-3m8p (critical) via @graphql-codegen/cli; locked 1.8.3 is vulnerable.
+# Policy: `overrides` for REACHABLE advisories (above); `auditConfig.ignoreGhsas` (below) for
+# present-but-UNREACHABLE transitive ones — see ADR-011 (ttctl).
 overrides:
   fast-uri: "^3.1.2"
   shell-quote: "^1.8.4"
+
+# Audit allowlist (#770) — all 9 are transitive through @modelcontextprotocol/sdk's HTTP/SSE transport
+# stack (hono, express, express-rate-limit, qs, ip-address) and require an active HTTP request handler.
+# ttctl's MCP server is stdio-only, so they never enter its runtime module graph — present-but-unreachable.
+# Pinned per-GHSA (not per-package) so future advisories still surface.
+# Posture + re-review triggers: SECURITY.md. Full triage + reachability proof: ADR-011 (ttctl).
+auditConfig:
+  ignoreGhsas:
+    # hono — only via the SDK's HTTP/SSE transport (@hono/node-server); stdio reaches none of it
+    - GHSA-qp7p-654g-cw7p # CSS Declaration Injection (JSX SSR)
+    - GHSA-p77w-8qqv-26rm # Cache Middleware ignores Vary: Authorization
+    - GHSA-xrhx-7g5j-rcj5 # IP Restriction bypass (non-canonical IPv6)
+    - GHSA-3hrh-pfw6-9m5x # Cookie helper Set-Cookie injection (sameSite/priority)
+    - GHSA-f577-qrjj-4474 # JWT middleware accepts any Authorization scheme
+    - GHSA-2gcr-mfcq-wcc3 # app.mount() strips mount prefix (percent-encoded paths)
+    - GHSA-hm8q-7f3q-5f36 # JWT verify() improper NumericDate validation (low)
+    # ip-address — only via express-rate-limit (the SDK's HTTP rate limiter)
+    - GHSA-v2v4-37r5-5v8g # XSS in Address6 HTML-emitting methods
+    # qs — only via express > body-parser (the SDK's HTTP body parsing)
+    - GHSA-q8mj-m7cp-5q26 # qs.stringify DoS on null/undefined comma-array entries
 
 catalog:
   # Pinned to ~6.0 (patch-only) until typescript-eslint relaxes peer ceiling (<6.1.0 as of 8.59.2)
