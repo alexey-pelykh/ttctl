@@ -141,9 +141,18 @@ export function assertWireShapeStable(params: AssertWireShapeStableParams): void
       response: params.response,
       ...(params.capturedAt !== undefined && { capturedAt: params.capturedAt }),
     });
-    writeSnapshot(snapshotPath, fresh);
     if (snapshotExists) {
+      // Merge (don't blind-overwrite) so a refresh preserves hand-marked
+      // nullable/optional wrappers instead of re-opening the flip treadmill (#750).
+      const existing = readSnapshot(snapshotPath);
+      const { shape, notes } = mergeSnapshotShape(existing.shape, fresh.shape);
+      writeSnapshot(snapshotPath, { ...fresh, shape });
       stderr(`[wire-snapshot] updated ${snapshotPath}\n`);
+      for (const note of notes) {
+        stderr(`[wire-snapshot] ${note}\n`);
+      }
+    } else {
+      writeSnapshot(snapshotPath, fresh);
     }
     return;
   }
@@ -258,6 +267,117 @@ function diffShapesInto(path: string, expected: WireShape, actual: WireShape, ou
       return;
     }
   }
+}
+
+/** Result of {@link mergeSnapshotShape}: the merged shape plus refresh-time notes. */
+export interface MergeSnapshotResult {
+  readonly shape: WireShape;
+  /** Human-facing diagnostics for the `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` operator (stderr). */
+  readonly notes: readonly string[];
+}
+
+/**
+ * Merge an existing committed snapshot shape with a freshly-captured one for
+ * the `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` refresh path (#750).
+ *
+ * The fresh capture supplies the current wire structure; the existing contract
+ * supplies any hand-marked `nullable`/`optional` wrapper (and its richer shape
+ * under a degenerate live cycle) so a refresh never silently drops them. The
+ * direction mirrors `diffShapes`: where the fresh shape would INHABIT the
+ * existing contract (and thus not drift), the existing contract is kept.
+ *
+ * A `nullable<T>` whose inner scalar kind genuinely changed (the #275/#779
+ * mistype class) keeps the nullable wrapper, adopts the live kind, and emits a
+ * `WARNING` note — the one transition that must surface rather than tolerate.
+ */
+export function mergeSnapshotShape(existing: WireShape, fresh: WireShape): MergeSnapshotResult {
+  const notes: string[] = [];
+  const shape = mergeShapeInto("", existing, fresh, notes);
+  return { shape, notes };
+}
+
+function mergeShapeInto(path: string, existing: WireShape, fresh: WireShape, notes: string[]): WireShape {
+  const here = path === "" ? "<root>" : path;
+
+  // Preserve an `optional` wrapper from either side (canonical outer wrapper).
+  if (existing.kind === "optional") {
+    const innerFresh = fresh.kind === "optional" ? fresh.inner : fresh;
+    return { kind: "optional", inner: mergeShapeInto(path, existing.inner, innerFresh, notes) };
+  }
+  if (fresh.kind === "optional") {
+    return { kind: "optional", inner: mergeShapeInto(path, existing, fresh.inner, notes) };
+  }
+
+  // Preserve a hand-marked `nullable` wrapper across the flip.
+  if (existing.kind === "nullable") {
+    if (fresh.kind === "null") {
+      notes.push(`preserved ${renderShape(existing)} at ${here} (null this cycle)`);
+      return existing;
+    }
+    const innerFresh = fresh.kind === "nullable" ? fresh.inner : fresh;
+    return { kind: "nullable", inner: mergeShapeInto(path, existing.inner, innerFresh, notes) };
+  }
+  // Field became nullable on the wire (e.g. mixed null/typed array elements) —
+  // genuine widening; adopt it.
+  if (fresh.kind === "nullable") {
+    return { kind: "nullable", inner: mergeShapeInto(path, existing, fresh.inner, notes) };
+  }
+
+  // A degenerate `null` snapshot now carries real data — de-degenerate; the
+  // operator decides whether to hand-mark it nullable.
+  if (existing.kind === "null") {
+    if (fresh.kind === "null") return { kind: "null" };
+    notes.push(`populated at ${here} (was null in snapshot)`);
+    return fresh;
+  }
+
+  // Concrete field null THIS cycle: keep the known type (a null cycle must not
+  // erase it) and flag it — auto-widening here would silently accept a genuine
+  // required→nullable change.
+  if (fresh.kind === "null") {
+    notes.push(`kept ${renderShape(existing)} at ${here} (null this cycle — mark nullable if intended)`);
+    return existing;
+  }
+
+  if (existing.kind === "object" && fresh.kind === "object") {
+    const allKeys = [...new Set([...Object.keys(existing.fields), ...Object.keys(fresh.fields)])].sort((a, b) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    const fields: Record<string, WireShape> = {};
+    for (const key of allKeys) {
+      const childPath = path === "" ? key : `${path}.${key}`;
+      const e = existing.fields[key];
+      const f = fresh.fields[key];
+      if (e !== undefined && f !== undefined) {
+        fields[key] = mergeShapeInto(childPath, e, f, notes);
+      } else if (f !== undefined) {
+        fields[key] = f; // genuine new field
+      }
+      // e-only → the wire dropped the field → omit it (object keys do not vanish
+      // from data degeneracy, so a missing key is a real removal).
+    }
+    return { kind: "object", fields };
+  }
+
+  if (existing.kind === "array" && fresh.kind === "array") {
+    // Empty live array captures as `array<unknown>` — keep the existing item
+    // contract rather than collapse it to `unknown`.
+    if (fresh.item.kind === "unknown") {
+      notes.push(`preserved array item at ${here} (empty this cycle)`);
+      return existing;
+    }
+    const itemPath = path === "" ? "[]" : `${path}[]`;
+    return { kind: "array", item: mergeShapeInto(itemPath, existing.item, fresh.item, notes) };
+  }
+
+  if (existing.kind === fresh.kind) {
+    return fresh;
+  }
+
+  // Genuine scalar-kind change — the #275/#779 mistype signal. Adopt the live
+  // kind but surface it loudly so the operator can cross-check the declared type.
+  notes.push(`WARNING: kind changed at ${here}: ${renderShape(existing)} → ${renderShape(fresh)}`);
+  return fresh;
 }
 
 /**

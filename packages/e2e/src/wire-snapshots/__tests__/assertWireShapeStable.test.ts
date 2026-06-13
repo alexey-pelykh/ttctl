@@ -13,6 +13,7 @@ import {
   assertWireShapeStable,
   diffShapes,
   formatDiffEntry,
+  mergeSnapshotShape,
   renderShape,
 } from "../assertWireShapeStable.js";
 import { captureWireShape } from "../captureWireShape.js";
@@ -531,6 +532,212 @@ describe("assertWireShapeStable — update mode (TTCTL_UPDATE_WIRE_SNAPSHOTS=1)"
         }),
       ).toThrow(WireSnapshotAssertionError);
     }
+  });
+});
+
+describe("assertWireShapeStable — null↔populated flip on an already-nullable field (#750, AC2)", () => {
+  // A field hand-marked `nullable<string>` in the committed snapshot must not
+  // drift whether the live cycle returns null or a populated string — the flip
+  // that previously minted a per-op chore on every capture-account data change.
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "wire-snapshot-test-"));
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("AvailReq", {
+        kind: "object",
+        fields: { comment: { kind: "nullable", inner: { kind: "string" } } },
+      }),
+    );
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function assertNoDrift(response: unknown): void {
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "AvailReq",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+        snapshotDir: dir,
+        env: {},
+      }),
+    ).not.toThrow();
+  }
+
+  it("does not drift when the field is null this cycle", () => {
+    assertNoDrift({ comment: null });
+  });
+
+  it("does not drift when the field is populated this cycle", () => {
+    assertNoDrift({ comment: "available next week" });
+  });
+
+  it("still drifts when the field populates with the WRONG scalar kind (#779 guard)", () => {
+    let error: WireSnapshotAssertionError | undefined;
+    try {
+      assertWireShapeStable({
+        operationName: "AvailReq",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response: { comment: 42 },
+        snapshotDir: dir,
+        env: {},
+      });
+    } catch (e) {
+      error = e as WireSnapshotAssertionError;
+    }
+    expect(error?.code).toBe("drift");
+    expect(error?.diff).toEqual([{ op: "~", path: "comment", expected: "string", actual: "number" }]);
+  });
+});
+
+describe("assertWireShapeStable — update mode preserves hand-marked nullables (#750, AC4)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "wire-snapshot-test-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function refresh(operationName: string, response: unknown): { shape: WireShape; stderr: string } {
+    const lines: string[] = [];
+    assertWireShapeStable({
+      operationName,
+      surface: "mobile-gateway",
+      transport: "stock",
+      response,
+      snapshotDir: dir,
+      env: { [UPDATE_ENV_VAR]: "1" },
+      capturedAt: "2026-05-15T12:00:00.000Z",
+      stderr: (l) => lines.push(l),
+    });
+    const written = JSON.parse(readFileSync(join(dir, `${operationName}.snapshot.json`), "utf8")) as WireSnapshot;
+    return { shape: written.shape, stderr: lines.join("") };
+  }
+
+  it("keeps nullable<string> when the field is null this refresh cycle", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("Op", { kind: "object", fields: { comment: { kind: "nullable", inner: { kind: "string" } } } }),
+    );
+    const { shape, stderr } = refresh("Op", { comment: null });
+    expect(shape).toEqual({ kind: "object", fields: { comment: { kind: "nullable", inner: { kind: "string" } } } });
+    expect(stderr).toContain("preserved nullable<string> at comment (null this cycle)");
+  });
+
+  it("keeps nullable<string> when the field is a bare string this refresh cycle", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("Op", { kind: "object", fields: { comment: { kind: "nullable", inner: { kind: "string" } } } }),
+    );
+    const { shape } = refresh("Op", { comment: "x" });
+    expect(shape).toEqual({ kind: "object", fields: { comment: { kind: "nullable", inner: { kind: "string" } } } });
+  });
+
+  it("keeps the existing array item shape when the array is empty this refresh cycle", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("Op", {
+        kind: "object",
+        fields: { records: { kind: "array", item: { kind: "object", fields: { date: { kind: "string" } } } } },
+      }),
+    );
+    const { shape, stderr } = refresh("Op", { records: [] });
+    expect(shape).toEqual({
+      kind: "object",
+      fields: { records: { kind: "array", item: { kind: "object", fields: { date: { kind: "string" } } } } },
+    });
+    expect(stderr).toContain("preserved array item at records (empty this cycle)");
+  });
+
+  it("warns and adopts the live kind when a preserved nullable's inner scalar changes (#779)", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("Op", { kind: "object", fields: { pgid: { kind: "nullable", inner: { kind: "string" } } } }),
+    );
+    const { shape, stderr } = refresh("Op", { pgid: 42 });
+    expect(shape).toEqual({ kind: "object", fields: { pgid: { kind: "nullable", inner: { kind: "number" } } } });
+    expect(stderr).toContain("WARNING: kind changed at pgid: string → number");
+  });
+
+  it("drops a genuinely removed field and keeps a genuinely added one", () => {
+    writeFixtureSnapshot(
+      dir,
+      buildSnapshot("Op", { kind: "object", fields: { a: { kind: "string" }, gone: { kind: "string" } } }),
+    );
+    const { shape } = refresh("Op", { a: "x", added: 1 });
+    expect(shape).toEqual({ kind: "object", fields: { a: { kind: "string" }, added: { kind: "number" } } });
+  });
+});
+
+describe("mergeSnapshotShape — nullable-aware merge (#750)", () => {
+  const NULLABLE_STR: WireShape = { kind: "nullable", inner: { kind: "string" } };
+
+  it("preserves nullable<T> when fresh is null (degenerate null cycle)", () => {
+    const { shape, notes } = mergeSnapshotShape(NULLABLE_STR, { kind: "null" });
+    expect(shape).toEqual(NULLABLE_STR);
+    expect(notes).toEqual(["preserved nullable<string> at <root> (null this cycle)"]);
+  });
+
+  it("preserves nullable<T> when fresh is a bare T (degenerate populated cycle)", () => {
+    const { shape, notes } = mergeSnapshotShape(NULLABLE_STR, { kind: "string" });
+    expect(shape).toEqual(NULLABLE_STR);
+    expect(notes).toEqual([]);
+  });
+
+  it("preserves nullable<T> when fresh is already nullable<T>", () => {
+    const { shape, notes } = mergeSnapshotShape(NULLABLE_STR, NULLABLE_STR);
+    expect(shape).toEqual(NULLABLE_STR);
+    expect(notes).toEqual([]);
+  });
+
+  it("preserves a layered optional<nullable<T>> across a null cycle", () => {
+    const layered: WireShape = { kind: "optional", inner: NULLABLE_STR };
+    expect(mergeSnapshotShape(layered, { kind: "null" }).shape).toEqual(layered);
+  });
+
+  it("keeps the nullable wrapper but warns when the inner scalar kind changes (#779 signal)", () => {
+    const { shape, notes } = mergeSnapshotShape(NULLABLE_STR, { kind: "number" });
+    expect(shape).toEqual({ kind: "nullable", inner: { kind: "number" } });
+    expect(notes).toEqual(["WARNING: kind changed at <root>: string → number"]);
+  });
+
+  it("adopts genuine new nullability from the wire", () => {
+    const { shape } = mergeSnapshotShape(
+      { kind: "object", fields: { note: { kind: "string" } } },
+      { kind: "object", fields: { note: NULLABLE_STR } },
+    );
+    expect(shape).toEqual({ kind: "object", fields: { note: NULLABLE_STR } });
+  });
+
+  it("keeps a concrete type when null this cycle and flags it for hand-marking", () => {
+    const { shape, notes } = mergeSnapshotShape({ kind: "string" }, { kind: "null" });
+    expect(shape).toEqual({ kind: "string" });
+    expect(notes).toEqual(["kept string at <root> (null this cycle — mark nullable if intended)"]);
+  });
+
+  it("de-degenerates a null snapshot when the field populates", () => {
+    const { shape, notes } = mergeSnapshotShape({ kind: "null" }, { kind: "string" });
+    expect(shape).toEqual({ kind: "string" });
+    expect(notes).toEqual(["populated at <root> (was null in snapshot)"]);
+  });
+
+  it("emits nested paths in notes", () => {
+    const { notes } = mergeSnapshotShape(
+      {
+        kind: "object",
+        fields: { items: { kind: "array", item: { kind: "object", fields: { pgid: NULLABLE_STR } } } },
+      },
+      {
+        kind: "object",
+        fields: { items: { kind: "array", item: { kind: "object", fields: { pgid: { kind: "null" } } } } },
+      },
+    );
+    expect(notes).toEqual(["preserved nullable<string> at items[].pgid (null this cycle)"]);
   });
 });
 
