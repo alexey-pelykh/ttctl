@@ -137,7 +137,10 @@
                 "kind": "string"
               },
               "industry": {
-                "kind": "null"
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
               },
               "isEnterprise": {
                 "kind": "boolean"
@@ -184,7 +187,10 @@
                   "kind": "string"
                 },
                 "position": {
-                  "kind": "string"
+                  "kind": "nullable",
+                  "inner": {
+                    "kind": "string"
+                  }
                 },
                 "timeZone": {
                   "kind": "object",

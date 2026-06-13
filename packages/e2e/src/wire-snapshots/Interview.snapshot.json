@@ -53,7 +53,10 @@
               "kind": "string"
             },
             "position": {
-              "kind": "string"
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
             },
             "timeZone": {
               "kind": "object",
@@ -87,7 +90,10 @@
         }
       },
       "guideId": {
-        "kind": "string"
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
       },
       "id": {
         "kind": "string"
@@ -99,7 +105,10 @@
         "kind": "string"
       },
       "interviewTime": {
-        "kind": "string"
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
       },
       "interviewType": {
         "kind": "string"
