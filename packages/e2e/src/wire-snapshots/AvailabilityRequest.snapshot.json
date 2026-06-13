@@ -11,7 +11,10 @@
         "kind": "string"
       },
       "comment": {
-        "kind": "null"
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
       },
       "createdAt": {
         "kind": "string"

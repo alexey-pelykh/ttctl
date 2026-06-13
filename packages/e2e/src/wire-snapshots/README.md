@@ -73,6 +73,34 @@ item shape and is compared normally, and a degenerate _snapshot_
 (`array<unknown>`) still drifts against populated live data — the remedy is
 re-capturing the snapshot from a populated subject.
 
+## Nullable-field policy (hand-marking)
+
+A field that is genuinely **nullable on the wire** but uniform this capture
+cycle — `null` in every sample, or typed in every sample — captures as a bare
+`null` / bare `T`, never as `nullable<T>`: `captureWireShape` cannot infer
+nullability from one uniform cycle (the `nullable` wrapper arises only from
+array/object unification across mixed elements). Left bare, the field drifts on
+the next cycle that flips it — the per-op chore treadmill this directory used to
+mint (#615 / #639 / #739).
+
+**Policy**: when triage shows a field is genuinely nullable, **hand-mark it
+`nullable<T>`** in the snapshot, where `T` is the field's declared scalar type
+from `research/graphql/gateway/schema.graphql` / the generated
+`packages/core/src/__generated__/*.ts` — _not_ whatever the current cycle
+returned. One edit per field, and the flip stops minting chores:
+
+- The comparator tolerates the flip both ways — a live `null` and a live bare
+  `T` both _inhabit_ `nullable<T>` (the directional contract above).
+- It still flags a **scalar-kind** mismatch: a live `number` against a
+  `nullable<string>` contract surfaces as `~ <path>: string → number`. Marking
+  `T` from the schema (never from a lone cycle) is what keeps that cross-check
+  real — a bare `null` snapshot carries no `T`, so it would mask a `#275`-class
+  mistype (the lesson of #779).
+
+`T` must be a known scalar. A field typed `Unknown` in the schema (e.g.
+`AvailabilityRequest.rejectReason`) has no determinate populated shape; leave it
+bare until its wire shape is observed rather than guess `nullable<string>`.
+
 ## What does NOT go in a snapshot
 
 ### Values — never
@@ -231,10 +259,22 @@ and commit it alongside the test.
 
 ### Update an existing snapshot when the wire genuinely changed
 
-Re-run the same command — the helper overwrites the snapshot and emits
-`[wire-snapshot] updated <path>` to stderr. The PR description **must**
-justify the wire change (Toptal incident, `research/notes/` update, or
-schema-drift evidence).
+Re-run the same command — the helper **merges** the fresh capture into the
+existing snapshot and emits `[wire-snapshot] updated <path>` to stderr. The
+merge preserves hand-marked `nullable<T>` / `optional<T>` wrappers (and the
+item shape of an array that is empty this cycle) instead of blind-overwriting
+them, so a refresh never silently erases the nullable-field policy above.
+Relevant transitions surface as extra stderr notes:
+
+- `preserved nullable<T> at <path> (null this cycle)` — a hand-marked wrapper
+  survived a degenerate cycle. Expected; no action.
+- `WARNING: kind changed at <path>: <T> → <U>` — a nullable's inner scalar kind
+  changed on the wire. **Investigate**: the `#779` signal that the declared
+  TS/codegen type may be wrong. The new kind is adopted; cross-check the schema
+  before committing.
+
+The PR description **must** justify any wire change (Toptal incident,
+`research/notes/` update, or schema-drift evidence).
 
 ### Triage a failing snapshot test
 
