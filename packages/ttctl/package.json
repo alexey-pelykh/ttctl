@@ -28,8 +28,12 @@
   "mcpName": "io.github.alexey-pelykh/ttctl",
   "keywords": [
     "toptal-talent",
+    "toptal",
+    "freelance",
+    "cli",
     "mcp",
-    "cli"
+    "mcp-server",
+    "model-context-protocol"
   ],
   "files": [
     "dist",
