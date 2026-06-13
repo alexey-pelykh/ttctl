@@ -42,7 +42,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { getCliClient, getSharedSession } from "./harness/index.js";
-import type { CliClient } from "./harness/index.js";
+import type { CliClient, CliInvocationResult } from "./harness/index.js";
 
 const e2eEnabled = process.env["TTCTL_E2E"] === "1";
 
@@ -88,6 +88,28 @@ function formatYmd(d: Date): string {
   const m = (d.getMonth() + 1).toString().padStart(2, "0");
   const day = d.getDate().toString().padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Surface a failing `breaks add`'s error `code`(s) before the exitCode assert —
+ * in `-o json` mode the error envelope lands on stdout, so without this the
+ * failure reaches the transcript as a bare exit 1 with the code lost. No-op on success.
+ */
+function surfaceAddFailure(addResult: CliInvocationResult): void {
+  if (addResult.exitCode === 0) return;
+  let codes = "<stdout not JSON>";
+  try {
+    const envelope = JSON.parse(addResult.stdout) as { errors?: Array<{ code?: string }> };
+    if (Array.isArray(envelope.errors)) {
+      codes = envelope.errors.map((e) => e.code ?? "?").join(", ") || "<empty errors[]>";
+    }
+  } catch {
+    // stdout wasn't JSON — the raw dump below still carries the signal.
+  }
+  process.stderr.write(
+    `breaks add failed (exit ${String(addResult.exitCode)}); error code(s): ${codes}\n` +
+      `  stdout: ${addResult.stdout}\n  stderr: ${addResult.stderr}\n`,
+  );
 }
 
 describe("engagements breaks (live mobile-gateway)", () => {
@@ -157,6 +179,7 @@ describe("engagements breaks (live mobile-gateway)", () => {
       "-o",
       "json",
     ]);
+    surfaceAddFailure(addResult);
     expect(addResult.exitCode).toBe(0);
     const addPayload = JSON.parse(addResult.stdout) as {
       ok?: boolean;
@@ -395,6 +418,7 @@ describe("engagements breaks (live mobile-gateway)", () => {
         "-o",
         "json",
       ]);
+      surfaceAddFailure(addResult);
       expect(addResult.exitCode).toBe(0);
       const addPayload = JSON.parse(addResult.stdout) as { created?: { id?: string } };
       const newBreakId = addPayload.created?.id;
