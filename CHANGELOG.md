@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.15] - 2026-06-13
+
+### Added
+
+- **README-verbs lint gate (#762).** `scripts/check-readme-verbs.ts`
+  (wired into `pnpm lint`) mechanically diffs the README's capability-verb
+  claims against the registered CLI command tree and fails the gate when
+  the README advertises a verb the CLI does not ship — a structural
+  defense against the #751 drift class.
+
+### Changed
+
+- **MCP README tool catalog recounted: 88 → 129 tools (#769).**
+  `packages/mcp/README.md` understated the registered MCP surface — it
+  claimed 88 tools, omitted the `surveys` domain from the per-domain
+  breakdown, and carried stale per-domain counts. Recounted against the
+  canonical tool enumeration: 129 tools across 10 domains, `surveys`
+  added, per-domain counts refreshed and reconciled to the total.
+  Docs-only; the README ships in the `@ttctl/mcp` tarball.
+- **Expand npm keywords on the `ttctl` umbrella package (#771).** Broadened
+  for registry discoverability ahead of the first stable (`toptal`,
+  `freelance`, `mcp-server`, `model-context-protocol`).
+- **CI: Codecov upload moved to a dedicated OIDC coverage job (#761,
+  #759).** The upload now authenticates via OIDC, and `CODECOV_TOKEN` is
+  scoped to the upload step rather than the whole workflow.
+
+### Fixed
+
+- **Drop the unshipped `timesheet update` verb from the README (#751).**
+  The root README's Timesheets bullet advertised an `update` verb with no
+  `UpdateTimesheet` invocation in core and no `timesheet update` CLI
+  command; corrected to "list, view, and submit". Restore when #458 lands.
+- **Generate coverage at the repository root so the Codecov upload
+  delivers (#760).** Coverage was produced per-package, leaving the upload
+  step with nothing to deliver; it is now generated at the root level.
+
+### Security
+
+- **Disposition the 9 transitive `npm audit` advisories (hono ×7,
+  ip-address, qs) via a documented allowlist (#770).** All nine arrive
+  through `@modelcontextprotocol/sdk`'s optional HTTP/SSE transport stack
+  (hono / express-rate-limit / qs / ip-address) and require an active HTTP
+  request handler; ttctl's MCP server is stdio-only, so the vulnerable
+  paths never enter its runtime module graph — present-but-unreachable (a
+  `security-architect` review confirmed the reachability claim). They are
+  pinned per-GHSA in `pnpm-workspace.yaml` `auditConfig.ignoreGhsas` (so
+  future advisories still surface), with the full triage and reachability
+  proof in ADR-011 and the posture plus re-review trigger in `SECURITY.md`.
+  A reachable `fast-uri` advisory surfaced during triage was closed with a
+  `pnpm.overrides` bump.
+
+### Dependencies
+
+- Bump `undici` 8.3.0 → 8.4.1 (#747), `prettier` 3.8.3 → 3.8.4 (#746),
+  `turbo` 2.9.16 → 2.9.18 (#745), `typescript-eslint` 8.60.1 → 8.61.0
+  (#749), `graphql` 16.14.0 → 16.14.2 (#748), `codecov/codecov-action`
+  6.0.1 → 7.0.0 (#744).
+
 ## [v0.1.0-rc.14] - 2026-06-12
 
 ### Added
