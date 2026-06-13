@@ -8,11 +8,15 @@ linkWorkspacePackages: true
 
 # Close fast-uri CVEs via MCP SDK (#223). ^3.1.2 forces re-resolution; ^3.0.0 would let locked 3.1.0 stay.
 # Close shell-quote GHSA-w7jw-789q-3m8p (critical) via @graphql-codegen/cli; locked 1.8.3 is vulnerable.
+# Bump esbuild to the GHSA-gv7w-rqvm-qjhr patch (>=0.28.1) — dev-only via vitest, not in the shipped tarball;
+# a clean patch exists so we upgrade rather than ignore (the release-time `pnpm audit --audit-level=high`
+# gate fails on the HIGH otherwise).
 # Policy: `overrides` for REACHABLE advisories (above); `auditConfig.ignoreGhsas` (below) for
 # present-but-UNREACHABLE transitive ones — see ADR-011 (ttctl).
 overrides:
   fast-uri: "^3.1.2"
   shell-quote: "^1.8.4"
+  esbuild: "^0.28.1"
 
 # Audit allowlist (#770) — all 9 are transitive through @modelcontextprotocol/sdk's HTTP/SSE transport
 # stack (hono, express, express-rate-limit, qs, ip-address) and require an active HTTP request handler.
