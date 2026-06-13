@@ -16,19 +16,22 @@
               "kind": "string"
             },
             "billingCycle": {
-              "kind": "object",
-              "fields": {
-                "__typename": {
-                  "kind": "string"
-                },
-                "endDate": {
-                  "kind": "string"
-                },
-                "id": {
-                  "kind": "string"
-                },
-                "startDate": {
-                  "kind": "string"
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "endDate": {
+                    "kind": "string"
+                  },
+                  "id": {
+                    "kind": "string"
+                  },
+                  "startDate": {
+                    "kind": "string"
+                  }
                 }
               }
             },
@@ -51,30 +54,33 @@
               "kind": "string"
             },
             "job": {
-              "kind": "object",
-              "fields": {
-                "__typename": {
-                  "kind": "string"
-                },
-                "client": {
-                  "kind": "object",
-                  "fields": {
-                    "__typename": {
-                      "kind": "string"
-                    },
-                    "fullName": {
-                      "kind": "string"
-                    },
-                    "id": {
-                      "kind": "string"
+              "kind": "nullable",
+              "inner": {
+                "kind": "object",
+                "fields": {
+                  "__typename": {
+                    "kind": "string"
+                  },
+                  "client": {
+                    "kind": "object",
+                    "fields": {
+                      "__typename": {
+                        "kind": "string"
+                      },
+                      "fullName": {
+                        "kind": "string"
+                      },
+                      "id": {
+                        "kind": "string"
+                      }
                     }
+                  },
+                  "id": {
+                    "kind": "string"
+                  },
+                  "title": {
+                    "kind": "string"
                   }
-                },
-                "id": {
-                  "kind": "string"
-                },
-                "title": {
-                  "kind": "string"
                 }
               }
             },
@@ -97,7 +103,10 @@
               }
             },
             "paymentGroupId": {
-              "kind": "null"
+              "kind": "nullable",
+              "inner": {
+                "kind": "number"
+              }
             },
             "status": {
               "kind": "string"

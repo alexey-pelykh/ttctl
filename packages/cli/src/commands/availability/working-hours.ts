@@ -45,7 +45,7 @@ export function formatWorkingHoursShow(data: WorkingHoursShow): string {
     lines.push("Time zone");
     lines.push(`  IANA: ${tz.value}`);
     if (tz.name !== null && tz.name !== "") lines.push(`  Name: ${tz.name}`);
-    if (tz.utcOffset !== null && tz.utcOffset !== "") lines.push(`  UTC offset: ${tz.utcOffset}`);
+    if (tz.utcOffset !== null) lines.push(`  UTC offset: ${tz.utcOffset}`);
   }
 
   lines.push("");

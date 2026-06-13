@@ -72,7 +72,7 @@ const PAYOUT_FIXTURE: payments.Payout = {
   description: "April payout",
   status: "PAID",
   kindCategory: "TALENT_PAYMENT",
-  paymentGroupId: "grp-1",
+  paymentGroupId: 1,
   billingCycle: { id: "bc-1", startDate: "2026-04-01", endDate: "2026-04-30" },
   dueDate: "2026-05-15",
   paidAt: "2026-05-10T12:00:00Z",

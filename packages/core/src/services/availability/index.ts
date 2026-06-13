@@ -129,8 +129,8 @@ export interface AvailabilityTimeZone {
   name: string | null;
   value: string;
   location: string | null;
-  utcOffset: string | null;
-  stdOffset: string | null;
+  utcOffset: number | null;
+  stdOffset: number | null;
 }
 
 /**
