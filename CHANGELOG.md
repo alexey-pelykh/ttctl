@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scalar type corrections: `paymentGroupId` and time-zone offsets are
+  `number`, not `string` (#779).** Two `#275`-class mistypes where the
+  hand-authored TypeScript contracted a `string` while the SDL, generated
+  codegen, and live wire all return a numeric `Int`. `payments` —
+  `Payout.paymentGroupId` / `WirePayment.paymentGroupId` retyped
+  `string | null` → `number | null` (live wire returns group ids like
+  `261280`). `availability` — `AvailabilityTimeZone.utcOffset` /
+  `.stdOffset` retyped `string | null` → `number | null` (live wire
+  returns offset seconds, e.g. `3600` for UTC+1), found by the
+  accompanying suite-wide scalar-mistype sweep. Runtime rendering is
+  unchanged (the wire already sent numbers); the fix aligns the type
+  contract so string operations on these fields are no longer silently
+  wrong. The `Payments` wire snapshot was hand-corrected (and
+  live-verified against a populated cycle): `paymentGroupId` from a
+  degenerate `null` capture to `nullable<number>`, and `billingCycle`/`job`
+  from a degenerate non-null capture to their true `nullable<object>` shape.
+
 ## [v0.1.0-rc.15] - 2026-06-13
 
 ### Added

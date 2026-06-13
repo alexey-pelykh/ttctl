@@ -186,7 +186,7 @@ export interface Payout {
   description: string | null;
   status: string;
   kindCategory: string;
-  paymentGroupId: string | null;
+  paymentGroupId: number | null;
   billingCycle: PayoutBillingCycle | null;
   dueDate: string | null;
   paidAt: string | null;
@@ -653,7 +653,7 @@ interface WirePayment {
   description: string | null;
   status: string;
   kindCategory: string;
-  paymentGroupId: string | null;
+  paymentGroupId: number | null;
   billingCycle: WirePaymentBillingCycle | null;
   dueDate: string | null;
   paidAt: string | null;

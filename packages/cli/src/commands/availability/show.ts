@@ -61,8 +61,8 @@ export function formatAvailabilitySnapshot(snap: availability.AvailabilitySnapsh
     lines.push(`  IANA: ${tz.value}`);
     if (tz.name !== null && tz.name !== "") lines.push(`  Name: ${tz.name}`);
     if (tz.location !== null && tz.location !== "") lines.push(`  Location: ${tz.location}`);
-    if (tz.utcOffset !== null && tz.utcOffset !== "") lines.push(`  UTC offset: ${tz.utcOffset}`);
-    if (tz.stdOffset !== null && tz.stdOffset !== "" && tz.stdOffset !== tz.utcOffset) {
+    if (tz.utcOffset !== null) lines.push(`  UTC offset: ${tz.utcOffset}`);
+    if (tz.stdOffset !== null && tz.stdOffset !== tz.utcOffset) {
       lines.push(`  Standard offset: ${tz.stdOffset}`);
     }
   }

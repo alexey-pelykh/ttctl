@@ -12,8 +12,8 @@ const TIME_ZONE_BERLIN: availability.AvailabilityTimeZone = {
   name: "Central European Time",
   value: "Europe/Berlin",
   location: "Berlin, Germany",
-  utcOffset: "+01:00",
-  stdOffset: "+01:00",
+  utcOffset: 3600,
+  stdOffset: 3600,
 };
 
 const SNAPSHOT_FIXTURE: availability.AvailabilitySnapshot = {
@@ -80,9 +80,9 @@ describe("formatAvailabilitySnapshot", () => {
   it("shows the standard-offset line when it differs from UTC offset", () => {
     const rendered = formatAvailabilitySnapshot({
       ...SNAPSHOT_FIXTURE,
-      timeZone: { ...TIME_ZONE_BERLIN, utcOffset: "+02:00", stdOffset: "+01:00" },
+      timeZone: { ...TIME_ZONE_BERLIN, utcOffset: 7200, stdOffset: 3600 },
     });
-    expect(rendered).toContain("Standard offset: +01:00");
+    expect(rendered).toContain("Standard offset: 3600");
   });
 });
 
