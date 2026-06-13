@@ -73,6 +73,40 @@ The repository is a pnpm monorepo with the following packages:
 
 Follow the project conventions documented in [CLAUDE.md](CLAUDE.md).
 
+### Issue triage: wave labels
+
+Open issues carry a wave label as a scheduling signal. **`wave-0`** is the
+shippable-MVP tier — release-blocking work for the current stable cut.
+**`wave-1`** is the actionable next-up tier — coverage round-out work that is
+ready to start now, with no unmet precondition. **`wave-2`** is the
+trigger-based deferred tier — work that is real but gated on a named external
+condition (a blocker issue closing, an upstream wire change, a prerequisite
+feature landing, or a vendor exposing a surface). An item is **promoted
+`wave-2` → `wave-1` when its named trigger fires** — the maintainer relabels it
+and records the trigger event in the issue body (e.g. "Trigger fired — #147
+merged 2026-05-11; promoting to wave-1"). `wave-1` is kept honest: an item that
+turns out to be blocked is demoted back to `wave-2` (retaining any `blocked`
+label) so the tier always means "startable today." There is no automatic
+demotion by age, but a periodic re-triage pass re-affirms or demotes each
+`wave-1` item to prevent the tier from silently losing meaning.
+
+### ADR citations in issues
+
+Three separate ADR catalogs exist and their numbers collide — never cite a bare
+`ADR-NNN` in an issue body. Qualify every citation by catalog, matching the
+convention the ADR files themselves use:
+
+- **`ADR-NNN (ttctl)`** — this repo's ADRs at `hq/engineering/adr/` (the public
+  tree; ADR-006 onward).
+- **`HQ ADR-NNN`** — the operational `alexey-pelykh/hq` sibling repo's ADRs
+  (private).
+- **`research ADR-NNN`** — the `ttctl/research` sibling repo's ADRs (private;
+  ADR-001–005, covering TLS impersonation, cookie-jar auth, and the
+  bearer-token model).
+
+The numbers are per-catalog, not global: `ADR-010 (ttctl)` (Codecov OIDC) and
+`HQ ADR-010` (service-layer layout) are different documents in different repos.
+
 ### Branch protection
 
 The `main` branch is protected by a [GitHub ruleset][gh-rulesets]. The
