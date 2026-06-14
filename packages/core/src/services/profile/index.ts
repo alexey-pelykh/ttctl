@@ -27,3 +27,16 @@ export * as external from "./external/index.js";
 export * as reviews from "./reviews/index.js";
 export * as specializations from "./specializations/index.js";
 export * as countries from "./countries/index.js";
+
+// Rich `GetViewer` projection behind `profile show --verbose` (#469).
+// Separate file per AC, re-exported here as the `profile.showRich` leaf
+// (sibling-file pattern, same as employment's `reportingToAutocomplete`).
+export { showRich } from "./viewer-rich.js";
+export type {
+  RichViewer,
+  RichViewerRole,
+  RichHireMeBanner,
+  RichLegalDocument,
+  RichPermissions,
+  RichViewerRoleOperations,
+} from "./viewer-rich.js";

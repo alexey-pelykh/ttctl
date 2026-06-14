@@ -8,6 +8,15 @@
   "GetTalentSpecializations": {
     "[].operations.apply.messages": "Apply is cleanly callable for this account's specializations; gating messages are absent."
   },
+  "GetViewer": {
+    "pendingNotifications": "No pending profile notifications on this account at capture time; populates only when the talent has an outstanding nudge.",
+    "pendingQuizzes": "No pending quizzes assigned to this account; populates only mid-assessment.",
+    "pendingSurveys": "No pending surveys assigned to this account; populates only when a survey is outstanding.",
+    "slackApplications.edges": "No Slack apps connected on this account; populates only after a Slack authorization.",
+    "viewerRole.nonTalentRoles": "This account holds only the talent role; populates only for users with additional non-talent roles.",
+    "viewerRole.operations.createRateChangeRequest.messages": "createRateChangeRequest is cleanly callable for this account; gating messages are absent.",
+    "viewerRole.operations.startSearchSubscription.messages": "startSearchSubscription is cleanly callable for this account; gating messages are absent."
+  },
   "Interview": {
     "contacts[].topChatConversation.uploads": "Interview TopChat threads on this account carry zero attachments.",
     "talentNotes": "Talent interview notes are append-only with no write surface on web or mobile; the array never populates on this account."

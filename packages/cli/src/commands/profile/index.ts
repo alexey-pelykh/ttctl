@@ -45,13 +45,20 @@ export function buildProfileCommand(): Command {
   profile
     .command("show")
     .description("Print a summary of the signed-in user's Toptal Talent profile (alias for `profile basic show`)")
+    // `--full` (not `--verbose`): the root program owns a global `--verbose`
+    // (#139 transport logging) that Commander binds in every position, so a
+    // command-level `--verbose` would never receive the flag (#469).
+    .option(
+      "--full",
+      "fetch the full portal GetViewer projection (legal docs, market state, pending work, rate insight)",
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
         .default("pretty" satisfies OutputFormat),
     )
-    .action(async (options: { output: OutputFormat }) => {
-      await runProfileBasicShow(options.output);
+    .action(async (options: { output: OutputFormat; full?: boolean }) => {
+      await runProfileBasicShow(options.output, options.full === true);
     });
 
   // Marked as a mutation (issue #52) so the global `--dry-run` flag

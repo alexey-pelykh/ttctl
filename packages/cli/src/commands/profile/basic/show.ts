@@ -63,8 +63,24 @@ export interface BasicShowPayload {
  * gateway 401, so the user-visible message ("run `ttctl auth signin`") is
  * uniform across "never signed in" and "signed in but expired".
  */
-export async function runProfileBasicShow(format: OutputFormat): Promise<void> {
+export async function runProfileBasicShow(format: OutputFormat, full = false): Promise<void> {
   const token = await loadAuthTokenOrExit("profile show", format);
+
+  // Full-projection path (#469): fetch the FULL portal `GetViewer` projection
+  // instead of the trimmed `ProfileShow` default. JSON/YAML emit the whole
+  // rich object; `pretty` renders a curated extended summary. The heavy
+  // legal-doc bodies + operational scopes only ride the wire on demand.
+  if (full) {
+    let rich: profile.RichViewer;
+    try {
+      rich = await profile.showRich(token);
+    } catch (err) {
+      handleProfileShowError(err, format);
+      return;
+    }
+    emitResult(rich, format, { pretty: formatRichViewerPretty });
+    return;
+  }
 
   let profilePayload: ProfileShowQuery;
   try {
@@ -358,6 +374,69 @@ export function formatProfileTable(
     table.push([k, v]);
   }
   return table.toString();
+}
+
+/**
+ * Curated `pretty` summary for `profile show --verbose` (#469). Surfaces
+ * the rich-projection fields the trimmed default omits — legal-doc
+ * acceptance, post-activation/market state, hire-me banner, rate insight —
+ * on top of base identity/role. The complete `GetViewer` object (incl. the
+ * inline legal-doc bodies and operational scopes) is available via
+ * `--output json` / `yaml`; pretty stays a digest.
+ */
+export function formatRichViewerPretty(viewer: profile.RichViewer): string {
+  const role = viewer.viewerRole;
+  const indent = "  ";
+  const lines: string[] = [role.fullName, `${indent}${role.email}`];
+  if (role.phoneNumber !== "") lines.push(`${indent}${role.phoneNumber}`);
+
+  lines.push(`${indent}Vertical: ${role.vertical.name}`);
+  const specs = role.specializations.slice(0, 3).map((s) => s.title);
+  if (specs.length > 0) lines.push(`${indent}Specializations: ${specs.join(", ")}`);
+  lines.push(
+    `${indent}Availability: ${role.availability} (${role.hiredHours.toString()}/${role.allocatedHours.toString()}h)`,
+  );
+  lines.push(`${indent}Rate: ${role.hourlyRate.verbose}/hr`);
+  lines.push(`${indent}TimeZone: ${role.timeZone.value}`);
+  lines.push(`${indent}Post-activation: ${role.postActivationStepsStatus}`);
+  lines.push(`${indent}Specialization type: ${role.specializationType}`);
+  if (role.blockedStatus.isBlocked) {
+    lines.push(`${indent}Blocked: ${unsetOr(role.blockedStatus.reason, "yes")}`);
+  }
+
+  // Market condition (the talent's vertical demand signal).
+  lines.push(
+    `${indent}Market: ${role.vertical.marketCondition.condition} ` +
+      `(global: ${role.vertical.globalMarketCondition.condition})`,
+  );
+
+  // Rate insight — competitiveness + recommended.
+  const ri = role.rateInsight.hourly;
+  lines.push(
+    `${indent}Rate insight: ${ri.currentRateCompetitive ? "competitive" : "below market"}, ` +
+      `recommended ${ri.recommendedRate}`,
+  );
+
+  // Hire-me banner state.
+  lines.push(
+    `${indent}Hire-me banner: ${viewer.hireMeBanner.enabled ? "enabled" : "disabled"} ` +
+      `(verification: ${viewer.hireMeBanner.verificationStatus})`,
+  );
+
+  // Legal-document acceptance — Code of Conduct + Terms of Service.
+  lines.push(`${indent}Code of Conduct: ${viewer.codeOfConduct.acceptedAt ? "accepted" : "not accepted"}`);
+  lines.push(`${indent}Terms of Service: action ${viewer.termsOfService.requiredAction ?? "NONE"}`);
+
+  // Pending-work counters (surveys, quizzes, notifications, job activity).
+  lines.push(
+    `${indent}Pending: ${viewer.pendingSurveys.length.toString()} surveys, ` +
+      `${viewer.pendingQuizzes.length.toString()} quizzes, ` +
+      `${viewer.pendingNotifications.length.toString()} notifications`,
+  );
+  lines.push(`${indent}Active job activity: ${viewer.jobActivityList.entities.length.toString()}`);
+
+  lines.push(`${indent}Public résumé: ${unsetOr(role.publicResumeUrl)}`);
+  return lines.join("\n");
 }
 
 function truncate(s: string, width: number): string {

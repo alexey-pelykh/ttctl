@@ -5,7 +5,7 @@ import type { ProfileShowQuery, profile } from "@ttctl/core";
 import { describe, expect, it } from "vitest";
 
 import { formatYaml } from "../../../../lib/output.js";
-import { formatProfilePretty, formatProfileTable } from "../show.js";
+import { formatProfilePretty, formatProfileTable, formatRichViewerPretty } from "../show.js";
 import type { BasicShowPayload } from "../show.js";
 
 /**
@@ -550,5 +550,184 @@ describe("BasicShowPayload — JSON / YAML serialization", () => {
     // The two paragraphs render on separate visible lines.
     expect(yaml).toContain("I built the Analytical Engine.");
     expect(yaml).toContain("Later, I wrote the first algorithm.");
+  });
+});
+
+// ---------------------------------------------------------------------
+// #469 — `profile show --full` rich-projection renderer
+// ---------------------------------------------------------------------
+
+/** Complete `RichViewer` fixture (independent of the core-package copy,
+ * per the deliberate cross-package duplication convention above). */
+const RICH: profile.RichViewer = {
+  id: "VjEtVmlld2VyLTEyMjc5OQ",
+  appliedAt: "2011-12-28T18:01:19+01:00",
+  hasSearchSubscription: false,
+  hireMeBanner: {
+    enabled: true,
+    submitted: false,
+    experimentVariant: "control",
+    referralUrl: "https://www.toptal.com/r/ada",
+    personalWebsiteUrl: null,
+    verificationStatus: "IDLE",
+    verifiedCount: 0,
+  },
+  availabilityRequestTalentCardEnabled: true,
+  coachingEligibility: "QUICK",
+  codeOfConduct: {
+    id: "coc-1",
+    acceptedAt: "2024-01-01T00:00:00+00:00",
+    body: "CoC body",
+    title: "Code of Conduct",
+    revisedOn: "2024-01-01",
+    revisionNotice: null,
+  },
+  scheduledAvailability: null,
+  termsOfService: {
+    id: "tos-1",
+    body: "ToS body",
+    title: "Terms of Service",
+    revisedOn: "2024-01-01",
+    revisionNotice: null,
+    requiredAction: "NONE",
+  },
+  viewerRole: {
+    activatedAt: "2018-06-15T00:00:00+00:00",
+    askExpertMenuVisible: true,
+    blockedStatus: { isBlocked: false, reason: null },
+    roleId: 12345,
+    profileId: "p1",
+    availability: "PART_TIME",
+    hiredHours: 30,
+    fullName: "Ada Lovelace",
+    phoneNumber: "+1 555 0100",
+    email: "ada@example.com",
+    toptalEmail: "ada@toptal.com",
+    toptalEmailSuspended: false,
+    userChameleonUUID: "11111111-1111-4111-8111-111111111111",
+    topSchedulerSettingsAllowed: true,
+    sendNotificationsToPrivateEmail: false,
+    applicationReapplyGracePeriodDueDate: null,
+    specializationType: "CORE_WITH_MARKETPLACE",
+    specializations: [{ id: "s1", title: "Core", deliveryModel: { id: "dm1", identifier: "CORE" } }],
+    photo: { small: "https://cdn.example.com/ada-small.jpg" },
+    postActivationStepsStatus: "COMPLETED",
+    publicResumeUrl: "https://www.toptal.com/resume/ada",
+    timeZone: {
+      name: "Europe/Berlin",
+      value: "(GMT+01:00) Berlin",
+      location: "Berlin",
+      utcOffset: 3600,
+      stdOffset: 3600,
+    },
+    allocatedHours: 40,
+    lastAllocatedHoursChangeRequest: null,
+    lastMobileAccess: { deviceType: "IOS", startedAt: "2026-05-01T08:00:00+00:00" },
+    isPassThroughTalent: false,
+    talentPartner: null,
+    talentVerticals: [{ isApiAllowed: true, name: "AI", roleId: 12345, slug: "ai" }],
+    vertical: {
+      name: "Artificial Intelligence",
+      slug: "ai",
+      hasSingleSpecialization: false,
+      isMarketplaceAccessEnabled: true,
+      profileHandbookUrl: null,
+      minPortfolioItems: 2,
+      talentJobApplicationConfig: {
+        portfolioRequired: true,
+        careerHighlightRequired: false,
+        highlightFields: ["EMPLOYMENTS"],
+      },
+      marketCondition: { condition: "POOR" },
+      globalMarketCondition: {
+        condition: "POOR",
+        conditionVerbose: "Poor",
+        conditionColor: "WARNING",
+        reportUrl: null,
+      },
+    },
+    nonTalentRoles: [],
+    hourlyRate: { verbose: "$110.00", decimal: "110.0" },
+    availableShiftRangeFrom: null,
+    availableShiftRangeTo: null,
+    workingTimeFrom: "08:00:00",
+    workingTimeTo: "18:00:00",
+    isFakeSession: false,
+    contactFields: { communitySlackId: "U123" },
+    rateInsight: { hourly: { currentRateCompetitive: true, recentApplicationRate: "108.0", recommendedRate: "120.0" } },
+    operations: {
+      promoteGigs: { callable: "ENABLED", messages: [] },
+      createRateChangeRequest: { callable: "ENABLED", messages: [] },
+      startSearchSubscription: { callable: "ENABLED", messages: [] },
+    },
+    permissions: {
+      canApplyToJobs: true,
+      canFillInAdvancedProfile: true,
+      canHaveReferrals: true,
+      canViewAskAnExpert: true,
+      canViewCoachingRequests: true,
+      canViewCommunity: true,
+      canViewConsultations: true,
+      canViewEligibleJobs: true,
+      canViewFaq: true,
+      canViewFeedbackCall: true,
+      canViewJobsOnClientReview: true,
+      canViewJobsOnMatcherReview: true,
+      canViewLegalSetting: true,
+      canViewMobileAppPromo: true,
+      canViewOnboardingVideo: true,
+      canViewPayments: true,
+      canViewRateInsights: true,
+      canViewRecognitionBadges: true,
+      canViewSlackCommunity: true,
+      canViewSmsNotificationSettings: true,
+      canViewSpecializations: true,
+      canViewToptalAdvantageSection: true,
+    },
+    marketplaceSeenMigrationNotificationAt: null,
+    marketplaceAutoMigrated: false,
+  },
+  ongoingRateChangeRequest: null,
+  pendingNotifications: [{ slug: "complete-profile" }],
+  pendingSurveys: [],
+  pendingQuizzes: [],
+  preliminarySearchSetting: { enabled: false },
+  referralUrl: {
+    legacySlug: "ada",
+    pathSuffix: "/ada",
+    shortenedUrl: "https://tpt.al/ada",
+    url: "https://www.toptal.com/r/ada",
+  },
+  jobActivityList: { entities: [] },
+  talentPortalSetting: { collapsedMenu: false, threeColumnLayout: true },
+  slackApplications: { edges: [] },
+};
+
+describe("formatRichViewerPretty (#469 --full)", () => {
+  it("renders identity, role, and the rich-only extras", () => {
+    const out = formatRichViewerPretty(RICH);
+    expect(out).toContain("Ada Lovelace");
+    expect(out).toContain("ada@example.com");
+    expect(out).toContain("Vertical: Artificial Intelligence");
+    expect(out).toContain("Rate: $110.00/hr");
+    // Rich-only fields the trimmed default omits:
+    expect(out).toContain("Post-activation: COMPLETED");
+    expect(out).toContain("Market: POOR");
+    expect(out).toContain("Code of Conduct: accepted");
+    expect(out).toContain("Terms of Service: action NONE");
+    expect(out).toContain("Rate insight: competitive, recommended 120.0");
+    expect(out).toContain("Hire-me banner: enabled");
+    expect(out).toContain("Pending: 0 surveys, 0 quizzes, 1 notifications");
+  });
+
+  it("does NOT leak the inline legal-document bodies into the pretty digest", () => {
+    const out = formatRichViewerPretty(RICH);
+    expect(out).not.toContain("CoC body");
+    expect(out).not.toContain("ToS body");
+  });
+
+  it("surfaces a not-accepted Code of Conduct when acceptedAt is null", () => {
+    const out = formatRichViewerPretty({ ...RICH, codeOfConduct: { ...RICH.codeOfConduct, acceptedAt: null } });
+    expect(out).toContain("Code of Conduct: not accepted");
   });
 });

@@ -88,6 +88,8 @@ export function registerProfileBasicShowTool(server: McpServer, ctx: ToolRegistr
         "",
         "Returns the merged read payload from both the mobile-gateway (`profile`) and the talent-profile (`basicInfo`) surfaces. `basicInfo.bio` mirrors `Profile.about`; `basicInfo.headline` mirrors `Profile.quote`. `basicInfo` is `null` when the secondary read call fails non-fatally.",
         "",
+        "Pass `verbose: true` to fetch the FULL portal `GetViewer` projection instead (legal-document acceptance, post-activation/market state, hire-me banner, pending surveys/quizzes, rate insight, and the full role scope). The default omits these heavy fields.",
+        "",
         "Pass `dryRun: true` to preview the primary request without firing the query.",
         "",
         "Example user prompts that should map to this tool:",
@@ -96,13 +98,20 @@ export function registerProfileBasicShowTool(server: McpServer, ctx: ToolRegistr
         '  - "What\'s my hourly rate and vertical?"',
         '  - "Show my bio and headline."',
         '  - "What languages do I have set?"',
+        '  - "Show my full Toptal viewer state / pending surveys / market condition." (verbose)',
       ].join("\n"),
       inputSchema: {
+        verbose: z
+          .boolean()
+          .optional()
+          .describe(
+            "Fetch the full portal `GetViewer` projection (legal docs, market state, pending work, rate insight, full role scope) instead of the trimmed default. Default: false.",
+          ),
         dryRun: z
           .boolean()
           .optional()
           .describe(
-            "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview: DryRunPreview }` with operationName + variables + redacted bearer header for the primary ProfileShow query. Default: false.",
+            "Preview the request without executing. Returns `{ ok: true, dryRun: true, preview: DryRunPreview }` with operationName + variables + redacted bearer header for the primary query (ProfileShow, or GetViewer when verbose). Default: false.",
           ),
       },
     },
@@ -110,8 +119,29 @@ export function registerProfileBasicShowTool(server: McpServer, ctx: ToolRegistr
       const auth = await ctx.loadTokenForTool(TOOL_NAME);
       if (isToolErrorResponse(auth)) return auth;
 
+      const verbose = input.verbose === true;
+
       if (input.dryRun === true) {
-        return dryRunResponse(buildMcpDryRunPreview("ProfileShow", "mobile-gateway", {}, auth.token));
+        const op = verbose ? "GetViewer" : "ProfileShow";
+        return dryRunResponse(buildMcpDryRunPreview(op, "mobile-gateway", {}, auth.token));
+      }
+
+      // Verbose path (#469): the full GetViewer projection. Single-call —
+      // bio/headline/languages live on the talent-profile surface and are
+      // not part of GetViewer, so the secondary getBasicInfo() merge is the
+      // default-path concern only.
+      if (verbose) {
+        try {
+          const rich = await profile.showRich(auth.token);
+          return jsonResponse(rich);
+        } catch (err) {
+          const typed = ttctlErrorToToolResponseOrNull(err);
+          if (typed !== null) return typed;
+          if (err instanceof profile.basic.ProfileError) {
+            return domainErrorResponse(TOOL_NAME, err);
+          }
+          return genericErrorResponse(TOOL_NAME, err);
+        }
       }
 
       let profilePayload: ProfileShowQuery;
