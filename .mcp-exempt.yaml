@@ -1,0 +1,48 @@
+# CLI ↔ MCP parity exemptions (#151)
+#
+# Consumed by packages/ttctl/src/__tests__/cli-mcp-parity.test.ts. See also
+# CLAUDE.md § CLI/MCP parity gate.
+#
+# The parity gate asserts that every CLI leaf command has a matching
+# `ttctl_<group>_<sub-domain>_<verb>` MCP tool and vice-versa. Surfaces that
+# intentionally diverge are declared here so they are NOT reported as drift.
+#
+#   cli_only:  CLI commands that intentionally have NO ttctl_<…> MCP tool.
+#   mcp_only:  MCP tools that intentionally have NO matching CLI command.
+#
+# Each `reason` is MANDATORY and surfaces in the parity report. A stale entry
+# (referencing a command/tool that no longer exists) fails the gate — keep this
+# file pruned. The inline `// mcp-exempt: <reason>` comment marker on a CLI
+# command registration is an equivalent per-command alternative; this file is
+# preferred for whole-sub-domain or cross-surface-rename exemptions where the
+# full command path makes the disposition unambiguous.
+
+cli_only:
+  # Authentication is an interactive, local credential-lifecycle surface. The
+  # MCP server is long-lived and consumes the already-captured bearer from the
+  # config file (path captured at startup, #113) — it never signs in. There is
+  # no AI-driven sign-in by design, so these have no MCP counterpart.
+  - command: "auth init"
+    reason: "Interactive ~/.ttctl.yaml scaffolding (clack prompts); CLI-only bootstrap, no MCP equivalent."
+  - command: "auth signin"
+    reason: "Interactive credential/1Password sign-in; CLI-only — MCP consumes the captured bearer, never signs in."
+  - command: "auth signout"
+    reason: "Local credential-lifecycle teardown; CLI-only."
+  - command: "auth status"
+    reason: "Local credential-lifecycle inspection; CLI-only."
+
+  # Wave-0 backwards-compatible short forms. These dispatch to the same
+  # handlers as the canonical `profile basic …` sub-tree, whose MCP tools
+  # (ttctl_profile_basic_show / ttctl_profile_basic_update) already exist.
+  - command: "profile show"
+    reason: "Back-compat alias for `profile basic show` → ttctl_profile_basic_show."
+  - command: "profile update"
+    reason: "Back-compat alias for `profile basic update` → ttctl_profile_basic_update."
+
+# No intentional MCP-only tools are exempted yet. The current MCP-only surfaces
+# (interest_requests_*, jobs_apply_* read affordances, portfolio upload_cover/
+# upload_file) and the CLI-only `profile reviews submit-for-review` are reported
+# as the warn-mode baseline (see the test header) pending triage; once
+# triaged, intentional ones move here and the genuine drift is closed, then the
+# gate is flipped to strict (CLI_MCP_PARITY_STRICT=1).
+mcp_only: []

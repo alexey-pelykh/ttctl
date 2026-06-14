@@ -3,6 +3,7 @@
 
 export { buildServer, runMcpStdio } from "./server.js";
 export type { BuildServerOptions } from "./server.js";
+export { listRegisteredMcpToolNames } from "./introspection.js";
 export {
   DATA_HANDLING_FOOTER,
   HIGH_RISK_TOOLS,
