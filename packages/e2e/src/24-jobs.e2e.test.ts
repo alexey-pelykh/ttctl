@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// e2e-covers: JobShow, JobsList
+// e2e-covers: JobShow, JobsList, JobsByIDs
 
 /**
  * E2E coverage for `ttctl jobs` (#148).
@@ -294,6 +294,73 @@ describe("jobs (live mobile-gateway)", () => {
         response,
       }),
     ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------
+  // JobsByIDs — batch fetch. Schema/contract: hand-authored op
+  // against a schema gap (`viewer.jobs(ids:)` is absent from the
+  // synthesized Viewer SDL), Track 1. The live call IS the wire proof:
+  // a wrong selection 400s. Also validates the two INFERRED behaviors —
+  // input-order re-ordering and missing-id omission — against the wire.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("jobs.showMany batch-fetches real ids in input order (JobsByIDs, Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const ids = listed.items.map((i) => i.id).filter((id): id is string => typeof id === "string");
+    if (ids.length === 0) {
+      process.stderr.write("warning: no eligible jobs in test account — JobsByIDs snapshot skipped\n");
+      return;
+    }
+
+    // Use up to two ids, REVERSED from list order, to prove the result
+    // follows INPUT order rather than wire order.
+    const probe = ids.slice(0, 2).reverse();
+    const response = await jobs.showMany(token, probe);
+
+    // Every requested id resolves (these came from `jobs list`), and the
+    // result echoes the requested order.
+    expect(response.map((j) => j.id)).toEqual(probe);
+
+    // Track 1 wire-shape snapshot of the populated batch result.
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "JobsByIDs",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  it.skipIf(!e2eEnabled)("jobs.showMany unresolvable-id behavior — omit vs whole-batch error", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const realId = listed.items[0]?.id;
+    if (typeof realId !== "string") {
+      process.stderr.write("warning: no eligible jobs in test account — JobsByIDs missing-id check skipped\n");
+      return;
+    }
+
+    // The unresolvable-id contract is NOT uniform — live-verified, two
+    // classes behave differently and the service propagates whichever the
+    // wire does:
+    //  (a) an id the wire cannot decode to a job is silently DROPPED, so
+    //      the batch returns a partial result (the real id only).
+    const undecodableId = `${realId}-ttctl-nonexistent-zzz`;
+    const partial = await jobs.showMany(token, [realId, undecodableId]);
+    expect(partial.map((j) => j.id)).toEqual([realId]);
+
+    //  (b) a cleanly-decodable-but-nonexistent id makes the wire reject
+    //      the WHOLE batch with GRAPHQL_ERROR("Invalid ids") — the valid
+    //      id in the same call yields nothing.
+    const decodableMissingId = "VjEtSm9iLTAwMDAwMA"; // base64("V1-Job-000000")
+    await expect(jobs.showMany(token, [realId, decodableMissingId])).rejects.toThrow(/Invalid ids/);
   });
 
   it.skipIf(!e2eEnabled)("round-trips save → saved → unsave → saved against a real job", async () => {

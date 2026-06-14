@@ -1,0 +1,295 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-14T23:03:27.544Z",
+  "operationName": "JobsByIDs",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "client": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "city": {
+              "kind": "null"
+            },
+            "countryName": {
+              "kind": "string"
+            },
+            "foundingYear": {
+              "kind": "null"
+            },
+            "fullName": {
+              "kind": "null"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "industry": {
+              "kind": "string"
+            },
+            "isEnterprise": {
+              "kind": "boolean"
+            },
+            "linkedin": {
+              "kind": "null"
+            },
+            "teamSize": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "value": {
+                  "kind": "null"
+                }
+              }
+            },
+            "website": {
+              "kind": "null"
+            }
+          }
+        },
+        "commitment": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "slug": {
+              "kind": "string"
+            }
+          }
+        },
+        "contacts": {
+          "kind": "array",
+          "item": {
+            "kind": "unknown"
+          }
+        },
+        "descriptionMd": {
+          "kind": "string"
+        },
+        "expectedHours": {
+          "kind": "number"
+        },
+        "fixedRate": {
+          "kind": "null"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "isCoaching": {
+          "kind": "boolean"
+        },
+        "isToptalProject": {
+          "kind": "boolean"
+        },
+        "jobTimeZone": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "hoursOverlap": {
+              "kind": "null"
+            },
+            "verbose": {
+              "kind": "string"
+            },
+            "workingTimeFrom": {
+              "kind": "string"
+            },
+            "workingTimeTo": {
+              "kind": "string"
+            }
+          }
+        },
+        "languages": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              }
+            }
+          }
+        },
+        "maxRate": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "number"
+          }
+        },
+        "minimumHoursPerBillingCycle": {
+          "kind": "null"
+        },
+        "notInterested": {
+          "kind": "boolean"
+        },
+        "pointsOfContact": {
+          "kind": "object",
+          "fields": {
+            "current": {
+              "kind": "object",
+              "fields": {
+                "contactFields": {
+                  "kind": "object",
+                  "fields": {
+                    "communitySlackId": {
+                      "kind": "nullable",
+                      "inner": {
+                        "kind": "string"
+                      }
+                    },
+                    "email": {
+                      "kind": "nullable",
+                      "inner": {
+                        "kind": "string"
+                      }
+                    },
+                    "phoneNumber": {
+                      "kind": "null"
+                    },
+                    "skype": {
+                      "kind": "null"
+                    }
+                  }
+                },
+                "fullName": {
+                  "kind": "string"
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "photo": {
+                  "kind": "nullable",
+                  "inner": {
+                    "kind": "object",
+                    "fields": {
+                      "small": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                },
+                "timeZone": {
+                  "kind": "object",
+                  "fields": {
+                    "location": {
+                      "kind": "string"
+                    },
+                    "name": {
+                      "kind": "string"
+                    },
+                    "value": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "vacation": {
+                  "kind": "nullable",
+                  "inner": {
+                    "kind": "object",
+                    "fields": {
+                      "endDate": {
+                        "kind": "string"
+                      },
+                      "id": {
+                        "kind": "string"
+                      },
+                      "startDate": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "handoff": {
+              "kind": "null"
+            },
+            "kind": {
+              "kind": "string"
+            }
+          }
+        },
+        "positionsCount": {
+          "kind": "number"
+        },
+        "postedWhen": {
+          "kind": "string"
+        },
+        "saved": {
+          "kind": "boolean"
+        },
+        "semiMonthlyBilling": {
+          "kind": "boolean"
+        },
+        "skills": {
+          "kind": "array",
+          "item": {
+            "kind": "object",
+            "fields": {
+              "id": {
+                "kind": "string"
+              },
+              "isOptional": {
+                "kind": "boolean"
+              },
+              "name": {
+                "kind": "string"
+              },
+              "rating": {
+                "kind": "number"
+              }
+            }
+          }
+        },
+        "specialization": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "title": {
+              "kind": "string"
+            }
+          }
+        },
+        "startDate": {
+          "kind": "string"
+        },
+        "title": {
+          "kind": "string"
+        },
+        "url": {
+          "kind": "string"
+        },
+        "viewed": {
+          "kind": "boolean"
+        },
+        "workType": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "slug": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

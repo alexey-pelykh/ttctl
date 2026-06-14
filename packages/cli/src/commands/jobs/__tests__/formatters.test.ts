@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { applications, jobs } from "@ttctl/core";
 
 import { formatInterestEntity } from "../interest.js";
-import { formatJobDetail, formatQuestionsSections } from "../show.js";
+import { formatJobDetail, formatJobDetails, formatQuestionsSections } from "../show.js";
 import {
   buildJobsPageInfo,
   formatDate,
@@ -453,5 +453,31 @@ describe("formatQuestionsSections (#437)", () => {
     expect(output).toContain("• EQ-bare:");
     // Negative check: no trailing space (`":"` + `" "` + empty prompt).
     expect(output).not.toContain("EQ-bare: ");
+  });
+});
+
+describe("formatJobDetails", () => {
+  it("joins multiple job blocks with a horizontal rule", () => {
+    const second: jobs.JobDetail = { ...DETAIL_FIXTURE, id: "job-2", title: "Backend Engineer" };
+    const output = formatJobDetails([DETAIL_FIXTURE, second], []);
+    expect(output).toContain("Job job-1");
+    expect(output).toContain("Job job-2");
+    expect(output).toContain("————");
+    expect(output.indexOf("Job job-1")).toBeLessThan(output.indexOf("Job job-2"));
+  });
+
+  it("appends a Not found line listing missing ids", () => {
+    const output = formatJobDetails([DETAIL_FIXTURE], ["job-9", "job-8"]);
+    expect(output).toContain("Job job-1");
+    expect(output).toContain("Not found (2): job-9, job-8");
+  });
+
+  it("renders an all-missing request as just the Not found line", () => {
+    const output = formatJobDetails([], ["job-9"]);
+    expect(output).toBe("Not found (1): job-9");
+  });
+
+  it("renders an empty result with no missing ids as a placeholder", () => {
+    expect(formatJobDetails([], [])).toBe("No jobs found.");
   });
 });

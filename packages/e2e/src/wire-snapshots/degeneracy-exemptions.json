@@ -31,6 +31,9 @@
   "JobShow": {
     "contacts": "Job contacts attach later in the funnel than this account's jobs reach."
   },
+  "JobsByIDs": {
+    "[].contacts": "Job contacts attach later in the funnel than this account's jobs reach (batch sibling of JobShow.contacts)."
+  },
   "Payments": {
     "items[].memorandums": "No credit-note/adjustment memorandums on this account's invoices."
   },

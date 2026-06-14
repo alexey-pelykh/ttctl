@@ -107,6 +107,45 @@ export async function runJobsShow(id: string, output: OutputFormat, opts: JobsSh
 }
 
 /**
+ * Action handler for `ttctl jobs show-many <id...>`.
+ * Batch-fetches several jobs' detail views in one wire round-trip via
+ * `jobs.showMany`, emitting the found jobs in input order. Ids that
+ * resolve to no job are reported (pretty: a trailing "Not found" line;
+ * json / yaml consumers diff the returned `id`s against their input).
+ */
+export async function runJobsShowMany(ids: string[], output: OutputFormat): Promise<void> {
+  const token = await loadAuthTokenOrExit("jobs show-many", output);
+
+  let items: jobs.JobDetail[];
+  try {
+    items = await jobs.showMany(token, ids);
+  } catch (err) {
+    handleJobsError("jobs show-many", err, output);
+  }
+
+  const found = new Set(items.map((j) => j.id));
+  const missing = ids.filter((id) => !found.has(id));
+  emitResult(items, output, {
+    pretty: (data) => formatJobDetails(data, missing),
+  });
+}
+
+/**
+ * Render several job detail views as one pretty block — each job's
+ * {@link formatJobDetail} output separated by a horizontal rule, with a
+ * trailing "Not found" line listing any requested ids the API did not
+ * return. Pure — directly unit-testable.
+ */
+export function formatJobDetails(items: jobs.JobDetail[], missing: string[]): string {
+  const blocks = items.map(formatJobDetail);
+  if (missing.length > 0) {
+    blocks.push(`Not found (${missing.length.toString()}): ${missing.join(", ")}`);
+  }
+  if (blocks.length === 0) return "No jobs found.";
+  return blocks.join("\n\n————————————————————————————————\n\n");
+}
+
+/**
  * Render the matcher + expertise question inventories as two
  * sectioned multi-line blocks. Sections fire unconditionally when
  * `--with-questions` is supplied — the count in the header (e.g.

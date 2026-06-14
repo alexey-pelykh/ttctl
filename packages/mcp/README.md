@@ -31,10 +31,10 @@ Requires **Node.js ≥ 22.19.0**, ESM only.
 
 ### Tool catalog
 
-The server registers 131 tools spanning the full Toptal Talent surface that TTCtl exposes — read AND mutation paths (per-domain counts below sum to the total):
+The server registers 132 tools spanning the full Toptal Talent surface that TTCtl exposes — read AND mutation paths (per-domain counts below sum to the total):
 
 - **`profile.*`** (69 tools) — `basic`, `skills`, `industries`, `education`, `certifications`, `employment`, `portfolio`, `visas`, `resume`, `external`, `reviews`, `specializations`, `countries`
-- **`jobs`** (18 tools) — browse (list / show) + saved / viewed / not-interested signals + search subscription + apply funnel
+- **`jobs`** (19 tools) — browse (list / show / show-many) + saved / viewed / not-interested signals + search subscription + apply funnel
 - **`payments`** (9 tools) — summary + payouts (list / show) + methods (list / show) + rate (current / show / questions / change)
 - **`engagements`** (8 tools) — list / show / stats + breaks (list / add / remove / reschedule / reasons)
 - **`applications`** (7 tools) — list / show / stats + interview detail (show / notes / guide) + availability-request detail
@@ -77,7 +77,7 @@ Each response row's `statusV2.verbose` is the exact label the portal renders ("J
 
 ### Trust model
 
-Process-level: any process that can spawn `ttctl mcp` gets full access to the user's Toptal Talent session via the configured config file. The 131-tool catalog includes destructive surfaces (`timesheet submit`, `timesheet update`, profile mutations, job-interest signals, rate-change requests, etc.) — the blast radius is the user's full profile and platform-side activity, not just reads. Don't grant MCP access to untrusted AI agents — see the project [`SECURITY.md`](https://github.com/alexey-pelykh/ttctl/blob/main/SECURITY.md).
+Process-level: any process that can spawn `ttctl mcp` gets full access to the user's Toptal Talent session via the configured config file. The 132-tool catalog includes destructive surfaces (`timesheet submit`, `timesheet update`, profile mutations, job-interest signals, rate-change requests, etc.) — the blast radius is the user's full profile and platform-side activity, not just reads. Don't grant MCP access to untrusted AI agents — see the project [`SECURITY.md`](https://github.com/alexey-pelykh/ttctl/blob/main/SECURITY.md).
 
 ### Debug instrumentation
 
