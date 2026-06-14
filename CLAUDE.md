@@ -437,6 +437,69 @@ visible, never silently dropped.
   baseline is clean post-#751, so there is no warn-phase gap to pay
   down.
 
+### Scalar type-consistency gate (#275 mistype-class defense)
+
+`scripts/check-scalar-type-consistency.ts` (wired into `pnpm lint`) is the
+structural CI-time defense against the **#275 scalar-mistype class**: a
+hand-authored TypeScript field type that contradicts the wire scalar. The
+class recurred 3+ times — #275 (`TimesheetRecord.duration`), #779
+(`Payments.paymentGroupId`, `string|null` vs wire `number|null`), and the
+#779 sweep (`AvailabilityTimeZone.utcOffset`/`.stdOffset`) — each caught
+only by hand. The wire-shape snapshots diff live-vs-snapshot, never
+snapshot-vs-hand-authored-TS, so the divergence stays invisible until a
+populated live cycle happens to hit it. The generated codegen + Zod outputs
+are the authority that catches it: an integer wire field produces
+`Maybe<Int>` / `z.number()`, so a hand-authored field typed `string` where
+the generated type says `number` (or the inverse) is mechanically detectable
+— exactly what the #779 sweep did by hand.
+
+Authority scope: `packages/core/src/__generated__/*.ts` (`gateway`,
+`talent-profile`, and the dual-content `*-zod-schemas`). Two parseable
+shapes are unioned into a `fieldName → {primitive…}` map: codegen TS
+named-type fields (`paymentGroupId: Maybe<Scalars['Int']['output']>;`,
+resolved through the file's `Scalars` block — `Int`/`Float` → `number`,
+`String`/`ID`/`BigDecimal`/`Date`/`DateTime`/`Time` → `string`, `Boolean`
+→ `boolean`, `JSON`/`Unknown`/`Upload`/… → non-primitive, contributing
+nothing) and codegen-Zod fields (`paymentGroupId: z.number().nullable(),`).
+OUTPUT shapes only — `['input']` / `InputMaybe<…>` TS fields and
+`*InputSchema()` Zod fields are skipped. The giant inline operation-result
+projections (`export type XxxQuery = { … }`) are not parsed field-by-field;
+they are projections of the same named types the gate already reads.
+
+Subject scope: `export interface` declarations under
+`packages/core/src/services/**` (excluding tests; services use `export
+interface` exclusively for response shapes). Only plain scalar fields are
+checked — a type reducing to exactly one of `string` / `number` /
+`boolean` after dropping `| null` / `| undefined` / `?`. References,
+arrays, and unions (`string | number`, literal unions) are skipped.
+
+Verdict is field-name based: a field is a **mismatch** iff its name
+resolves in the authority to a SINGLE primitive that differs from the
+hand-authored one. A name the authority holds with two primitives across
+different generated types is **ambiguous** (skipped — the false-positive
+guard for generic names like `value`); a name absent from the authority is
+**no-authority** (skipped). Field-name matching can pair
+semantically-distinct same-named fields, so warn-by-default plus the
+exemption marker absorb collisions.
+
+- **Exempt** a deliberate divergence (a numeric wire scalar intentionally
+  surfaced as a `string`, or a name-collision false positive) with
+  `// scalar-consistency-exempt: <reason>` directly above the field — or
+  above the `export interface` header to cover every field in it; per-field
+  markers override. The reason is mandatory and surfaces in the report.
+- **Default mode** is warn-only (exit 0). Set `SCALAR_CONSISTENCY_STRICT=1`
+  (or pass `--strict`) to fail on non-exempt mismatches once the corpus is
+  triaged. Three field-name-collision false positives stand today —
+  `Certification.number` / `CertificationFields.number` (a credential
+  string colliding with `TalentPayment.number: Int`) and
+  `ProfileSkillSet.position` (an ordering index colliding with an unrelated
+  `position: String`); each semantically-correct field is `Unknown`-typed
+  in the synthesized talent_profile SDL, so the colliding gateway primitive
+  wins. Exempt these and flip strict in a follow-up. Sibling pattern to
+  `E2E_COVERAGE_STRICT` / `SURFACE_COVERAGE_STRICT` /
+  `WRITE_READ_SYMMETRY_STRICT` / `MERGE_COMPLETENESS_STRICT` /
+  `SNAPSHOT_DEGENERACY_STRICT`.
+
 ### Wire-shape snapshots
 
 Post-merge wire-drift detection sibling to the rule above. E2E runs
