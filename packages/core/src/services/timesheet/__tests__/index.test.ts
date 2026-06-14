@@ -12,8 +12,9 @@ vi.mock("../../../transport.js", async () => {
   };
 });
 
-import { list, resolveCurrentCycle, show, submit, TimesheetError } from "../index.js";
+import { list, resolveCurrentCycle, show, submit, update, TimesheetError } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
+import { ConsentRequiredError } from "../../../consent.js";
 import { stockTransport } from "../../../transport.js";
 import type { TransportResponse } from "../../../transport.js";
 
@@ -470,6 +471,191 @@ describe("timesheet.submit", () => {
     await expect(submit(TOKEN, "bc-1")).rejects.toMatchObject({
       name: "TimesheetError",
       code: "UNKNOWN",
+    });
+  });
+});
+
+describe("timesheet.update", () => {
+  // The apply path is read-modify-write: show() (TimesheetDetails) then the
+  // UpdateTimesheet mutation. Queue both, in order.
+  function replyReadThenUpdate(billingCycle: unknown, opts: { success?: boolean; errors?: unknown[] } = {}): void {
+    reply(
+      { body: { data: { node: DETAIL_WIRE_ITEM } } },
+      {
+        body: {
+          data: {
+            updateTimesheet: {
+              __typename: "UpdateTimesheetPayload",
+              success: opts.success ?? true,
+              errors: opts.errors ?? [],
+              billingCycle,
+            },
+          },
+        },
+      },
+    );
+  }
+
+  // The two current records of DETAIL_WIRE_ITEM, projected onto the wire
+  // input shape ({ date, duration, note }) — the read-modify-write baseline.
+  const CURRENT_RECORDS_AS_INPUT = [
+    { date: "2026-05-12", duration: "480.0", note: "auth refactor" },
+    { date: "2026-05-13", duration: "0.0", note: null },
+  ];
+
+  it("comment-only change → resends the full current record set unchanged + new comment", async () => {
+    replyReadThenUpdate({ ...DETAIL_WIRE_ITEM, timesheetComment: "reviewed with client" });
+    const outcome = await update(TOKEN, "bc-1", {
+      comment: "reviewed with client",
+      timesheetBillingConsentIssued: true,
+    });
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") throw new Error("expected applied outcome");
+    expect(outcome.result.timesheetComment).toBe("reviewed with client");
+    expect(mockedStock).toHaveBeenCalledTimes(2);
+    expect(mockedStock.mock.calls[0]?.[0]?.body).toMatchObject({ operationName: "TimesheetDetails" });
+    expect(mockedStock.mock.calls[1]?.[0]?.body).toMatchObject({
+      operationName: "UpdateTimesheet",
+      variables: { id: "bc-1", comment: "reviewed with client", timesheetRecords: CURRENT_RECORDS_AS_INPUT },
+    });
+  });
+
+  it("record duration override merges by date, preserving the untouched day (no null-out)", async () => {
+    replyReadThenUpdate(DETAIL_WIRE_ITEM);
+    await update(TOKEN, "bc-1", {
+      records: [{ date: "2026-05-12", duration: "240.0" }],
+      timesheetBillingConsentIssued: true,
+    });
+    const sent = mockedStock.mock.calls[1]?.[0]?.body as {
+      variables: { comment: string; timesheetRecords: unknown[] };
+    };
+    // comment unchanged (resent from current); 05-12 overridden; 05-13 preserved.
+    expect(sent.variables.comment).toBe("Worked on auth refactor");
+    expect(sent.variables.timesheetRecords).toEqual([
+      { date: "2026-05-12", duration: "240.0", note: "auth refactor" },
+      { date: "2026-05-13", duration: "0.0", note: null },
+    ]);
+  });
+
+  it("note override (and explicit clear) merges without touching duration", async () => {
+    replyReadThenUpdate(DETAIL_WIRE_ITEM);
+    await update(TOKEN, "bc-1", {
+      records: [
+        { date: "2026-05-12", note: null },
+        { date: "2026-05-13", note: "added a note" },
+      ],
+      timesheetBillingConsentIssued: true,
+    });
+    const sent = mockedStock.mock.calls[1]?.[0]?.body as { variables: { timesheetRecords: unknown[] } };
+    expect(sent.variables.timesheetRecords).toEqual([
+      { date: "2026-05-12", duration: "480.0", note: null },
+      { date: "2026-05-13", duration: "0.0", note: "added a note" },
+    ]);
+  });
+
+  it("override for an unknown date is appended as a new day", async () => {
+    replyReadThenUpdate(DETAIL_WIRE_ITEM);
+    await update(TOKEN, "bc-1", {
+      records: [{ date: "2026-05-20", duration: "120.0", note: "extra" }],
+      timesheetBillingConsentIssued: true,
+    });
+    const sent = mockedStock.mock.calls[1]?.[0]?.body as { variables: { timesheetRecords: unknown[] } };
+    expect(sent.variables.timesheetRecords).toEqual([
+      ...CURRENT_RECORDS_AS_INPUT,
+      { date: "2026-05-20", duration: "120.0", note: "extra" },
+    ]);
+  });
+
+  it("dry-run: returns a preview WITHOUT any wire call (not even the read)", async () => {
+    const outcome = await update(
+      TOKEN,
+      "bc-1",
+      { comment: "draft", records: [{ date: "2026-05-12", duration: "60.0" }] },
+      { dryRun: true },
+    );
+    expect(outcome.kind).toBe("preview");
+    if (outcome.kind !== "preview") throw new Error("expected preview outcome");
+    expect(outcome.preview.operationName).toBe("UpdateTimesheet");
+    expect(outcome.preview.surface).toBe("mobile-gateway");
+    expect(outcome.preview.variables).toEqual({
+      id: "bc-1",
+      comment: "draft",
+      timesheetRecords: [{ date: "2026-05-12", duration: "60.0", note: null }],
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("missing consent → ConsentRequiredError before any wire call", async () => {
+    await expect(update(TOKEN, "bc-1", { comment: "x" })).rejects.toBeInstanceOf(ConsentRequiredError);
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("env bypass (TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1) allows the apply path without the consent field", async () => {
+    const prev = process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"];
+    process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"] = "1";
+    try {
+      replyReadThenUpdate(DETAIL_WIRE_ITEM);
+      const outcome = await update(TOKEN, "bc-1", { comment: "via env bypass" });
+      expect(outcome.kind).toBe("applied");
+      expect(mockedStock).toHaveBeenCalledTimes(2);
+    } finally {
+      if (prev === undefined) delete process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"];
+      else process.env["TTCTL_ALLOW_INFERRED_DESTRUCTIVE"] = prev;
+    }
+  });
+
+  it("nothing to update (no comment, no records) → VALIDATION_ERROR, no wire call", async () => {
+    await expect(update(TOKEN, "bc-1", { timesheetBillingConsentIssued: true })).rejects.toMatchObject({
+      name: "TimesheetError",
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("payload null → NOT_FOUND", async () => {
+    reply({ body: { data: { node: DETAIL_WIRE_ITEM } } }, { body: { data: { updateTimesheet: null } } });
+    await expect(update(TOKEN, "bc-1", { comment: "x", timesheetBillingConsentIssued: true })).rejects.toMatchObject({
+      name: "TimesheetError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("server reports success: false → MUTATION_ERROR with formatted message", async () => {
+    replyReadThenUpdate(null, {
+      success: false,
+      errors: [{ code: "validation", key: "hours", message: "Duration exceeds cycle max" }],
+    });
+    let captured: TimesheetError | undefined;
+    try {
+      await update(TOKEN, "bc-1", { comment: "x", timesheetBillingConsentIssued: true });
+    } catch (err) {
+      if (err instanceof TimesheetError) captured = err;
+    }
+    expect(captured?.code).toBe("MUTATION_ERROR");
+    expect(captured?.message).toContain("Duration exceeds cycle max");
+  });
+
+  it("success: true but billingCycle null → UNKNOWN", async () => {
+    replyReadThenUpdate(null, { success: true });
+    await expect(update(TOKEN, "bc-1", { comment: "x", timesheetBillingConsentIssued: true })).rejects.toMatchObject({
+      name: "TimesheetError",
+      code: "UNKNOWN",
+    });
+  });
+
+  it("Relay decode error on the mutation → remapped to NOT_FOUND", async () => {
+    reply(
+      { body: { data: { node: DETAIL_WIRE_ITEM } } },
+      {
+        body: {
+          data: null,
+          errors: [{ message: "Node id 'VjEt' resolves to an unknown type Nonexistent." }],
+        },
+      },
+    );
+    await expect(update(TOKEN, "bc-1", { comment: "x", timesheetBillingConsentIssued: true })).rejects.toMatchObject({
+      name: "TimesheetError",
+      code: "NOT_FOUND",
     });
   });
 });

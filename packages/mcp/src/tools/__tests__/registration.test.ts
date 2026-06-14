@@ -180,7 +180,7 @@ const EXPECTED_TOOLS = [
   "ttctl_jobs_apply_questions",
   "ttctl_jobs_apply_rate_insight",
   "ttctl_jobs_apply_similar_answers",
-  // timesheet (#13) — 3 tools (list/show/submit) plus #374 pending_list.
+  // timesheet — 5 tools: list / show / submit (#13) + pending_list (#374) + update (#458).
   // Submit is destructive (one-way at the wire level); LLM clients must
   // confirm with the user. #374 pending_list exposes surface-honest
   // `limit` pagination (the viewer-wide wire field is LimitPagination,
@@ -190,6 +190,7 @@ const EXPECTED_TOOLS = [
   "ttctl_timesheet_pending_list",
   "ttctl_timesheet_show",
   "ttctl_timesheet_submit",
+  "ttctl_timesheet_update",
   // payments (#149, #447, #448) — 9 tools (summary + payouts list/show +
   // methods list/show + rate current/show/questions/change). rate_change
   // is destructive (compliance flow); LLM clients must confirm with the
@@ -245,7 +246,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (129 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (130 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);
