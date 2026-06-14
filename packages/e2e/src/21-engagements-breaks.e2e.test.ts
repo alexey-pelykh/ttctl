@@ -32,6 +32,9 @@
  *   - The `breaks list` call surfaces an existing break that overlaps
  *     the chosen far-future window (collision: skip; the user should
  *     pick a non-overlapping window or clean up the existing break).
+ *   - The active engagement is not a Network job — the server rejects
+ *     `breaks add` with `breaksNotAllowed` (only Network-job engagements
+ *     permit breaks). Structural account limit, not a regression.
  *
  * **Safety**: the round-trip is gated on TTCTL_E2E=1 alongside the
  * read-side tests. There is no separate write-only env gate; the
@@ -112,6 +115,22 @@ function surfaceAddFailure(addResult: CliInvocationResult): void {
   );
 }
 
+/**
+ * The account's active engagement may not be a Network job; the server then
+ * rejects break creation with `breaksNotAllowed`. That is a structural
+ * account-capability limit, not a wire regression — skip rather than fail.
+ * Any other add failure still fails the test (genuine-regression signal).
+ */
+function breaksNotAllowed(addResult: CliInvocationResult): boolean {
+  if (addResult.exitCode === 0) return false;
+  try {
+    const envelope = JSON.parse(addResult.stdout) as { errors?: Array<{ message?: string }> };
+    return (envelope.errors ?? []).some((e) => typeof e.message === "string" && e.message.includes("breaksNotAllowed"));
+  } catch {
+    return false;
+  }
+}
+
 describe("engagements breaks (live mobile-gateway)", () => {
   let cli: CliClient;
 
@@ -180,6 +199,12 @@ describe("engagements breaks (live mobile-gateway)", () => {
       "json",
     ]);
     surfaceAddFailure(addResult);
+    if (breaksNotAllowed(addResult)) {
+      process.stderr.write(
+        "warning: active engagement is not a Network job (breaksNotAllowed) — breaks round-trip skipped\n",
+      );
+      return;
+    }
     expect(addResult.exitCode).toBe(0);
     const addPayload = JSON.parse(addResult.stdout) as {
       ok?: boolean;
@@ -419,6 +444,12 @@ describe("engagements breaks (live mobile-gateway)", () => {
         "json",
       ]);
       surfaceAddFailure(addResult);
+      if (breaksNotAllowed(addResult)) {
+        process.stderr.write(
+          "warning: active engagement is not a Network job (breaksNotAllowed) — breaks reschedule round-trip skipped\n",
+        );
+        return;
+      }
       expect(addResult.exitCode).toBe(0);
       const addPayload = JSON.parse(addResult.stdout) as { created?: { id?: string } };
       const newBreakId = addPayload.created?.id;
