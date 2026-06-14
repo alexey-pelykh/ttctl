@@ -22,10 +22,16 @@
  *     five covered domains: `profile`, `engagements`, `payments`,
  *     `timesheet`, `scheduler` (the last currently absent — silently
  *     skipped).
- *   - Two export shapes are recognized:
+ *   - Three export shapes are recognized:
  *     1. Top-level `export async function <name>(...)` declarations.
  *     2. Sub-namespace exports: `export const <ns> = { async <name>(...) }`
  *        blocks (the `payouts` / `methods` / `rate` / `breaks` pattern).
+ *     3. Sibling-file re-exports: `export { <name>[, ...] } from "./<sibling>.js"`
+ *        — the sibling is read and its `export async function <name>` /
+ *        `export const <name> = { ... }` declarations are attributed to the
+ *        importing `index.ts`'s namespace (the `reportingToAutocomplete`
+ *        pattern: separate file per AC, re-exported from the domain index).
+ *        `export type { ... } from` re-exports are ignored (not operations).
  *   - Exports whose names start with `_` are treated as internal and
  *     skipped (convention; e.g. `_setMultipartFetchForTesting`). The
  *     leading-underscore convention exists alongside the explicit
@@ -104,8 +110,12 @@
  */
 
 import { execSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Reads a repo-relative POSIX path; returns split lines, or null if unreadable. */
+type FileReader = (relPath: string) => string[] | null;
 
 /**
  * Domains under coverage. Service files under
@@ -130,7 +140,13 @@ const TOP_FN_RE = /^export\s+async\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 const TOP_CONST_RE = /^export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{/;
 const NS_METHOD_RE = /^\s{2,}async\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
-interface ServiceExport {
+/**
+ * `export { a, b as c } from "./sibling.js"` value re-export. `export type {...}`
+ * does NOT match — `export\s+\{` requires the brace right after `export`.
+ */
+const REEXPORT_RE = /^export\s+\{([^}]*)\}\s+from\s+["']\.\/([^"']+)\.js["']/;
+
+export interface ServiceExport {
   /** Top-level domain (`profile`, `engagements`, ...). */
   domain: CoveredDomain;
   /** Optional sub-folder one level beneath the domain (e.g. `basic`, `portfolio`). */
@@ -147,7 +163,7 @@ interface ServiceExport {
   exempt: string | null;
 }
 
-interface CoverageStatus {
+export interface CoverageStatus {
   cli: boolean;
   mcp: boolean;
   /** First CLI file where the call pattern was found, for navigation. */
@@ -156,7 +172,7 @@ interface CoverageStatus {
   mcpFile: string | null;
 }
 
-type Disposition = "BOTH" | "CLI-ONLY" | "MCP-ONLY" | "NEITHER" | "EXEMPT";
+export type Disposition = "BOTH" | "CLI-ONLY" | "MCP-ONLY" | "NEITHER" | "EXEMPT";
 
 function listTrackedFiles(repoRoot: string): string[] {
   const stdout = execSync("git ls-files", {
@@ -324,6 +340,13 @@ function findExemptMarker(lines: readonly string[], lineIndex: number): string |
  *   - `export const <ns> = { async <name>(...) ... }` — namespace export
  *     with one or more async methods. Brace-tracking determines the
  *     end of the namespace block.
+ *   - `export { <name>[, ...] } from "./<sibling>.js"` — sibling re-export.
+ *     The sibling is read via {@link readFile} and parsed for the named
+ *     declarations, which are attributed to this file's `(domain, sub)`
+ *     namespace. Re-export following is one level deep (siblings are parsed
+ *     with a null reader, so a sibling's own re-exports are not chased) —
+ *     sufficient for the documented pattern and cycle-safe. `export type {}`
+ *     re-exports are ignored.
  *
  * Skips exports whose names start with `_` (internal convention).
  *
@@ -335,6 +358,7 @@ function parseServiceExports(
   relPath: string,
   domain: CoveredDomain,
   sub: string | null,
+  readFile: FileReader,
 ): ServiceExport[] {
   const out: ServiceExport[] = [];
   const inComment = maskBlockComments(lines);
@@ -342,6 +366,12 @@ function parseServiceExports(
   for (let i = 0; i < lines.length; i++) {
     if (inComment[i]) continue;
     const line = stripLineComment(lines[i] ?? "");
+
+    const reexportMatch = REEXPORT_RE.exec(line);
+    if (reexportMatch !== null) {
+      out.push(...resolveReexport(reexportMatch[1] ?? "", reexportMatch[2] ?? "", relPath, domain, sub, readFile));
+      continue;
+    }
 
     const fnMatch = TOP_FN_RE.exec(line);
     if (fnMatch !== null) {
@@ -390,6 +420,82 @@ function parseServiceExports(
             exempt: methodExempt,
           });
         }
+      }
+    }
+  }
+  return out;
+}
+
+interface ReexportSpec {
+  /** Name as declared in the sibling file. */
+  source: string;
+  /** Name as exposed by the importing index (the `as` alias, or `source`). */
+  exposed: string;
+}
+
+/**
+ * Parse the brace-clause of an `export { ... } from` line into value specs.
+ * Drops `type`-only specifiers (`type Foo`, the inline-type form) — those are
+ * not runtime operations. Handles `name` and `name as alias`.
+ */
+function parseReexportClause(clause: string): ReexportSpec[] {
+  const out: ReexportSpec[] = [];
+  for (const raw of clause.split(",")) {
+    const spec = raw.trim();
+    if (spec === "") continue;
+    if (spec === "type" || spec.startsWith("type ")) continue;
+    const asMatch = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(spec);
+    if (asMatch !== null) {
+      out.push({ source: asMatch[1] ?? "", exposed: asMatch[2] ?? "" });
+      continue;
+    }
+    const idMatch = /^([A-Za-z_$][\w$]*)$/.exec(spec);
+    if (idMatch !== null) out.push({ source: idMatch[1] ?? "", exposed: idMatch[1] ?? "" });
+  }
+  return out;
+}
+
+/**
+ * Resolve `export { ... } from "./<sibling>.js"` to {@link ServiceExport} rows.
+ *
+ * Reads the sibling (same directory as `relPath`, `.js` specifier → `.ts` file),
+ * parses ITS declarations with a null reader (one-level following), keeps the
+ * rows whose binding name (`ns` for namespaces, else `name`) is re-exported, and
+ * applies any `as` alias. The rows carry the sibling's file/line (for navigation
+ * and `// surface-exempt:` markers, which live above the real declaration) but
+ * the importing index's `(domain, sub)` namespace. A missing/unreadable sibling
+ * degrades to zero rows.
+ */
+function resolveReexport(
+  clause: string,
+  siblingBase: string,
+  relPath: string,
+  domain: CoveredDomain,
+  sub: string | null,
+  readFile: FileReader,
+): ServiceExport[] {
+  const specs = parseReexportClause(clause);
+  if (specs.length === 0) return [];
+
+  const dir = relPath.slice(0, relPath.lastIndexOf("/"));
+  const siblingPath = `${dir}/${siblingBase}.ts`;
+  const siblingLines = readFile(siblingPath);
+  if (siblingLines === null) return [];
+
+  // Null reader: a sibling's own re-exports are NOT chased (one level, cycle-safe).
+  const siblingExports = parseServiceExports(siblingLines, siblingPath, domain, sub, () => null);
+
+  const out: ServiceExport[] = [];
+  for (const spec of specs) {
+    for (const se of siblingExports) {
+      const binding = se.ns ?? se.name;
+      if (binding !== spec.source) continue;
+      if (spec.exposed === spec.source) {
+        out.push(se);
+      } else if (se.ns === spec.source) {
+        out.push({ ...se, ns: spec.exposed });
+      } else {
+        out.push({ ...se, name: spec.exposed });
       }
     }
   }
@@ -457,7 +563,7 @@ function callPattern(exp: ServiceExport): string {
  * For diagnostic output: dotted reference for an export. Matches
  * {@link callPattern} without the trailing `(`.
  */
-function canonicalRef(exp: ServiceExport): string {
+export function canonicalRef(exp: ServiceExport): string {
   const parts: string[] = [exp.domain];
   if (exp.sub !== null) parts.push(exp.sub);
   if (exp.ns !== null) parts.push(exp.ns);
@@ -479,13 +585,12 @@ function canonicalRef(exp: ServiceExport): string {
  */
 function scanSurface(
   files: readonly string[],
-  repoRoot: string,
+  readFile: FileReader,
   patterns: ReadonlyMap<string, ServiceExport>,
 ): Map<string, string> {
   const hits = new Map<string, string>();
   for (const path of files) {
-    const abs = join(repoRoot, path);
-    const lines = readSourceLines(abs);
+    const lines = readFile(path);
     if (lines === null) continue;
     const inComment = maskBlockComments(lines);
     const codeOnly: string[] = [];
@@ -507,7 +612,7 @@ function scanSurface(
   return hits;
 }
 
-function classifyDisposition(exp: ServiceExport, status: CoverageStatus): Disposition {
+export function classifyDisposition(exp: ServiceExport, status: CoverageStatus): Disposition {
   if (exp.exempt !== null) return "EXEMPT";
   if (status.cli && status.mcp) return "BOTH";
   if (status.cli) return "CLI-ONLY";
@@ -616,13 +721,18 @@ function render({ exports, coverage, strict }: RenderInputs): RenderOutputs {
   return { stdoutLines: stdout, stderrLines: stderr, classAGapCount: neitherCount };
 }
 
-function main(): void {
-  const repoRoot = process.cwd();
-  const args = new Set(process.argv.slice(2));
-  const strict = args.has("--strict") || process.env["SURFACE_COVERAGE_STRICT"] === "1";
+export interface SurfaceAnalysis {
+  exports: ServiceExport[];
+  coverage: Map<ServiceExport, CoverageStatus>;
+}
 
-  const tracked = listTrackedFiles(repoRoot);
-
+/**
+ * Pure core of the gate: given the tracked file list and a {@link FileReader},
+ * enumerate every in-scope service export (following sibling re-exports) and
+ * compute its CLI/MCP coverage. No git, no `process`, no I/O beyond `readFile` —
+ * `main` injects a repo-backed reader; tests inject an in-memory fixture map.
+ */
+export function analyzeSurfaceCoverage(tracked: readonly string[], readFile: FileReader): SurfaceAnalysis {
   const exports: ServiceExport[] = [];
   const cliFiles: string[] = [];
   const mcpFiles: string[] = [];
@@ -630,9 +740,9 @@ function main(): void {
   for (const relPath of tracked) {
     const svc = classifyServiceIndex(relPath);
     if (svc !== null) {
-      const lines = readSourceLines(join(repoRoot, relPath));
+      const lines = readFile(relPath);
       if (lines !== null) {
-        exports.push(...parseServiceExports(lines, relPath, svc.domain, svc.sub));
+        exports.push(...parseServiceExports(lines, relPath, svc.domain, svc.sub, readFile));
       }
       continue;
     }
@@ -653,8 +763,8 @@ function main(): void {
     if (!patterns.has(pat)) patterns.set(pat, exp);
   }
 
-  const cliHits = scanSurface(cliFiles, repoRoot, patterns);
-  const mcpHits = scanSurface(mcpFiles, repoRoot, patterns);
+  const cliHits = scanSurface(cliFiles, readFile, patterns);
+  const mcpHits = scanSurface(mcpFiles, readFile, patterns);
 
   const coverage = new Map<ServiceExport, CoverageStatus>();
   for (const exp of exports) {
@@ -669,6 +779,19 @@ function main(): void {
     });
   }
 
+  return { exports, coverage };
+}
+
+function main(): void {
+  const repoRoot = process.cwd();
+  const args = new Set(process.argv.slice(2));
+  const strict = args.has("--strict") || process.env["SURFACE_COVERAGE_STRICT"] === "1";
+
+  const tracked = listTrackedFiles(repoRoot);
+  const readFile: FileReader = (relPath) => readSourceLines(join(repoRoot, relPath));
+
+  const { exports, coverage } = analyzeSurfaceCoverage(tracked, readFile);
+
   const { stdoutLines, stderrLines, classAGapCount } = render({ exports, coverage, strict });
 
   for (const line of stdoutLines) process.stdout.write(`${line}\n`);
@@ -679,4 +802,23 @@ function main(): void {
   }
 }
 
-main();
+/**
+ * True when this module is the process entrypoint (`tsx scripts/...`), false
+ * when imported (e.g. by the unit test). Compares realpath-normalized native
+ * paths rather than URL strings so Windows drive-letter casing / slash
+ * differences cannot make the gate silently no-op (which, in warn mode, would
+ * still exit 0 and look green).
+ */
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main();
+}
