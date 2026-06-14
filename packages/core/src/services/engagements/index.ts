@@ -5,6 +5,9 @@
  * `engagements` service module — view current and past engagements,
  * inspect engagement detail, and manage engagement breaks.
  *
+ * Surfacing rationale (no top-level `viewer.engagements`) —
+ * [ADR-012 (ttctl)](../../../../../hq/engineering/adr/ADR-012-engagements-via-jobactivityitems.md).
+ *
  * In Toptal vocabulary, an "Engagement" is an active assignment between
  * a talent and a client (= what users colloquially call "current job"
  * or "current contract"). The platform exposes engagements through the
