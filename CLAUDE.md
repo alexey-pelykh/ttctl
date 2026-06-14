@@ -60,7 +60,8 @@ pnpm dev              # Watch mode
 `pnpm format:check` (Prettier) with the ESLint pass, repo-local lints
 (`lint:root`), and the repo `check-*` gates (secret-leakage,
 e2e-coverage, surface-coverage, dep-confusion, write-read-symmetry,
-merge-completeness, snapshot-degeneracy, readme-verbs). Running `pnpm lint` before
+merge-completeness, snapshot-degeneracy, readme-verbs,
+scalar-type-consistency). Running `pnpm lint` before
 pushing catches every check that CI enforces in its lint-class steps.
 `pnpm format:check` remains a separate script so it can be invoked
 standalone (e.g. by CI's first step at `.github/workflows/ci.yml`, or by
@@ -296,11 +297,16 @@ both surfaces), #342 (industries `.show` missing both — closed
 post-fix), #343 (external `.show` missing both — open).
 
 Detection scope: `packages/core/src/services/{profile,engagements,payments,timesheet,scheduler}/**/index.ts`.
-The script walks two export shapes — top-level `export async function
-<name>(...)` and `export const <ns> = { async <name>(...) }`
+The script walks three export shapes — top-level `export async
+function <name>(...)`, `export const <ns> = { async <name>(...) }`
 namespace blocks (the `payouts` / `methods` / `rate` / `breaks`
-pattern) — and asserts each exported operation is invoked from at
-least one surface tree. Detection is invocation-based, not name-based:
+pattern), and sibling-file re-exports `export { <name> } from
+"./<sibling>.js"` (the `reportingToAutocomplete` pattern — a separate
+file per AC, re-exported from the domain index; the sibling
+declaration is read and attributed to the importing index's
+namespace, honoring `as` aliases, with `export type { ... } from`
+re-exports ignored) — and asserts each exported operation is invoked
+from at least one surface tree. Detection is invocation-based, not name-based:
 for each export the script searches CLI + MCP files for the literal
 call pattern `<domain>.[<sub>.][<ns>.]<name>(` (e.g.
 `profile.basic.show(`, `payments.payouts.list(`). The approach is
@@ -452,17 +458,21 @@ registers (docs shipped ahead of — or outliving — their feature; #431
 closed while prerequisite #458 was still open).
 
 Detection scope: the bold bullets between `## What It Does` and
-`### Out of scope` in `README.md`. Two mechanically-checkable claim
+`### Out of scope` in `README.md`. Three mechanically-checkable claim
 kinds per bullet: backtick command paths (`payments rate show` — every
 path segment must be a registered `.command("...")` token in that
 domain's `packages/cli/src/commands/<domain>/**` tree, token-set
-matched) and leading bare-verb lists ("list, view, and submit" —
-mapped through a curated verb→command alias vocabulary, e.g.
-view→show, sign in→signin; the alias map's keys DEFINE what is
-mechanically checkable). Tokenized text outside that vocabulary,
-non-command backticks (flags, `ttctl_*` MCP tool names), and bullet
-prose past the leading verb clause are reported as unchecked —
-visible, never silently dropped.
+matched); `ttctl_*` MCP tool-name spans
+(`ttctl_jobs_apply_similar_answers` — resolved against the
+`EXPECTED_TOOLS` roster in
+`packages/mcp/src/tools/__tests__/registration.test.ts`; registered →
+checked, unregistered → strict finding); and leading bare-verb lists
+("list, view, and submit" — mapped through a curated verb→command
+alias vocabulary, e.g. view→show, sign in→signin; the alias map's keys
+DEFINE what is mechanically checkable). Tokenized text outside that
+vocabulary, non-command backticks (flags), and bullet prose past the
+leading verb clause are reported as unchecked — visible, never
+silently dropped.
 
 - **Exempt** a deliberate prose bullet by placing
   `<!-- readme-verbs-exempt: <reason> -->` on the line directly above
