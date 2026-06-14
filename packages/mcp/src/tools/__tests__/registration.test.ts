@@ -213,6 +213,9 @@ const EXPECTED_TOOLS = [
   "ttctl_surveys_feedback",
   "ttctl_surveys_list",
   "ttctl_surveys_submit",
+  // me (#389) — 1 tool: the viewer performed-actions audit log
+  // (`GetPerformedActions`, ADR-007 row 5 bidirectional cursor).
+  "ttctl_me_actions_list",
 ];
 
 /**
@@ -246,7 +249,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (130 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (131 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

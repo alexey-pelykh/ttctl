@@ -1,0 +1,46 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-14T22:11:36.733Z",
+  "operationName": "GetPerformedActions",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "category": {
+          "kind": "string"
+        },
+        "description": {
+          "kind": "object",
+          "fields": {
+            "template": {
+              "kind": "string"
+            },
+            "variables": {
+              "kind": "array",
+              "item": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "kind": "string"
+                  },
+                  "text": {
+                    "kind": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "id": {
+          "kind": "string"
+        },
+        "occurredAt": {
+          "kind": "string"
+        }
+      }
+    }
+  }
+}

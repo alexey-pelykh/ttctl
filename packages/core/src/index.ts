@@ -89,6 +89,7 @@ export * as jobs from "./services/jobs/index.js";
 export * as payments from "./services/payments/index.js";
 export * as surveys from "./services/surveys/index.js";
 export * as timesheet from "./services/timesheet/index.js";
+export * as me from "./services/me/index.js";
 
 export { PROFILE_BASIC_FIELDS, PROFILE_SKILL_FIELDS, cliToServer, serverToCli } from "./services/translations.js";
 

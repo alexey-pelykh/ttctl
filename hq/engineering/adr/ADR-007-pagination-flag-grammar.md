@@ -28,7 +28,7 @@ Adopt **surface-honest per-wire-idiom pagination flag grammar**: CLI / MCP flags
 | Offset-pagination wrapper    | `(offsetPagination: {offset: Int!, limit: Int!})` | `--page` / `--per-page` (translated) | `{page, perPage}` (translated) | payments payouts                               | `Payments`                         |
 | Limit-only wrapper           | `(pagination: {limit: Int})`                      | `--limit`                            | `{limit}`                      | timesheet pending (post-#374 re-spike)         | `PendingTimesheets`                |
 | Limit+forward-cursor wrapper | `(pagination: {limit, after: ID})`                | `--limit` + `--after <id>`           | `{limit, after}`               | _(deferred — see future engagements-payments)_ | `GetEngagementPayments`            |
-| Bare bidirectional cursor    | `(before: String, after: String, limit: Int)`     | `--before` / `--after` / `--limit`   | `{before, after, limit}`       | _(deferred — see future performed-actions)_    | `GetPerformedActions`              |
+| Bare bidirectional cursor    | `(before: String, after: String, limit: Int)`     | `--before` / `--after` / `--limit`   | `{before, after, limit}`       | me actions                                     | `GetPerformedActions`              |
 
 ### Translation rule for row 2
 
@@ -88,6 +88,7 @@ Honesty section. This ADR does **not**:
 - [#373](https://github.com/alexey-pelykh/ttctl/issues/373) — payments payouts pagination. The only row-2 service ttctl currently ships.
 - [#375](https://github.com/alexey-pelykh/ttctl/issues/375) — engagements pagination. Resolved using row 1.
 - [#138](https://github.com/alexey-pelykh/ttctl/issues/138) / [#183](https://github.com/alexey-pelykh/ttctl/issues/183) — original `--page` / `--per-page` convention (row 1 establishment).
+- [#389](https://github.com/alexey-pelykh/ttctl/issues/389) — performed-actions list. The first row-5 (bare bidirectional cursor) consumer; `ttctl me actions list` / `ttctl_me_actions_list`.
 
 ## References
 

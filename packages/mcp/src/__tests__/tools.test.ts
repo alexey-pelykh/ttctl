@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (130 tools)", () => {
+  it("registers exactly the cumulative tool set (131 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -123,6 +123,8 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_jobs_show",
       "ttctl_jobs_unsave",
       "ttctl_jobs_viewed",
+      // #389 — me (1, viewer performed-actions audit log; ADR-007 row 5 bidirectional cursor)
+      "ttctl_me_actions_list",
       // #149 + #447 + #448 — payments (9, summary + payouts list/show +
       // methods list/show + rate current/show/questions/change).
       // rate_change is destructive (compliance flow); LLM clients must

@@ -309,6 +309,8 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
     answers: [{ questionId: "q-1", value: "5" }],
     surveySubmissionConsentIssued: true,
   },
+  // me (1 — #389; read-only, all args optional → empty fixture)
+  ttctl_me_actions_list: {},
   // timesheet (5 — #13 + #374 pending_list + #458 update)
   ttctl_timesheet_list: {},
   ttctl_timesheet_pending_list: {},
@@ -354,8 +356,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 130 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(130);
+  it("registers exactly 131 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(131);
   });
 
   it("every registered tool has a fixture", () => {

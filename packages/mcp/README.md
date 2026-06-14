@@ -31,7 +31,7 @@ Requires **Node.js ≥ 22.19.0**, ESM only.
 
 ### Tool catalog
 
-The server registers 130 tools spanning the full Toptal Talent surface that TTCtl exposes — read AND mutation paths (per-domain counts below sum to the total):
+The server registers 131 tools spanning the full Toptal Talent surface that TTCtl exposes — read AND mutation paths (per-domain counts below sum to the total):
 
 - **`profile.*`** (69 tools) — `basic`, `skills`, `industries`, `education`, `certifications`, `employment`, `portfolio`, `visas`, `resume`, `external`, `reviews`, `specializations`, `countries`
 - **`jobs`** (18 tools) — browse (list / show) + saved / viewed / not-interested signals + search subscription + apply funnel
@@ -43,6 +43,7 @@ The server registers 130 tools spanning the full Toptal Talent surface that TTCt
 - **`interest_requests`** (4 tools) — list + accept / reject / reject-reasons (the `ON_RECRUITER_REVIEW` write surface)
 - **`surveys`** (3 tools) — list (pending) / submit (answers) / feedback (free-text)
 - **`contracts`** (2 tools) — list / show (talent-level contracts surface)
+- **`me`** (1 tool) — actions list (viewer performed-actions audit log)
 
 Tools use canonical sub-domain names — CLI aliases (`certs`, `experience`) are CLI-only and do NOT appear in the MCP catalog. The full registry is wired in [`tools/index.ts`](https://github.com/alexey-pelykh/ttctl/blob/main/packages/mcp/src/tools/index.ts); the authoritative tool count and per-name set are asserted by the registration tests ([`src/tools/__tests__/registration.test.ts`](https://github.com/alexey-pelykh/ttctl/blob/main/packages/mcp/src/tools/__tests__/registration.test.ts), [`src/__tests__/tools.test.ts`](https://github.com/alexey-pelykh/ttctl/blob/main/packages/mcp/src/__tests__/tools.test.ts)) — re-derive from there when the surface changes.
 
@@ -76,7 +77,7 @@ Each response row's `statusV2.verbose` is the exact label the portal renders ("J
 
 ### Trust model
 
-Process-level: any process that can spawn `ttctl mcp` gets full access to the user's Toptal Talent session via the configured config file. The 130-tool catalog includes destructive surfaces (`timesheet submit`, `timesheet update`, profile mutations, job-interest signals, rate-change requests, etc.) — the blast radius is the user's full profile and platform-side activity, not just reads. Don't grant MCP access to untrusted AI agents — see the project [`SECURITY.md`](https://github.com/alexey-pelykh/ttctl/blob/main/SECURITY.md).
+Process-level: any process that can spawn `ttctl mcp` gets full access to the user's Toptal Talent session via the configured config file. The 131-tool catalog includes destructive surfaces (`timesheet submit`, `timesheet update`, profile mutations, job-interest signals, rate-change requests, etc.) — the blast radius is the user's full profile and platform-side activity, not just reads. Don't grant MCP access to untrusted AI agents — see the project [`SECURITY.md`](https://github.com/alexey-pelykh/ttctl/blob/main/SECURITY.md).
 
 ### Debug instrumentation
 
