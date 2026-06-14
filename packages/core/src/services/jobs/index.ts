@@ -130,6 +130,7 @@ export type JobsErrorCode =
   | "MUTATION_ERROR"
   | "NETWORK_ERROR"
   | "WIRE_SHAPE_ERROR"
+  | "VALIDATION_ERROR"
   | "UNKNOWN";
 
 export class JobsError extends Error {
@@ -642,12 +643,12 @@ const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!]
   }
 }`;
 
-const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
-  viewer {
-    __typename
-    id
-    job(id: $id) {
-      __typename
+// Shared job-detail field selection — a hand-trimmed subset of the
+// captured `jobData` fragment. `JobShow` (`viewer.job(id:)`) and
+// `JobsByIDs` (`viewer.jobs(ids:)`) select identical fields so both
+// project through `projectJobDetail` / `JobDetailEntity`; the constant
+// keeps the two queries from drifting.
+const JOB_DETAIL_SELECTION = `__typename
       id
       title
       url
@@ -747,7 +748,28 @@ const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
             ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
           }
         }
-      }
+      }`;
+
+const JOB_SHOW_QUERY = `query JobShow($id: ID!) {
+  viewer {
+    __typename
+    id
+    job(id: $id) {
+      ${JOB_DETAIL_SELECTION}
+    }
+  }
+}`;
+
+// Bulk sibling of `JobShow`. `viewer.jobs(ids:)` batch-fetches the same
+// trimmed selection for up to `MAX_SHOW_MANY_IDS` ids in one round-trip.
+// The captured op also selects `pendingAvailabilityRequests` at the
+// viewer level; ttctl trims that (parity with `JobShow`).
+const JOBS_BY_IDS_QUERY = `query JobsByIDs($ids: [ID!]!) {
+  viewer {
+    __typename
+    id
+    jobs(ids: $ids) {
+      ${JOB_DETAIL_SELECTION}
     }
   }
 }`;
@@ -990,6 +1012,17 @@ interface JobShowResponse {
   viewer: {
     id: string;
     job: JobDetailEntity | null;
+  } | null;
+}
+
+// `viewer.jobs(ids:)` return shape. List + item nullability are INFERRED
+// — the synthesized Viewer SDL carries neither `job(id:)` nor
+// `jobs(ids:)` (schema gap → T1). Typed defensively; `showMany` filters
+// null items and re-orders by input id. Live E2E validates the shape.
+interface JobsByIdsResponse {
+  viewer: {
+    id: string;
+    jobs: (JobDetailEntity | null)[] | null;
   } | null;
 }
 
@@ -1350,6 +1383,53 @@ export async function show(token: string, id: string): Promise<JobDetail> {
     throw new JobsError("NOT_FOUND", `No job found with id "${id}" (or you don't have access to it).`);
   }
   return projectJobDetail(data.viewer.job);
+}
+
+/** Upper bound on the id list accepted by {@link showMany}. */
+export const MAX_SHOW_MANY_IDS = 20 as const;
+
+/**
+ * Batch-fetch jobs by id — the bulk sibling of {@link show}, wrapping
+ * mobile-gateway `JobsByIDs`. Returns found jobs in INPUT order: the wire
+ * does not guarantee positional correspondence, so the result is
+ * re-ordered client-side by matching each requested id against the
+ * returned `id`.
+ *
+ * Throws `JobsError("VALIDATION_ERROR")` for an empty list or more than
+ * {@link MAX_SHOW_MANY_IDS} ids.
+ *
+ * Unresolvable-id handling is wire-determined and NOT uniform (verified
+ * live): an id the wire silently drops is omitted from the result
+ * (partial fetch, never a `NOT_FOUND`), but some invalid ids instead make
+ * the wire reject the WHOLE batch with `GRAPHQL_ERROR("Invalid ids")`,
+ * which propagates verbatim. The service cannot pre-distinguish the two
+ * classes, so callers passing untrusted ids must handle either outcome.
+ */
+export async function showMany(token: string, ids: string[]): Promise<JobDetail[]> {
+  if (ids.length === 0) {
+    throw new JobsError("VALIDATION_ERROR", "showMany requires at least one job id.");
+  }
+  if (ids.length > MAX_SHOW_MANY_IDS) {
+    throw new JobsError(
+      "VALIDATION_ERROR",
+      `showMany accepts at most ${MAX_SHOW_MANY_IDS.toString()} ids (got ${ids.length.toString()}).`,
+    );
+  }
+  const data = await callGateway<JobsByIdsResponse>(token, "JobsByIDs", JOBS_BY_IDS_QUERY, { ids });
+  if (data.viewer === null) {
+    throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  const byId = new Map<string, JobDetail>();
+  for (const entity of data.viewer.jobs ?? []) {
+    if (entity === null) continue;
+    byId.set(entity.id, projectJobDetail(entity));
+  }
+  const out: JobDetail[] = [];
+  for (const id of ids) {
+    const job = byId.get(id);
+    if (job !== undefined) out.push(job);
+  }
+  return out;
 }
 
 /**

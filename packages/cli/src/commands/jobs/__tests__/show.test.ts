@@ -16,6 +16,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
     jobs: {
       ...actual.jobs,
       show: vi.fn(),
+      showMany: vi.fn(),
     },
     applications: {
       ...actual.applications,
@@ -35,9 +36,10 @@ vi.mock("../../../lib/config-context.js", () => ({
 
 import { applications, jobs } from "@ttctl/core";
 
-import { runJobsShow } from "../show.js";
+import { runJobsShow, runJobsShowMany } from "../show.js";
 
 const mockedJobsShow = vi.mocked(jobs.show);
+const mockedJobsShowMany = vi.mocked(jobs.showMany);
 const mockedApplyQuestions = vi.mocked(applications.applyQuestions);
 
 const JOB_DETAIL_FIXTURE: jobs.JobDetail = {
@@ -139,6 +141,7 @@ function captureStdout(): { lines: string[] } {
 
 beforeEach(() => {
   mockedJobsShow.mockReset();
+  mockedJobsShowMany.mockReset();
   mockedApplyQuestions.mockReset();
 });
 
@@ -238,5 +241,49 @@ describe("runJobsShow --with-questions (issue #437)", () => {
     expect(mockedApplyQuestions).not.toHaveBeenCalled();
     const stdout = out.lines.join("");
     expect(stdout).not.toContain("Matcher Questions");
+  });
+});
+
+describe("runJobsShowMany", () => {
+  const JOB_DETAIL_FIXTURE_2: jobs.JobDetail = { ...JOB_DETAIL_FIXTURE, id: "JOB-789", title: "Backend Engineer" };
+
+  it("renders each found job, in input order, separated by a rule", async () => {
+    const out = captureStdout();
+    // service returns input order already (it re-orders); caller asked [789, 456].
+    mockedJobsShowMany.mockResolvedValueOnce([JOB_DETAIL_FIXTURE_2, JOB_DETAIL_FIXTURE]);
+
+    await runJobsShowMany(["JOB-789", "JOB-456"], "pretty");
+
+    expect(mockedJobsShowMany).toHaveBeenCalledWith("tok-test-437", ["JOB-789", "JOB-456"]);
+    const stdout = out.lines.join("");
+    expect(stdout).toContain("Job JOB-789");
+    expect(stdout).toContain("Job JOB-456");
+    // input order preserved in the rendered output
+    expect(stdout.indexOf("Job JOB-789")).toBeLessThan(stdout.indexOf("Job JOB-456"));
+  });
+
+  it("reports requested ids that were not found", async () => {
+    const out = captureStdout();
+    mockedJobsShowMany.mockResolvedValueOnce([JOB_DETAIL_FIXTURE]);
+
+    await runJobsShowMany(["JOB-456", "JOB-missing"], "pretty");
+
+    const stdout = out.lines.join("");
+    expect(stdout).toContain("Job JOB-456");
+    expect(stdout).toContain("Not found (1): JOB-missing");
+  });
+
+  it("emits the jobs array for json consumers", async () => {
+    const out = captureStdout();
+    mockedJobsShowMany.mockResolvedValueOnce([JOB_DETAIL_FIXTURE_2, JOB_DETAIL_FIXTURE]);
+
+    await runJobsShowMany(["JOB-789", "JOB-456"], "json");
+
+    const stdout = out.lines.join("");
+    expect(stdout).toContain("JOB-789");
+    expect(stdout).toContain("JOB-456");
+    // machine output carries both ids in input order
+    expect(stdout.indexOf("JOB-789")).toBeLessThan(stdout.indexOf("JOB-456"));
+    expect(stdout).not.toContain("Not found");
   });
 });

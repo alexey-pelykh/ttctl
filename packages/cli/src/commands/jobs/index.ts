@@ -17,7 +17,7 @@ import {
 } from "./interest.js";
 import { runJobsList, runJobsNotInterestedList, runJobsSaved, runJobsViewed } from "./list.js";
 import { runJobsSearchList, runJobsSearchRemove, runJobsSearchSave } from "./search.js";
-import { runJobsShow } from "./show.js";
+import { runJobsShow, runJobsShowMany } from "./show.js";
 
 /**
  * Page-number option factory (#183). Each paginating leaf declares its
@@ -168,6 +168,19 @@ export function buildJobsCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat; withQuestions?: boolean }) => {
       await runJobsShow(id, options.output, { withQuestions: options.withQuestions === true });
+    });
+
+  cmd
+    .command("show-many")
+    .description("Show several jobs by id in one batch fetch (≤20 ids; results in input order)")
+    .argument("<id...>", "job ids (from `jobs list`)", parseIdsArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (ids: string[], options: { output: OutputFormat }) => {
+      await runJobsShowMany(ids, options.output);
     });
 
   // #430 — Direct-apply to a job. Per ADR-008 § Decision Part 5: the
@@ -483,4 +496,12 @@ function parseIdArg(value: string): string {
     throw new InvalidArgumentError("id must not be empty");
   }
   return trimmed;
+}
+
+// Variadic accumulator for `<id...>`. Commander threads `previous` per
+// value when a custom parser is supplied to a variadic argument, so the
+// parser must accumulate (a single-value parser would yield only the
+// last id). Trims + rejects empty ids per element, like `parseIdArg`.
+function parseIdsArg(value: string, previous: string[] = []): string[] {
+  return [...previous, parseIdArg(value)];
 }

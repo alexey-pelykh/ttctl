@@ -14,6 +14,7 @@ vi.mock("../../../transport/index.js", async () => {
 
 import {
   JobsError,
+  MAX_SHOW_MANY_IDS,
   clearInterest,
   list,
   markViewed,
@@ -25,6 +26,7 @@ import {
   searchSubscriptionSave,
   searchSubscriptionShow,
   show,
+  showMany,
   unsave,
   viewedList,
 } from "../index.js";
@@ -514,6 +516,62 @@ describe("jobs.show", () => {
       name: "JobsError",
       code: "NOT_FOUND",
     });
+  });
+});
+
+describe("jobs.showMany", () => {
+  const JOB_DETAIL_ENTITY_2 = { ...JOB_DETAIL_ENTITY, id: "job-2", title: "Backend Engineer" };
+
+  it("returns the projected jobs in INPUT order, regardless of wire order", async () => {
+    // Wire returns job-1 then job-2; caller asked for [job-2, job-1].
+    reply({
+      body: { data: { viewer: { id: "v1", jobs: [JOB_DETAIL_ENTITY, JOB_DETAIL_ENTITY_2] } } },
+    });
+    const jobs = await showMany(TOKEN, ["job-2", "job-1"]);
+    expect(jobs.map((j) => j.id)).toEqual(["job-2", "job-1"]);
+    expect(jobs[0]?.title).toBe("Backend Engineer");
+    expect(jobs[1]?.descriptionMd).toBe("We're hiring a React engineer.");
+  });
+
+  it("passes the id list through to the wire", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobs: [JOB_DETAIL_ENTITY] } } } });
+    await showMany(TOKEN, ["job-1"]);
+    const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string; variables: { ids: string[] } };
+    expect(body.operationName).toBe("JobsByIDs");
+    expect(body.variables.ids).toEqual(["job-1"]);
+  });
+
+  it("omits ids that resolve to no job (partial result)", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobs: [JOB_DETAIL_ENTITY] } } } });
+    const jobs = await showMany(TOKEN, ["job-1", "job-missing"]);
+    expect(jobs.map((j) => j.id)).toEqual(["job-1"]);
+  });
+
+  it("filters null list items", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobs: [JOB_DETAIL_ENTITY, null] } } } });
+    const jobs = await showMany(TOKEN, ["job-1", "job-2"]);
+    expect(jobs.map((j) => j.id)).toEqual(["job-1"]);
+  });
+
+  it("returns [] when viewer.jobs is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobs: null } } } });
+    await expect(showMany(TOKEN, ["job-1"])).resolves.toEqual([]);
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(showMany(TOKEN, ["job-1"])).rejects.toMatchObject({ name: "JobsError", code: "NO_VIEWER" });
+  });
+
+  it("rejects an empty id list without touching the wire", async () => {
+    await expect(showMany(TOKEN, [])).rejects.toMatchObject({ name: "JobsError", code: "VALIDATION_ERROR" });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects more than MAX_SHOW_MANY_IDS ids without touching the wire", async () => {
+    const tooMany = Array.from({ length: MAX_SHOW_MANY_IDS + 1 }, (_, i) => `job-${i.toString()}`);
+    await expect(showMany(TOKEN, tooMany)).rejects.toMatchObject({ name: "JobsError", code: "VALIDATION_ERROR" });
+    expect(mockedStock).not.toHaveBeenCalled();
   });
 });
 

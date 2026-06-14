@@ -98,9 +98,10 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * `opportunities_*` aliasing (MCP tool names must be deterministic for
  * LLM clients).
  *
- * Tool surface (17 tools):
+ * Tool surface (19 tools):
  *   - `ttctl_jobs_list`
  *   - `ttctl_jobs_show`
+ *   - `ttctl_jobs_show_many`
  *   - `ttctl_jobs_save`
  *   - `ttctl_jobs_unsave`
  *   - `ttctl_jobs_saved`
@@ -116,6 +117,7 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  *   - `ttctl_jobs_apply_questions` (#436 — read)
  *   - `ttctl_jobs_apply_rate_insight` (#436 — read)
  *   - `ttctl_jobs_apply` (#436 — DESTRUCTIVE; consent-gated)
+ *   - `ttctl_jobs_apply_similar_answers`
  *
  * **Wire-shape notes** (R1 / R2): `jobs_viewed` aggregates the FULL
  * eligibleJobs pool and applies a client-side filter on the `viewed`
@@ -260,6 +262,45 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       try {
         const item = await jobs.show(auth.token, args.id);
         return successResponse(item);
+      } catch (err) {
+        return mapJobsError(err);
+      }
+    },
+  );
+
+  // -------- show-many ---------------------------------------------
+  server.registerTool(
+    "ttctl_jobs_show_many",
+    {
+      title: "Show several jobs by id (batch)",
+      description: [
+        "Batch-fetch several jobs' detail views by id in a single wire round-trip — the bulk sibling of",
+        "`ttctl_jobs_show`. Each job carries the same fields as `ttctl_jobs_show`.",
+        "Returns the found jobs in INPUT order; ids that resolve to no job are omitted (diff the returned",
+        "`id`s against the ids you passed). Accepts up to 20 ids.",
+        "",
+        "Example user prompts:",
+        '  - "Compare Toptal jobs job_abc123 and job_def456."',
+        '  - "Show me the details for these three jobs I saved."',
+      ].join("\n"),
+      inputSchema: {
+        ids: z
+          .array(z.string())
+          .min(1)
+          .max(jobs.MAX_SHOW_MANY_IDS)
+          .describe(`Job ids (from \`ttctl_jobs_list\`). 1–${jobs.MAX_SHOW_MANY_IDS.toString()} ids.`),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("JobsByIDs", "mobile-gateway", { ids: args.ids }, auth.token));
+      }
+      try {
+        const items = await jobs.showMany(auth.token, args.ids);
+        return successResponse(items);
       } catch (err) {
         return mapJobsError(err);
       }
