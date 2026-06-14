@@ -48,6 +48,17 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         to: dateInput.optional().describe("end date — ISO-8601 or year"),
         fieldOfStudy: z.string().optional(),
         location: z.string().optional(),
+        skills: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("catalog Skill id"),
+              name: z.string().optional().describe("display name (optional; supplied verbatim if known)"),
+            }),
+          )
+          .optional()
+          .describe(
+            "Catalog skills to attach (optional). Discover ids via `ttctl_profile_skills_list`. The Toptal wire requires at least one skill on create (#612).",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -67,11 +78,15 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       }
       if (input.fieldOfStudy !== undefined) fields.fieldOfStudy = input.fieldOfStudy;
       if (input.location !== undefined) fields.location = input.location;
+      // `name` falls back to "" — server keys on `id` (mirrors employment_add #541).
+      if (input.skills !== undefined) {
+        fields.skills = input.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));
+      }
 
       if (input.dryRun === true) {
-        // skills: [] mirrors core add() — the wire requires non-null
-        // skills (#605 cert sibling). Wire shape uses `title` for the
-        // school name (no `institution` slot on EducationInput).
+        // skills mirrors core add(): caller-supplied set, else [] (the wire
+        // requires non-null skills, #605 cert sibling). Wire shape uses
+        // `title` for the school name (no `institution` slot on EducationInput).
         return dryRunResponse(
           buildMcpDryRunPreview(
             "CREATE_EDUCATION",
@@ -79,7 +94,7 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
             {
               input: {
                 profileId: profile.basic.DRY_RUN_PROFILE_ID_PLACEHOLDER,
-                education: { ...profile.education.toEducationWireInput(fields), skills: [] },
+                education: { ...profile.education.toEducationWireInput(fields), skills: fields.skills ?? [] },
               },
             },
             auth.token,
@@ -110,6 +125,18 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
         fieldOfStudy: z.string().optional(),
         location: z.string().optional(),
         highlight: z.boolean().optional(),
+        skills: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("catalog Skill id"),
+              name: z.string().optional().describe("display name (optional; supplied verbatim if known)"),
+            }),
+          )
+          .min(1)
+          .optional()
+          .describe(
+            "Catalog skills — when supplied, replaces the entry's entire skill set (partial update; omit to preserve). Discover ids via `ttctl_profile_skills_list`. The Toptal server rejects an empty `skills` array on update; ttctl enforces `min(1)` on the wrapper to fail fast.",
+          ),
         dryRun: DRY_RUN_FIELD,
       },
     },
@@ -129,6 +156,12 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       if (input.fieldOfStudy !== undefined) fields.fieldOfStudy = input.fieldOfStudy;
       if (input.location !== undefined) fields.location = input.location;
       if (input.highlight !== undefined) fields.highlight = input.highlight;
+      // Replace-on-supply: a supplied set wins over the dry-run placeholder /
+      // apply-path current-state echo. `name` falls back to "" — server keys
+      // on `id` (mirrors employment_update #541).
+      if (input.skills !== undefined) {
+        fields.skills = input.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));
+      }
 
       if (input.dryRun === true) {
         // Preview placeholders mirror UNCONDITIONAL echoes in
