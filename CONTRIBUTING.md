@@ -136,6 +136,18 @@ release-readiness gate.
 3. Commit with descriptive message (see CLAUDE.md for format)
 4. Open a pull request
 
+### Partial closures
+
+The commit-message convention is `(type) lowercase message [(#NNN)]`. When a
+PR's title or a commit references an OPEN **multi-step** issue with `(#NNN)` but
+ships only PART of its scope, sync the parent issue within 24 hours of merge:
+post a comment (or edit the body) summarizing what shipped and what remains.
+This keeps the issue body honest for whoever picks it up next.
+
+The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) carries a
+gate-checklist row for this. It does not apply to full closures, PRs with no
+`(#NNN)` reference, or single-step issues.
+
 ## Code of Conduct
 
 This project adopts the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md) (version 3.0). Please read it before participating.

@@ -67,6 +67,15 @@ CLAUDE.md.
       [#225](https://github.com/alexey-pelykh/ttctl/issues/225) for the
       rationale (prevents recurrence of #107-class doc-drift).
 
+- [ ] **Partial-scope issue sync** — If this PR closes only PART of a
+      referenced OPEN multi-step issue (its title or a commit carries
+      `(#NNN)`), the parent issue has been — or will be, on merge —
+      synced with a short note of what shipped vs what remains, OR this
+      does not apply (full closure, no `(#NNN)` reference, or a
+      single-step / already-current issue). See
+      [`CONTRIBUTING.md`](../CONTRIBUTING.md#partial-closures) for the
+      expectation.
+
 ## Test plan
 
 <!--
