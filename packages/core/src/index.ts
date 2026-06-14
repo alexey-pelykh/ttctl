@@ -29,7 +29,7 @@ export type { ConfigLockHandle } from "./configLock.js";
 
 export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js";
 
-export { getAuthStatus, resolveCredentials, signIn, signOut, SignInError } from "./auth.js";
+export { getAuthStatus, resolveCredentials, signIn, signOut, SignInError } from "./auth/index.js";
 export type {
   AuthInvalidReason,
   AuthStatusResult,
@@ -37,7 +37,7 @@ export type {
   SignOutInvalidReason,
   SignOutResult,
   SignOutUnreachableReason,
-} from "./auth.js";
+} from "./auth/index.js";
 
 export { AuthRevokedError, TtctlError } from "./auth/errors.js";
 

@@ -8,7 +8,7 @@ vi.mock("../transport/index.js", () => ({
   impersonatedTransport: vi.fn(),
 }));
 
-import { getAuthStatus, signIn, signOut, SignInError } from "../auth.js";
+import { getAuthStatus, signIn, signOut, SignInError } from "../auth/index.js";
 import { impersonatedTransport, stockTransport } from "../transport/index.js";
 import type { TransportRequest, TransportResponse } from "../transport/index.js";
 

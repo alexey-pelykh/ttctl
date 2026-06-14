@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-import type { AuthCredentials } from "./config.js";
-import { resolveOnePasswordReference } from "./onepassword.js";
-import { isAuthRevokedExtensionCode } from "./services/profile/shared.js";
-import { impersonatedTransport, stockTransport } from "./transport/index.js";
-import type { TransportResponse } from "./transport/index.js";
-import type { Credentials } from "./types.js";
+import type { AuthCredentials } from "../config.js";
+import { resolveOnePasswordReference } from "../onepassword.js";
+import { isAuthRevokedExtensionCode } from "./errors.js";
+import { impersonatedTransport, stockTransport } from "../transport/index.js";
+import type { TransportResponse } from "../transport/index.js";
+import type { Credentials } from "../types.js";
 
 /**
  * Persisted-query SHA-256 hash for the `EmailPasswordSignIn` mutation. Sourced
