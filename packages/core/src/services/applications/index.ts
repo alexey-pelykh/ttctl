@@ -1321,7 +1321,7 @@ export async function stats(token: string): Promise<ApplicationsStats> {
 // (snapshots) disposition. Wire-shape snapshots commit in #445.
 //
 // The CLI `schema-contract-disposition` CI gate's file-path triggers
-// cover `packages/core/src/auth.ts` + `packages/core/src/services/profile/**`
+// cover `packages/core/src/auth/**` + `packages/core/src/services/profile/**`
 // — `applications/` is not in the gate's scan set, so the gate doesn't
 // mechanically fire for this issue. The rule's INTENT is preserved
 // via the explicit cross-issue commitment to #445.
