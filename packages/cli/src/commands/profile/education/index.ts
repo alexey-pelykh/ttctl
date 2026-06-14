@@ -43,6 +43,11 @@ export function buildProfileEducationCommand(): Command {
     .option("--to <date>", "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
     .option("--field-of-study <text>", "field of study (optional)")
     .option("--location <text>", "city / country (optional)")
+    .option(
+      "--skill-id <id>",
+      "catalog Skill id (repeatable). Discover via `ttctl profile skills list`. The Toptal wire requires at least one skill on create (#612).",
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -63,6 +68,11 @@ export function buildProfileEducationCommand(): Command {
     .option("--field-of-study <text>", "field of study")
     .option("--location <text>", "city / country")
     .option("--highlight <bool>", "set highlight flag (true|false)")
+    .option(
+      "--skill-id <id>",
+      "catalog Skill id (repeatable; when supplied, replaces the entry's skill set — omit to preserve). Discover via `ttctl profile skills list`. The Toptal wire rejects an empty skill set — supply at least one id when using this flag.",
+      (value: string, prev: string[] | undefined) => (prev ? [...prev, value] : [value]),
+    )
     .addOption(
       new Option("-o, --output <format>", "output format")
         .choices(OUTPUT_FORMATS)
@@ -134,6 +144,8 @@ interface AddOptions {
   to?: string;
   fieldOfStudy?: string;
   location?: string;
+  // Catalog skill ids supplied via `--skill-id` (repeatable, #633).
+  skillId?: string[];
   output: OutputFormat;
 }
 
@@ -145,6 +157,8 @@ interface UpdateOptions {
   fieldOfStudy?: string;
   location?: string;
   highlight?: string;
+  // Catalog skill ids supplied via `--skill-id` (repeatable, #633).
+  skillId?: string[];
   output: OutputFormat;
 }
 
@@ -155,6 +169,10 @@ async function runAdd(options: AddOptions): Promise<void> {
   };
   applyDateFlags(fields, options, "profile education add", options.output);
   applyOptionalStrings(fields, options);
+  // `name` is "" — the server keys on `id` (mirrors employment #541).
+  if (options.skillId !== undefined && options.skillId.length > 0) {
+    fields.skills = options.skillId.map((id) => ({ id, name: "" }));
+  }
 
   const token = await loadAuthTokenOrExit("profile education add", options.output);
   let result: profile.education.Education;
@@ -196,6 +214,12 @@ async function runUpdate(id: string, options: UpdateOptions): Promise<void> {
     fields.highlight = options.highlight === "true";
   }
   applyDateFlags(fields, options, "profile education update", options.output);
+  // Replace-on-supply: a supplied set replaces the wire skill set (and counts
+  // toward the field-flag check below); omitted → core preserves current.skills.
+  // `name` is "" — the server keys on `id` (mirrors employment #541).
+  if (options.skillId !== undefined && options.skillId.length > 0) {
+    fields.skills = options.skillId.map((id) => ({ id, name: "" }));
+  }
 
   if (Object.keys(fields).length === 0) {
     emitErrorAndExit({
