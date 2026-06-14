@@ -14,8 +14,8 @@ import {
   RedirectError,
   stockTransport,
   USER_AGENT,
-} from "../../../transport.js";
-import type { DryRunPreview, TransportResponse } from "../../../transport.js";
+} from "../../../transport/index.js";
+import type { DryRunPreview, TransportResponse } from "../../../transport/index.js";
 import { SURFACE_ENDPOINTS } from "../../../types.js";
 import { isAuthRevokedExtensionCode } from "../shared.js";
 
@@ -1784,8 +1784,8 @@ async function multipartImpersonatedFetch(
 
   // Diagnostic log hook (issue #139). This path is photo-upload-specific;
   // duplicating the `impersonatedMultipartTransport` hook here keeps both
-  // paths covered without adding a circular dep between transport.ts and
-  // this module. The operation envelope and slot map come from the
+  // paths covered without adding a circular dep between the transport
+  // module and this module. The operation envelope and slot map come from the
   // caller so the trace reflects the actual GraphQL operation +
   // wire-shape map (the binary file content is intentionally NOT in
   // the body — it carries no diagnostic value and binary in a terminal
@@ -1832,7 +1832,7 @@ async function multipartImpersonatedFetch(
   }
 
   // Redirect anomaly (issue #268) — same no-follow posture as the
-  // transport.ts entry points. Capture the response in the diagnostic
+  // transport-module entry points. Capture the response in the diagnostic
   // trace before rejecting so an operator sees the redirect target.
   const redirectLocation = getRedirectLocation(res.status, responseHeaders);
   if (redirectLocation !== undefined) {

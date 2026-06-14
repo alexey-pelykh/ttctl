@@ -5,8 +5,8 @@ import type { z } from "zod";
 
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
 import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { impersonatedTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
+import { impersonatedTransport } from "../../transport/index.js";
+import type { TransportResponse } from "../../transport/index.js";
 import { show as basicShow, ProfileError } from "./basic/index.js";
 
 /**

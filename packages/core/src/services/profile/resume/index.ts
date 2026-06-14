@@ -5,8 +5,8 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { impersonatedMultipartTransport, impersonatedTransport } from "../../../transport.js";
-import type { MultipartFile, TransportResponse } from "../../../transport.js";
+import { impersonatedMultipartTransport, impersonatedTransport } from "../../../transport/index.js";
+import type { MultipartFile, TransportResponse } from "../../../transport/index.js";
 import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 
 /**

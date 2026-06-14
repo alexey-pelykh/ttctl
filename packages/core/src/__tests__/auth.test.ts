@@ -3,14 +3,14 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../transport.js", () => ({
+vi.mock("../transport/index.js", () => ({
   stockTransport: vi.fn(),
   impersonatedTransport: vi.fn(),
 }));
 
 import { getAuthStatus, signIn, signOut, SignInError } from "../auth.js";
-import { impersonatedTransport, stockTransport } from "../transport.js";
-import type { TransportRequest, TransportResponse } from "../transport.js";
+import { impersonatedTransport, stockTransport } from "../transport/index.js";
+import type { TransportRequest, TransportResponse } from "../transport/index.js";
 
 const mockedTransport = vi.mocked(stockTransport);
 const mockedImpersonatedTransport = vi.mocked(impersonatedTransport);

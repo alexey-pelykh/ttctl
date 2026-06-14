@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AuthRevokedError, TtctlError } from "../auth/errors.js";
-import { Cf403Error, Cf403PersistentError, SchedulerBearerExpired } from "../transport.js";
+import { Cf403Error, Cf403PersistentError, SchedulerBearerExpired } from "../transport/index.js";
 
 describe("TtctlError hierarchy (#77)", () => {
   it("is the abstract base for every typed auth error", () => {

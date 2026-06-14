@@ -3,8 +3,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
+vi.mock("../../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport/index.js")>(
+    "../../../../transport/index.js",
+  );
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -14,8 +16,8 @@ vi.mock("../../../../transport.js", async () => {
 
 import { list } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { impersonatedTransport } from "../../../../transport.js";
-import type { TransportResponse } from "../../../../transport.js";
+import { impersonatedTransport } from "../../../../transport/index.js";
+import type { TransportResponse } from "../../../../transport/index.js";
 
 const mockedImpersonated = vi.mocked(impersonatedTransport);
 const TOKEN = "tok-countries-123";

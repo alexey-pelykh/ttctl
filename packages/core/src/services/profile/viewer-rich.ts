@@ -38,8 +38,8 @@
  */
 
 import { AuthRevokedError } from "../../auth/errors.js";
-import { stockTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
+import { stockTransport } from "../../transport/index.js";
+import type { TransportResponse } from "../../transport/index.js";
 import { ProfileError } from "./basic/index.js";
 import { isAuthRevokedExtensionCode } from "./shared.js";
 

@@ -87,7 +87,7 @@ The `99-auth-signout.e2e.test.ts` case runs last by convention — post-#171 it'
 
 - **Module-level state persists across files.** A module-scoped `let` (e.g., the `printed` flag in `banner.ts`, the `handleCount` counter in `session.ts`, the `isolationCounter` in `session.ts`) keeps its value from one file to the next. The harness audits this carefully — see `globalSetup.ts` for the transport-state audit comment.
 - **`globalSetup` runs in a SEPARATE process** from the test workers. Variables cannot be passed in-memory; the handoff is filesystem-mediated via `<sandbox>/.session.json`.
-- **Adversarial tests' isolation is path-based, not process-based.** `withFreshSession()` writes to a per-call subdirectory (`<sandbox>/isolated-<N>/`); the corruption is isolated by being on a different file path, not in a different process. If `packages/core/src/transport.ts` ever introduces module-level mutable state (TLS client cache, cookie-jar handle, agent instance), that state COULD leak across files — re-audit on transport changes.
+- **Adversarial tests' isolation is path-based, not process-based.** `withFreshSession()` writes to a per-call subdirectory (`<sandbox>/isolated-<N>/`); the corruption is isolated by being on a different file path, not in a different process. If `packages/core/src/transport/` ever introduces module-level mutable state (TLS client cache, cookie-jar handle, agent instance), that state COULD leak across files — re-audit on transport changes.
 
 ## Running the harness
 

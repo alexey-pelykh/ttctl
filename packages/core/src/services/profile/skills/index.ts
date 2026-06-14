@@ -54,8 +54,8 @@ import type { z } from "zod";
 
 import { callGatewayShared } from "../../_shared/transport.js";
 import { ensureDestructiveConsent } from "../../../consent.js";
-import { buildDryRunPreview } from "../../../transport.js";
-import type { DryRunPreview } from "../../../transport.js";
+import { buildDryRunPreview } from "../../../transport/index.js";
+import type { DryRunPreview } from "../../../transport/index.js";
 import { DRY_RUN_PROFILE_ID_PLACEHOLDER } from "../basic/index.js";
 import { extractProfileId } from "../shared.js";
 

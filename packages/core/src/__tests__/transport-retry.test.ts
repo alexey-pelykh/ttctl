@@ -23,7 +23,12 @@ vi.mock("undici", () => ({
 import { fetch as wreqFetch } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
-import { Cf403Error, impersonatedMultipartTransport, impersonatedTransport, stockTransport } from "../transport.js";
+import {
+  Cf403Error,
+  impersonatedMultipartTransport,
+  impersonatedTransport,
+  stockTransport,
+} from "../transport/index.js";
 import { resetTransportConfigCache, TransportError } from "../transport-resilience.js";
 
 interface FakeWreqResponse {

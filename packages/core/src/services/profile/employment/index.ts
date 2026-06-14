@@ -4,8 +4,8 @@
 import { DRY_RUN_PROFILE_ID_PLACEHOLDER, ProfileError } from "../basic/index.js";
 import { applyUserErrorsAndSuccess, callTalentProfile, ensureNoTopLevelErrors, extractProfileId } from "../shared.js";
 import type { GraphQLErrorEntry, UserError } from "../shared.js";
-import { buildDryRunPreview } from "../../../transport.js";
-import type { DryRunPreview } from "../../../transport.js";
+import { buildDryRunPreview } from "../../../transport/index.js";
+import type { DryRunPreview } from "../../../transport/index.js";
 
 /**
  * `Employment` row as ttctl exposes it. Trimmed read-side projection of

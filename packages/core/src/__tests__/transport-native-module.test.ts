@@ -10,7 +10,11 @@ vi.mock("node-wreq", () => ({
 import { fetch as wreqFetch } from "node-wreq";
 
 import { TtctlError } from "../auth/errors.js";
-import { impersonatedMultipartTransport, impersonatedTransport, NativeModuleUnavailableError } from "../transport.js";
+import {
+  impersonatedMultipartTransport,
+  impersonatedTransport,
+  NativeModuleUnavailableError,
+} from "../transport/index.js";
 
 const mockedFetch = vi.mocked(wreqFetch);
 

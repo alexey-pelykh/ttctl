@@ -48,8 +48,8 @@
 
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
 import { ensureDestructiveConsent } from "../../../consent.js";
-import { impersonatedTransport } from "../../../transport.js";
-import type { TransportResponse } from "../../../transport.js";
+import { impersonatedTransport } from "../../../transport/index.js";
+import type { TransportResponse } from "../../../transport/index.js";
 import { ProfileError } from "../basic/index.js";
 import type { ProfileErrorCode } from "../basic/index.js";
 import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";

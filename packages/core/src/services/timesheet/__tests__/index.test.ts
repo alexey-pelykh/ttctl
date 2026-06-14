@@ -4,8 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // All timesheet ops run against mobile-gateway via `stockTransport`.
-vi.mock("../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../transport.js")>("../../../transport.js");
+vi.mock("../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../transport/index.js")>("../../../transport/index.js");
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -15,8 +15,8 @@ vi.mock("../../../transport.js", async () => {
 import { list, resolveCurrentCycle, show, submit, update, TimesheetError } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { ConsentRequiredError } from "../../../consent.js";
-import { stockTransport } from "../../../transport.js";
-import type { TransportResponse } from "../../../transport.js";
+import { stockTransport } from "../../../transport/index.js";
+import type { TransportResponse } from "../../../transport/index.js";
 
 const mockedStock = vi.mocked(stockTransport);
 const TOKEN = "tok-ts-123";

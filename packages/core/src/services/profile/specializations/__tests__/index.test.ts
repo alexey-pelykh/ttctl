@@ -8,8 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // `gateway/operations/portal/` but the gateway endpoint is the same as
 // the mobile-side ops — same pattern `payments.summary` (#448) and
 // `payments.rate.current` (#447) already follow).
-vi.mock("../../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
+vi.mock("../../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport/index.js")>(
+    "../../../../transport/index.js",
+  );
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -20,8 +22,8 @@ import { ProfileError, apply, show } from "../index.js";
 import type { SpecializationApplyConsent } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { ConsentRequiredError } from "../../../../consent.js";
-import { stockTransport } from "../../../../transport.js";
-import type { TransportResponse } from "../../../../transport.js";
+import { stockTransport } from "../../../../transport/index.js";
+import type { TransportResponse } from "../../../../transport/index.js";
 
 const CONSENT: SpecializationApplyConsent = { profileCapabilityConsentIssued: true };
 

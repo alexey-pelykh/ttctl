@@ -15,7 +15,7 @@
  * the asserted cleanup action lives outside any worker fork and can't be
  * skipped by a worker crash; see `globalTeardown.ts`.
  *
- * Audited `packages/core/src/transport.ts` 2026-05-07 — no module-level
+ * Audited `packages/core/src/transport/` 2026-05-07 — no module-level
  * mutable state that adversarial tests could corrupt across files.
  *
  * Filesystem-mediated handoff: vitest's globalSetup runs in a separate

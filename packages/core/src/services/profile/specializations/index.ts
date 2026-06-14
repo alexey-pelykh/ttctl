@@ -59,8 +59,8 @@
  */
 
 import { ensureDestructiveConsent } from "../../../consent.js";
-import { buildDryRunPreview } from "../../../transport.js";
-import type { DryRunPreview } from "../../../transport.js";
+import { buildDryRunPreview } from "../../../transport/index.js";
+import type { DryRunPreview } from "../../../transport/index.js";
 import { ProfileError } from "../basic/index.js";
 import type { ProfileErrorCode } from "../basic/index.js";
 import { callGatewayShared } from "../../_shared/transport.js";
