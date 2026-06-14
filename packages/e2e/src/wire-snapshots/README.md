@@ -255,7 +255,9 @@ TTCTL_E2E=1 TTCTL_UPDATE_WIRE_SNAPSHOTS=1 pnpm test:e2e -- -t <OpName>
 
 The first run writes `<OpName>.snapshot.json` here; review against the
 [Manual review checklist](#manual-review-checklist-for-snapshot-prs)
-and commit it alongside the test.
+and commit it alongside the test. Before opening the PR, run the
+[open-issue grep](#update-an-existing-snapshot-when-the-wire-genuinely-changed)
+for the new op and cite any tracking issue the snapshot resolves.
 
 ### Update an existing snapshot when the wire genuinely changed
 
@@ -273,8 +275,18 @@ Relevant transitions surface as extra stderr notes:
   TS/codegen type may be wrong. The new kind is adopted; cross-check the schema
   before committing.
 
+After regenerating, grep open issues for **each** touched op and cite (or
+`Closes`) the matches in the PR body — a wave refresh resolves per-op drift
+issues (the `#615` / `#639` class) without naming them, so an un-cited issue
+never auto-closes and silently re-mints as phantom backlog:
+
+```sh
+gh issue list --state open --search "<OpName>"
+```
+
 The PR description **must** justify any wire change (Toptal incident,
-`research/notes/` update, or schema-drift evidence).
+`research/notes/` update, or schema-drift evidence) **and** cite every open
+issue the regenerated ops resolve.
 
 ### Triage a failing snapshot test
 
