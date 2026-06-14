@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.16] - 2026-06-14
+
+### Added
+
+- **CLI/MCP parity contract test (#151).**
+  `packages/ttctl/src/__tests__/cli-mcp-parity.test.ts` (runs in
+  `pnpm test`) is the sibling parity gate to surface-coverage: it walks
+  the live Commander tree and a constructed MCP server's tool registry
+  (a new `listRegisteredMcpToolNames()` export from `@ttctl/mcp`) and
+  reports when a CLI leaf `ttctl <group> <sub-domain> <verb>` and its
+  `ttctl_<group>_<sub-domain>_<verb>` MCP tool drift apart. Runtime
+  discovery resolves the template-literal tool registrations a source
+  scan cannot; intentional divergences live in `.mcp-exempt.yaml` or an
+  inline `// mcp-exempt:` comment. Warn-by-default;
+  `CLI_MCP_PARITY_STRICT=1` fails on drift.
+- **Scalar type-consistency lint gate (#782).**
+  `scripts/check-scalar-type-consistency.ts` (wired into `pnpm lint`)
+  cross-references hand-authored `export interface` scalar fields under
+  `packages/core/src/services/**` against the generated codegen named
+  types and Zod schemas, flagging a hand-authored field whose primitive
+  contradicts the wire scalar — the structural defense against the #275
+  mistype class (#275, #779). Field-name match on a single unambiguous
+  contradiction; warn-by-default with `// scalar-consistency-exempt:`
+  markers and `SCALAR_CONSISTENCY_STRICT=1`.
+
+### Changed
+
+- **Surface-coverage gate follows sibling-file re-exports (#662).** The
+  Class A gate parsed only `export async function` and
+  `export const ns = {}`; it now also follows value re-exports
+  (`export { name } from "./sibling.js"`, honoring `as` aliases and
+  ignoring `export type`), attributing the op to the importing index's
+  namespace — so an op implemented in a sibling file (e.g.
+  `profile.employment.reportingToAutocomplete`) is no longer invisible
+  to it.
+- **README-verbs gate resolves `ttctl_*` MCP tool-name claims (#765).**
+  The #762 gate routed every `ttctl_*` backtick span to its unchecked
+  report; those spans now resolve against the registered MCP tool roster
+  (`EXPECTED_TOOLS`, pinned to the live server registry), so a README
+  naming a renamed or removed tool is a strict finding rather than a
+  silent unchecked row.
+
 ### Fixed
 
 - **Scalar type corrections: `paymentGroupId` and time-zone offsets are
