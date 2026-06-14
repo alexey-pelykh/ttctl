@@ -13,6 +13,12 @@ Maintainer-facing conventions for audit cycles run against this repository's ope
 - **When checking cross-org GitHub state, scope queries to ALL relevant orgs.** This project uses both `alexey-pelykh/*` and `ttctl/*` GitHub orgs with different roles (personal-brand HQ vs project HQ). `gh search repos --owner alexey-pelykh` does NOT cover the `ttctl` org — verify against both.
 - **Prefer pattern-grep over absolute line refs when the cited code is in active churn.** Use `file.ts — grep for 'createTravelVisa'` instead of `file.ts:123-145` when the underlying area has been touched ≥1 PR in the last 30 days. Absolute line refs are acceptable for stable code or for issues created post-burn-down.
 
+## When emitting issues from findings
+
+- **Wave-label every emitted issue at creation.** Each issue an audit brief emits carries exactly one of `wave-0` / `wave-1` / `wave-2`, the same scheduling signal every actionable open issue carries (see [`CONTRIBUTING.md` § Issue triage: wave labels](../../CONTRIBUTING.md#issue-triage-wave-labels) for the tier meanings). The audit-emit path is the one that historically dropped it — user-authored and wave-0 batch issues carried wave labels while audit-emitted ones did not, so a brief that classifies its own findings by effort still shipped unlabelled issues.
+- **Derive the suggested tier from the brief's effort class.** Briefs group Recommended Actions by effort ("Quick fixes" / "Medium effort" / "Significant work"). Map: Quick fix → `wave-0` if release-critical else `wave-1`; Medium → `wave-1`, or `wave-2` when gated on a named trigger; Significant → `wave-1` with an explicit rationale, or `wave-2`. Effort sizes the work; release-criticality and trigger-gating pick the tier — the map yields a suggestion, not an automatic label.
+- **Confirm the tier per issue before emit.** `wave-2` asserts "gated on a named external condition," which the effort class alone cannot establish — so the maintainer confirms or overrides the suggested tier at emit time. When the gating trigger is unknown, default to `wave-2` and name the open question in the body rather than guessing `wave-1`.
+
 ## Snapshot annotation
 
 For issues containing dated status tables or methodology checklists, include the literal line:

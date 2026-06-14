@@ -90,6 +90,10 @@ label) so the tier always means "startable today." There is no automatic
 demotion by age, but a periodic re-triage pass re-affirms or demotes each
 `wave-1` item to prevent the tier from silently losing meaning.
 
+Issues emitted from an audit brief are wave-labelled at creation, with the
+suggested tier derived from the brief's effort class — see
+[`docs/audit/audit-checklist.md` § When emitting issues from findings](docs/audit/audit-checklist.md#when-emitting-issues-from-findings).
+
 ### ADR citations in issues
 
 Three separate ADR catalogs exist and their numbers collide — never cite a bare
