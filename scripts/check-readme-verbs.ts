@@ -3,7 +3,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 /**
- * README verb gate (issue #762).
+ * README verb gate (issue #762; MCP tool-name parity #765).
  *
  * Structural defense against the **#751 drift class**: a README
  * "What It Does" bullet claiming a verb or command that no CLI command
@@ -12,7 +12,10 @@
  * registers only list / pending / show / submit — docs issue #431 closed
  * ahead of its prerequisite feature #458, and nothing structural caught
  * the divergence. This gate diffs the claims against the command tree at
- * lint time.
+ * lint time. Backtick `ttctl_*` spans additionally resolve against the
+ * registered MCP tool names (#765): the same drift class has an MCP-parity
+ * sibling — a bullet naming a renamed or removed tool — that the CLI-only
+ * universe could not catch.
  *
  * Detection scope:
  *
@@ -27,6 +30,12 @@
  *     based: every segment of a claimed path must be a registered token in
  *     that domain. Token-set matching catches the #751 class (a token
  *     registered nowhere); it does not verify segment nesting order.
+ *   - The MCP tool-name universe is the `EXPECTED_TOOLS` roster parsed
+ *     from `packages/mcp/src/tools/__tests__/registration.test.ts` — the
+ *     canonical inventory the registration test pins to the live server
+ *     registry (so it cannot silently drift from the real tools). Resolved
+ *     lazily (only when a `ttctl_*` span is seen); a missing or unparseable
+ *     roster is a structural error, never a silent pass.
  *
  * Claim taxonomy (what is — and is not — mechanically checkable):
  *
@@ -36,19 +45,23 @@
  *      (multi-word ones span to their closing bracket) and `--flag`
  *      tokens are stripped; remaining segments must all be registered
  *      tokens of that domain.
- *   2. **Verb claims**: the bullet's leading verb clause (text up to the
+ *   2. **MCP tool-name claims**: backtick spans whose first token is an
+ *      `ttctl_*` MCP tool name (e.g. `ttctl_jobs_apply_similar_answers`),
+ *      resolved against the `EXPECTED_TOOLS` roster. An unregistered name
+ *      is a finding (fails strict); a registered one is a checked claim.
+ *   3. **Verb claims**: the bullet's leading verb clause (text up to the
  *      first `;`, `(`, or `.`), split on commas — and on " and " only
  *      when the next word is itself a known verb — then mapped through
  *      the alias vocabulary below (`view` → `show`, `sign in` → `signin`,
  *      ...). The alias map's keys DEFINE the checkable vocabulary.
- *   3. **Unchecked**: everything else — verb segments outside the alias
+ *   4. **Unchecked**: everything else — verb segments outside the alias
  *      vocabulary ("aggregate payment totals"), non-command backticks
- *      (`--flags`, `ttctl_*` MCP tool names), prose after the leading
- *      clause ("manage engagement breaks" — one un-scanned-remainder row
- *      per bullet), nested list lines, and command spans left unchecked
- *      past an unbalanced placeholder bracket. Every unchecked item is
- *      reported visibly; none ever fails the gate. The parser is honest
- *      about this boundary rather than pretending prose is verifiable.
+ *      (`--flags`), prose after the leading clause ("manage engagement
+ *      breaks" — one un-scanned-remainder row per bullet), nested list
+ *      lines, and command spans left unchecked past an unbalanced
+ *      placeholder bracket. Every unchecked item is reported visibly; none
+ *      ever fails the gate. The parser is honest about this boundary
+ *      rather than pretending prose is verifiable.
  *
  * Exemption mechanism:
  *
@@ -79,16 +92,25 @@
  */
 
 import { execSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ─── Configuration ──────────────────────────────────────────────────
 
 const README_FILE = "README.md";
 const COMMANDS_ROOT = "packages/cli/src/commands";
+// Canonical MCP tool-name roster — the live registration test pins
+// `EXPECTED_TOOLS` to the server's real registry, so reusing it here means
+// the gate's tool-name universe cannot drift from the actual tools (#765).
+const MCP_REGISTRATION_TEST = "packages/mcp/src/tools/__tests__/registration.test.ts";
 const SECTION_HEADING = "## What It Does";
 const EXEMPT_MARKER = /^<!--\s*readme-verbs-exempt:\s*(.*?)\s*-->$/;
 const BULLET = /^- \*\*(.+?)\*\*\s+—\s+(.*)$/;
+/** The `EXPECTED_TOOLS = [ ... ]` array body in the MCP registration test (tolerates a `: Type` annotation). */
+const EXPECTED_TOOLS_ARRAY = /const\s+EXPECTED_TOOLS\s*(?::[^=]+)?=\s*\[([\s\S]*?)\]/;
+/** A double-quoted `ttctl_*` MCP tool-name literal. */
+const MCP_TOOL_NAME = /"(ttctl_[a-z0-9_]+)"/g;
 
 /** README bullet display name → CLI command domain directory. */
 const DOMAIN_MAP: ReadonlyMap<string, string> = new Map([
@@ -143,7 +165,7 @@ interface ExemptedBullet {
   readonly reason: string;
 }
 
-interface RunReport {
+export interface RunReport {
   readonly findings: Finding[];
   readonly unchecked: UncheckedItem[];
   readonly exempted: ExemptedBullet[];
@@ -151,6 +173,24 @@ interface RunReport {
   readonly structuralErrors: string[];
   readonly bulletCount: number;
   readonly claimCount: number;
+}
+
+/** Resolved MCP tool-name roster, or a structural error explaining why it could not be loaded. */
+export interface McpToolResolution {
+  readonly names: ReadonlySet<string>;
+  readonly error: string | null;
+}
+
+/** Injectable inputs for the pure core — wired to the real FS in `main`, to fixtures in tests. */
+export interface ReadmeVerbsInputs {
+  /** Raw `README.md` content. */
+  readonly readme: string;
+  /** CLI command domain directory names under `packages/cli/src/commands`. */
+  readonly domains: ReadonlySet<string>;
+  /** Registered `.command("...")` tokens for a domain (called only for known domains). */
+  readonly tokensOf: (domain: string) => ReadonlySet<string>;
+  /** Resolve the MCP tool-name roster — called lazily, only when a `ttctl_*` span is seen. */
+  readonly resolveMcpTools: () => McpToolResolution;
 }
 
 // ─── Repo helpers ───────────────────────────────────────────────────
@@ -245,6 +285,48 @@ function collectDomainTokens(repoRoot: string, domain: string): Set<string> {
   return tokens;
 }
 
+// ─── MCP tool-name universe ─────────────────────────────────────────
+
+/**
+ * Extract the `ttctl_*` names from the `EXPECTED_TOOLS` array in the MCP
+ * registration test. Comments are masked first so a tool name mentioned in
+ * a comment cannot register as a roster entry. A missing array or an empty
+ * roster is an error (the caller fails the gate) rather than a silently
+ * empty universe that would pass every claim.
+ */
+export function parseExpectedToolNames(source: string): McpToolResolution {
+  const block = EXPECTED_TOOLS_ARRAY.exec(maskComments(source));
+  if (block === null) {
+    return {
+      names: new Set(),
+      error: `EXPECTED_TOOLS array not found in ${MCP_REGISTRATION_TEST} — MCP tool-name source is stale`,
+    };
+  }
+  const names = new Set<string>();
+  for (const m of (block[1] ?? "").matchAll(MCP_TOOL_NAME)) names.add(m[1] ?? "");
+  if (names.size === 0) {
+    return {
+      names,
+      error: `EXPECTED_TOOLS array in ${MCP_REGISTRATION_TEST} has no ttctl_* names — MCP tool-name source is stale`,
+    };
+  }
+  return { names, error: null };
+}
+
+/** Load + parse the MCP tool-name roster from disk. Unreadable file → error, never a silent empty universe. */
+function collectMcpToolNames(repoRoot: string): McpToolResolution {
+  let source: string;
+  try {
+    source = readFileSync(join(repoRoot, MCP_REGISTRATION_TEST), "utf8");
+  } catch {
+    return {
+      names: new Set(),
+      error: `${MCP_REGISTRATION_TEST} not readable — cannot resolve ttctl_* MCP tool-name claims`,
+    };
+  }
+  return parseExpectedToolNames(source);
+}
+
 // ─── README parsing ─────────────────────────────────────────────────
 
 interface ParsedBullet {
@@ -262,8 +344,8 @@ interface ParsedSection {
 }
 
 /** Extract bullets from the positive-claims block of `## What It Does`. */
-function parseReadme(repoRoot: string): ParsedSection {
-  const lines = readFileSync(join(repoRoot, README_FILE), "utf8").split("\n");
+function parseReadme(readme: string): ParsedSection {
+  const lines = readme.split("\n");
   const start = lines.findIndex((l) => l.trim() === SECTION_HEADING);
   if (start === -1) {
     return {
@@ -400,20 +482,19 @@ function splitVerbSegments(clause: string): string[] {
 
 // ─── Run ────────────────────────────────────────────────────────────
 
-function run(): RunReport {
-  const repoRoot = gitTopLevel();
-  const domains = listDomains(repoRoot);
-  const tokenCache = new Map<string, Set<string>>();
-  const tokensOf = (domain: string): Set<string> => {
-    let tokens = tokenCache.get(domain);
-    if (tokens === undefined) {
-      tokens = collectDomainTokens(repoRoot, domain);
-      tokenCache.set(domain, tokens);
-    }
-    return tokens;
+export function analyzeReadmeVerbs(inputs: ReadmeVerbsInputs): RunReport {
+  const { readme, domains, tokensOf, resolveMcpTools } = inputs;
+
+  // MCP roster is resolved lazily + memoized: a README with no `ttctl_*`
+  // span never touches the registration test, so a stale roster fails the
+  // gate only when a tool-name claim actually depends on it.
+  let mcpResolution: McpToolResolution | null = null;
+  const mcpTools = (): McpToolResolution => {
+    if (mcpResolution === null) mcpResolution = resolveMcpTools();
+    return mcpResolution;
   };
 
-  const { bullets, markerIssues, structuralErrors, nestedUnchecked } = parseReadme(repoRoot);
+  const { bullets, markerIssues, structuralErrors, nestedUnchecked } = parseReadme(readme);
   const findings: Finding[] = [];
   const unchecked: UncheckedItem[] = [];
   const exempted: ExemptedBullet[] = [];
@@ -457,11 +538,19 @@ function run(): RunReport {
         continue;
       }
       if (first.startsWith("ttctl_")) {
-        unchecked.push({
-          bullet: bullet.name,
-          line: bullet.line,
-          detail: `backtick \`${span}\` (MCP tool name — not a CLI path)`,
-        });
+        const mcp = mcpTools();
+        if (mcp.error !== null) {
+          if (!structuralErrors.includes(mcp.error)) structuralErrors.push(mcp.error);
+          continue;
+        }
+        claimCount += 1;
+        if (!mcp.names.has(first)) {
+          findings.push({
+            bullet: bullet.name,
+            line: bullet.line,
+            detail: `\`${span}\` → MCP tool "${first}" not registered (see ${MCP_REGISTRATION_TEST} EXPECTED_TOOLS)`,
+          });
+        }
         continue;
       }
       if (!domains.has(first)) {
@@ -543,7 +632,7 @@ function run(): RunReport {
 
 // ─── Report ─────────────────────────────────────────────────────────
 
-function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; text: string } {
+export function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; text: string } {
   const lines: string[] = [];
 
   if (report.structuralErrors.length > 0) {
@@ -551,7 +640,7 @@ function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; te
     for (const e of report.structuralErrors) lines.push(`    - ${e}`);
   }
   if (report.findings.length > 0) {
-    lines.push("\n  MISSING COMMANDS:");
+    lines.push("\n  MISSING COMMANDS / TOOLS:");
     for (const f of report.findings) {
       lines.push(`    - ${f.bullet} (${README_FILE}:${String(f.line)}): ${f.detail}`);
     }
@@ -574,14 +663,14 @@ function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; te
   }
   if (report.findings.length > 0) {
     lines.push(
-      "\n  remedy: fix the README claim, register the command, or — for deliberate prose naming no command — place <!-- readme-verbs-exempt: <reason> --> on the line above the bullet",
+      "\n  remedy: fix the README claim, register the command or MCP tool, or — for deliberate prose naming no command — place <!-- readme-verbs-exempt: <reason> --> on the line above the bullet",
     );
   }
 
   const fails = report.findings.length > 0 || report.structuralErrors.length > 0 || report.markerIssues.length > 0;
   const header = fails
-    ? `check-readme-verbs: ${String(report.findings.length)} missing-command claim(s), ${String(report.structuralErrors.length)} structural error(s), ${String(report.markerIssues.length)} marker issue(s)`
-    : `check-readme-verbs: ${String(report.claimCount)} claim(s) checked across ${String(report.bulletCount)} bullet(s), no missing commands`;
+    ? `check-readme-verbs: ${String(report.findings.length)} missing command/tool claim(s), ${String(report.structuralErrors.length)} structural error(s), ${String(report.markerIssues.length)} marker issue(s)`
+    : `check-readme-verbs: ${String(report.claimCount)} claim(s) checked across ${String(report.bulletCount)} bullet(s), no missing commands or tools`;
   const uncheckedNote = report.unchecked.length > 0 ? `, ${String(report.unchecked.length)} unchecked` : "";
   const exemptedNote = report.exempted.length > 0 ? `, ${String(report.exempted.length)} exempted` : "";
   const mode = strict ? "strict" : "warn";
@@ -593,11 +682,47 @@ function formatReport(report: RunReport, strict: boolean): { exitCode: 0 | 1; te
 }
 
 function main(): void {
+  const repoRoot = gitTopLevel();
   const strict = process.argv.includes("--strict") || process.env["README_VERBS_STRICT"] === "1";
-  const report = run();
+
+  const tokenCache = new Map<string, ReadonlySet<string>>();
+  const inputs: ReadmeVerbsInputs = {
+    readme: readFileSync(join(repoRoot, README_FILE), "utf8"),
+    domains: listDomains(repoRoot),
+    tokensOf: (domain) => {
+      let tokens = tokenCache.get(domain);
+      if (tokens === undefined) {
+        tokens = collectDomainTokens(repoRoot, domain);
+        tokenCache.set(domain, tokens);
+      }
+      return tokens;
+    },
+    resolveMcpTools: () => collectMcpToolNames(repoRoot),
+  };
+
+  const report = analyzeReadmeVerbs(inputs);
   const { exitCode, text } = formatReport(report, strict);
   process.stderr.write(text);
   process.exit(exitCode);
 }
 
-main();
+/**
+ * True when this module is the process entrypoint (`tsx scripts/...`), false
+ * when imported (e.g. by the unit test). Compares realpath-normalized native
+ * paths rather than URL strings so a Windows drive-letter / slash mismatch
+ * cannot make the gate silently no-op (which, in warn mode, would still exit
+ * 0 and look green).
+ */
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main();
+}
