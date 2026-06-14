@@ -39,32 +39,17 @@ function perPageOption(): Option {
 }
 
 /**
- * Build the `ttctl applications` command tree. Read-only access to the
- * user's Toptal Talent **Activity** view (which Toptal colloquially
- * calls "applications"). Three leaves:
+ * Build the `ttctl applications` command tree — the user's Toptal Talent
+ * **Activity** view (which Toptal colloquially calls "applications").
+ * Read is primary; writes on the application funnel are in scope per
+ * ADR-008 (`hq/engineering/adr/ADR-008-application-funnel-write-side.md`):
+ * Interest Request confirm / reject and direct job application are in
+ * scope; `withdraw` / `edit`, bulk apply, and interview accept / reject
+ * remain out of scope. The command tree below is the authoritative leaf
+ * inventory.
  *
- * | Leaf      | Description                                                |
- * |-----------|------------------------------------------------------------|
- * | `list`    | List recent activity rows (filterable by status group)     |
- * | `show <id>` | Detail view for one row                                  |
- * | `stats`   | Per-status-group counts (5 server calls in parallel)       |
- *
- * Write operations on the application funnel are in scope per ADR-008
- * (ttctl) — `hq/engineering/adr/ADR-008-application-funnel-write-side.md`.
- * ADR-008 § Decision relaxes the #15 read-only non-goal and bounds the
- * write surface: Interest Request confirm / reject (shipped in #411)
- * and direct job application are in scope; `withdraw` / `edit`, bulk
- * apply, and interview accept / reject remain explicitly out of scope.
- *
- * **Pagination (#377)**: the `list` leaf declares `--page` /
- * `--per-page` (1-indexed positive integers; same `parsePaginationFlag`
- * enforcement as the jobs leaves per #183). `#377` added the
- * `$page` / `$pageSize` wire args to the hand-authored
- * `JobActivityItems` document.
- *
- * **Still out of scope** (see `.tmp/workitem-15.md` § Open Questions):
- * `--from` / `--to` date filters — captured operation accepts no date
- * args.
+ * Date filters (`--from` / `--to`) on `list` remain out of scope — the
+ * captured `JobActivityItems` operation accepts no date args.
  */
 export function buildApplicationsCommand(): Command {
   const cmd = new Command("applications").description(
