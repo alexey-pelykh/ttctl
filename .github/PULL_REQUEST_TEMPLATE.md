@@ -36,6 +36,17 @@ CLAUDE.md.
       verify; the gate is wired into `pnpm lint` and runs on every CI
       build. See [`scripts/check-e2e-coverage.ts`](../scripts/check-e2e-coverage.ts)
       for the marker protocol.
+- [ ] **CLI/MCP parity** — If this PR adds, renames, or removes a CLI
+      command (`packages/cli/src/commands/**`) or an MCP tool
+      (`packages/mcp/src/tools/**`), the two surfaces stay coupled: a CLI
+      leaf `ttctl <group> <sub-domain> <verb>` has a matching
+      `ttctl_<group>_<sub-domain>_<verb>` MCP tool (and vice-versa), OR the
+      divergence is declared in [`.mcp-exempt.yaml`](../.mcp-exempt.yaml)
+      (or an inline `// mcp-exempt: <reason>` comment on the CLI command)
+      with a reason. The `cli-mcp-parity` contract test
+      ([`packages/ttctl/src/__tests__/cli-mcp-parity.test.ts`](../packages/ttctl/src/__tests__/cli-mcp-parity.test.ts))
+      reports drift on every `pnpm test`; `CLI_MCP_PARITY_STRICT=1 pnpm test`
+      fails on it.
 - [ ] **Doc surface** — If this PR touches `packages/core/src/auth.ts`,
       `packages/core/src/auth/**`, `packages/core/src/config.ts`,
       `packages/core/src/configWriter.ts`,

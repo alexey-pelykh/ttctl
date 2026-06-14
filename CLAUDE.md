@@ -332,6 +332,44 @@ and skipped — the leading-underscore convention coexists with the
 explicit `// surface-exempt:` marker for cases where the export name
 cannot be changed without breaking callers.
 
+### CLI/MCP parity gate (cross-surface drift defense)
+
+`packages/ttctl/src/__tests__/cli-mcp-parity.test.ts` (runs in `pnpm test`)
+is the sibling parity contract referenced by the surface-coverage gate
+(#151). Where surface-coverage catches a capability missing from BOTH
+surfaces (Class A), this catches the two surfaces drifting APART: a CLI
+leaf command `ttctl <group> <sub-domain> <verb>` whose matching
+`ttctl_<group>_<sub-domain>_<verb>` MCP tool is absent (or vice-versa), or
+an MCP tool whose name violates the convention.
+
+The umbrella package hosts it because it already depends on both
+`@ttctl/cli` and `@ttctl/mcp` — no new dependency, no cli→mcp coupling.
+Discovery is RUNTIME, not source-scan: the CLI side walks the live
+Commander tree from `buildProgram()`; the MCP side reads a constructed
+server's tool registry via `listRegisteredMcpToolNames()` (exported from
+`@ttctl/mcp`). Runtime is mandatory for correctness — some tools register
+computed names (e.g. `ttctl_profile_employment_skills_${op}`) that a source
+scan of the tool files cannot resolve. Canonical names only; CLI aliases
+(`certs`, `experience`) and wave-0 short forms are not walked.
+
+- **Exempt** an intentional divergence in `.mcp-exempt.yaml` —
+  `cli_only` (a CLI command with no MCP tool) or `mcp_only` (an MCP tool
+  with no CLI command), each with a mandatory `reason`. Equivalent inline
+  alternative: a `// mcp-exempt: <reason>` comment directly above the CLI
+  command registration (exempts by terminal verb; `.mcp-exempt.yaml` is
+  preferred when a verb is ambiguous across groups). Stale entries
+  (referencing a command/tool that no longer exists) fail the gate.
+- **Always hard-asserted** (clean today): the naming convention, the
+  absence of stale/ambiguous exemptions, the interactive-auth exemption,
+  and a curated set of known-good pairs.
+- **Default mode** is warn-only — parity gaps are reported via
+  `console.warn` and the build stays green (an existing baseline of
+  cross-surface renames + MCP-only affordances + one CLI-only leaf is
+  pending triage). Set `CLI_MCP_PARITY_STRICT=1` to fail on any non-exempt
+  missing-MCP or orphan-MCP once the baseline is triaged. Sibling switch
+  to `SURFACE_COVERAGE_STRICT` / `E2E_COVERAGE_STRICT` and the other
+  `check-*` strict flags.
+
 ### Merge-completeness gate (full-replace class defense)
 
 `scripts/check-merge-completeness.ts` (wired into `pnpm lint`) is the
