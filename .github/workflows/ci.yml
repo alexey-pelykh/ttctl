@@ -81,7 +81,7 @@ jobs:
   doc-surface:
     name: Doc Surface Attestation
     # PR-only gate: fails if the PR diff touches any of the doc-surface-tracked
-    # files (auth.ts, config*.ts, transport.ts, services/profile/**, codegen
+    # files (auth/**, config*.ts, transport/**, services/profile/**, codegen
     # config, synthesized schema) without an attestation line in the PR body.
     # Rationale: #225 / prevents recurrence of #107-class doc drift.
     if: github.event_name == 'pull_request'
@@ -97,17 +97,16 @@ jobs:
             // Doc-surface-tracked paths (per #225). Exact paths AND directory
             // prefixes (anything under the prefix triggers the gate).
             const exactPaths = [
-              'packages/core/src/auth.ts',
               'packages/core/src/config.ts',
               'packages/core/src/configWriter.ts',
               'packages/core/src/configLock.ts',
               'packages/core/src/onepassword.ts',
-              'packages/core/src/transport.ts',
               'codegen.config.ts',
               'research/graphql/gateway/schema.graphql',
             ];
             const dirPrefixes = [
               'packages/core/src/auth/',
+              'packages/core/src/transport/',
               'packages/core/src/services/profile/',
             ];
 
@@ -176,7 +175,7 @@ jobs:
     # checklist) without a disposition marker in the PR body.
     #
     # Trigger set (per CLAUDE.md):
-    #   - packages/core/src/auth.ts
+    #   - packages/core/src/auth/** (any file under)
     #   - packages/core/src/services/profile/** (any file under)
     #   - Any new hand-authored GraphQL operation (deferred — file-path
     #     triggers cover the typical sites; hand-authored detection is an
@@ -200,10 +199,9 @@ jobs:
         with:
           script: |
             // Schema/contract trigger set (per CLAUDE.md § Code-review checklist).
-            const exactPaths = [
-              'packages/core/src/auth.ts',
-            ];
+            const exactPaths = [];
             const dirPrefixes = [
+              'packages/core/src/auth/',
               'packages/core/src/services/profile/',
             ];
 

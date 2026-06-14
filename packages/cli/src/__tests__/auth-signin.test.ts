@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@ttctl/core", async () => {
   // Implement the error classes locally so `instanceof` checks in signin.ts
   // resolve against THESE constructors (vi.mock replaces the imports). The
-  // signatures track the real classes in `packages/core/src/auth.ts`,
+  // signatures track the real classes in `packages/core/src/auth/`,
   // `onepassword.ts`, `config.ts`, and `configWriter.ts`.
   class ConfigError extends Error {
     override readonly name = "ConfigError";

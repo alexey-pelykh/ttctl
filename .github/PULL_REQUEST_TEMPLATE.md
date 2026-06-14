@@ -19,8 +19,8 @@ CLAUDE.md.
       [`docs/snapshot-tests.md`](../docs/snapshot-tests.md)).
 - [ ] **Inferred-schema E2E** — If this PR introduces or modifies a
       hand-rolled GraphQL operation, an inferred contract shape, or
-      changes `packages/core/src/auth.ts` or any
-      `packages/core/src/services/profile/` service, the schema /
+      changes any `packages/core/src/auth/` or
+      `packages/core/src/services/profile/` file, the schema /
       contract validation rule from
       [`CLAUDE.md`](../CLAUDE.md#schemacontract-validation-rule) was
       satisfied (E2E test path + transcript pasted below), OR the rule
@@ -47,12 +47,12 @@ CLAUDE.md.
       ([`packages/ttctl/src/__tests__/cli-mcp-parity.test.ts`](../packages/ttctl/src/__tests__/cli-mcp-parity.test.ts))
       reports drift on every `pnpm test`; `CLI_MCP_PARITY_STRICT=1 pnpm test`
       fails on it.
-- [ ] **Doc surface** — If this PR touches `packages/core/src/auth.ts`,
-      `packages/core/src/auth/**`, `packages/core/src/config.ts`,
+- [ ] **Doc surface** — If this PR touches `packages/core/src/auth/**`,
+      `packages/core/src/config.ts`,
       `packages/core/src/configWriter.ts`,
       `packages/core/src/configLock.ts`,
       `packages/core/src/onepassword.ts`,
-      `packages/core/src/transport.ts`,
+      `packages/core/src/transport/**`,
       `packages/core/src/services/profile/**`, `codegen.config.ts`, or
       `research/graphql/gateway/schema.graphql`, the PR description
       contains EITHER of:

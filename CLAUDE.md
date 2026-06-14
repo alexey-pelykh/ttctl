@@ -165,7 +165,8 @@ PRs touching any of the following must explicitly state in the PR body
 whether this rule was triggered and, if so, how it was satisfied (E2E
 test path + transcript):
 
-- `packages/core/src/auth.ts`
+- Any file under `packages/core/src/auth/` (the cross-cutting auth
+  module — e.g. `auth/index.ts`, `auth/errors.ts`)
 - Any file under `packages/core/src/services/profile/` (the
   talent-profile domain services — e.g. `services/profile/basic/index.ts`
   for `UPDATE_BASIC_INFO`)
@@ -189,7 +190,7 @@ The disposition statement is mechanically enforced by the
 `schema-contract-disposition`, wired through the `CI` ci-gate aggregate
 that is the required status check on the `main-protection` ruleset). The
 gate inspects the PR diff against the file-path trigger set above
-(`packages/core/src/auth.ts`, `packages/core/src/services/profile/**`)
+(`packages/core/src/auth/**`, `packages/core/src/services/profile/**`)
 and, when any matches, requires the PR body to contain a
 `Schema/contract rule: triggered` or `Schema/contract rule: NOT triggered`
 marker. Hand-authored GraphQL detection is intentionally deferred (issue
@@ -1134,14 +1135,15 @@ The Toptal Talent platform exposes three GraphQL endpoints:
 - `https://www.toptal.com/api/talent_profile/graphql` — web profile editor, **Cloudflare-protected** (requires Chrome TLS fingerprint impersonation)
 - `https://scheduler.toptal.com/api/graphql` — scheduler, separate Cloudflare zone
 
-TTCtl uses two transports in `packages/core/src/transport.ts`:
+TTCtl uses two transports in `packages/core/src/transport/` (`stock.ts` and
+`impersonated.ts`, sharing infra in `_shared.ts`, composed by `index.ts`):
 
 - **Stock** (`undici`) for the mobile gateway
 - **Impersonated** (`node-wreq` with `chrome_147` profile, BoringSSL via Rust)
   for the Cloudflare-protected endpoints
 
 The `User-Agent` Chrome version derives from the `node-wreq` profile
-(`IMPERSONATE_PROFILE` in `transport.ts` is the single source of truth), so a
+(`IMPERSONATE_PROFILE` in `transport/_shared.ts` is the single source of truth), so a
 profile bump rotates the whole identity bundle. Identity-catalog freshness is
 critical (see `tls-fingerprinting` skill).
 

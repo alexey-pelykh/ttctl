@@ -192,7 +192,7 @@ exists but no `schema:` argument is passed to the helper yet
 
 TTCtl does not currently invoke any operation against the
 `scheduler.toptal.com` surface. The runtime infrastructure
-(`types.ts:ToptalSurface`, `transport.ts` Cf403/Cf-persistent
+(`types.ts:ToptalSurface`, `transport/impersonated.ts` Cf403/Cf-persistent
 handling) is provisioned and the surface is recognised by the
 e2e-coverage gate, but no service-level call site exists.
 
