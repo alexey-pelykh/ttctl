@@ -11,6 +11,7 @@ import { runTimesheetList } from "./list.js";
 import { runTimesheetPendingList } from "./pending/list.js";
 import { runTimesheetShow } from "./show.js";
 import { runTimesheetSubmit } from "./submit.js";
+import { runTimesheetUpdate } from "./update.js";
 
 /**
  * Build the `ttctl timesheet` command tree (#13). Three leaves plus a
@@ -22,6 +23,7 @@ import { runTimesheetSubmit } from "./submit.js";
  * | `pending list [--limit N]`       | Viewer-wide pending timesheets, with --limit      |
  * | `show <id>`                      | One timesheet detail (id = BillingCycle.id)       |
  * | `submit [id] [--confirm]`        | Submit timesheet for billing (destructive)        |
+ * | `update <id> [--comment …]`      | Edit a draft timesheet (comment / per-day records)|
  *
  * **Wire identity model**:
  *   - `BillingCycle.id` — the public "timesheet id" returned by
@@ -37,10 +39,12 @@ import { runTimesheetSubmit } from "./submit.js";
  * `--page` / `--per-page` used by jobs / applications / engagements /
  * payouts. Documented in `CHANGELOG.md` and ADR-007.
  *
- * **Out of scope for v1** (per #13 spec): editing timesheet records,
- * uploading attachments, reminder settings, rejection/approval
- * workflow. The web UI handles record entry; this CLI surfaces the
- * read paths and the submit verb.
+ * **Editing** (`update`, #458): `UpdateTimesheet` is a full-replacement
+ * contract; the core service does read-modify-write so partial CLI flags
+ * (`--comment` / `--record` / `--note`) don't null unspecified fields.
+ *
+ * **Out of scope** (per #13 spec): uploading attachments, reminder
+ * settings, rejection/approval workflow.
  */
 export function buildTimesheetCommand(): Command {
   const cmd = new Command("timesheet").description("View timesheet billing cycles and submit them for billing");
@@ -125,7 +129,70 @@ export function buildTimesheetCommand(): Command {
     );
   markMutation(submitCmd);
 
+  const updateCmd = cmd
+    .command("update")
+    .description("Edit a draft timesheet's comment and/or per-day records (read-modify-write)")
+    .argument("<id>", "timesheet id (BillingCycle.id from `timesheet list`)", parseIdArg)
+    .option("--comment <text>", "set the timesheet comment (replaces the existing comment)")
+    .addOption(
+      new Option(
+        "--record <date=minutes>",
+        "override a day's duration in MINUTES (wire-native: 480 = 8h), e.g. 2026-06-01=480; repeatable",
+      )
+        .argParser(collectFlag)
+        .default([] as string[]),
+    )
+    .addOption(
+      new Option(
+        "--note <date=text>",
+        'override a day\'s note, e.g. 2026-06-01="fixed build"; empty value clears it; repeatable',
+      )
+        .argParser(collectFlag)
+        .default([] as string[]),
+    )
+    .option(
+      "--consent-timesheet-billing",
+      "acknowledge this edits billing data on your behalf (ADR-009 timesheet-billing consent; required)",
+      false,
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(
+      async (
+        id: string,
+        options: {
+          comment?: string;
+          record: string[];
+          note: string[];
+          consentTimesheetBilling: boolean;
+          output: OutputFormat;
+        },
+      ) => {
+        const updateOpts: import("./update.js").TimesheetUpdateOptions = {
+          record: options.record,
+          note: options.note,
+          consentTimesheetBilling: options.consentTimesheetBilling,
+          output: options.output,
+        };
+        if (options.comment !== undefined) updateOpts.comment = options.comment;
+        await runTimesheetUpdate(id, updateOpts);
+      },
+    );
+  markMutation(updateCmd);
+
   return cmd;
+}
+
+/**
+ * Accumulator for repeatable options (`--record`, `--note`). Collects raw
+ * `date=value` strings; parsing/validation happens in the action handler so
+ * malformed input routes through the domain error envelope.
+ */
+function collectFlag(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 /**

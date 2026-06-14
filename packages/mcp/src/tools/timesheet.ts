@@ -35,6 +35,7 @@ const SUBMIT_AUTO_RESOLVE_PLACEHOLDER = "<auto-resolved-at-apply-time>";
  *   - `ttctl_timesheet_pending_list`   (#374)
  *   - `ttctl_timesheet_show`
  *   - `ttctl_timesheet_submit`
+ *   - `ttctl_timesheet_update`         (#458)
  *
  * Each tool maps 1:1 to a CLI leaf — schemas describe the same set of
  * fields. Identity model:
@@ -331,6 +332,105 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
       }
     },
   );
+
+  server.registerTool(
+    "ttctl_timesheet_update",
+    {
+      title: "Edit a draft timesheet's comment / per-day records (WRITE)",
+      description: [
+        "Edit a draft timesheet (BillingCycle.id) — its comment and/or per-day",
+        "time records. Use after the user wants to correct logged hours or fix",
+        "a timesheet comment before submitting.",
+        "",
+        "**This is a write operation.** Confirm the change with the user first.",
+        "",
+        "**Full-replacement contract**: the wire op replaces the ENTIRE record",
+        "set and comment, so this tool does read-modify-write — it fetches the",
+        "current timesheet, merges your `records` overrides by date into the",
+        "complete set, and resends everything. Days you don't mention are",
+        "preserved, NOT cleared. Each `records` entry: `date` (YYYY-MM-DD),",
+        "optional `duration` (MINUTES as a decimal string, wire-native — `'480'`",
+        "= 8h; omit to keep the day's existing value), optional `note` (omit to",
+        "keep, `''`/`null` to clear).",
+        "",
+        "**Consent**: `timesheetBillingConsentIssued: true` is mandatory — editing",
+        "billing data on the user's behalf is gated (ADR-009 timesheet-billing).",
+        "Without it the call is refused with `CONSENT_REQUIRED` before any wire",
+        "call.",
+        "",
+        "Targets a draft (unsubmitted) cycle; the server may reject editing a",
+        "submitted one.",
+        "",
+        "Example user prompts:",
+        "  - \"Fix the comment on timesheet bc_abc123 to 'reviewed with client'.\"",
+        '  - "Set 2026-06-01 to 8 hours on my current timesheet."',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Timesheet id (BillingCycle.id from `ttctl_timesheet_list`)"),
+        comment: z.string().optional().describe("Set the timesheet comment (replaces the existing comment)."),
+        records: z
+          .array(
+            z.object({
+              date: z.string().describe("Day to override (YYYY-MM-DD)."),
+              duration: z
+                .string()
+                .optional()
+                .describe("Duration in MINUTES as a decimal string (wire-native; '480' = 8h). Omit to keep existing."),
+              note: z.string().nullable().optional().describe("Per-day note. Omit to keep; '' or null to clear."),
+            }),
+          )
+          .optional()
+          .describe(
+            "Per-day overrides, merged by date into the full record set (read-modify-write — unspecified days preserved).",
+          ),
+        timesheetBillingConsentIssued: z
+          .boolean()
+          .optional()
+          .describe(
+            "MUST be true. ADR-009 timesheet-billing consent — the call is refused unless this is true (or the server env sets TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1).",
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        // Mirror the apply path's read-modify-write: dry-run shows only the
+        // caller's explicit overrides and issues no wire call (no read). The
+        // full merge is described in the tool's `description`.
+        const variables = {
+          id: args.id,
+          comment: args.comment ?? null,
+          timesheetRecords: (args.records ?? []).map((r) => ({
+            date: r.date,
+            duration: r.duration ?? null,
+            note: r.note ?? null,
+          })),
+        };
+        return dryRunResponse(buildMcpDryRunPreview("UpdateTimesheet", "mobile-gateway", variables, auth.token));
+      }
+      try {
+        const input: timesheet.UpdateTimesheetInput = {};
+        if (args.comment !== undefined) input.comment = args.comment;
+        if (args.records !== undefined) {
+          input.records = args.records.map((r) => {
+            const rec: timesheet.TimesheetRecordInput = { date: r.date };
+            if (r.duration !== undefined) rec.duration = r.duration;
+            if (r.note !== undefined) rec.note = r.note;
+            return rec;
+          });
+        }
+        if (args.timesheetBillingConsentIssued !== undefined) {
+          input.timesheetBillingConsentIssued = args.timesheetBillingConsentIssued;
+        }
+        const outcome = await timesheet.update(auth.token, args.id, input);
+        return successResponse(outcome.kind === "applied" ? outcome.result : outcome);
+      } catch (err) {
+        return mapTimesheetError(err);
+      }
+    },
+  );
 }
 
 interface ToolSuccessResponse {
@@ -381,7 +481,9 @@ function recoveryForCode(code: timesheet.TimesheetErrorCode): string {
     case "MULTIPLE_CURRENT_CYCLES":
       return "Multiple cycles overlap — specify the cycle id explicitly via `id`.";
     case "MUTATION_ERROR":
-      return "The server rejected the submission (often: missing required hours, deadline passed, or already submitted). Inspect the message above.";
+      return "The server rejected the mutation (often: missing required hours, deadline passed, or already submitted). Inspect the message above.";
+    case "VALIDATION_ERROR":
+      return "Supply at least one change — `comment`, or a `records` entry with `duration`/`note`.";
     default:
       return "Adjust the tool input or retry; see the code below.";
   }

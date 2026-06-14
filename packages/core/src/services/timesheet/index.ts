@@ -24,6 +24,7 @@
  * | `list({engagement})`     | `Timesheets($jobActivityItemId)`                   |
  * | `show(id)`               | `TimesheetDetails($id)` — id is BillingCycle.id    |
  * | `submit(id)`             | `SubmitTimesheet($id)` — id is BillingCycle.id     |
+ * | `update(id, input)`      | `UpdateTimesheet($id, …)` — id is BillingCycle.id  |
  * | `resolveCurrentCycle()`  | `PendingTimesheets` + client-side window filter    |
  *
  * **Routing**: All ops talk to the **mobile-gateway** surface
@@ -39,6 +40,11 @@
  *   - `Timesheets.graphql`          — used verbatim
  *   - `TimesheetDetails.graphql`    — used verbatim
  *   - `SubmitTimesheet.graphql`     — used verbatim
+ *   - `UpdateTimesheet.graphql`     — mobile variant (mobile wins the
+ *                                     mobile/portal name-collision); the
+ *                                     response fragment is the shared
+ *                                     `timesheetDetailsFields` so the
+ *                                     mutation returns a full detail
  *
  * **CLAUDE.md schema/contract validation rule**: the operations here
  * are **[INFERRED — UNVERIFIED]** until the gated `*.e2e.test.ts` files
@@ -54,16 +60,23 @@
  * is callable directly and does not enforce these — callers are
  * responsible for end-user confirmation.
  *
- * **Out of scope for v1** (per #13 spec):
- *   - Editing timesheet records (`UpdateTimesheet` mutation exists but
- *     isn't surfaced; web UI handles record entry).
+ * **Editing** (`update`, #458): `UpdateTimesheet` is a full-replacement
+ * contract — `comment: String!` and `timesheetRecords: [TimesheetRecordsInput!]!`
+ * are both required, so omitting a field NULLs it server-side. {@link update}
+ * therefore does read-modify-write: it fetches the current detail, merges
+ * the caller's partial overrides (by date) into the complete record set,
+ * and sends the whole thing. This is the structural defense against the
+ * full-replace null-out class.
+ *
+ * **Out of scope** (per #13 spec):
  *   - Uploading timesheet attachments (`UploadTimesheet` mutation).
  *   - Reminder settings (`UpdateTimesheetReminderSettings` mutation).
- *   - Per-day hour adjustments and rejection/approval workflow.
+ *   - Rejection/approval workflow.
  */
 
 import type { z } from "zod";
 
+import { ensureDestructiveConsent } from "../../consent.js";
 import { buildDryRunPreview } from "../../transport.js";
 import type { DryRunPreview } from "../../transport.js";
 import { callGatewayShared } from "../_shared/transport.js";
@@ -93,9 +106,12 @@ import { callGatewayShared } from "../_shared/transport.js";
  * - `GRAPHQL_ERROR`: top-level `errors[]` from the gateway, not an
  *   auth-revoked extension and not a `Record not found`.
  * - `MUTATION_ERROR`: the `MutationResult.errors[]` payload from
- *   `SubmitTimesheet` (the wire operation succeeded at GraphQL level,
- *   but the submission itself reports per-field errors — overdue,
- *   missing required hours, etc.).
+ *   `SubmitTimesheet` / `UpdateTimesheet` (the wire operation succeeded
+ *   at GraphQL level, but the mutation itself reports per-field errors —
+ *   overdue, missing required hours, etc.).
+ * - `VALIDATION_ERROR`: client-side input rejection BEFORE any wire call
+ *   (e.g. {@link update} called with neither a comment nor any record
+ *   override — nothing to change).
  * - `NETWORK_ERROR`, `UNKNOWN`: standard transport failure modes.
  *
  * Auth-revoked failures throw `AuthRevokedError` (cross-cutting
@@ -109,6 +125,7 @@ export type TimesheetErrorCode =
   | "MULTIPLE_CURRENT_CYCLES"
   | "GRAPHQL_ERROR"
   | "MUTATION_ERROR"
+  | "VALIDATION_ERROR"
   | "NETWORK_ERROR"
   | "WIRE_SHAPE_ERROR"
   | "UNKNOWN";
@@ -373,6 +390,56 @@ export interface ResolveCurrentCycleOptions {
   now?: Date;
 }
 
+/**
+ * One per-day override for {@link update}. `date` identifies the record
+ * to change (wire `date: Date!`, e.g. `"2026-06-01"`): the matching day
+ * in the current timesheet is overridden, or a new record is appended if
+ * no current day matches.
+ *
+ * `duration` is the wire-native form — a string-encoded decimal in
+ * **minutes** (`"480.0"` = 8h), per ADR-006 wire-string discipline; it is
+ * never parsed to a number. Omit to keep the day's existing duration.
+ * `note` omitted keeps the existing note; pass `null` (or `""`) to clear.
+ */
+export interface TimesheetRecordInput {
+  date: string;
+  duration?: string;
+  note?: string | null;
+}
+
+/**
+ * Input for {@link update}. All fields are partial overrides merged into
+ * the current timesheet (read-modify-write — see the module docstring on
+ * the full-replacement contract). At least one of {@link comment} /
+ * {@link records} must be set, else there is nothing to update.
+ *
+ * `timesheetBillingConsentIssued` is the ADR-009 `timesheet-billing`
+ * consent ceremony: editing billing data on the user's behalf is an
+ * INFERRED-destructive write, so the gate refuses the call unless this is
+ * `true` (or `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1` is set). Apply path only
+ * — dry-run previews issue no mutation and need no consent.
+ */
+export interface UpdateTimesheetInput {
+  comment?: string;
+  records?: TimesheetRecordInput[];
+  timesheetBillingConsentIssued?: boolean;
+}
+
+/**
+ * Apply-path outcome for {@link update}. Mirrors
+ * {@link TimesheetSubmitAppliedOutcome}.
+ */
+export interface TimesheetUpdateAppliedOutcome {
+  kind: "applied";
+  result: TimesheetDetail;
+}
+
+/**
+ * Discriminated-union return type for {@link update}. The dry-run arm
+ * reuses {@link TimesheetDryRunPreviewOutcome}.
+ */
+export type UpdateOutcome = TimesheetUpdateAppliedOutcome | TimesheetDryRunPreviewOutcome;
+
 // ---------------------------------------------------------------------
 
 // Adapted from `../research/graphql/gateway/operations/mobile/PendingTimesheets.graphql`
@@ -396,6 +463,16 @@ const TIMESHEET_DETAILS_QUERY = `query TimesheetDetails($id: ID!) { node(id: $id
 
 // Verbatim from `../research/graphql/gateway/operations/mobile/SubmitTimesheet.graphql`.
 const SUBMIT_TIMESHEET_MUTATION = `mutation SubmitTimesheet($id: ID!) { submitTimesheet(billingCycleId: $id) { __typename billingCycle { __typename ...timesheetDetailsFields } ...mutationResultFields } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment contactFieldsData on ContactFields { __typename communitySlackId email phoneNumber skype }  fragment timeZoneFields on TimeZone { __typename location value }  fragment recruiterData on Recruiter { __typename id fullName contactFields { __typename ...contactFieldsData } photo { __typename small } vacation { __typename id startDate endDate } timeZone { __typename ...timeZoneFields } }  fragment pointOfContactData on PointsOfContact { __typename current { __typename ...recruiterData } handoff { __typename ...recruiterData } kind }  fragment deliveryModelData on TalentEngagementDeliveryModel { __typename id identifier }  fragment timesheetDetailsFields on BillingCycle { __typename ...timesheetListFields timesheetUrl actualAgreement { __typename applicationRate talentHourlyRate marketplaceMargin } engagement { __typename id expectedHours job { __typename id pointsOfContact { __typename ...pointOfContactData } engagementDeliveryModel { __typename ...deliveryModelData } } } timesheetComment timesheetRecords { __typename date duration isDayOff note hours persisted } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }`;
+
+// Adapted from `../research/graphql/gateway/operations/mobile/UpdateTimesheet.graphql`
+// (mobile wins the mobile/portal name-collision per GATEWAY_PORTAL_COLLISIONS; the
+// mobile selection set is the one we mirror). The response selection reuses the
+// SAME `timesheetDetailsFields` fragment chain as SubmitTimesheet — so `update`
+// returns a full `TimesheetDetail` and `projectDetailItem` is shared. The captured
+// mobile doc happened to omit `hours`/`persisted` on `timesheetRecords`; we keep
+// the fuller shared fragment (the server returns those fields, proven by the
+// TimesheetDetails/SubmitTimesheet snapshots) rather than fork a near-identical one.
+const UPDATE_TIMESHEET_MUTATION = `mutation UpdateTimesheet($id: ID!, $comment: String!, $timesheetRecords: [TimesheetRecordsInput!]!) { updateTimesheet(billingCycleId: $id, comment: $comment, timesheetRecords: $timesheetRecords) { __typename billingCycle { __typename ...timesheetDetailsFields } ...mutationResultFields } }  fragment minimumCommitmentData on MinimumCommitment { __typename applicable minimumHours reasonNotApplicable }  fragment timesheetListFields on BillingCycle { __typename id startDate endDate hours minimumCommitment { __typename ...minimumCommitmentData } timesheetOverdue timesheetSubmissionOpenDatetime timesheetSubmissionDeadlineDatetime timesheetSubmitted engagement { __typename id job { __typename id client { __typename id fullName } title } } }  fragment contactFieldsData on ContactFields { __typename communitySlackId email phoneNumber skype }  fragment timeZoneFields on TimeZone { __typename location value }  fragment recruiterData on Recruiter { __typename id fullName contactFields { __typename ...contactFieldsData } photo { __typename small } vacation { __typename id startDate endDate } timeZone { __typename ...timeZoneFields } }  fragment pointOfContactData on PointsOfContact { __typename current { __typename ...recruiterData } handoff { __typename ...recruiterData } kind }  fragment deliveryModelData on TalentEngagementDeliveryModel { __typename id identifier }  fragment timesheetDetailsFields on BillingCycle { __typename ...timesheetListFields timesheetUrl actualAgreement { __typename applicationRate talentHourlyRate marketplaceMargin } engagement { __typename id expectedHours job { __typename id pointsOfContact { __typename ...pointOfContactData } engagementDeliveryModel { __typename ...deliveryModelData } } } timesheetComment timesheetRecords { __typename date duration isDayOff note hours persisted } }  fragment mutationResultFields on MutationResult { __typename errors { __typename key message code } success }`;
 
 // ---------------------------------------------------------------------
 
@@ -445,6 +522,26 @@ interface SubmitTimesheetResponse {
         billingCycle: TimesheetDetailWireItem | null;
       })
     | null;
+}
+
+interface UpdateTimesheetResponse {
+  updateTimesheet:
+    | (MutationResult & {
+        billingCycle: TimesheetDetailWireItem | null;
+      })
+    | null;
+}
+
+/**
+ * Wire element for `timesheetRecords` (`TimesheetRecordsInput`):
+ * `{ date: Date!, duration: BigDecimal, note: Unknown }`. `duration` is
+ * the string-encoded minutes value (never a number); `note` is a free
+ * string or null.
+ */
+interface TimesheetRecordsInputWire {
+  date: string;
+  duration: string | null;
+  note: string | null;
 }
 
 /**
@@ -833,6 +930,159 @@ export async function submit(token: string, id: string, options: DryRunOptions =
     );
   }
   return { kind: "applied", result: projectDetailItem(payload.billingCycle) };
+}
+
+/**
+ * Edit a timesheet's comment and/or per-day records.
+ *
+ * **Full-replacement contract**: `UpdateTimesheet` requires the COMPLETE
+ * record set and a non-null comment, so omitting either NULLs it
+ * server-side. {@link update} therefore does read-modify-write — it
+ * fetches the current detail via {@link show}, merges the caller's
+ * partial overrides (by date for records, whole-value for the comment)
+ * into the complete set, and sends everything. Omitted days and an
+ * omitted comment are preserved.
+ *
+ * Targets a draft (unsubmitted) cycle; the server may reject editing a
+ * submitted one (surfaced as `MUTATION_ERROR`).
+ *
+ * **Consent** (ADR-009 `timesheet-billing`): the apply path refuses
+ * unless `input.timesheetBillingConsentIssued === true` (or
+ * `TTCTL_ALLOW_INFERRED_DESTRUCTIVE=1`). Dry-run issues no mutation and
+ * skips the gate.
+ *
+ * **Dry-run** (`options.dryRun === true`): returns a {@link DryRunPreview}
+ * WITHOUT any wire call. To honor "dry-run issues no wire requests" it
+ * does NOT read current state, so the preview carries only the caller's
+ * explicit overrides; the apply-path merge is surfaced by the CLI/MCP
+ * dry-run notice.
+ *
+ * `id` is the BillingCycle.id from {@link list} / {@link show}.
+ *
+ * Throws (apply path): `VALIDATION_ERROR` (nothing to update),
+ * `ConsentRequiredError`, `NOT_FOUND`, `MUTATION_ERROR`, `GRAPHQL_ERROR`
+ * (incl. the empirical 500-on-bad-id), `UNKNOWN`.
+ */
+export async function update(
+  token: string,
+  id: string,
+  input: UpdateTimesheetInput,
+  options: DryRunOptions = {},
+): Promise<UpdateOutcome> {
+  if (input.comment === undefined && (input.records === undefined || input.records.length === 0)) {
+    throw new TimesheetError(
+      "VALIDATION_ERROR",
+      "Nothing to update — supply a comment and/or at least one record override.",
+    );
+  }
+
+  if (options.dryRun === true) {
+    // "dry-run issues no wire requests": skip the read-merge. The preview
+    // carries only the caller's explicit overrides; the apply path's full
+    // read-modify-write merge is surfaced by the CLI/MCP dry-run notice.
+    return {
+      kind: "preview",
+      preview: buildDryRunPreview({
+        surface: "mobile-gateway",
+        authToken: token,
+        body: {
+          operationName: "UpdateTimesheet",
+          query: UPDATE_TIMESHEET_MUTATION,
+          variables: {
+            id,
+            comment: input.comment ?? null,
+            timesheetRecords: (input.records ?? []).map(toWireRecord),
+          },
+        },
+      }),
+    };
+  }
+
+  // Consent gate FIRST — before any wire call. The widening cast is
+  // load-bearing: the runtime check covers JSON-sourced inputs from
+  // CLI / MCP / agents. See ADR-009 and packages/core/src/consent.ts.
+  ensureDestructiveConsent(
+    "UpdateTimesheet",
+    "timesheet-billing",
+    input as unknown as { readonly [key: string]: unknown },
+  );
+
+  // Read-modify-write so the full-replacement contract doesn't null
+  // unspecified days or the comment.
+  const current = await show(token, id);
+  const comment = input.comment ?? current.timesheetComment ?? "";
+  const timesheetRecords = mergeRecords(current.timesheetRecords, input.records ?? []);
+
+  let data: UpdateTimesheetResponse;
+  try {
+    data = await callGateway<UpdateTimesheetResponse>(token, "UpdateTimesheet", UPDATE_TIMESHEET_MUTATION, {
+      id,
+      comment,
+      timesheetRecords,
+    });
+  } catch (err) {
+    if (err instanceof TimesheetError && err.code === "GRAPHQL_ERROR" && NOT_FOUND_MESSAGE_PATTERN.test(err.message)) {
+      throw new TimesheetError(
+        "NOT_FOUND",
+        `No timesheet found with id "${id}" (or you don't have access to edit it).`,
+        {
+          cause: err,
+        },
+      );
+    }
+    throw err;
+  }
+  const payload = data.updateTimesheet;
+  if (payload === null) {
+    throw new TimesheetError("NOT_FOUND", `No timesheet found with id "${id}" (or you don't have access to edit it).`);
+  }
+  if (!payload.success) {
+    throw new TimesheetError("MUTATION_ERROR", formatMutationErrors("UpdateTimesheet rejected", payload.errors));
+  }
+  if (payload.billingCycle === null) {
+    throw new TimesheetError(
+      "UNKNOWN",
+      "UpdateTimesheet succeeded but the server returned no updated billingCycle payload.",
+    );
+  }
+  return { kind: "applied", result: projectDetailItem(payload.billingCycle) };
+}
+
+/**
+ * Merge per-day overrides into the current record set, preserving every
+ * existing day. Overrides match by `date`; an override whose date isn't
+ * in the current set is appended (a new day). `duration` / `note` left
+ * `undefined` keep the existing value; an explicit `null`/`""` on `note`
+ * clears it. `duration` stays a string throughout (ADR-006).
+ */
+function mergeRecords(current: TimesheetRecord[], overrides: TimesheetRecordInput[]): TimesheetRecordsInputWire[] {
+  const byDate = new Map<string, TimesheetRecordInput>();
+  for (const ov of overrides) byDate.set(ov.date, ov);
+
+  const merged: TimesheetRecordsInputWire[] = current.map((rec) => {
+    const ov = byDate.get(rec.date);
+    byDate.delete(rec.date);
+    return {
+      date: rec.date,
+      duration: ov?.duration !== undefined ? ov.duration : rec.duration,
+      note: ov !== undefined && ov.note !== undefined ? ov.note : rec.note,
+    };
+  });
+
+  for (const ov of byDate.values()) merged.push(toWireRecord(ov));
+  return merged;
+}
+
+/**
+ * Project an override onto the wire input shape — for appended (new-day)
+ * records and for the dry-run preview.
+ */
+function toWireRecord(ov: TimesheetRecordInput): TimesheetRecordsInputWire {
+  return {
+    date: ov.date,
+    duration: ov.duration ?? null,
+    note: ov.note ?? null,
+  };
 }
 
 function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | null | undefined): string {

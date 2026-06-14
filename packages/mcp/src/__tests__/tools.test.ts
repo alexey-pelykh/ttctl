@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (129 tools)", () => {
+  it("registers exactly the cumulative tool set (130 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -226,7 +226,7 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_surveys_feedback",
       "ttctl_surveys_list",
       "ttctl_surveys_submit",
-      // #13 — timesheet (3, list/show/submit) + #374 pending_list.
+      // timesheet (5) — #13 list/show/submit + #374 pending_list + #458 update.
       // Submit is destructive (one-way); LLM clients must confirm with
       // the user. pending_list (#374) exposes surface-honest `limit`
       // pagination — diverges from page/perPage other paginated tools
@@ -236,6 +236,7 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_timesheet_pending_list",
       "ttctl_timesheet_show",
       "ttctl_timesheet_submit",
+      "ttctl_timesheet_update",
     ]);
   });
 
