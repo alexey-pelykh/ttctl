@@ -8,8 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // first resolves the user's `profileId` via `extractProfileId(token)`,
 // which fans out one mobile-gateway round-trip through
 // `stockTransport`. Mock both transports.
-vi.mock("../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../transport.js")>("../../../transport.js");
+vi.mock("../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../transport/index.js")>("../../../transport/index.js");
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -19,8 +19,8 @@ vi.mock("../../../transport.js", async () => {
 
 import { ContractsError, list, show } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
-import { impersonatedTransport, stockTransport } from "../../../transport.js";
-import type { TransportResponse } from "../../../transport.js";
+import { impersonatedTransport, stockTransport } from "../../../transport/index.js";
+import type { TransportResponse } from "../../../transport/index.js";
 import { VIEWER_OK } from "../../profile/__tests__/fixtures.js";
 
 const mockedStock = vi.mocked(stockTransport);
@@ -227,7 +227,7 @@ describe("contracts.list", () => {
     // The service must NOT wrap it as NETWORK_ERROR — the CLI/MCP surface
     // depends on the typed error reaching `presentTtctlError`.
     replyStock({ body: VIEWER_OK });
-    const { Cf403Error } = await import("../../../transport.js");
+    const { Cf403Error } = await import("../../../transport/index.js");
     mockedImpersonated.mockRejectedValueOnce(new Cf403Error("talent-profile", "challenge"));
     await expect(list(TOKEN)).rejects.toBeInstanceOf(Cf403Error);
   });

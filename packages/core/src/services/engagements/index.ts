@@ -79,8 +79,8 @@
 
 import type { z } from "zod";
 
-import { buildDryRunPreview } from "../../transport.js";
-import type { DryRunPreview } from "../../transport.js";
+import { buildDryRunPreview } from "../../transport/index.js";
+import type { DryRunPreview } from "../../transport/index.js";
 import { callGatewayShared } from "../_shared/transport.js";
 
 /**

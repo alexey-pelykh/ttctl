@@ -9,7 +9,7 @@ vi.mock("node-wreq", () => ({
 
 import { fetch as wreqFetch } from "node-wreq";
 
-import { Cf403Error, buildGraphQLMultipart, impersonatedMultipartTransport } from "../transport.js";
+import { Cf403Error, buildGraphQLMultipart, impersonatedMultipartTransport } from "../transport/index.js";
 
 interface FakeResponse {
   status: number;

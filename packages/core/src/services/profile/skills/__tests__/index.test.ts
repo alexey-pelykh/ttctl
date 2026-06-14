@@ -3,8 +3,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
+vi.mock("../../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport/index.js")>(
+    "../../../../transport/index.js",
+  );
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -27,8 +29,8 @@ import {
 import type { AddSkillConnectionConsent, RemoveSkillConnectionConsent } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
 import { ConsentRequiredError } from "../../../../consent.js";
-import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
-import type { TransportRequest, TransportResponse } from "../../../../transport.js";
+import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport/index.js";
+import type { TransportRequest, TransportResponse } from "../../../../transport/index.js";
 import { VIEWER_OK } from "../../__tests__/fixtures.js";
 
 const mocked = vi.mocked(impersonatedTransport);

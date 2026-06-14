@@ -3,8 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
+vi.mock("../../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport/index.js")>(
+    "../../../../transport/index.js",
+  );
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -14,8 +16,8 @@ vi.mock("../../../../transport.js", async () => {
 
 import { ProfileError, _setMultipartFetchForTesting, photoShow, photoUpload } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { Cf403Error, impersonatedTransport, RedirectError, stockTransport } from "../../../../transport.js";
-import type { TransportResponse } from "../../../../transport.js";
+import { Cf403Error, impersonatedTransport, RedirectError, stockTransport } from "../../../../transport/index.js";
+import type { TransportResponse } from "../../../../transport/index.js";
 
 const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);
@@ -257,7 +259,7 @@ describe("profile.basic.photoUpload (Buffer input)", () => {
     replyStock({ body: VIEWER_OK });
     const { calls } = installFakeMultipart();
     await photoUpload(TOKEN, { file: Buffer.from("x") });
-    // The photo-upload path bypasses transport.ts; it must still carry the
+    // The photo-upload path bypasses the transport module; it must still carry the
     // no-follow posture — file-upload is the highest-impact exfil vector.
     expect(calls[0]?.redirect).toBe("manual");
   });

@@ -46,8 +46,8 @@ import type { z } from "zod";
 
 import { AuthRevokedError, TtctlError } from "../../auth/errors.js";
 import { buildWireShapeError } from "../../lib/wire-shape.js";
-import { impersonatedTransport, stockTransport } from "../../transport.js";
-import type { TransportResponse } from "../../transport.js";
+import { impersonatedTransport, stockTransport } from "../../transport/index.js";
+import type { TransportResponse } from "../../transport/index.js";
 import { SURFACES_REQUIRING_IMPERSONATION } from "../../types.js";
 import type { ToptalSurface } from "../../types.js";
 import { isAuthRevokedExtensionCode } from "../profile/shared.js";
@@ -129,7 +129,7 @@ export interface CallGatewaySharedOptions<T> {
  * scheduler), {@link stockTransport} otherwise (mobile-gateway).
  * Routing is inlined here rather than delegating to `callSurface`
  * because existing service-level tests mock these transport
- * functions directly via `vi.mock("../../transport.js", …)`;
+ * functions directly via `vi.mock("../../transport/index.js", …)`;
  * routing through `callSurface` would bypass those mocks
  * (the function captures a closure reference at module-load time).
  *

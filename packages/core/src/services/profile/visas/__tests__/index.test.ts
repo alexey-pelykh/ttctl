@@ -3,8 +3,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
+vi.mock("../../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport/index.js")>(
+    "../../../../transport/index.js",
+  );
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -13,8 +15,8 @@ vi.mock("../../../../transport.js", async () => {
 });
 
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { impersonatedTransport, stockTransport } from "../../../../transport.js";
-import type { TransportRequest, TransportResponse } from "../../../../transport.js";
+import { impersonatedTransport, stockTransport } from "../../../../transport/index.js";
+import type { TransportRequest, TransportResponse } from "../../../../transport/index.js";
 import { VisasError, add, list, remove, update } from "../index.js";
 
 const mockedStock = vi.mocked(stockTransport);

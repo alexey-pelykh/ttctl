@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `showRich` runs against mobile-gateway via `stockTransport` (same surface
 // + transport as `basic.show`; no Cloudflare, no impersonation).
-vi.mock("../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../transport.js")>("../../../transport.js");
+vi.mock("../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../transport/index.js")>("../../../transport/index.js");
   return { ...actual, stockTransport: vi.fn() };
 });
 
@@ -14,8 +14,8 @@ import { showRich } from "../viewer-rich.js";
 import type { RichViewer } from "../viewer-rich.js";
 import { ProfileError } from "../basic/index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
-import { stockTransport } from "../../../transport.js";
-import type { TransportRequest, TransportResponse } from "../../../transport.js";
+import { stockTransport } from "../../../transport/index.js";
+import type { TransportRequest, TransportResponse } from "../../../transport/index.js";
 
 const mockedStock = vi.mocked(stockTransport);
 const TOKEN = "tok-rich-123";

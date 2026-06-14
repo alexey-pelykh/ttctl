@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { AuthRevokedError, TtctlError } from "../../../auth/errors.js";
-import { impersonatedTransport } from "../../../transport.js";
-import type { TransportResponse } from "../../../transport.js";
+import { impersonatedTransport } from "../../../transport/index.js";
+import type { TransportResponse } from "../../../transport/index.js";
 import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
 
 /**

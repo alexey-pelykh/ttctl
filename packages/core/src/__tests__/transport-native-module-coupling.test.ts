@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 /**
  * Drift guard for the native-module-error coupling (issue #708).
  *
- * `isNativeModuleLoadError` (transport.ts) recognises node-wreq's native-binding
+ * `isNativeModuleLoadError` (transport/impersonated.ts) recognises node-wreq's native-binding
  * load failure by matching two message substrings — the only signal available,
  * since node-wreq throws a plain `Error`, not a typed class. If a node-wreq bump
  * rewords those messages, the translation silently regresses to the raw error on
@@ -24,7 +24,7 @@ describe("node-wreq native-load message coupling (#708)", () => {
     const require = createRequire(import.meta.url);
     const bindingPath = resolve(dirname(require.resolve("node-wreq")), "native/binding.js");
     const src = readFileSync(bindingPath, "utf8");
-    // Keep these in sync with isNativeModuleLoadError() in transport.ts.
+    // Keep these in sync with isNativeModuleLoadError() in transport/impersonated.ts.
     expect(src).toContain("Failed to load native module");
     expect(src).toContain("Unsupported platform");
   });

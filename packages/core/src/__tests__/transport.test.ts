@@ -14,7 +14,7 @@ vi.mock("undici", () => ({
 import { fetch as wreqFetch } from "node-wreq";
 import { request as undiciRequest } from "undici";
 
-import { Cf403Error, IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../transport.js";
+import { Cf403Error, IMPERSONATE_PROFILE, impersonatedTransport, stockTransport } from "../transport/index.js";
 
 interface FakeResponse {
   status: number;

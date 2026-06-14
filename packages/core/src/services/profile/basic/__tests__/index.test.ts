@@ -7,8 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // no impersonation needed). `set` runs against talent-profile via
 // `impersonatedTransport` (Cloudflare-protected). Mocks need to be split so a
 // single `set()` call exercises BOTH (stock → impersonated chain).
-vi.mock("../../../../transport.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../../transport.js")>("../../../../transport.js");
+vi.mock("../../../../transport/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../../transport/index.js")>(
+    "../../../../transport/index.js",
+  );
   return {
     ...actual,
     stockTransport: vi.fn(),
@@ -18,8 +20,8 @@ vi.mock("../../../../transport.js", async () => {
 
 import { ProfileError, getBasicInfo, normalizeTwitterHandle, set, show } from "../index.js";
 import { AuthRevokedError } from "../../../../auth/errors.js";
-import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport.js";
-import type { TransportRequest, TransportResponse } from "../../../../transport.js";
+import { Cf403Error, impersonatedTransport, stockTransport } from "../../../../transport/index.js";
+import type { TransportRequest, TransportResponse } from "../../../../transport/index.js";
 
 const mockedStock = vi.mocked(stockTransport);
 const mockedImpersonated = vi.mocked(impersonatedTransport);

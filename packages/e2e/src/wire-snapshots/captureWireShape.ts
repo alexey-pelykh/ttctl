@@ -68,7 +68,7 @@ export interface WireSnapshot {
 /** Endpoint family — matches the surfaces enumerated in CLAUDE.md. */
 export type WireSnapshotSurface = "mobile-gateway" | "talent-profile" | "scheduler";
 
-/** Transport family — matches `packages/core/src/transport.ts`. */
+/** Transport family — matches `packages/core/src/transport/_shared.ts`. */
 export type WireSnapshotTransport = "stock" | "impersonated";
 
 /** Parameters for `createWireSnapshot`. */

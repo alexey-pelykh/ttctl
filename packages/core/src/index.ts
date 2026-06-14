@@ -65,14 +65,14 @@ export {
   impersonatedMultipartTransport,
   impersonatedTransport,
   stockTransport,
-} from "./transport.js";
+} from "./transport/index.js";
 export type {
   DryRunPreview,
   MultipartFile,
   MultipartTransportRequest,
   TransportRequest,
   TransportResponse,
-} from "./transport.js";
+} from "./transport/index.js";
 
 export { TransportError, readTransportConfig, resetTransportConfigCache } from "./transport-resilience.js";
 export type { TransportConfig } from "./transport-resilience.js";

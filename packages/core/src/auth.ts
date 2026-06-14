@@ -4,8 +4,8 @@
 import type { AuthCredentials } from "./config.js";
 import { resolveOnePasswordReference } from "./onepassword.js";
 import { isAuthRevokedExtensionCode } from "./services/profile/shared.js";
-import { impersonatedTransport, stockTransport } from "./transport.js";
-import type { TransportResponse } from "./transport.js";
+import { impersonatedTransport, stockTransport } from "./transport/index.js";
+import type { TransportResponse } from "./transport/index.js";
 import type { Credentials } from "./types.js";
 
 /**

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import { ensureDestructiveConsent } from "../../../consent.js";
-import { stockTransport } from "../../../transport.js";
+import { stockTransport } from "../../../transport/index.js";
 import { ProfileError } from "../basic/index.js";
 import { applyUserErrorsAndSuccess, callTalentProfile, ensureNoTopLevelErrors, extractProfileId } from "../shared.js";
 import type { GraphQLErrorEntry, UserError } from "../shared.js";
