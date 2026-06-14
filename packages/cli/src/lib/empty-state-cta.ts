@@ -74,6 +74,12 @@ export const EMPTY_STATE_CTAS: Readonly<Record<string, EmptyStateCta>> = Object.
   "applications.list": {
     entityPlural: "activity items",
   },
+  // Performed actions are a server-driven audit log — entries materialize
+  // as the viewer acts (status changes, applications submitted). Empty is
+  // a happy state for new users; no add verb.
+  "me.actions.list": {
+    entityPlural: "performed actions",
+  },
 });
 
 /**

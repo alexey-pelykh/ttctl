@@ -124,7 +124,7 @@ type FileReader = (relPath: string) => string[] | null;
  * `contracts`, etc.) are NOT walked. The list mirrors the issue #349
  * scope; expand here as new service domains land.
  */
-const COVERED_DOMAINS = ["profile", "engagements", "payments", "timesheet", "scheduler", "surveys"] as const;
+const COVERED_DOMAINS = ["profile", "engagements", "payments", "timesheet", "scheduler", "surveys", "me"] as const;
 type CoveredDomain = (typeof COVERED_DOMAINS)[number];
 const COVERED_DOMAIN_SET = new Set<string>(COVERED_DOMAINS);
 

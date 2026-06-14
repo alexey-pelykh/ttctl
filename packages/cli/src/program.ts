@@ -15,6 +15,7 @@ import { buildAvailabilityCommand } from "./commands/availability/index.js";
 import { buildContractsCommand } from "./commands/contracts/index.js";
 import { buildEngagementsCommand } from "./commands/engagements/index.js";
 import { buildJobsCommand } from "./commands/jobs/index.js";
+import { buildMeCommand } from "./commands/me/index.js";
 import { buildPaymentsCommand } from "./commands/payments/index.js";
 import { buildSurveysCommand } from "./commands/surveys/index.js";
 import { buildTimesheetCommand } from "./commands/timesheet/index.js";
@@ -290,6 +291,7 @@ export function buildProgram(): Command {
   program.addCommand(buildPaymentsCommand());
   program.addCommand(buildSurveysCommand());
   program.addCommand(buildTimesheetCommand());
+  program.addCommand(buildMeCommand());
 
   return program;
 }

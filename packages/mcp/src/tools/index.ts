@@ -10,6 +10,7 @@ import { registerContractsTools } from "./contracts.js";
 import { registerEngagementsTools } from "./engagements.js";
 import { registerInterestRequestsTools } from "./interest_requests.js";
 import { registerJobsTools } from "./jobs.js";
+import { registerMeTools } from "./me.js";
 import { registerPaymentsTools } from "./payments.js";
 import { registerSurveysTools } from "./surveys.js";
 import { registerTimesheetTools } from "./timesheet.js";
@@ -188,4 +189,9 @@ export function registerAllTools(server: McpServer, ctx: ToolRegistrationContext
   // (post-interview feedback, NPS, etc.) via `PendingSurveys`. First op
   // in the new `surveys` domain; write side ships separately.
   registerSurveysTools(server, ctx);
+
+  // me — 1 read-only leaf (#389). The viewer performed-actions audit log
+  // via `GetPerformedActions` (ADR-007 row 5 bidirectional cursor). First
+  // op in the new `me` domain (viewer-scoped reads).
+  registerMeTools(server, ctx);
 }
