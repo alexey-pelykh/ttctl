@@ -13,6 +13,7 @@ vi.mock("@ttctl/core", async (importOriginal) => {
     ...actual,
     profile: {
       ...actual.profile,
+      showRich: vi.fn(),
       basic: {
         ...actual.profile.basic,
         show: vi.fn(),
@@ -49,6 +50,7 @@ import { registerProfileBasicShowTool } from "../profile_basic_show.js";
  */
 
 const MOCKED_SHOW = profile.basic.show as ReturnType<typeof vi.fn>;
+const MOCKED_SHOW_RICH = profile.showRich as ReturnType<typeof vi.fn>;
 const MOCKED_GET_BASIC_INFO = profile.basic.getBasicInfo as ReturnType<typeof vi.fn>;
 const MOCKED_PHOTO_SHOW = profile.basic.photoShow as ReturnType<typeof vi.fn>;
 const MOCKED_PHOTO_UPLOAD = profile.basic.photoUpload as ReturnType<typeof vi.fn>;
@@ -174,6 +176,37 @@ describe("profile.basic MCP tools — dry-run paths (#165)", () => {
     expect(parsed.basicInfo?.bio).toBe("Senior engineer.");
     expect(parsed.basicInfo?.headline).toBe("Reliable systems.");
     expect(parsed.basicInfo?.languages).toEqual([{ id: "lang_en", name: "English" }]);
+  });
+
+  it("ttctl_profile_basic_show verbose dry-run previews GetViewer and skips showRich() (#469)", async () => {
+    registerProfileBasicShowTool(server, buildTokenSuccessCtx("tok_v"));
+    const handler = getToolHandler(server, "ttctl_profile_basic_show");
+    const result = (await handler({ verbose: true, dryRun: true }, {})) as ToolSuccessShape;
+
+    expect(MOCKED_SHOW_RICH).not.toHaveBeenCalled();
+    expect(MOCKED_SHOW).not.toHaveBeenCalled();
+
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as DryRunEnvelope;
+    expect(parsed.ok).toBe(true);
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.preview.operationName).toBe("GetViewer");
+    expect(parsed.preview.surface).toBe("mobile-gateway");
+    expect(parsed.preview.transport).toBe("stock");
+  });
+
+  it("ttctl_profile_basic_show verbose apply path calls showRich() only and returns the rich projection (#469)", async () => {
+    MOCKED_SHOW_RICH.mockResolvedValueOnce({ id: "v1", viewerRole: { fullName: "Ada Lovelace" } });
+    registerProfileBasicShowTool(server, buildTokenSuccessCtx());
+    const handler = getToolHandler(server, "ttctl_profile_basic_show");
+    const result = (await handler({ verbose: true }, {})) as ToolSuccessShape;
+
+    expect(MOCKED_SHOW_RICH).toHaveBeenCalledTimes(1);
+    expect(MOCKED_SHOW).not.toHaveBeenCalled();
+    expect(MOCKED_GET_BASIC_INFO).not.toHaveBeenCalled();
+
+    const parsed = JSON.parse(result.content[0]?.text ?? "") as { id: string; viewerRole: { fullName: string } };
+    expect(parsed.id).toBe("v1");
+    expect(parsed.viewerRole.fullName).toBe("Ada Lovelace");
   });
 
   it("ttctl_profile_basic_show apply path degrades to basicInfo: null when getBasicInfo() throws a non-session error", async () => {

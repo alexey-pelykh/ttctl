@@ -1,0 +1,766 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-14T17:01:33.169Z",
+  "operationName": "GetViewer",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "appliedAt": {
+        "kind": "string"
+      },
+      "availabilityRequestTalentCardEnabled": {
+        "kind": "boolean"
+      },
+      "coachingEligibility": {
+        "kind": "string"
+      },
+      "codeOfConduct": {
+        "kind": "object",
+        "fields": {
+          "acceptedAt": {
+            "kind": "string"
+          },
+          "body": {
+            "kind": "string"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "revisedOn": {
+            "kind": "string"
+          },
+          "revisionNotice": {
+            "kind": "null"
+          },
+          "title": {
+            "kind": "string"
+          }
+        }
+      },
+      "hasSearchSubscription": {
+        "kind": "boolean"
+      },
+      "hireMeBanner": {
+        "kind": "object",
+        "fields": {
+          "enabled": {
+            "kind": "boolean"
+          },
+          "experimentVariant": {
+            "kind": "string"
+          },
+          "personalWebsiteUrl": {
+            "kind": "string"
+          },
+          "referralUrl": {
+            "kind": "string"
+          },
+          "submitted": {
+            "kind": "boolean"
+          },
+          "verificationStatus": {
+            "kind": "string"
+          },
+          "verifiedCount": {
+            "kind": "number"
+          }
+        }
+      },
+      "id": {
+        "kind": "string"
+      },
+      "jobActivityList": {
+        "kind": "object",
+        "fields": {
+          "entities": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "engagement": {
+                  "kind": "object",
+                  "fields": {
+                    "commitment": {
+                      "kind": "object",
+                      "fields": {
+                        "slug": {
+                          "kind": "string"
+                        },
+                        "verbose": {
+                          "kind": "string"
+                        }
+                      }
+                    },
+                    "endDate": {
+                      "kind": "null"
+                    },
+                    "id": {
+                      "kind": "string"
+                    },
+                    "proposedEnd": {
+                      "kind": "object",
+                      "fields": {
+                        "endDate": {
+                          "kind": "string"
+                        },
+                        "id": {
+                          "kind": "string"
+                        },
+                        "status": {
+                          "kind": "string"
+                        }
+                      }
+                    },
+                    "startDate": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "job": {
+                  "kind": "object",
+                  "fields": {
+                    "activityItem": {
+                      "kind": "object",
+                      "fields": {
+                        "id": {
+                          "kind": "string"
+                        },
+                        "status": {
+                          "kind": "object",
+                          "fields": {
+                            "raw": {
+                              "kind": "string"
+                            },
+                            "slug": {
+                              "kind": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "client": {
+                      "kind": "object",
+                      "fields": {
+                        "id": {
+                          "kind": "string"
+                        },
+                        "isEnterprise": {
+                          "kind": "boolean"
+                        }
+                      }
+                    },
+                    "engagementDeliveryModel": {
+                      "kind": "object",
+                      "fields": {
+                        "id": {
+                          "kind": "string"
+                        },
+                        "identifier": {
+                          "kind": "string"
+                        }
+                      }
+                    },
+                    "id": {
+                      "kind": "string"
+                    },
+                    "pointsOfContact": {
+                      "kind": "object",
+                      "fields": {
+                        "current": {
+                          "kind": "object",
+                          "fields": {
+                            "contactFields": {
+                              "kind": "object",
+                              "fields": {
+                                "communitySlackId": {
+                                  "kind": "string"
+                                },
+                                "email": {
+                                  "kind": "string"
+                                }
+                              }
+                            },
+                            "fullName": {
+                              "kind": "string"
+                            },
+                            "id": {
+                              "kind": "string"
+                            }
+                          }
+                        },
+                        "handoff": {
+                          "kind": "null"
+                        },
+                        "kind": {
+                          "kind": "string"
+                        }
+                      }
+                    },
+                    "title": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ongoingRateChangeRequest": {
+        "kind": "null"
+      },
+      "pendingNotifications": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "pendingQuizzes": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "pendingSurveys": {
+        "kind": "array",
+        "item": {
+          "kind": "unknown"
+        }
+      },
+      "preliminarySearchSetting": {
+        "kind": "object",
+        "fields": {
+          "enabled": {
+            "kind": "boolean"
+          }
+        }
+      },
+      "referralUrl": {
+        "kind": "object",
+        "fields": {
+          "legacySlug": {
+            "kind": "string"
+          },
+          "pathSuffix": {
+            "kind": "string"
+          },
+          "shortenedUrl": {
+            "kind": "string"
+          },
+          "url": {
+            "kind": "string"
+          }
+        }
+      },
+      "scheduledAvailability": {
+        "kind": "null"
+      },
+      "slackApplications": {
+        "kind": "object",
+        "fields": {
+          "edges": {
+            "kind": "array",
+            "item": {
+              "kind": "unknown"
+            }
+          }
+        }
+      },
+      "talentPortalSetting": {
+        "kind": "object",
+        "fields": {
+          "collapsedMenu": {
+            "kind": "boolean"
+          },
+          "threeColumnLayout": {
+            "kind": "boolean"
+          }
+        }
+      },
+      "termsOfService": {
+        "kind": "object",
+        "fields": {
+          "body": {
+            "kind": "string"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "requiredAction": {
+            "kind": "string"
+          },
+          "revisedOn": {
+            "kind": "string"
+          },
+          "revisionNotice": {
+            "kind": "null"
+          },
+          "title": {
+            "kind": "string"
+          }
+        }
+      },
+      "viewerRole": {
+        "kind": "object",
+        "fields": {
+          "activatedAt": {
+            "kind": "string"
+          },
+          "allocatedHours": {
+            "kind": "number"
+          },
+          "applicationReapplyGracePeriodDueDate": {
+            "kind": "null"
+          },
+          "askExpertMenuVisible": {
+            "kind": "boolean"
+          },
+          "availability": {
+            "kind": "string"
+          },
+          "availableShiftRangeFrom": {
+            "kind": "string"
+          },
+          "availableShiftRangeTo": {
+            "kind": "string"
+          },
+          "blockedStatus": {
+            "kind": "object",
+            "fields": {
+              "isBlocked": {
+                "kind": "boolean"
+              },
+              "reason": {
+                "kind": "null"
+              }
+            }
+          },
+          "contactFields": {
+            "kind": "object",
+            "fields": {
+              "communitySlackId": {
+                "kind": "string"
+              }
+            }
+          },
+          "email": {
+            "kind": "string"
+          },
+          "fullName": {
+            "kind": "string"
+          },
+          "hiredHours": {
+            "kind": "number"
+          },
+          "hourlyRate": {
+            "kind": "object",
+            "fields": {
+              "decimal": {
+                "kind": "string"
+              },
+              "verbose": {
+                "kind": "string"
+              }
+            }
+          },
+          "isFakeSession": {
+            "kind": "boolean"
+          },
+          "isPassThroughTalent": {
+            "kind": "boolean"
+          },
+          "lastAllocatedHoursChangeRequest": {
+            "kind": "object",
+            "fields": {
+              "allocatedHours": {
+                "kind": "number"
+              },
+              "availability": {
+                "kind": "string"
+              },
+              "comment": {
+                "kind": "null"
+              },
+              "id": {
+                "kind": "string"
+              },
+              "rejectReason": {
+                "kind": "null"
+              },
+              "status": {
+                "kind": "object",
+                "fields": {
+                  "value": {
+                    "kind": "string"
+                  },
+                  "verbose": {
+                    "kind": "string"
+                  }
+                }
+              }
+            }
+          },
+          "lastMobileAccess": {
+            "kind": "object",
+            "fields": {
+              "deviceType": {
+                "kind": "string"
+              },
+              "startedAt": {
+                "kind": "string"
+              }
+            }
+          },
+          "marketplaceAutoMigrated": {
+            "kind": "boolean"
+          },
+          "marketplaceSeenMigrationNotificationAt": {
+            "kind": "string"
+          },
+          "nonTalentRoles": {
+            "kind": "array",
+            "item": {
+              "kind": "unknown"
+            }
+          },
+          "operations": {
+            "kind": "object",
+            "fields": {
+              "createRateChangeRequest": {
+                "kind": "object",
+                "fields": {
+                  "callable": {
+                    "kind": "string"
+                  },
+                  "messages": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "unknown"
+                    }
+                  }
+                }
+              },
+              "promoteGigs": {
+                "kind": "object",
+                "fields": {
+                  "callable": {
+                    "kind": "string"
+                  },
+                  "errors": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "object",
+                      "fields": {
+                        "code": {
+                          "kind": "string"
+                        },
+                        "message": {
+                          "kind": "string"
+                        }
+                      }
+                    }
+                  },
+                  "messages": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              },
+              "startSearchSubscription": {
+                "kind": "object",
+                "fields": {
+                  "callable": {
+                    "kind": "string"
+                  },
+                  "messages": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "unknown"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "permissions": {
+            "kind": "object",
+            "fields": {
+              "canApplyToJobs": {
+                "kind": "boolean"
+              },
+              "canFillInAdvancedProfile": {
+                "kind": "boolean"
+              },
+              "canHaveReferrals": {
+                "kind": "boolean"
+              },
+              "canViewAskAnExpert": {
+                "kind": "boolean"
+              },
+              "canViewCoachingRequests": {
+                "kind": "boolean"
+              },
+              "canViewCommunity": {
+                "kind": "boolean"
+              },
+              "canViewConsultations": {
+                "kind": "boolean"
+              },
+              "canViewEligibleJobs": {
+                "kind": "boolean"
+              },
+              "canViewFaq": {
+                "kind": "boolean"
+              },
+              "canViewFeedbackCall": {
+                "kind": "boolean"
+              },
+              "canViewJobsOnClientReview": {
+                "kind": "boolean"
+              },
+              "canViewJobsOnMatcherReview": {
+                "kind": "boolean"
+              },
+              "canViewLegalSetting": {
+                "kind": "boolean"
+              },
+              "canViewMobileAppPromo": {
+                "kind": "boolean"
+              },
+              "canViewOnboardingVideo": {
+                "kind": "boolean"
+              },
+              "canViewPayments": {
+                "kind": "boolean"
+              },
+              "canViewRateInsights": {
+                "kind": "boolean"
+              },
+              "canViewRecognitionBadges": {
+                "kind": "boolean"
+              },
+              "canViewSlackCommunity": {
+                "kind": "boolean"
+              },
+              "canViewSmsNotificationSettings": {
+                "kind": "boolean"
+              },
+              "canViewSpecializations": {
+                "kind": "boolean"
+              },
+              "canViewToptalAdvantageSection": {
+                "kind": "boolean"
+              }
+            }
+          },
+          "phoneNumber": {
+            "kind": "string"
+          },
+          "photo": {
+            "kind": "object",
+            "fields": {
+              "small": {
+                "kind": "string"
+              }
+            }
+          },
+          "postActivationStepsStatus": {
+            "kind": "string"
+          },
+          "profileId": {
+            "kind": "string"
+          },
+          "publicResumeUrl": {
+            "kind": "string"
+          },
+          "rateInsight": {
+            "kind": "object",
+            "fields": {
+              "hourly": {
+                "kind": "object",
+                "fields": {
+                  "currentRateCompetitive": {
+                    "kind": "boolean"
+                  },
+                  "recentApplicationRate": {
+                    "kind": "string"
+                  },
+                  "recommendedRate": {
+                    "kind": "string"
+                  }
+                }
+              }
+            }
+          },
+          "roleId": {
+            "kind": "number"
+          },
+          "sendNotificationsToPrivateEmail": {
+            "kind": "boolean"
+          },
+          "specializationType": {
+            "kind": "string"
+          },
+          "specializations": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "deliveryModel": {
+                  "kind": "object",
+                  "fields": {
+                    "id": {
+                      "kind": "string"
+                    },
+                    "identifier": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "title": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "talentPartner": {
+            "kind": "null"
+          },
+          "talentVerticals": {
+            "kind": "array",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "isApiAllowed": {
+                  "kind": "boolean"
+                },
+                "name": {
+                  "kind": "string"
+                },
+                "roleId": {
+                  "kind": "number"
+                },
+                "slug": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "timeZone": {
+            "kind": "object",
+            "fields": {
+              "location": {
+                "kind": "string"
+              },
+              "name": {
+                "kind": "string"
+              },
+              "stdOffset": {
+                "kind": "number"
+              },
+              "utcOffset": {
+                "kind": "number"
+              },
+              "value": {
+                "kind": "string"
+              }
+            }
+          },
+          "topSchedulerSettingsAllowed": {
+            "kind": "boolean"
+          },
+          "toptalEmail": {
+            "kind": "string"
+          },
+          "toptalEmailSuspended": {
+            "kind": "boolean"
+          },
+          "userChameleonUUID": {
+            "kind": "string"
+          },
+          "vertical": {
+            "kind": "object",
+            "fields": {
+              "globalMarketCondition": {
+                "kind": "object",
+                "fields": {
+                  "condition": {
+                    "kind": "string"
+                  },
+                  "conditionColor": {
+                    "kind": "string"
+                  },
+                  "conditionVerbose": {
+                    "kind": "string"
+                  },
+                  "reportUrl": {
+                    "kind": "string"
+                  }
+                }
+              },
+              "hasSingleSpecialization": {
+                "kind": "boolean"
+              },
+              "isMarketplaceAccessEnabled": {
+                "kind": "boolean"
+              },
+              "marketCondition": {
+                "kind": "object",
+                "fields": {
+                  "condition": {
+                    "kind": "string"
+                  }
+                }
+              },
+              "minPortfolioItems": {
+                "kind": "number"
+              },
+              "name": {
+                "kind": "string"
+              },
+              "profileHandbookUrl": {
+                "kind": "string"
+              },
+              "slug": {
+                "kind": "string"
+              },
+              "talentJobApplicationConfig": {
+                "kind": "object",
+                "fields": {
+                  "careerHighlightRequired": {
+                    "kind": "boolean"
+                  },
+                  "highlightFields": {
+                    "kind": "array",
+                    "item": {
+                      "kind": "string"
+                    }
+                  },
+                  "portfolioRequired": {
+                    "kind": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          "workingTimeFrom": {
+            "kind": "string"
+          },
+          "workingTimeTo": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}
