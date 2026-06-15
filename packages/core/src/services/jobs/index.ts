@@ -309,6 +309,16 @@ export interface ListOptions {
 }
 
 /**
+ * Pagination for {@link recommended} — the algorithmic feed takes only
+ * offset-list pagination (no filters); the filter-less sibling of
+ * {@link ListOptions}. Defaults `page: 1, perPage: 20`.
+ */
+export interface RecommendedOptions {
+  page?: number;
+  perPage?: number;
+}
+
+/**
  * Page wrapper returned by {@link list}, {@link saved}, and {@link
  * notInterestedList}. Carries the projected items plus the
  * server-reported `totalCount` and the resolved `page` / `perPage`
@@ -560,23 +570,12 @@ export interface SearchSubscriptionState {
 // `InitialJobs` selects fragments unrelated to this service's contract).
 // ---------------------------------------------------------------------
 
-// Pagination variable types (issue #138):
+// Shared `TalentJob` list-row selection. Both `JobsList`
+// (`eligibleJobs.entities`) and `GetRecommendedJobs`
+// (`recommendedJobsV2.entities`) project it through {@link projectListItem}
+// into {@link JobListItem}. Sibling of {@link JOB_DETAIL_SELECTION} — keeps
+// the two feeds from drifting.
 //
-// - `$page: Int` — nullable Int; server defaults to 0 when omitted.
-//   Verified empirically: BlogPosts, GetJobsForDashboard, and
-//   GetTalentReferralTrackers (in
-//   `research/graphql/gateway/operations/`) all declare `$page: Int`.
-//
-// - `$pageSize: PageSize` — CUSTOM SCALAR, NOT `Int`. Captured operations
-//   use the named `PageSize` scalar. The pre-#138 hardcoded literal
-//   `pageSize: 20` worked because GraphQL accepts integer literals for
-//   custom scalars without type-checking; once we extracted the value
-//   to a variable, the server validated and (correctly) rejected
-//   `Int` in a `PageSize`-typed position. The fix is to declare the
-//   variable with the actual server type. Verified empirically: live
-//   API returned HTTP 400 `Variable "$pageSize" of type "Int!" used
-//   in position expecting type "PageSize"` during E2E pre-merge
-//   verification — schema/contract validation rule caught it.
 // `activityItem.availabilityRequest.metadata.offeredHourlyRate` (#410)
 // surfaces the recruiter-pinned Fixed rate per row. The schema declares
 // `TalentJob.activityItem: TalentJobActivityItem!` (non-null) and
@@ -586,26 +585,7 @@ export interface SearchSubscriptionState {
 // `null`. Adds one nested selection per row; size impact is small
 // (3 strings when set, nothing when not). Disposition stays T1 per
 // `docs/wire-validation-routing.md` — no committed snapshot to update.
-const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!], $excludeSkills: [String!], $excludeKeywords: [String!], $commitments: [JobCommitmentFilterEnum!], $workTypes: [JobWorkTypeSlug!], $estimatedLengths: [EstimatedLengthFilterEnum!], $notInterested: BooleanFilter, $saved: BooleanFilter, $sortTarget: String, $page: Int, $pageSize: PageSize) {
-  viewer {
-    __typename
-    id
-    eligibleJobs(
-      page: $page
-      pageSize: $pageSize
-      sortTarget: $sortTarget
-      skills: $skills
-      keywords: $keywords
-      excludeSkills: $excludeSkills
-      excludeKeywords: $excludeKeywords
-      commitmentsV2: $commitments
-      workTypesV2: $workTypes
-      estimatedLengths: $estimatedLengths
-      filter: { notInterested: $notInterested, saved: $saved }
-    ) {
-      __typename
-      entities {
-        __typename
+const JOB_LIST_ENTITY_SELECTION = `__typename
         id
         title
         url
@@ -636,7 +616,67 @@ const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!]
               ... on MarketplaceAvailabilityRequestFlexibleMetadata { __typename }
             }
           }
-        }
+        }`;
+
+// Pagination variable types (issue #138) — apply to both `JobsList` and
+// `GetRecommendedJobs` below:
+//
+// - `$page: Int` — nullable Int; server defaults to 0 when omitted.
+//   Verified empirically: BlogPosts, GetJobsForDashboard, and
+//   GetTalentReferralTrackers (in
+//   `research/graphql/gateway/operations/`) all declare `$page: Int`.
+//
+// - `$pageSize: PageSize` — CUSTOM SCALAR, NOT `Int`. Captured operations
+//   use the named `PageSize` scalar. The pre-#138 hardcoded literal
+//   `pageSize: 20` worked because GraphQL accepts integer literals for
+//   custom scalars without type-checking; once we extracted the value
+//   to a variable, the server validated and (correctly) rejected
+//   `Int` in a `PageSize`-typed position. The fix is to declare the
+//   variable with the actual server type. Verified empirically: live
+//   API returned HTTP 400 `Variable "$pageSize" of type "Int!" used
+//   in position expecting type "PageSize"` during E2E pre-merge
+//   verification — schema/contract validation rule caught it.
+const JOBS_LIST_QUERY = `query JobsList($skills: [String!], $keywords: [String!], $excludeSkills: [String!], $excludeKeywords: [String!], $commitments: [JobCommitmentFilterEnum!], $workTypes: [JobWorkTypeSlug!], $estimatedLengths: [EstimatedLengthFilterEnum!], $notInterested: BooleanFilter, $saved: BooleanFilter, $sortTarget: String, $page: Int, $pageSize: PageSize) {
+  viewer {
+    __typename
+    id
+    eligibleJobs(
+      page: $page
+      pageSize: $pageSize
+      sortTarget: $sortTarget
+      skills: $skills
+      keywords: $keywords
+      excludeSkills: $excludeSkills
+      excludeKeywords: $excludeKeywords
+      commitmentsV2: $commitments
+      workTypesV2: $workTypes
+      estimatedLengths: $estimatedLengths
+      filter: { notInterested: $notInterested, saved: $saved }
+    ) {
+      __typename
+      entities {
+        ${JOB_LIST_ENTITY_SELECTION}
+      }
+      totalCount
+    }
+  }
+}`;
+
+// GetRecommendedJobs — algorithmic feed, browse-sibling of `JobsList`.
+// Wraps `viewer.recommendedJobsV2(page, pageSize)` — offset-list (ADR-007
+// row 1), NOT the `--limit`/`--after` cursor the issue body guessed (the
+// captured portal op is offset-paginated, hardcoding `page: 0, pageSize:
+// 3`). `$pageSize: PageSize` mirrors `eligibleJobs` (an `Int` in that
+// position is rejected — see the #138 note above). Schema gappy
+// (`GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`) → T1.
+const GET_RECOMMENDED_JOBS_QUERY = `query GetRecommendedJobs($page: Int, $pageSize: PageSize) {
+  viewer {
+    __typename
+    id
+    recommendedJobsV2(page: $page, pageSize: $pageSize) {
+      __typename
+      entities {
+        ${JOB_LIST_ENTITY_SELECTION}
       }
       totalCount
     }
@@ -958,6 +998,18 @@ interface JobsListResponse {
   viewer: {
     id: string;
     eligibleJobs: {
+      entities: JobListEntity[] | null;
+      totalCount: number;
+    } | null;
+  } | null;
+}
+
+// `GetRecommendedJobs` wire shape — mirrors {@link JobsListResponse} with
+// the `recommendedJobsV2` connection in place of `eligibleJobs`.
+interface RecommendedJobsResponse {
+  viewer: {
+    id: string;
+    recommendedJobsV2: {
       entities: JobListEntity[] | null;
       totalCount: number;
     } | null;
@@ -1357,6 +1409,28 @@ export async function list(token: string, opts: ListOptions = {}): Promise<JobLi
   }
   const items = (data.viewer.eligibleJobs.entities ?? []).map(projectListItem);
   return { items, totalCount: data.viewer.eligibleJobs.totalCount, page, perPage };
+}
+
+/**
+ * Algorithmic job-recommendation feed (Toptal's "recommended for you") —
+ * the browse-sibling of {@link list}, which returns the full eligible pool.
+ * Same {@link JobListPage} shape; defaults `page: 1, perPage: 20`.
+ */
+export async function recommended(token: string, opts: RecommendedOptions = {}): Promise<JobListPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
+  const data = await callGateway<RecommendedJobsResponse>(token, "GetRecommendedJobs", GET_RECOMMENDED_JOBS_QUERY, {
+    page,
+    pageSize: perPage,
+  });
+  if (data.viewer === null) {
+    throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.recommendedJobsV2 === null) {
+    return { items: [], totalCount: 0, page, perPage };
+  }
+  const items = (data.viewer.recommendedJobsV2.entities ?? []).map(projectListItem);
+  return { items, totalCount: data.viewer.recommendedJobsV2.totalCount, page, perPage };
 }
 
 /**

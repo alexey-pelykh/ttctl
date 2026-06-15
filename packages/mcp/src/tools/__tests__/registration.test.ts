@@ -157,11 +157,13 @@ const EXPECTED_TOOLS = [
   "ttctl_availability_working_hours_set",
   "ttctl_availability_allocated_hours_show",
   "ttctl_availability_allocated_hours_set",
-  // jobs (#148 / #436 / #471) — 19 tools: browse (list / show / show-many),
-  // interest + search subscription, and the apply funnel (apply +
-  // apply_data / _questions / _rate_insight / _similar_answers). Per AC:
-  // MCP names use canonical `jobs_*` prefix only — no `opportunities_*`.
+  // jobs (#148 / #436 / #471 / #472) — 20 tools: browse (list / show /
+  // show-many / recommended), interest + search subscription, and the
+  // apply funnel (apply + apply_data / _questions / _rate_insight /
+  // _similar_answers). Per AC: MCP names use canonical `jobs_*` prefix
+  // only — no `opportunities_*`.
   "ttctl_jobs_list",
+  "ttctl_jobs_recommended",
   "ttctl_jobs_show",
   "ttctl_jobs_show_many",
   "ttctl_jobs_save",
@@ -249,7 +251,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (132 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (133 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

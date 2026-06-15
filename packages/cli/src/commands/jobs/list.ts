@@ -58,6 +58,7 @@ interface FilterlessPaginatedOptions {
 export type JobsSavedOptions = FilterlessPaginatedOptions;
 export type JobsViewedOptions = FilterlessPaginatedOptions;
 export type JobsNotInterestedListOptions = FilterlessPaginatedOptions;
+export type JobsRecommendedOptions = FilterlessPaginatedOptions;
 
 export async function runJobsList(opts: JobsListOptions): Promise<void> {
   const token = await loadAuthTokenOrExit("jobs list", opts.output);
@@ -86,6 +87,33 @@ export async function runJobsList(opts: JobsListOptions): Promise<void> {
     pretty: (data) => renderJobsListPretty(data.items, page),
     table: (data) => renderJobsListPretty(data.items, page),
     empty: { command: "jobs.list" },
+  });
+}
+
+/**
+ * Action handler for `ttctl jobs recommended`. Wraps `jobs.recommended()`
+ * (the algorithmic `recommendedJobsV2` feed) — same list envelope and
+ * pretty footer as `jobs list`, paginated via `--page` / `--per-page`.
+ */
+export async function runJobsRecommended(opts: JobsRecommendedOptions): Promise<void> {
+  const token = await loadAuthTokenOrExit("jobs recommended", opts.output);
+
+  const listOpts: jobs.RecommendedOptions = {};
+  if (opts.page !== undefined) listOpts.page = opts.page;
+  if (opts.perPage !== undefined) listOpts.perPage = opts.perPage;
+
+  let page: jobs.JobListPage;
+  try {
+    page = await jobs.recommended(token, listOpts);
+  } catch (err) {
+    handleJobsError("jobs recommended", err, opts.output);
+  }
+
+  const pageInfo = buildJobsPageInfo(page);
+  emitResult(wrapListEnvelope(page.items, pageInfo), opts.output, {
+    pretty: (data) => renderJobsListPretty(data.items, page),
+    table: (data) => renderJobsListPretty(data.items, page),
+    empty: { command: "jobs.recommended" },
   });
 }
 
