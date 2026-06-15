@@ -76,19 +76,6 @@ export function buildProfileBasicCommand(): Command {
           .choices(OUTPUT_FORMATS)
           .default("pretty" satisfies OutputFormat),
       )
-      .addHelpText(
-        "after",
-        [
-          "",
-          "Precondition (account state):",
-          "  Toptal requires SMS-notification consent to be enabled in your",
-          "  account settings (talent.toptal.com → notifications) before",
-          "  profile-update mutations will succeed. If SMS consent is",
-          "  disabled, this command will fail with a USER_ERROR (or similar)",
-          "  surfaced from the Toptal API — ttctl cannot toggle the consent",
-          "  flag for you. Toggle it in the web UI, then retry. See issue #536.",
-        ].join("\n"),
-      )
       .action(
         async (options: {
           bio?: string;
