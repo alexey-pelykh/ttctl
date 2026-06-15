@@ -37,15 +37,11 @@ import { truncate } from "./show.js";
  * (missing file, mode conflict) surface as `profile update failed (CODE)`
  * with an actionable code, never as a confusing post-network error.
  *
- * Account-state precondition (#536): the underlying `UPDATE_BASIC_INFO`
- * mutation requires SMS-notification consent to be enabled in the
- * user's Toptal account (talent.toptal.com → notifications). When the
- * consent is off, the mutation fails — surfaced today via whichever
- * `profile.basic.ProfileError` branch catches the API's rejection
- * (most likely `USER_ERROR` or `GRAPHQL_ERROR`). TTCtl deliberately
- * does NOT expose `UpdateSmsNotificationsSettings` (README § Out of
- * scope), so the remediation is a one-time web-UI toggle by the user.
- * See `profile.basic.set` JSDoc for the full rationale.
+ * SMS consent is client-side only, not a server gate (#540): the web
+ * profile editor's "agree to receive text messages" checkbox is
+ * enforced client-side, so `UPDATE_BASIC_INFO` is not gated on it
+ * server-side and `profile basic update` is never blocked by consent
+ * state. See `profile.basic.set` JSDoc for the evidence.
  *
  * Note on naming: the user-facing CLI verb is `update` (per #69 AC and the
  * #68 epic verb economy `add / remove / update / show / list`); the core
