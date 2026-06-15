@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs, GetJobMatchQualityMetrics, GetTalentJobRateInsight
+// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs, GetJobMatchQualityMetrics, GetTalentJobRateInsight, GetJobsForDashboard, GetJobsCountForDashboard
 
 /**
  * E2E coverage for `ttctl jobs` (#148).
@@ -472,6 +472,85 @@ describe("jobs (live mobile-gateway)", () => {
     expect(() =>
       assertWireShapeStable({
         operationName: "GetTalentJobRateInsight",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------
+  // GetJobsForDashboard + GetJobsCountForDashboard — the "my activity"
+  // dashboard projection (#479). READ-only, round-trip safe. Schema/
+  // contract: both ops are hand-authored against a schema gap
+  // (`jobActivityList` resolves but `JobActivityStatusGroup` is a bare
+  // scalar in the synthesized SDL), Track 1. The live call IS the wire
+  // proof — a wrong selection or a bad `statusGroup` 400s. The list's
+  // `statusGroup: { except: null, only: null }` (no filter) is the
+  // specific claim the live call validates.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("jobs dashboard returns the activity-list envelope with the projection shape", async () => {
+    const result = await cli.run(["jobs", "dashboard", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as { version?: string; items?: unknown };
+    expect(payload.version).toBeDefined();
+    expect(Array.isArray(payload.items)).toBe(true);
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
+      process.stderr.write("warning: no dashboard activity in test account — projection assertions skipped\n");
+      return;
+    }
+    const first = payload.items[0] as Record<string, unknown>;
+    for (const key of [
+      "id",
+      "status",
+      "statusGroup",
+      "statusColor",
+      "lastUpdatedAt",
+      "engagement",
+      "application",
+      "job",
+    ]) {
+      expect(key in first).toBe(true);
+    }
+    // The inner `job` rides the shared list projection.
+    const job = first["job"] as Record<string, unknown>;
+    expect("id" in job).toBe(true);
+    expect("title" in job).toBe(true);
+  });
+
+  it.skipIf(!e2eEnabled)("GetJobsForDashboard wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await jobs.getJobsForDashboard(token);
+    if (response.items.length === 0) {
+      process.stderr.write("warning: no dashboard activity in test account — GetJobsForDashboard snapshot skipped\n");
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetJobsForDashboard",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  it.skipIf(!e2eEnabled)("jobs dashboard-count returns an integer count for a status group", async () => {
+    const result = await cli.run(["jobs", "dashboard-count", "ACTIVE_ENGAGEMENT", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as { statusGroup?: string; count?: unknown };
+    expect(payload.statusGroup).toBe("ACTIVE_ENGAGEMENT");
+    expect(typeof payload.count).toBe("number");
+    expect(payload.count as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it.skipIf(!e2eEnabled)("GetJobsCountForDashboard wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await jobs.getJobsCountForDashboard(token, "ACTIVE_ENGAGEMENT");
+    expect(typeof response).toBe("number");
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetJobsCountForDashboard",
         surface: "mobile-gateway",
         transport: "stock",
         response,

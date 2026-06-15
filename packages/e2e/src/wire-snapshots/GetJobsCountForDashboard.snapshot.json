@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-15T07:14:28.971Z",
+  "operationName": "GetJobsCountForDashboard",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "number"
+  }
+}
