@@ -20,6 +20,7 @@ import {
   markViewed,
   notInterested,
   notInterestedList,
+  recommended,
   save,
   saved,
   searchSubscriptionRemove,
@@ -242,6 +243,54 @@ describe("jobs.list", () => {
     expect(body.variables["pageSize"]).toBe(5);
     expect(page.page).toBe(1);
     expect(page.perPage).toBe(5);
+  });
+});
+
+describe("jobs.recommended", () => {
+  it("returns the projected entities in a JobListPage (wire op GetRecommendedJobs)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { __typename: "Viewer", id: "v1", recommendedJobsV2: { entities: [JOB_LIST_ENTITY], totalCount: 1 } },
+        },
+      },
+    });
+    const page = await recommended(TOKEN);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({ id: "job-1", title: "Senior React Engineer" });
+    expect(page.totalCount).toBe(1);
+    const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string };
+    expect(body.operationName).toBe("GetRecommendedJobs");
+  });
+
+  it("no pagination opts: wire receives page=1, pageSize=20", async () => {
+    reply({ body: { data: { viewer: { id: "v1", recommendedJobsV2: { entities: [], totalCount: 0 } } } } });
+    const page = await recommended(TOKEN);
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(1);
+    expect(body.variables["pageSize"]).toBe(20);
+    expect(page.page).toBe(1);
+    expect(page.perPage).toBe(20);
+  });
+
+  it("threads page/perPage to the wire and sends no filter variables", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", recommendedJobsV2: { entities: [JOB_LIST_ENTITY], totalCount: 42 } } } },
+    });
+    const page = await recommended(TOKEN, { page: 3, perPage: 5 });
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(3);
+    expect(body.variables["pageSize"]).toBe(5);
+    expect(body.variables["skills"]).toBeUndefined();
+    expect(page.page).toBe(3);
+    expect(page.perPage).toBe(5);
+    expect(page.totalCount).toBe(42);
+  });
+
+  it("returns empty JobListPage when recommendedJobsV2 is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", recommendedJobsV2: null } } } });
+    const page = await recommended(TOKEN);
+    expect(page).toEqual({ items: [], totalCount: 0, page: 1, perPage: 20 });
   });
 });
 

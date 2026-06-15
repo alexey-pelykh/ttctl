@@ -154,7 +154,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_interest_requests_accept: { id: "ar_123", rate: "80.00", kind: "FIXED" },
   ttctl_interest_requests_reject: { id: "ar_123", reason: "rate_too_low" },
   ttctl_interest_requests_reject_reasons: {},
-  // jobs (17 — 13 base + 4 apply-funnel #436)
+  // jobs (20 — browse + interest + search + apply funnel)
   ttctl_jobs_apply: { id: "job_123", consentIssued: true, requestedHourlyRate: "95.00" },
   ttctl_jobs_apply_data: { id: "job_123" },
   ttctl_jobs_apply_questions: { id: "job_123" },
@@ -165,6 +165,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_jobs_mark_viewed: { id: "job_123" },
   ttctl_jobs_not_interested: { id: "job_123", reason: "schedule" },
   ttctl_jobs_not_interested_list: {},
+  ttctl_jobs_recommended: {},
   ttctl_jobs_save: { id: "job_123" },
   ttctl_jobs_saved: {},
   ttctl_jobs_search_list: {},
@@ -357,8 +358,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 132 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(132);
+  it("registers exactly 133 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(133);
   });
 
   it("every registered tool has a fixture", () => {

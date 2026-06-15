@@ -15,7 +15,7 @@ import {
   runJobsSave,
   runJobsUnsave,
 } from "./interest.js";
-import { runJobsList, runJobsNotInterestedList, runJobsSaved, runJobsViewed } from "./list.js";
+import { runJobsList, runJobsNotInterestedList, runJobsRecommended, runJobsSaved, runJobsViewed } from "./list.js";
 import { runJobsSearchList, runJobsSearchRemove, runJobsSearchSave } from "./search.js";
 import { runJobsShow, runJobsShowMany } from "./show.js";
 
@@ -181,6 +181,23 @@ export function buildJobsCommand(): Command {
     )
     .action(async (ids: string[], options: { output: OutputFormat }) => {
       await runJobsShowMany(ids, options.output);
+    });
+
+  cmd
+    .command("recommended")
+    .description("List algorithmically-recommended job opportunities (paginated via --page / --per-page)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { page?: number; perPage?: number; output: OutputFormat }) => {
+      const listOpts: import("./list.js").JobsRecommendedOptions = { output: options.output };
+      if (options.page !== undefined) listOpts.page = options.page;
+      if (options.perPage !== undefined) listOpts.perPage = options.perPage;
+      await runJobsRecommended(listOpts);
     });
 
   // #430 — Direct-apply to a job. Per ADR-008 § Decision Part 5: the

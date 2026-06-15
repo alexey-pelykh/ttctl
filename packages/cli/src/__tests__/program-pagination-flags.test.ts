@@ -182,6 +182,22 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     expect(helpText).toMatch(/--per-page <number>/);
   });
 
+  it("--page DOES appear in `jobs recommended --help` (#472)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["jobs", "recommended", "--help"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--page <number>/);
+    expect(helpText).toMatch(/--per-page <number>/);
+  });
+
   it("--page DOES appear in `payments payouts list --help` (#373)", async () => {
     const program = buildProgram();
     program.exitOverride();

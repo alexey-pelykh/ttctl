@@ -98,8 +98,9 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * `opportunities_*` aliasing (MCP tool names must be deterministic for
  * LLM clients).
  *
- * Tool surface (19 tools):
+ * Tool surface (20 tools):
  *   - `ttctl_jobs_list`
+ *   - `ttctl_jobs_recommended`
  *   - `ttctl_jobs_show`
  *   - `ttctl_jobs_show_many`
  *   - `ttctl_jobs_save`
@@ -225,6 +226,57 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
         // payload addition — `result.items` is byte-identical to the
         // prior payload.
         const page = await jobs.list(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
+      } catch (err) {
+        return mapJobsError(err);
+      }
+    },
+  );
+
+  // -------- recommended ------------------------------------------------
+  server.registerTool(
+    "ttctl_jobs_recommended",
+    {
+      title: "Get recommended job opportunities",
+      description: [
+        "Fetch Toptal's algorithmic job-recommendation feed for the signed-in user —",
+        "the 'what should I look at' view, distinct from `ttctl_jobs_list`'s filter-based browse.",
+        "Returns one page of recommended jobs (same row shape as `ttctl_jobs_list`) plus",
+        "offset-style `pageInfo` (`currentPage`, `perPage`, `totalPages`, `hasNextPage`).",
+        "",
+        "Pagination:",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+        "",
+        "Example user prompts:",
+        '  - "What Toptal jobs are recommended for me?"',
+        '  - "Show my recommended opportunities."',
+      ].join("\n"),
+      inputSchema: {
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      const opts: jobs.RecommendedOptions = {};
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
+      if (args.dryRun === true) {
+        // `recommended()` sends only `{ page, pageSize }` — no filter vars.
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GetRecommendedJobs",
+            "mobile-gateway",
+            { page: opts.page ?? jobs.DEFAULT_PAGE, pageSize: opts.perPage ?? jobs.DEFAULT_PER_PAGE },
+            auth.token,
+          ),
+        );
+      }
+      try {
+        const page = await jobs.recommended(auth.token, opts);
         return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
       } catch (err) {
         return mapJobsError(err);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// e2e-covers: JobShow, JobsList, JobsByIDs
+// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs
 
 /**
  * E2E coverage for `ttctl jobs` (#148).
@@ -289,6 +289,58 @@ describe("jobs (live mobile-gateway)", () => {
     expect(() =>
       assertWireShapeStable({
         operationName: "JobsList",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------
+  // GetRecommendedJobs — algorithmic feed (#472). READ-only, round-trip
+  // safe. Schema/contract: hand-authored op against a schema gap
+  // (`recommendedJobsV2` is `Unknown`-typed in the synthesized SDL),
+  // Track 1. The live call IS the wire proof — a wrong selection or a
+  // wrong `$pageSize` scalar 400s (cf. the #138 `PageSize` finding).
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("jobs recommended returns the list envelope with the projection shape", async () => {
+    const result = await cli.run(["jobs", "recommended", "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as { version?: string; items?: unknown };
+    expect(payload.version).toBeDefined();
+    expect(Array.isArray(payload.items)).toBe(true);
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
+      process.stderr.write("warning: no recommended jobs in test account — projection assertions skipped\n");
+      return;
+    }
+    const first = payload.items[0] as Record<string, unknown>;
+    for (const key of [
+      "id",
+      "title",
+      "commitment",
+      "workType",
+      "client",
+      "saved",
+      "notInterested",
+      "viewed",
+      "fixedRate",
+    ]) {
+      expect(key in first).toBe(true);
+    }
+  });
+
+  it.skipIf(!e2eEnabled)("GetRecommendedJobs wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const response = await jobs.recommended(token);
+    if (response.items.length === 0) {
+      process.stderr.write(
+        "warning: no recommended jobs in test account — GetRecommendedJobs wire-shape snapshot skipped\n",
+      );
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetRecommendedJobs",
         surface: "mobile-gateway",
         transport: "stock",
         response,

@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (132 tools)", () => {
+  it("registers exactly the cumulative tool set (133 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -104,7 +104,7 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_interest_requests_list",
       "ttctl_interest_requests_reject",
       "ttctl_interest_requests_reject_reasons",
-      // #148 / #436 / #471 — jobs (19): browse + interest + search + apply funnel
+      // #148 / #436 / #471 / #472 — jobs (20): browse + interest + search + apply funnel
       "ttctl_jobs_apply",
       "ttctl_jobs_apply_data",
       "ttctl_jobs_apply_questions",
@@ -115,6 +115,7 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_jobs_mark_viewed",
       "ttctl_jobs_not_interested",
       "ttctl_jobs_not_interested_list",
+      "ttctl_jobs_recommended",
       "ttctl_jobs_save",
       "ttctl_jobs_saved",
       "ttctl_jobs_search_list",
