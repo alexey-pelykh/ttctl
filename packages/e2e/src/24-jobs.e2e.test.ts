@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs
+// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs, GetJobMatchQualityMetrics
 
 /**
  * E2E coverage for `ttctl jobs` (#148).
@@ -341,6 +341,70 @@ describe("jobs (live mobile-gateway)", () => {
     expect(() =>
       assertWireShapeStable({
         operationName: "GetRecommendedJobs",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------
+  // GetJobMatchQualityMetrics — per-job match-quality breakdown (#473).
+  // READ-only, round-trip safe. Schema/contract: hand-authored op against
+  // a schema gap (`matchQuality` is `Unknown`-typed in the synthesized
+  // Viewer SDL), Track 1. The live call IS the wire proof — a wrong
+  // selection 400s.
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("jobs match-quality returns the per-criterion metrics breakdown", async () => {
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const probeId = listed.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write("warning: no eligible jobs in test account — jobs match-quality assertions skipped\n");
+      return;
+    }
+    const result = await cli.run(["jobs", "match-quality", probeId, "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as { metrics?: unknown };
+    expect("metrics" in payload).toBe(true);
+    expect(Array.isArray(payload.metrics)).toBe(true);
+    // metrics may be empty for some jobs (e.g. already-engaged); assert the
+    // per-row projection only when the breakdown is populated.
+    if (Array.isArray(payload.metrics) && payload.metrics.length > 0) {
+      const first = payload.metrics[0] as Record<string, unknown>;
+      for (const key of [
+        "name",
+        "slug",
+        "statusV2",
+        "description",
+        "explanation",
+        "isRequired",
+        "forAvailabilityRequest",
+      ]) {
+        expect(key in first).toBe(true);
+      }
+    }
+  });
+
+  it.skipIf(!e2eEnabled)("GetJobMatchQualityMetrics wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const probeId = listed.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write("warning: no eligible jobs in test account — GetJobMatchQualityMetrics snapshot skipped\n");
+      return;
+    }
+    const response = await jobs.matchQuality(token, probeId);
+    if (response.metrics.length === 0) {
+      process.stderr.write("warning: empty match-quality metrics — GetJobMatchQualityMetrics snapshot skipped\n");
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetJobMatchQualityMetrics",
         surface: "mobile-gateway",
         transport: "stock",
         response,

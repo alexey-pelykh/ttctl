@@ -18,6 +18,7 @@ import {
   clearInterest,
   list,
   markViewed,
+  matchQuality,
   notInterested,
   notInterestedList,
   recommended,
@@ -565,6 +566,90 @@ describe("jobs.show", () => {
       name: "JobsError",
       code: "NOT_FOUND",
     });
+  });
+});
+
+describe("jobs.matchQuality", () => {
+  const METRIC = {
+    __typename: "JobMatchQualityMetric",
+    name: "Skills match",
+    slug: "skills_match",
+    statusV2: "passed",
+    description: "Your skills align with the job requirements.",
+    explanation: "8 of 8 required skills matched.",
+    isRequired: true,
+    forAvailabilityRequest: false,
+  };
+
+  it("returns the projected metrics (wire op GetJobMatchQualityMetrics, sends jobId)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            job: { __typename: "TalentJob", id: "job-1", matchQuality: { metrics: [METRIC] } },
+          },
+        },
+      },
+    });
+    const result = await matchQuality(TOKEN, "job-1");
+    expect(result.metrics).toHaveLength(1);
+    expect(result.metrics[0]).toEqual({
+      name: "Skills match",
+      slug: "skills_match",
+      statusV2: "passed",
+      description: "Your skills align with the job requirements.",
+      explanation: "8 of 8 required skills matched.",
+      isRequired: true,
+      forAvailabilityRequest: false,
+    });
+    const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string; variables: Record<string, unknown> };
+    expect(body.operationName).toBe("GetJobMatchQualityMetrics");
+    expect(body.variables).toEqual({ jobId: "job-1" });
+  });
+
+  it("projects absent metric fields to null", async () => {
+    reply({
+      body: { data: { viewer: { id: "v1", job: { id: "job-1", matchQuality: { metrics: [{ slug: "rate" }] } } } } },
+    });
+    const result = await matchQuality(TOKEN, "job-1");
+    expect(result.metrics[0]).toEqual({
+      name: null,
+      slug: "rate",
+      statusV2: null,
+      description: null,
+      explanation: null,
+      isRequired: null,
+      forAvailabilityRequest: null,
+    });
+  });
+
+  it("returns empty metrics when matchQuality is null (e.g. already-engaged job)", async () => {
+    reply({ body: { data: { viewer: { id: "v1", job: { id: "job-1", matchQuality: null } } } } });
+    const result = await matchQuality(TOKEN, "job-1");
+    expect(result).toEqual({ metrics: [] });
+  });
+
+  it("returns empty metrics when the metrics array is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", job: { id: "job-1", matchQuality: { metrics: null } } } } } });
+    const result = await matchQuality(TOKEN, "job-1");
+    expect(result).toEqual({ metrics: [] });
+  });
+
+  it("translates `Record not found` to NOT_FOUND", async () => {
+    reply({ body: { data: null, errors: [{ message: "Record not found" }] } });
+    await expect(matchQuality(TOKEN, "missing")).rejects.toMatchObject({ name: "JobsError", code: "NOT_FOUND" });
+  });
+
+  it("translates viewer.job=null to NOT_FOUND", async () => {
+    reply({ body: { data: { viewer: { id: "v1", job: null } } } });
+    await expect(matchQuality(TOKEN, "missing")).rejects.toMatchObject({ name: "JobsError", code: "NOT_FOUND" });
+  });
+
+  it("translates viewer=null to NO_VIEWER", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(matchQuality(TOKEN, "job-1")).rejects.toMatchObject({ name: "JobsError", code: "NO_VIEWER" });
   });
 });
 

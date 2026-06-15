@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { applications, jobs } from "@ttctl/core";
 
 import { formatInterestEntity } from "../interest.js";
+import { formatMatchQuality } from "../match-quality.js";
 import { formatJobDetail, formatJobDetails, formatQuestionsSections } from "../show.js";
 import {
   buildJobsPageInfo,
@@ -479,5 +480,54 @@ describe("formatJobDetails", () => {
 
   it("renders an empty result with no missing ids as a placeholder", () => {
     expect(formatJobDetails([], [])).toBe("No jobs found.");
+  });
+});
+
+describe("formatMatchQuality", () => {
+  const METRIC_FIXTURE: jobs.JobMatchQualityMetric = {
+    name: "Skills match",
+    slug: "skills_match",
+    statusV2: "passed",
+    description: "Your skills align with the job.",
+    explanation: "8 of 8 required skills matched.",
+    isRequired: true,
+    forAvailabilityRequest: false,
+  };
+
+  it("renders the criterion count header and one entry per metric", () => {
+    const output = formatMatchQuality("job-1", { metrics: [METRIC_FIXTURE] });
+    expect(output).toContain("Match quality for job job-1 (1 criterion)");
+    expect(output).toContain("• Skills match [passed] (required)");
+    expect(output).toContain("Your skills align with the job.");
+    expect(output).toContain("8 of 8 required skills matched.");
+  });
+
+  it("renders a zero-criteria header when metrics is empty", () => {
+    expect(formatMatchQuality("job-1", { metrics: [] })).toBe("Match quality for job job-1 (0 criteria)");
+  });
+
+  it("falls back to slug when name is null and omits the status/flags when absent", () => {
+    const output = formatMatchQuality("job-1", {
+      metrics: [
+        {
+          name: null,
+          slug: "rate_match",
+          statusV2: null,
+          description: null,
+          explanation: null,
+          isRequired: null,
+          forAvailabilityRequest: null,
+        },
+      ],
+    });
+    // The metric line is exactly the bullet + slug — no `[status]`, no `(flags)`.
+    expect(output.split("\n")[1]).toBe("  • rate_match");
+  });
+
+  it("labels availability-request metrics", () => {
+    const output = formatMatchQuality("job-1", {
+      metrics: [{ ...METRIC_FIXTURE, isRequired: false, forAvailabilityRequest: true }],
+    });
+    expect(output).toContain("(availability-request)");
   });
 });

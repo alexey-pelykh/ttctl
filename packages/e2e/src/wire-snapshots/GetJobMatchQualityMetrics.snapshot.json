@@ -1,0 +1,47 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-15T00:58:30.527Z",
+  "operationName": "GetJobMatchQualityMetrics",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "metrics": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "description": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "explanation": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "forAvailabilityRequest": {
+              "kind": "boolean"
+            },
+            "isRequired": {
+              "kind": "boolean"
+            },
+            "name": {
+              "kind": "string"
+            },
+            "slug": {
+              "kind": "string"
+            },
+            "statusV2": {
+              "kind": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
