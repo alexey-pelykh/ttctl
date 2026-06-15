@@ -12,7 +12,7 @@ vi.mock("../../../transport/index.js", async () => {
   };
 });
 
-import { ENGAGEMENT_STATUS_GROUPS, breaks, list, show, stats } from "../index.js";
+import { ENGAGEMENT_STATUS_GROUPS, breaks, list, payments, show, stats } from "../index.js";
 import { AuthRevokedError } from "../../../auth/errors.js";
 import { stockTransport } from "../../../transport/index.js";
 import type { TransportResponse } from "../../../transport/index.js";
@@ -1081,5 +1081,188 @@ describe("engagements.breaks.reasonsList", () => {
     });
     const items = await breaks.reasonsList(TOKEN);
     expect(items.map((r) => r.identifier)).toEqual(["alpha", "Beta", "Gamma"]);
+  });
+});
+
+const PAYMENT_ENTITY = {
+  id: "pay-1",
+  amount: "1234.56",
+  correctionAmount: "0.00",
+  createdAt: "2026-03-01T00:00:00Z",
+  downloadHtmlUrl: "https://www.toptal.com/pay/pay-1.html",
+  downloadPdfUrl: "https://www.toptal.com/pay/pay-1.pdf",
+  dueDate: "2026-03-15",
+  kind: "regular",
+  number: 42,
+  paidAt: "2026-03-10T00:00:00Z",
+  paymentGroupId: 7,
+  paymentMethod: "PAYONEER",
+  status: "PAID",
+  billingCycle: {
+    availability: "available",
+    startDate: "2026-02-01",
+    endDate: "2026-02-28",
+    id: "bc-1",
+    hours: "160.0",
+    talentRate: "75.00",
+  },
+  memorandums: {
+    nodes: [
+      {
+        amount: "10.00",
+        balance: "5.00",
+        downloadHtmlUrl: "https://www.toptal.com/memo/m1.html",
+        effectiveDate: "2026-03-05",
+        id: "memo-1",
+      },
+      null,
+    ],
+  },
+};
+
+function paymentsBody(
+  nodes: unknown,
+  totalCount: number,
+  overrides: { job?: unknown; activityItem?: unknown; engagement?: unknown } = {},
+): MockResponse {
+  const engagement =
+    "engagement" in overrides ? overrides.engagement : { id: "eng-1", payments: { nodes, totalCount } };
+  const activityItem = "activityItem" in overrides ? overrides.activityItem : { id: "act-1", engagement };
+  const job = "job" in overrides ? overrides.job : { id: "job-1", activityItem };
+  return { body: { data: { viewer: { id: "v1", job } } } };
+}
+
+describe("engagements.payments.list (#388)", () => {
+  it("projects the TalentPayment fragment, derives totalCount, and echoes pagination", async () => {
+    reply(paymentsBody([PAYMENT_ENTITY], 3));
+    const page = await payments.list(TOKEN, "job-1", { limit: 1 });
+
+    expect(page.totalCount).toBe(3);
+    expect(page.limit).toBe(1);
+    expect(page.after).toBeNull();
+    // Full page (items.length === limit) ⇒ last id is the forward cursor.
+    expect(page.nextCursor).toBe("pay-1");
+    expect(page.items).toHaveLength(1);
+
+    const p = page.items[0];
+    expect(p?.id).toBe("pay-1");
+    expect(p?.number).toBe(42);
+    expect(p?.amount).toBe("1234.56");
+    expect(p?.paymentGroupId).toBe(7);
+    expect(p?.kind).toBe("regular");
+    expect(p?.paymentMethod).toBe("PAYONEER");
+    expect(p?.downloadHtmlUrl).toBe("https://www.toptal.com/pay/pay-1.html");
+    expect(p?.billingCycle?.hours).toBe("160.0");
+    expect(p?.billingCycle?.availability).toBe("available");
+    expect(p?.billingCycle?.talentRate).toBe("75.00");
+    // null memorandum entry filtered; downloadHtmlUrl carried.
+    expect(p?.memorandums).toHaveLength(1);
+    expect(p?.memorandums[0]?.id).toBe("memo-1");
+    expect(p?.memorandums[0]?.downloadHtmlUrl).toBe("https://www.toptal.com/memo/m1.html");
+  });
+
+  it("threads the JOB id and forward cursor into the wire variables verbatim", async () => {
+    reply(paymentsBody([PAYMENT_ENTITY], 1));
+    await payments.list(TOKEN, "job-9", { limit: 25, after: "pay-cursor" });
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      operationName: "GetEngagementPayments",
+      variables: { jobId: "job-9", paginationLimit: 25, paginationCursor: "pay-cursor" },
+    });
+  });
+
+  it("sends null limit/cursor when neither is supplied (server-default slice)", async () => {
+    reply(paymentsBody([], 0));
+    const page = await payments.list(TOKEN, "job-1");
+    const call = mockedStock.mock.calls[0]?.[0];
+    expect(call?.body).toMatchObject({
+      variables: { jobId: "job-1", paginationLimit: null, paginationCursor: null },
+    });
+    expect(page).toEqual({ items: [], totalCount: 0, limit: null, after: null, nextCursor: null });
+  });
+
+  it("returns nextCursor null when the page is shorter than the requested limit (drained)", async () => {
+    reply(paymentsBody([PAYMENT_ENTITY], 1));
+    const page = await payments.list(TOKEN, "job-1", { limit: 10 });
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("falls back to items.length when the connection omits totalCount", async () => {
+    reply(paymentsBody([PAYMENT_ENTITY], undefined as unknown as number));
+    const page = await payments.list(TOKEN, "job-1");
+    expect(page.totalCount).toBe(1);
+  });
+
+  it("returns nextCursor null when an uncapped page returns the full total (drained)", async () => {
+    // No --limit: items.length === totalCount ⇒ the connection is fully
+    // returned, so there is no next page to advertise.
+    reply(paymentsBody([PAYMENT_ENTITY], 1));
+    const page = await payments.list(TOKEN, "job-1");
+    expect(page.limit).toBeNull();
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("returns the last id as nextCursor when an uncapped page is server-truncated below total", async () => {
+    // No --limit but the server returned fewer rows than totalCount ⇒ a
+    // forward cursor (last id) lets the caller fetch the remainder.
+    reply(paymentsBody([PAYMENT_ENTITY, { ...PAYMENT_ENTITY, id: "pay-2" }], 5));
+    const page = await payments.list(TOKEN, "job-1");
+    expect(page.limit).toBeNull();
+    expect(page.nextCursor).toBe("pay-2");
+  });
+
+  it("returns an empty page when the payments connection is null", async () => {
+    reply(paymentsBody(null, 0, { engagement: { id: "eng-1", payments: null } }));
+    const page = await payments.list(TOKEN, "job-1");
+    expect(page).toEqual({ items: [], totalCount: 0, limit: null, after: null, nextCursor: null });
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(payments.list(TOKEN, "job-1")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NO_VIEWER",
+    });
+  });
+
+  it("throws NOT_FOUND when the job id does not resolve (job null)", async () => {
+    reply(paymentsBody(null, 0, { job: null }));
+    await expect(payments.list(TOKEN, "missing")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it.each(["Record not found", "Invalid ID", 'Node id "x" resolves to a TalentJob, not the expected type'])(
+    'translates the gateway "%s" GraphQL error into NOT_FOUND',
+    async (message) => {
+      reply({ body: { errors: [{ message }] } });
+      await expect(payments.list(TOKEN, "missing")).rejects.toMatchObject({
+        name: "EngagementsError",
+        code: "NOT_FOUND",
+      });
+    },
+  );
+
+  it("throws NO_ENGAGEMENT when the job has no activity item", async () => {
+    reply(paymentsBody(null, 0, { activityItem: null }));
+    await expect(payments.list(TOKEN, "job-1")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NO_ENGAGEMENT",
+    });
+  });
+
+  it("throws NO_ENGAGEMENT when the activity item has no engagement", async () => {
+    reply(paymentsBody(null, 0, { engagement: null }));
+    await expect(payments.list(TOKEN, "job-1")).rejects.toMatchObject({
+      name: "EngagementsError",
+      code: "NO_ENGAGEMENT",
+    });
+  });
+
+  it("throws AuthRevokedError on HTTP 401", async () => {
+    reply({ status: 401, body: { errors: [{ message: "Unauthorized" }] } });
+    await expect(payments.list(TOKEN, "job-1")).rejects.toBeInstanceOf(AuthRevokedError);
   });
 });

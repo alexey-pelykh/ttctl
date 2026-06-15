@@ -7,6 +7,7 @@ import type { engagements } from "@ttctl/core";
 
 import { formatBreakEntity, formatBreaksTable, formatReasonsTable } from "../breaks.js";
 import { formatDate, formatEngagementsTable, shortenEngagementStatus } from "../list.js";
+import { formatPaymentsFooter, formatPaymentsTable } from "../payments.js";
 import { buildEngagementsPageInfo, formatPageFooter } from "../shared.js";
 import { formatEngagementDetail } from "../show.js";
 import { formatStatsPretty } from "../stats.js";
@@ -475,5 +476,72 @@ describe("buildEngagementsPageInfo", () => {
     });
     expect(pageInfo.totalPages).toBe(1);
     expect(pageInfo.hasNextPage).toBe(false);
+  });
+});
+
+// =======================================================================
+// Payments formatters (#388)
+// =======================================================================
+
+const PAYMENT_FIXTURE: engagements.EngagementPayment = {
+  id: "pay-1",
+  number: 42,
+  amount: "1234.56",
+  correctionAmount: "0.00",
+  status: "PAID",
+  kind: "regular",
+  paymentMethod: "PAYONEER",
+  paymentGroupId: 7,
+  createdAt: "2026-03-01T00:00:00Z",
+  dueDate: "2026-03-15",
+  paidAt: "2026-03-10T08:00:00Z",
+  downloadPdfUrl: "https://www.toptal.com/pay/pay-1.pdf",
+  downloadHtmlUrl: "https://www.toptal.com/pay/pay-1.html",
+  billingCycle: {
+    id: "bc-1",
+    startDate: "2026-02-01",
+    endDate: "2026-02-28",
+    hours: "160.0",
+    availability: "available",
+    talentRate: "75.00",
+  },
+  memorandums: [],
+};
+
+describe("formatPaymentsTable", () => {
+  it("renders an empty table (header only) when there are no items", () => {
+    const out = formatPaymentsTable([]);
+    expect(out).toContain("id");
+    expect(out).toContain("number");
+    expect(out).toContain("amount");
+  });
+
+  it("renders a row with id, number, status, amount, and shortened dates", () => {
+    const out = formatPaymentsTable([PAYMENT_FIXTURE], 120);
+    expect(out).toContain("pay-1");
+    expect(out).toContain("42");
+    expect(out).toContain("PAID");
+    expect(out).toContain("1234.56"); // verbatim decimal string, no rounding
+    expect(out).toContain("2026-03-15"); // dueDate
+    expect(out).toContain("2026-03-10"); // paidAt date portion only
+  });
+
+  it("renders '—' for a null paidAt (unpaid payment)", () => {
+    const out = formatPaymentsTable([{ ...PAYMENT_FIXTURE, paidAt: null }], 120);
+    expect(out).toContain("—");
+  });
+});
+
+describe("formatPaymentsFooter", () => {
+  it("shows shown/total counts and the --after cursor hint when more pages remain", () => {
+    expect(
+      formatPaymentsFooter({ items: [PAYMENT_FIXTURE], totalCount: 9, limit: 1, after: null, nextCursor: "pay-1" }),
+    ).toBe("1 shown · 9 total · more: --after pay-1");
+  });
+
+  it("omits the cursor hint on the last page (nextCursor null)", () => {
+    expect(
+      formatPaymentsFooter({ items: [PAYMENT_FIXTURE], totalCount: 1, limit: null, after: null, nextCursor: null }),
+    ).toBe("1 shown · 1 total");
   });
 });

@@ -141,7 +141,7 @@ const EXPECTED_TOOLS = [
   // the engagement-attached `EngagementAgreement` surfaced by engagements_show)
   "ttctl_contracts_list",
   "ttctl_contracts_show",
-  // engagements (#147 + #155 + #156) — 8 tools (3 read + 5 break: list/add/remove/reschedule/reasons_list)
+  // engagements (#147 + #155 + #156 + #388) — 9 tools (3 read + 5 break: list/add/remove/reschedule/reasons_list + payments_list)
   "ttctl_engagements_list",
   "ttctl_engagements_show",
   "ttctl_engagements_stats",
@@ -150,6 +150,7 @@ const EXPECTED_TOOLS = [
   "ttctl_engagements_breaks_remove",
   "ttctl_engagements_breaks_reschedule",
   "ttctl_engagements_breaks_reasons_list",
+  "ttctl_engagements_payments_list",
   // availability (#146 amended) — 5 tools (snapshot show + working-hours
   // show/set + allocated-hours show/set; time-off lives on engagements)
   "ttctl_availability_show",
@@ -255,7 +256,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (137 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (138 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

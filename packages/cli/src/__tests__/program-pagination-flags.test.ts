@@ -638,4 +638,82 @@ describe("--page / --per-page per-command flags (issues #138, #183)", () => {
     const errOut = stderr.lines.join("");
     expect(errOut).toContain("--limit must be a positive integer");
   });
+
+  // -------------------------------------------------------------------
+  // engagements payments list (#388) — limit + forward-cursor (ADR-007
+  // row 4): surface-honest `--limit` + `--after`, NOT --page/--per-page
+  // -------------------------------------------------------------------
+
+  it("--limit / --after DO appear in `engagements payments list --help`, --page does NOT (#388)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    const stdout = captureStdout();
+    captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["engagements", "payments", "list", "--help"], { from: "user" });
+    } catch {
+      // expected — help exits via exitOverride
+    }
+    const helpText = stdout.lines.join("");
+    expect(helpText).toMatch(/--limit <number>/);
+    expect(helpText).toMatch(/--after <id>/);
+    expect(helpText).not.toMatch(/^\s+--page\b/m);
+    expect(helpText).not.toMatch(/^\s+--per-page\b/m);
+  });
+
+  it("--limit 5 --after pay-9 on `engagements payments list` carries both (#388)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    captureStderr();
+    captureExit();
+
+    const engagements = program.commands.find((c) => c.name() === "engagements");
+    const payments = engagements?.commands.find((c) => c.name() === "payments");
+    const list = payments?.commands.find((c) => c.name() === "list");
+    expect(list).toBeDefined();
+    if (!list) return;
+
+    try {
+      await program.parseAsync(["engagements", "payments", "list", "job-1", "--limit", "5", "--after", "pay-9"], {
+        from: "user",
+      });
+    } catch (err) {
+      if (!(err instanceof ExitInvoked)) throw err;
+    }
+    const opts = list.opts<{ limit?: number; after?: string }>();
+    expect(opts.limit).toBe(5);
+    expect(opts.after).toBe("pay-9");
+  });
+
+  it("--limit 0 is rejected on `engagements payments list` (must be ≥ 1) (#388)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["engagements", "payments", "list", "job-1", "--limit", "0"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toContain("--limit must be a positive integer");
+  });
+
+  it("--page on `engagements payments list` fails with Commander's unknown-option error (#388)", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    captureStdout();
+    const stderr = captureStderr();
+    captureExit();
+    try {
+      await program.parseAsync(["engagements", "payments", "list", "job-1", "--page", "1"], { from: "user" });
+    } catch {
+      // expected
+    }
+    const errOut = stderr.lines.join("");
+    expect(errOut).toMatch(/error: unknown option '--page'/);
+  });
 });

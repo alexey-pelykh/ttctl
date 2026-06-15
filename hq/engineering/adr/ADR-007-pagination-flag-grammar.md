@@ -11,7 +11,7 @@
 The Toptal wire exposes multiple coexisting pagination idioms across surfaces — there is no single uniform shape. Three findings drove the decision:
 
 1. **Empirical wire enforcement** — PR [#383](https://github.com/alexey-pelykh/ttctl/pull/383) attempted to add `offset` to `Viewer.billingCycles.pagination` (a limit-only field). The wire rejected the request with HTTP 400 across 8 E2E test failures. The wire is not tolerant of additive flags; the per-idiom shape is enforced server-side.
-2. **Multiple idioms in active use** — `eligibleJobs` / `jobActivityList` ship offset-list `(page, pageSize)`; `Payments` ships an offset-pagination wrapper `(offsetPagination: {offset, limit})`; `PendingTimesheets` (post-[#374](https://github.com/alexey-pelykh/ttctl/issues/374) re-spike) ships a limit-only wrapper `(pagination: {limit})`; future engagements-payments will ship limit+forward-cursor; future performed-actions will ship bare bidirectional cursor.
+2. **Multiple idioms in active use** — `eligibleJobs` / `jobActivityList` ship offset-list `(page, pageSize)`; `Payments` ships an offset-pagination wrapper `(offsetPagination: {offset, limit})`; `PendingTimesheets` (post-[#374](https://github.com/alexey-pelykh/ttctl/issues/374) re-spike) ships a limit-only wrapper `(pagination: {limit})`; `GetEngagementPayments` ships limit+forward-cursor; `GetPerformedActions` ships bare bidirectional cursor.
 3. **Surface-honesty positioning** — ttctl's value proposition is faithful third-client behavior (Sage archetype per `brand-strategist`). A uniform flag layer that translates to/from the wire would (a) silently lie about which arguments the wire accepts, (b) forfeit AI/script callers' ability to map flag names back to wire arguments, (c) introduce a coupling that drifts silently on Toptal wire changes.
 
 A 5-agent council (`technical-architect`, `product-strategist`, `testing-architect`, `brand-strategist`, `ux-architect`) deliberated. Verdict: **CONVERGENT-HIGH-CONFIDENCE 5/5** on surface-honest per-wire-idiom flags.
@@ -22,13 +22,13 @@ Adopt **surface-honest per-wire-idiom pagination flag grammar**: CLI / MCP flags
 
 ### Grammar
 
-| Wire idiom                   | Wire shape                                        | CLI flags                            | MCP keys                       | Used today by                                  | Reference op                       |
-| ---------------------------- | ------------------------------------------------- | ------------------------------------ | ------------------------------ | ---------------------------------------------- | ---------------------------------- |
-| Offset-list                  | `(page: Int, pageSize: PageSize)`                 | `--page` / `--per-page`              | `{page, perPage}`              | jobs / applications / engagements              | `eligibleJobs` / `jobActivityList` |
-| Offset-pagination wrapper    | `(offsetPagination: {offset: Int!, limit: Int!})` | `--page` / `--per-page` (translated) | `{page, perPage}` (translated) | payments payouts                               | `Payments`                         |
-| Limit-only wrapper           | `(pagination: {limit: Int})`                      | `--limit`                            | `{limit}`                      | timesheet pending (post-#374 re-spike)         | `PendingTimesheets`                |
-| Limit+forward-cursor wrapper | `(pagination: {limit, after: ID})`                | `--limit` + `--after <id>`           | `{limit, after}`               | _(deferred — see future engagements-payments)_ | `GetEngagementPayments`            |
-| Bare bidirectional cursor    | `(before: String, after: String, limit: Int)`     | `--before` / `--after` / `--limit`   | `{before, after, limit}`       | me actions                                     | `GetPerformedActions`              |
+| Wire idiom                   | Wire shape                                        | CLI flags                            | MCP keys                       | Used today by                          | Reference op                       |
+| ---------------------------- | ------------------------------------------------- | ------------------------------------ | ------------------------------ | -------------------------------------- | ---------------------------------- |
+| Offset-list                  | `(page: Int, pageSize: PageSize)`                 | `--page` / `--per-page`              | `{page, perPage}`              | jobs / applications / engagements      | `eligibleJobs` / `jobActivityList` |
+| Offset-pagination wrapper    | `(offsetPagination: {offset: Int!, limit: Int!})` | `--page` / `--per-page` (translated) | `{page, perPage}` (translated) | payments payouts                       | `Payments`                         |
+| Limit-only wrapper           | `(pagination: {limit: Int})`                      | `--limit`                            | `{limit}`                      | timesheet pending (post-#374 re-spike) | `PendingTimesheets`                |
+| Limit+forward-cursor wrapper | `(pagination: {limit, after: ID})`                | `--limit` + `--after <id>`           | `{limit, after}`               | engagements payments                   | `GetEngagementPayments`            |
+| Bare bidirectional cursor    | `(before: String, after: String, limit: Int)`     | `--before` / `--after` / `--limit`   | `{before, after, limit}`       | me actions                             | `GetPerformedActions`              |
 
 ### Translation rule for row 2
 
@@ -89,6 +89,7 @@ Honesty section. This ADR does **not**:
 - [#375](https://github.com/alexey-pelykh/ttctl/issues/375) — engagements pagination. Resolved using row 1.
 - [#138](https://github.com/alexey-pelykh/ttctl/issues/138) / [#183](https://github.com/alexey-pelykh/ttctl/issues/183) — original `--page` / `--per-page` convention (row 1 establishment).
 - [#389](https://github.com/alexey-pelykh/ttctl/issues/389) — performed-actions list. The first row-5 (bare bidirectional cursor) consumer; `ttctl me actions list` / `ttctl_me_actions_list`.
+- [#388](https://github.com/alexey-pelykh/ttctl/issues/388) — engagements payments list. The first row-4 (limit + forward-cursor) consumer; `ttctl engagements payments list` / `ttctl_engagements_payments_list`. The cursor is a payment `ID` (not opaque); the issue's `--engagement` sketch was reconciled to the wire `$jobId`.
 
 ## References
 
