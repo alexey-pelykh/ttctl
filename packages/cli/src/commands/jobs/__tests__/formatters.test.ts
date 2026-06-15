@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { applications, jobs } from "@ttctl/core";
 
+import { formatDashboardTable } from "../dashboard.js";
 import { formatInterestEntity } from "../interest.js";
 import { formatMatchQuality } from "../match-quality.js";
 import { formatRateInsight } from "../rate-insight.js";
@@ -574,5 +575,45 @@ describe("formatRateInsight", () => {
   it("falls back to 'unknown' when the kind discriminant is null", () => {
     const output = formatRateInsight("job-1", { ...UNCOMPETITIVE, kind: null });
     expect(output.split("\n")[0]).toBe("Rate insight for job job-1 — unknown");
+  });
+});
+
+describe("formatDashboardTable", () => {
+  const DASHBOARD_ITEM: jobs.DashboardJobItem = {
+    id: "act-1",
+    status: { value: "engaged", verbose: "Engaged" },
+    statusGroup: "ACTIVE_ENGAGEMENT",
+    statusColor: "#00aa00",
+    lastUpdatedAt: "2026-06-10T12:00:00Z",
+    engagement: { id: "eng-1" },
+    application: null,
+    job: LIST_ITEM_FIXTURE,
+  };
+
+  it("renders the job id, title, client, status, group, and updated date", () => {
+    // Wide terminal so the title column doesn't word-wrap the fixture title.
+    const out = formatDashboardTable([DASHBOARD_ITEM], 200);
+    // The actionable id column is the JOB id (for `jobs show`), not the activity id.
+    expect(out).toContain("job-1");
+    expect(out).toContain("Senior React Engineer");
+    expect(out).toContain("Acme Inc.");
+    expect(out).toContain("Engaged");
+    expect(out).toContain("ACTIVE_ENGAGEMENT");
+    // lastUpdatedAt rendered as the date portion only.
+    expect(out).toContain("2026-06-10");
+  });
+
+  it("renders an empty table with the header row when there are no items", () => {
+    const out = formatDashboardTable([], 120);
+    expect(out).toContain("job id");
+    expect(out).toContain("status");
+    expect(out).not.toContain("Senior React Engineer");
+  });
+
+  it("prefers status.value when verbose is null and blanks a null status", () => {
+    const valueOnly = formatDashboardTable([{ ...DASHBOARD_ITEM, status: { value: "on_review", verbose: null } }], 120);
+    expect(valueOnly).toContain("on_review");
+    // null status renders an empty cell (no throw).
+    expect(() => formatDashboardTable([{ ...DASHBOARD_ITEM, status: null, statusGroup: null }], 120)).not.toThrow();
   });
 });

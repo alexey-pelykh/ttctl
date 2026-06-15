@@ -159,7 +159,7 @@ export function formatPageFooter(currentPage: number, perPage: number, totalCoun
  *
  * Pure — directly unit-testable.
  */
-export function buildJobsPageInfo(page: jobs.JobListPage): {
+export function buildJobsPageInfo(page: { totalCount: number; perPage: number; page: number }): {
   currentPage: number;
   perPage: number;
   totalPages: number;

@@ -81,7 +81,7 @@ interface JobsPageInfo {
   hasNextPage: boolean;
 }
 
-function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
+function buildJobsPageInfo(page: { totalCount: number; perPage: number; page: number }): JobsPageInfo {
   const totalPages = Math.max(1, Math.ceil(page.totalCount / page.perPage));
   return {
     currentPage: page.page,
@@ -98,10 +98,10 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * `opportunities_*` aliasing (MCP tool names must be deterministic for
  * LLM clients).
  *
- * Tool surface (22 tools):
+ * Tool surface (24 tools):
  *   - `ttctl_jobs_list`
  *   - `ttctl_jobs_recommended`
- *   - `ttctl_jobs_show`
+ *   - `ttctl_jobs_dashboard` *   - `ttctl_jobs_dashboard_count` *   - `ttctl_jobs_show`
  *   - `ttctl_jobs_show_many`
  *   - `ttctl_jobs_match_quality`
  *   - `ttctl_jobs_rate_insight`
@@ -280,6 +280,104 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       try {
         const page = await jobs.recommended(auth.token, opts);
         return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
+      } catch (err) {
+        return mapJobsError(err);
+      }
+    },
+  );
+
+  // -------- dashboard --------------------------------------------------
+  server.registerTool(
+    "ttctl_jobs_dashboard",
+    {
+      title: "List dashboard job activity",
+      description: [
+        "Fetch the signed-in talent's dashboard 'my activity' list — every job they have an",
+        "engagement, application, or pending action on (`viewer.jobActivityList`), distinct from",
+        "`ttctl_jobs_list` / `ttctl_jobs_recommended` (browse feeds). Each row carries the job",
+        "(same shape as `ttctl_jobs_list`) plus activity status (`status`, `statusGroup`,",
+        "`statusColor`, `lastUpdatedAt`) and `engagement` / `application` presence markers, with",
+        "offset-style `pageInfo`.",
+        "",
+        "Pagination:",
+        "  - `page`: 1-indexed page number (≥ 1). Default: 1.",
+        "  - `perPage`: items per page (≥ 1; server-capped). Default: 20.",
+        "",
+        "Example user prompts:",
+        '  - "Show my Toptal dashboard."',
+        '  - "What jobs am I currently engaged on or applied to?"',
+      ].join("\n"),
+      inputSchema: {
+        page: PAGE_FIELD,
+        perPage: PER_PAGE_FIELD,
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      const opts: jobs.DashboardListOptions = {};
+      if (args.page !== undefined) opts.page = args.page;
+      if (args.perPage !== undefined) opts.perPage = args.perPage;
+      if (args.dryRun === true) {
+        // `getJobsForDashboard()` sends `{ page, pageSize, except: null, only: null }`.
+        return dryRunResponse(
+          buildMcpDryRunPreview(
+            "GetJobsForDashboard",
+            "mobile-gateway",
+            {
+              page: opts.page ?? jobs.DEFAULT_PAGE,
+              pageSize: opts.perPage ?? jobs.DEFAULT_PER_PAGE,
+              except: null,
+              only: null,
+            },
+            auth.token,
+          ),
+        );
+      }
+      try {
+        const page = await jobs.getJobsForDashboard(auth.token, opts);
+        return successResponse({ items: page.items, pageInfo: buildJobsPageInfo(page) });
+      } catch (err) {
+        return mapJobsError(err);
+      }
+    },
+  );
+
+  // -------- dashboard-count --------------------------------------------
+  server.registerTool(
+    "ttctl_jobs_dashboard_count",
+    {
+      title: "Count dashboard jobs in a status group",
+      description: [
+        "Count the talent's dashboard job-activity items in ONE status group. The wire op",
+        "requires a status group, so `statusGroup` is REQUIRED — this is not an input-less",
+        "count. Known groups: `ACTIVE_ENGAGEMENT`, `CLOSED_ENGAGEMENT`, `ON_CLIENT_REVIEW`,",
+        "`ON_RECRUITER_REVIEW`. Returns `{ statusGroup, count }`.",
+        "",
+        "Example user prompts:",
+        '  - "How many active engagements do I have?"',
+        '  - "Count my jobs awaiting recruiter review."',
+      ].join("\n"),
+      inputSchema: {
+        statusGroup: z
+          .string()
+          .min(1)
+          .describe("JobActivityStatusGroup value (e.g. ACTIVE_ENGAGEMENT, ON_CLIENT_REVIEW)."),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("GetJobsCountForDashboard", "mobile-gateway", { only: args.statusGroup }, auth.token),
+        );
+      }
+      try {
+        const count = await jobs.getJobsCountForDashboard(auth.token, args.statusGroup);
+        return successResponse({ statusGroup: args.statusGroup, count });
       } catch (err) {
         return mapJobsError(err);
       }

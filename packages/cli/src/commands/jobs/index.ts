@@ -8,6 +8,7 @@ import { OUTPUT_FORMATS } from "../../lib/output.js";
 import type { OutputFormat } from "../../lib/output.js";
 import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runJobsApply } from "./apply.js";
+import { runJobsDashboard, runJobsDashboardCount } from "./dashboard.js";
 import {
   runJobsClearInterest,
   runJobsMarkViewed,
@@ -228,6 +229,40 @@ export function buildJobsCommand(): Command {
       if (options.page !== undefined) listOpts.page = options.page;
       if (options.perPage !== undefined) listOpts.perPage = options.perPage;
       await runJobsRecommended(listOpts);
+    });
+
+  cmd
+    .command("dashboard")
+    .description("List dashboard job-activity items (engagements / applications / pending actions; paginated)")
+    .addOption(pageOption())
+    .addOption(perPageOption())
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (options: { page?: number; perPage?: number; output: OutputFormat }) => {
+      const dashOpts: import("./dashboard.js").JobsDashboardOptions = { output: options.output };
+      if (options.page !== undefined) dashOpts.page = options.page;
+      if (options.perPage !== undefined) dashOpts.perPage = options.perPage;
+      await runJobsDashboard(dashOpts);
+    });
+
+  cmd
+    .command("dashboard-count")
+    .description("Count dashboard job-activity items in a status group (e.g. ACTIVE_ENGAGEMENT)")
+    .argument(
+      "<status-group>",
+      "JobActivityStatusGroup value (e.g. ACTIVE_ENGAGEMENT, CLOSED_ENGAGEMENT, ON_CLIENT_REVIEW, ON_RECRUITER_REVIEW)",
+      parseStatusGroupArg,
+    )
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (statusGroup: string, options: { output: OutputFormat }) => {
+      await runJobsDashboardCount(statusGroup, options.output);
     });
 
   // #430 — Direct-apply to a job. Per ADR-008 § Decision Part 5: the
@@ -541,6 +576,17 @@ function parseIdArg(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
     throw new InvalidArgumentError("id must not be empty");
+  }
+  return trimmed;
+}
+
+// `JobActivityStatusGroup` is a bare scalar in the synthesized SDL, so we
+// accept any non-empty token (the server validates the value). The
+// description enumerates the empirically-observed groups as a hint.
+function parseStatusGroupArg(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new InvalidArgumentError("status-group must not be empty");
   }
   return trimmed;
 }

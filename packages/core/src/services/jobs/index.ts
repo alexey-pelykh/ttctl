@@ -319,6 +319,20 @@ export interface RecommendedOptions {
 }
 
 /**
+ * Pagination options for {@link getJobsForDashboard}. The
+ * dashboard activity list (`viewer.jobActivityList`) is offset-paginated
+ * like {@link recommended}; defaults are {@link DEFAULT_PAGE} /
+ * {@link DEFAULT_PER_PAGE}. No status-group filter is exposed — the
+ * unfiltered list surfaces every activity item (engagements,
+ * applications, pending actions). Filtering by a single status group is
+ * the {@link getJobsCountForDashboard} surface.
+ */
+export interface DashboardListOptions {
+  page?: number;
+  perPage?: number;
+}
+
+/**
  * Page wrapper returned by {@link list}, {@link saved}, and {@link
  * notInterestedList}. Carries the projected items plus the
  * server-reported `totalCount` and the resolved `page` / `perPage`
@@ -395,6 +409,47 @@ export interface JobListItem {
   viewed: boolean | null;
   saved: boolean | null;
   notInterested: boolean | null;
+}
+
+/**
+ * Single dashboard activity-item projection. `viewer.jobActivityList`
+ * is the talent's "my activity" view — every job the talent has an
+ * engagement, application, or pending action on — distinct from the
+ * browse feeds ({@link list} / {@link recommended}). Each item wraps the
+ * underlying {@link JobListItem} (reusing the shared list projection) plus
+ * the activity-level status fields.
+ *
+ * - `status` — human-facing activity status (`statusV2` on the wire):
+ *   `value` is the machine token, `verbose` the display label.
+ * - `statusGroup` — the coarser grouping (`statusGroupV2.value`, e.g.
+ *   `ACTIVE_ENGAGEMENT`, `ON_CLIENT_REVIEW`); the same vocabulary
+ *   {@link getJobsCountForDashboard} filters by.
+ * - `engagement` / `application` — `{ id }` presence markers (null when
+ *   the activity carries neither); lifted from the heavy
+ *   `TalentEngagement` / `JobApplication` wire objects to keep the
+ *   projection lean.
+ */
+export interface DashboardJobItem {
+  id: string;
+  status: { value: string | null; verbose: string | null } | null;
+  statusGroup: string | null;
+  statusColor: string | null;
+  lastUpdatedAt: string | null;
+  engagement: { id: string } | null;
+  application: { id: string } | null;
+  job: JobListItem;
+}
+
+/**
+ * Page wrapper returned by {@link getJobsForDashboard} — mirrors
+ * {@link JobListPage} but carries {@link DashboardJobItem} rows. Same
+ * `totalCount` / `page` / `perPage` offset-pagination contract.
+ */
+export interface DashboardJobPage {
+  items: DashboardJobItem[];
+  totalCount: number;
+  page: number;
+  perPage: number;
 }
 
 /**
@@ -721,6 +776,72 @@ const GET_RECOMMENDED_JOBS_QUERY = `query GetRecommendedJobs($page: Int, $pageSi
       entities {
         ${JOB_LIST_ENTITY_SELECTION}
       }
+      totalCount
+    }
+  }
+}`;
+
+// GetJobsForDashboard — the talent's "my activity" projection
+// over `viewer.jobActivityList`. Schema gappy (`jobActivityList` resolves
+// to `JobActivityList` whose `entities` are `TalentJobActivityItem`, but
+// `JobActivityStatusGroup` is a bare scalar in the synthesized SDL) →
+// `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` → T1. Hand-trimmed from the
+// captured portal op: the inner `job` reuses `JOB_LIST_ENTITY_SELECTION`
+// (it's a `TalentJob`, same as the browse feeds), and the heavy
+// `engagement` / `availabilityRequest` sub-objects are reduced to `{ id }`
+// presence markers. `$except` / `$only` mirror the captured op's
+// `statusGroup` filter (both `[JobActivityStatusGroup!]`, defaulted null
+// by the caller = no constraint = the full activity list); `$pageSize:
+// PageSize` is the custom scalar, NOT `Int` (see the #138 note above).
+const GET_JOBS_FOR_DASHBOARD_QUERY = `query GetJobsForDashboard($page: Int, $pageSize: PageSize, $except: [JobActivityStatusGroup!], $only: [JobActivityStatusGroup!]) {
+  viewer {
+    __typename
+    id
+    jobActivityList(page: $page, pageSize: $pageSize, statusGroup: { except: $except, only: $only }) {
+      __typename
+      totalCount
+      entities {
+        __typename
+        id
+        status: statusV2 {
+          __typename
+          value
+          verbose
+        }
+        statusGroupV2 {
+          __typename
+          value
+        }
+        statusColor
+        lastUpdatedAt
+        engagement {
+          __typename
+          id
+        }
+        jobApplication {
+          __typename
+          id
+        }
+        job {
+          ${JOB_LIST_ENTITY_SELECTION}
+        }
+      }
+    }
+  }
+}`;
+
+// GetJobsCountForDashboard — just the `totalCount` of
+// `viewer.jobActivityList` for ONE status group. The captured op requires
+// `$only: JobActivityStatusGroup!` (a single, REQUIRED value — wrapped in
+// a list at the arg site), so the count cannot be input-less; the caller
+// passes the status group it wants counted (e.g. `ACTIVE_ENGAGEMENT`).
+// Same `GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS` → T1 classification.
+const GET_JOBS_COUNT_FOR_DASHBOARD_QUERY = `query GetJobsCountForDashboard($only: JobActivityStatusGroup!) {
+  viewer {
+    __typename
+    id
+    jobActivityList(statusGroup: { only: [$only] }) {
+      __typename
       totalCount
     }
   }
@@ -1126,6 +1247,41 @@ interface RecommendedJobsResponse {
   } | null;
 }
 
+// `GetJobsForDashboard` wire shape. `entities` is
+// `[TalentJobActivityItem]!` on the wire — a non-null list of NULLABLE
+// items; `getJobsForDashboard` filters the nulls. The inner `job` reuses
+// {@link JobListEntity} so `projectListItem` applies unchanged.
+interface DashboardActivityEntity {
+  id: string;
+  status: { value: string | null; verbose: string | null } | null;
+  statusGroupV2: { value: string | null } | null;
+  statusColor: string | null;
+  lastUpdatedAt: string | null;
+  engagement: { id: string } | null;
+  jobApplication: { id: string } | null;
+  job: JobListEntity;
+}
+
+interface JobsForDashboardResponse {
+  viewer: {
+    id: string;
+    jobActivityList: {
+      entities: (DashboardActivityEntity | null)[] | null;
+      totalCount: number;
+    } | null;
+  } | null;
+}
+
+// `GetJobsCountForDashboard` wire shape — just the count.
+interface JobsCountForDashboardResponse {
+  viewer: {
+    id: string;
+    jobActivityList: {
+      totalCount: number;
+    } | null;
+  } | null;
+}
+
 interface JobDetailEntity extends JobListEntity {
   descriptionMd: string | null;
   minimumHoursPerBillingCycle: number | null;
@@ -1376,6 +1532,23 @@ function projectListItem(entity: JobListEntity): JobListItem {
   };
 }
 
+// Lift a wire `TalentJobActivityItem` into a {@link DashboardJobItem}:
+// coalesce the nullable status hops and reduce
+// engagement/application to `{ id }` presence markers; the inner `job`
+// rides the shared {@link projectListItem}.
+function projectDashboardItem(entity: DashboardActivityEntity): DashboardJobItem {
+  return {
+    id: entity.id,
+    status: entity.status === null ? null : { value: entity.status.value, verbose: entity.status.verbose },
+    statusGroup: entity.statusGroupV2?.value ?? null,
+    statusColor: entity.statusColor,
+    lastUpdatedAt: entity.lastUpdatedAt,
+    engagement: entity.engagement === null ? null : { id: entity.engagement.id },
+    application: entity.jobApplication === null ? null : { id: entity.jobApplication.id },
+    job: projectListItem(entity.job),
+  };
+}
+
 /**
  * Project the wire `Recruiter` sub-shape into the public {@link Recruiter}
  * type (#545), defensively coalescing every nullable hop and dropping the
@@ -1593,6 +1766,62 @@ export async function recommended(token: string, opts: RecommendedOptions = {}):
   }
   const items = (data.viewer.recommendedJobsV2.entities ?? []).map(projectListItem);
   return { items, totalCount: data.viewer.recommendedJobsV2.totalCount, page, perPage };
+}
+
+/**
+ * Dashboard job-activity list — the talent's "my activity"
+ * projection over `viewer.jobActivityList` (engagements, applications,
+ * pending actions), distinct from the {@link list} / {@link recommended}
+ * browse feeds. Same {@link DashboardJobPage} offset-pagination contract;
+ * defaults `page: 1, perPage: 20`. The unfiltered list surfaces every
+ * activity item (no status-group constraint).
+ */
+export async function getJobsForDashboard(token: string, opts: DashboardListOptions = {}): Promise<DashboardJobPage> {
+  const page = opts.page ?? DEFAULT_PAGE;
+  const perPage = opts.perPage ?? DEFAULT_PER_PAGE;
+  const data = await callGateway<JobsForDashboardResponse>(token, "GetJobsForDashboard", GET_JOBS_FOR_DASHBOARD_QUERY, {
+    page,
+    pageSize: perPage,
+    // No status-group filter — the full activity list (the captured op's
+    // `statusGroup` filter vars defaulted null = no constraint).
+    except: null,
+    only: null,
+  });
+  if (data.viewer === null) {
+    throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.jobActivityList === null) {
+    return { items: [], totalCount: 0, page, perPage };
+  }
+  const items = (data.viewer.jobActivityList.entities ?? [])
+    .filter((e): e is DashboardActivityEntity => e !== null)
+    .map(projectDashboardItem);
+  return { items, totalCount: data.viewer.jobActivityList.totalCount, page, perPage };
+}
+
+/**
+ * Count of dashboard job-activity items in ONE status group. The wire op
+ * requires `$only: JobActivityStatusGroup!` (a single, REQUIRED value), so
+ * the caller MUST name the group to count (e.g. `ACTIVE_ENGAGEMENT`,
+ * `CLOSED_ENGAGEMENT`, `ON_CLIENT_REVIEW`, `ON_RECRUITER_REVIEW`).
+ * `JobActivityStatusGroup` is a bare scalar in the synthesized SDL, so
+ * the value is passed through verbatim (no closed-enum validation, like
+ * {@link NotInterestedOptions}'s `reason`).
+ */
+export async function getJobsCountForDashboard(token: string, statusGroup: string): Promise<number> {
+  if (statusGroup.trim() === "") {
+    throw new JobsError("VALIDATION_ERROR", "getJobsCountForDashboard requires a non-empty status group.");
+  }
+  const data = await callGateway<JobsCountForDashboardResponse>(
+    token,
+    "GetJobsCountForDashboard",
+    GET_JOBS_COUNT_FOR_DASHBOARD_QUERY,
+    { only: statusGroup },
+  );
+  if (data.viewer === null) {
+    throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  return data.viewer.jobActivityList?.totalCount ?? 0;
 }
 
 /**

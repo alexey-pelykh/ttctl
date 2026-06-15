@@ -16,6 +16,8 @@ import {
   JobsError,
   MAX_SHOW_MANY_IDS,
   clearInterest,
+  getJobsCountForDashboard,
+  getJobsForDashboard,
   list,
   markViewed,
   matchQuality,
@@ -293,6 +295,131 @@ describe("jobs.recommended", () => {
     reply({ body: { data: { viewer: { id: "v1", recommendedJobsV2: null } } } });
     const page = await recommended(TOKEN);
     expect(page).toEqual({ items: [], totalCount: 0, page: 1, perPage: 20 });
+  });
+});
+
+const DASHBOARD_ACTIVITY_ENTITY = {
+  __typename: "TalentJobActivityItem",
+  id: "act-1",
+  status: { __typename: "JobActivityItemStatus", value: "engaged", verbose: "Engaged" },
+  statusGroupV2: { __typename: "JobActivityItemStatusGroup", value: "ACTIVE_ENGAGEMENT" },
+  statusColor: "#00aa00",
+  lastUpdatedAt: "2026-06-10T12:00:00Z",
+  engagement: { __typename: "TalentEngagement", id: "eng-1" },
+  jobApplication: null,
+  job: JOB_LIST_ENTITY,
+};
+
+describe("jobs.getJobsForDashboard", () => {
+  it("projects activity items into a DashboardJobPage (wire op GetJobsForDashboard)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: {
+            __typename: "Viewer",
+            id: "v1",
+            jobActivityList: { __typename: "JobActivityList", entities: [DASHBOARD_ACTIVITY_ENTITY], totalCount: 1 },
+          },
+        },
+      },
+    });
+    const page = await getJobsForDashboard(TOKEN);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
+      id: "act-1",
+      status: { value: "engaged", verbose: "Engaged" },
+      statusGroup: "ACTIVE_ENGAGEMENT",
+      statusColor: "#00aa00",
+      lastUpdatedAt: "2026-06-10T12:00:00Z",
+      engagement: { id: "eng-1" },
+      application: null,
+    });
+    // Inner job rides the shared list projection.
+    expect(page.items[0]?.job).toMatchObject({ id: "job-1", title: "Senior React Engineer" });
+    expect(page.totalCount).toBe(1);
+    const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string };
+    expect(body.operationName).toBe("GetJobsForDashboard");
+  });
+
+  it("no pagination opts: wire receives page=1, pageSize=20 and null status-group filters", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobActivityList: { entities: [], totalCount: 0 } } } } });
+    const page = await getJobsForDashboard(TOKEN);
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(1);
+    expect(body.variables["pageSize"]).toBe(20);
+    expect(body.variables["except"]).toBeNull();
+    expect(body.variables["only"]).toBeNull();
+    expect(page.page).toBe(1);
+    expect(page.perPage).toBe(20);
+  });
+
+  it("threads page/perPage to the wire", async () => {
+    reply({
+      body: {
+        data: { viewer: { id: "v1", jobActivityList: { entities: [DASHBOARD_ACTIVITY_ENTITY], totalCount: 42 } } },
+      },
+    });
+    const page = await getJobsForDashboard(TOKEN, { page: 3, perPage: 5 });
+    const body = mockedStock.mock.calls[0]?.[0].body as { variables: Record<string, unknown> };
+    expect(body.variables["page"]).toBe(3);
+    expect(body.variables["pageSize"]).toBe(5);
+    expect(page).toMatchObject({ page: 3, perPage: 5, totalCount: 42 });
+  });
+
+  it("filters null entities (wire `[TalentJobActivityItem]` nullable items)", async () => {
+    reply({
+      body: {
+        data: {
+          viewer: { id: "v1", jobActivityList: { entities: [DASHBOARD_ACTIVITY_ENTITY, null], totalCount: 2 } },
+        },
+      },
+    });
+    const page = await getJobsForDashboard(TOKEN);
+    expect(page.items).toHaveLength(1);
+    expect(page.totalCount).toBe(2);
+  });
+
+  it("returns empty DashboardJobPage when jobActivityList is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobActivityList: null } } } });
+    const page = await getJobsForDashboard(TOKEN);
+    expect(page).toEqual({ items: [], totalCount: 0, page: 1, perPage: 20 });
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(getJobsForDashboard(TOKEN)).rejects.toMatchObject({ name: "JobsError", code: "NO_VIEWER" });
+  });
+});
+
+describe("jobs.getJobsCountForDashboard", () => {
+  it("returns the totalCount for a status group (wire op GetJobsCountForDashboard)", async () => {
+    reply({ body: { data: { viewer: { __typename: "Viewer", id: "v1", jobActivityList: { totalCount: 3 } } } } });
+    const count = await getJobsCountForDashboard(TOKEN, "ACTIVE_ENGAGEMENT");
+    expect(count).toBe(3);
+    const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string; variables: Record<string, unknown> };
+    expect(body.operationName).toBe("GetJobsCountForDashboard");
+    expect(body.variables["only"]).toBe("ACTIVE_ENGAGEMENT");
+  });
+
+  it("returns 0 when jobActivityList is null", async () => {
+    reply({ body: { data: { viewer: { id: "v1", jobActivityList: null } } } });
+    expect(await getJobsCountForDashboard(TOKEN, "CLOSED_ENGAGEMENT")).toBe(0);
+  });
+
+  it("rejects an empty status group before any wire call", async () => {
+    await expect(getJobsCountForDashboard(TOKEN, "  ")).rejects.toMatchObject({
+      name: "JobsError",
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockedStock).not.toHaveBeenCalled();
+  });
+
+  it("throws NO_VIEWER when viewer is null", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(getJobsCountForDashboard(TOKEN, "ACTIVE_ENGAGEMENT")).rejects.toMatchObject({
+      name: "JobsError",
+      code: "NO_VIEWER",
+    });
   });
 });
 
