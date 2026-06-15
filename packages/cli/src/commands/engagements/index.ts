@@ -17,6 +17,7 @@ import {
   runEngagementsBreaksReasonsList,
 } from "./breaks.js";
 import { runEngagementsList } from "./list.js";
+import { runEngagementsPaymentsList } from "./payments.js";
 import { runEngagementsShow } from "./show.js";
 import { runEngagementsStats } from "./stats.js";
 
@@ -52,10 +53,13 @@ function perPageOption(): Option {
  * | `breaks add <id> --from <date> --to <date>`       | Schedule a break                         |
  * | `breaks remove <break-id>`                        | Cancel a break                           |
  * | `breaks reschedule <break-id> --from <date> --to <date>` | Move an existing break to a new window |
+ * | `payments list <job-id> [--limit N] [--after <id>]` | List per-engagement payments |
  *
  * `<id>` is always the `jobActivityItem.id` (the row id from
  * `engagements list`); `<break-id>` is the `engagementBreak.id` (from
- * `breaks list`).
+ * `breaks list`). `payments list` is the exception — its `<job-id>` is
+ * the `job.id` (the wire op `GetEngagementPayments` takes `$jobId`, not
+ * the activity-item id — #388).
  *
  * **Out of scope for v1** (per #147 spec):
  *   - Engagement creation / acceptance / rejection (lives in
@@ -243,6 +247,37 @@ export function buildEngagementsCommand(): Command {
     )
     .action(async (options: { output: OutputFormat }) => {
       await runEngagementsBreaksReasonsList(options.output);
+    });
+
+  // ----- Payments sub-group (#388) ---------------------------------------
+  // Read-only, so no mutation marking. Addressed by JOB id (the wire op
+  // `GetEngagementPayments` takes `$jobId`), unlike the activity-item-id
+  // `show` / `breaks.*` leaves — reconciled from the issue's
+  // `--engagement` sketch to the wire input.
+  const payments = cmd.command("payments").description("View per-engagement payments");
+
+  payments
+    .command("list")
+    .description("List payments under an engagement (by job id)")
+    .argument(
+      "<job-id>",
+      "job id (the `job.id` from `engagements list` / `jobs list` — NOT the activity-item row id)",
+      parseIdArg,
+    )
+    .addOption(
+      new Option("--limit <number>", "max payments to return").argParser((raw) => parsePaginationFlag("--limit", raw)),
+    )
+    .addOption(new Option("--after <id>", "forward cursor — return payments after this payment id"))
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (jobId: string, options: { limit?: number; after?: string; output: OutputFormat }) => {
+      const opts: import("./payments.js").EngagementsPaymentsListOptions = { output: options.output };
+      if (options.limit !== undefined) opts.limit = options.limit;
+      if (options.after !== undefined) opts.after = options.after;
+      await runEngagementsPaymentsList(jobId, opts);
     });
 
   return cmd;

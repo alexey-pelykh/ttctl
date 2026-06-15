@@ -23,6 +23,7 @@
  * | `breaks.add`              | `CreateEngagementBreak(engagementId, ...)`            |
  * | `breaks.remove`           | `CancelEngagementBreak(engagementBreakId)`            |
  * | `breaks.reschedule`       | `RescheduleEngagementBreak(engagementBreakId, ...)`   |
+ * | `payments.list`           | `GetEngagementPayments(jobId, limit, after)`          |
  *
  * **Routing**: All ops talk to the **mobile-gateway** surface
  * (`https://www.toptal.com/gateway/graphql/talent/graphql`) via
@@ -32,14 +33,16 @@
  *
  * **Operations are inlined as strings** (not codegen-driven) — same
  * pattern as `applications` and `profile.skills` mutations. The
- * captured operations live in
- * `../research/graphql/gateway/operations/mobile/`:
+ * captured operations live under
+ * `../research/graphql/gateway/operations/` (mobile + portal):
  *   - `EngagementBreaks.graphql` — used verbatim
  *   - `CreateEngagementBreak.graphql` — used verbatim
  *   - `CancelEngagementBreak.graphql` — used verbatim
  *   - `RescheduleEngagementBreak.graphql` — used verbatim (#155)
  *   - `JobActivityItems.graphql` — derived (extended engagement projection)
  *   - `JobActivityItem.graphql` — derived (extended engagement projection)
+ *   - `portal/GetEngagementPayments.graphql` — used verbatim (#388;
+ *     `viewer.job(id).activityItem.engagement.payments`)
  *
  * **CLAUDE.md schema/contract validation rule**: the operations here
  * are **[INFERRED — UNVERIFIED]** until the gated `*.e2e.test.ts` files
@@ -70,9 +73,6 @@
  * **Out of scope for v1**:
  *   - Engagement creation / acceptance / rejection (lives in
  *     `applications` group as part of the activity-item lifecycle).
- *   - Engagement payments / earnings detail (would require
- *     `GetEngagementPayments` from the portal surface, which is
- *     Cloudflare-protected — separate work).
  *   - Engagement testimonial (`CREATE_ENGAGEMENT_TESTIMONIAL` —
  *     follow-up).
  */
@@ -1574,5 +1574,268 @@ export const breaks = {
       );
     }
     return { kind: "applied", result: result.break };
+  },
+};
+
+// ---------------------------------------------------------------------
+// Per-engagement payments (#388) — `GetEngagementPayments`
+// ---------------------------------------------------------------------
+
+/**
+ * Billing cycle attached to an {@link EngagementPayment}. Richer than
+ * `payments.PayoutBillingCycle`: the portal `TalentPayment` fragment
+ * adds `hours` / `availability` / `talentRate` (absent from the mobile
+ * `paymentFields` fragment and from the synthesized SDL — hence T1).
+ */
+export interface EngagementPaymentBillingCycle {
+  id: string;
+  startDate: string;
+  endDate: string;
+  hours: string;
+  availability: string | null;
+  talentRate: string | null;
+}
+
+export interface EngagementPaymentMemorandum {
+  id: string;
+  amount: string;
+  balance: string;
+  downloadHtmlUrl: string | null;
+  effectiveDate: string | null;
+}
+
+/**
+ * One payment row under an engagement — projection of the captured
+ * portal `TalentPayment` fragment. Scalar types mirror `payments.Payout`
+ * (same wire GraphQL type): `amount` / `correctionAmount` are decimal
+ * strings (parse with a decimal lib, never `parseFloat`), `number` is an
+ * integer, `paymentGroupId` an integer or null. The portal fragment adds
+ * `kind` / `paymentMethod` / `downloadHtmlUrl` over the mobile payouts shape.
+ */
+export interface EngagementPayment {
+  id: string;
+  number: number;
+  amount: string;
+  correctionAmount: string;
+  status: string;
+  kind: string | null;
+  paymentMethod: string | null;
+  paymentGroupId: number | null;
+  createdAt: string;
+  dueDate: string | null;
+  paidAt: string | null;
+  downloadPdfUrl: string | null;
+  downloadHtmlUrl: string | null;
+  billingCycle: EngagementPaymentBillingCycle | null;
+  memorandums: EngagementPaymentMemorandum[];
+}
+
+/**
+ * Options for {@link payments.list}. Hybrid pagination per ADR-007 row 4:
+ * `limit` caps the page; `after` is a forward cursor that IS a payment
+ * `ID` (not opaque) — pass {@link EngagementPaymentsPage.nextCursor} to
+ * walk forward. Omit both for the server-default first slice.
+ */
+export interface EngagementPaymentsListOptions {
+  limit?: number;
+  after?: string;
+}
+
+/**
+ * Page returned by {@link payments.list}. `totalCount` is the
+ * server-reported full count for the engagement (cursor-independent);
+ * `nextCursor` is the id to pass as `after` for the next slice, or null
+ * when a short/empty page signals the feed is drained.
+ */
+export interface EngagementPaymentsPage {
+  items: EngagementPayment[];
+  totalCount: number;
+  limit: number | null;
+  after: string | null;
+  nextCursor: string | null;
+}
+
+/**
+ * Bad-id pattern for the `viewer.job(id:)` entry point — wider than the
+ * jobActivityItem-id {@link NOT_FOUND_MESSAGE_PATTERN} because a bad JOB
+ * id surfaces as a Relay node-decode error, not "Record not found".
+ * Mirrors the `applications` job-id path.
+ */
+const JOB_NOT_FOUND_MESSAGE_PATTERN = /Record not found|Invalid ID|Node id .*? resolves to/i;
+
+const GET_ENGAGEMENT_PAYMENTS_QUERY = `query GetEngagementPayments($jobId: ID!, $paginationLimit: Int, $paginationCursor: ID) { viewer { id job(id: $jobId) { id activityItem { id engagement { id payments(pagination: {limit: $paginationLimit, after: $paginationCursor}) { nodes { id ...TalentPayment } totalCount } } } } } }
+
+fragment TalentPayment on TalentPayment { id amount correctionAmount createdAt downloadHtmlUrl downloadPdfUrl dueDate kind number paidAt paymentGroupId paymentMethod status billingCycle { availability startDate endDate id hours talentRate } memorandums { nodes { amount balance downloadHtmlUrl effectiveDate id } } }`;
+
+interface EngagementPaymentBillingCycleEntity {
+  id: string;
+  startDate: string;
+  endDate: string;
+  hours: string;
+  availability: string | null;
+  talentRate: string | null;
+}
+
+interface EngagementPaymentMemorandumEntity {
+  id: string;
+  amount: string;
+  balance: string;
+  downloadHtmlUrl: string | null;
+  effectiveDate: string | null;
+}
+
+interface EngagementPaymentEntity {
+  id: string;
+  amount: string;
+  correctionAmount: string;
+  createdAt: string;
+  downloadHtmlUrl: string | null;
+  downloadPdfUrl: string | null;
+  dueDate: string | null;
+  kind: string | null;
+  number: number;
+  paidAt: string | null;
+  paymentGroupId: number | null;
+  paymentMethod: string | null;
+  status: string;
+  billingCycle: EngagementPaymentBillingCycleEntity | null;
+  memorandums: { nodes: (EngagementPaymentMemorandumEntity | null)[] | null } | null;
+}
+
+interface EngagementPaymentsResponse {
+  viewer: {
+    job: {
+      activityItem: {
+        engagement: {
+          // totalCount is INFERRED — absent from the `PaymentsConnection` SDL;
+          // defensively nullable so the projection falls back to items.length.
+          payments: { nodes: (EngagementPaymentEntity | null)[] | null; totalCount: number | null } | null;
+        } | null;
+      } | null;
+    } | null;
+  } | null;
+}
+
+function projectPaymentMemorandum(wire: EngagementPaymentMemorandumEntity): EngagementPaymentMemorandum {
+  return {
+    id: wire.id,
+    amount: wire.amount,
+    balance: wire.balance,
+    downloadHtmlUrl: wire.downloadHtmlUrl ?? null,
+    effectiveDate: wire.effectiveDate ?? null,
+  };
+}
+
+function projectEngagementPayment(wire: EngagementPaymentEntity): EngagementPayment {
+  const memos = (wire.memorandums?.nodes ?? []).filter((m): m is EngagementPaymentMemorandumEntity => m !== null);
+  return {
+    id: wire.id,
+    number: wire.number,
+    amount: wire.amount,
+    correctionAmount: wire.correctionAmount,
+    status: wire.status,
+    kind: wire.kind ?? null,
+    paymentMethod: wire.paymentMethod ?? null,
+    paymentGroupId: wire.paymentGroupId ?? null,
+    createdAt: wire.createdAt,
+    dueDate: wire.dueDate ?? null,
+    paidAt: wire.paidAt ?? null,
+    downloadPdfUrl: wire.downloadPdfUrl ?? null,
+    downloadHtmlUrl: wire.downloadHtmlUrl ?? null,
+    billingCycle:
+      wire.billingCycle == null
+        ? null
+        : {
+            id: wire.billingCycle.id,
+            startDate: wire.billingCycle.startDate,
+            endDate: wire.billingCycle.endDate,
+            hours: wire.billingCycle.hours,
+            availability: wire.billingCycle.availability ?? null,
+            talentRate: wire.billingCycle.talentRate ?? null,
+          },
+    memorandums: memos.map(projectPaymentMemorandum),
+  };
+}
+
+/**
+ * Forward cursor for the next page: the last row's id when more may
+ * remain, null when the connection is drained. A capped page (limit
+ * set) drains when it comes back shorter than the limit; an uncapped
+ * page drains when it returns the full total — without that totalCount
+ * check, a complete uncapped result would falsely advertise a next page.
+ */
+function deriveNextCursor(items: EngagementPayment[], limit: number | null, totalCount: number): string | null {
+  const last = items[items.length - 1];
+  if (!last) return null;
+  if (limit === null) return items.length < totalCount ? last.id : null;
+  return items.length < limit ? null : last.id;
+}
+
+/**
+ * Per-engagement payments. Sub-namespace so the public surface stays
+ * `engagements.payments.list` — matching the CLI path
+ * `engagements payments list <job-id>` and the MCP tool
+ * `ttctl_engagements_payments_list`.
+ */
+export const payments = {
+  /**
+   * List the payments under an engagement, addressed by its JOB id.
+   *
+   * The wire entry point is
+   * `viewer.job(id:).activityItem.engagement.payments` — the op's
+   * `$jobId` is a JOB id (from `jobs list` / `engagements list` `job.id`),
+   * NOT the `jobActivityItem.id` the sibling `show` / `breaks.*` leaves
+   * take. The issue's `--engagement` sketch was reconciled to the wire (#388).
+   *
+   * Hybrid pagination (ADR-007 row 4): `opts.limit` caps the page;
+   * `opts.after` is a forward cursor (a payment id). Throws `NOT_FOUND`
+   * when the job id doesn't resolve, `NO_ENGAGEMENT` when the job has no
+   * engagement, `NO_VIEWER` defensively.
+   */
+  async list(token: string, jobId: string, opts: EngagementPaymentsListOptions = {}): Promise<EngagementPaymentsPage> {
+    const limit = opts.limit ?? null;
+    const after = opts.after ?? null;
+    let data: EngagementPaymentsResponse;
+    try {
+      data = await callGateway<EngagementPaymentsResponse>(
+        token,
+        "GetEngagementPayments",
+        GET_ENGAGEMENT_PAYMENTS_QUERY,
+        { jobId, paginationLimit: limit, paginationCursor: after },
+      );
+    } catch (err) {
+      if (
+        err instanceof EngagementsError &&
+        err.code === "GRAPHQL_ERROR" &&
+        JOB_NOT_FOUND_MESSAGE_PATTERN.test(err.message)
+      ) {
+        throw new EngagementsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+          cause: err,
+        });
+      }
+      throw err;
+    }
+    if (data.viewer === null) {
+      throw new EngagementsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+    }
+    if (data.viewer.job === null) {
+      throw new EngagementsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+    }
+    const activityItem = data.viewer.job.activityItem;
+    if (activityItem === null || activityItem.engagement === null) {
+      throw new EngagementsError(
+        "NO_ENGAGEMENT",
+        `Job "${jobId}" exists but has no engagement (likely an application or interview that never became an engagement).`,
+      );
+    }
+    const conn = activityItem.engagement.payments;
+    if (conn === null) {
+      return { items: [], totalCount: 0, limit, after, nextCursor: null };
+    }
+    const items = (conn.nodes ?? [])
+      .filter((n): n is EngagementPaymentEntity => n !== null)
+      .map(projectEngagementPayment);
+    const totalCount = conn.totalCount ?? items.length;
+    return { items, totalCount, limit, after, nextCursor: deriveNextCursor(items, limit, totalCount) };
   },
 };

@@ -65,11 +65,15 @@ function buildEngagementsPageInfo(page: engagements.EngagementListPage): Engagem
  *   - `ttctl_engagements_breaks_add`
  *   - `ttctl_engagements_breaks_remove`
  *   - `ttctl_engagements_breaks_reschedule` (#155)
+ *   - `ttctl_engagements_payments_list` (#388)
  *
  * Each tool maps 1:1 to a CLI leaf — the schemas describe the same set
  * of fields. The `<id>` argument is the `jobActivityItem.id` (the row
  * id from `engagements_list`); `<break-id>` is the
  * `engagementBreak.id` (the id returned by `engagements_breaks_list`).
+ * `payments_list` is the exception — its `id` is the `job.id` (the wire
+ * op `GetEngagementPayments` is keyed by `$jobId`, not the activity-item
+ * id — #388).
  *
  * Per #147 scope amendment (2026-05-10), `allocated-hours` is NOT
  * surfaced here — that scope moved to `availability` (#146) since the
@@ -454,6 +458,58 @@ export function registerEngagementsTools(server: McpServer, ctx: ToolRegistratio
         );
         if (outcome.kind === "preview") return dryRunResponse(outcome.preview);
         return successResponse(outcome.result);
+      } catch (err) {
+        return mapEngagementsError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "ttctl_engagements_payments_list",
+    {
+      title: "List per-engagement payments",
+      description: [
+        "List the payments under an engagement on the Toptal Talent platform —",
+        "invoices/payouts with amount, status, due/paid dates, and billing cycle.",
+        "",
+        "**Input is the JOB id** (the `job.id` from `ttctl_engagements_list` or",
+        "`ttctl_jobs_list`), NOT the activity-item row id the other engagements",
+        "tools take — the wire op `GetEngagementPayments` is keyed by `$jobId`.",
+        "",
+        "Pagination (ADR-007 row 4, limit + forward cursor): `limit` caps the page;",
+        "`after` is a forward cursor that IS a payment id. Returns",
+        "`{ items, totalCount, nextCursor }` — pass `nextCursor` back as `after`",
+        "to walk forward; a null `nextCursor` means the feed is drained.",
+        "",
+        "Example user prompts:",
+        '  - "Show me the payments for my current Toptal engagement."',
+        '  - "List the invoices on job 12345."',
+        '  - "What have I been paid on this contract so far?"',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (the `job.id` from `ttctl_engagements_list` / `ttctl_jobs_list`)"),
+        limit: z.number().int().positive().optional().describe("Maximum number of payments to return."),
+        after: z.string().optional().describe("Forward cursor — return payments after this payment id."),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        const variables: Record<string, unknown> = {
+          jobId: args.id,
+          paginationLimit: args.limit ?? null,
+          paginationCursor: args.after ?? null,
+        };
+        return dryRunResponse(buildMcpDryRunPreview("GetEngagementPayments", "mobile-gateway", variables, auth.token));
+      }
+      const opts: engagements.EngagementPaymentsListOptions = {};
+      if (args.limit !== undefined) opts.limit = args.limit;
+      if (args.after !== undefined) opts.after = args.after;
+      try {
+        const page = await engagements.payments.list(auth.token, args.id, opts);
+        return successResponse({ items: page.items, totalCount: page.totalCount, nextCursor: page.nextCursor });
       } catch (err) {
         return mapEngagementsError(err);
       }

@@ -2,6 +2,9 @@
   "AvailabilityRequest": {
     "matcherQuestions[].options": "Matcher options are empty/heterogeneous across this account's availability requests; they collapse to unknown under cross-question unification."
   },
+  "GetEngagementPayments": {
+    "items[].memorandums": "No credit-note/adjustment memorandums on this account's engagement payments (sibling of Payments.items[].memorandums)."
+  },
   "GetInterviewNotes": {
     "notes": "Talent interview notes are append-only with no write surface on web or mobile; the array never populates on this account."
   },

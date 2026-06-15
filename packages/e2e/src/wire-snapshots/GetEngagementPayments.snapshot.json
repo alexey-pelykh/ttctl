@@ -1,0 +1,100 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-15T08:31:45.933Z",
+  "operationName": "GetEngagementPayments",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "items": {
+        "kind": "array",
+        "item": {
+          "kind": "object",
+          "fields": {
+            "amount": {
+              "kind": "string"
+            },
+            "billingCycle": {
+              "kind": "object",
+              "fields": {
+                "availability": {
+                  "kind": "string"
+                },
+                "endDate": {
+                  "kind": "string"
+                },
+                "hours": {
+                  "kind": "string"
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "startDate": {
+                  "kind": "string"
+                },
+                "talentRate": {
+                  "kind": "string"
+                }
+              }
+            },
+            "correctionAmount": {
+              "kind": "string"
+            },
+            "createdAt": {
+              "kind": "string"
+            },
+            "downloadHtmlUrl": {
+              "kind": "string"
+            },
+            "downloadPdfUrl": {
+              "kind": "string"
+            },
+            "dueDate": {
+              "kind": "string"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "kind": {
+              "kind": "string"
+            },
+            "memorandums": {
+              "kind": "array",
+              "item": {
+                "kind": "unknown"
+              }
+            },
+            "number": {
+              "kind": "number"
+            },
+            "paidAt": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "paymentGroupId": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "number"
+              }
+            },
+            "paymentMethod": {
+              "kind": "nullable",
+              "inner": {
+                "kind": "string"
+              }
+            },
+            "status": {
+              "kind": "string"
+            }
+          }
+        }
+      },
+      "totalCount": {
+        "kind": "number"
+      }
+    }
+  }
+}
