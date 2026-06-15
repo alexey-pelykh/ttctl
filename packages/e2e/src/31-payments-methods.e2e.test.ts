@@ -11,7 +11,8 @@
  *
  * Coverage:
  *   - `payments methods list` returns the list envelope with the
- *     projected fields (id, paymentMethod, preferredOption, …).
+ *     projected fields (id, paymentMethod, preferredOption, …) plus the
+ *     `availableMethods` sibling array (viewerRole.availablePaymentMethods).
  *   - `payments methods show <id>` returns the projected detail for
  *     a real id.
  *   - `payments methods show <bad-id>` returns NOT_FOUND envelope
@@ -42,10 +43,14 @@ describe("payments methods (live mobile-gateway)", () => {
     const result = await cli.run(["payments", "methods", "list", "-o", "json"]);
     expect(result.exitCode).toBe(0);
 
-    const payload = JSON.parse(result.stdout) as { version?: string; items?: unknown };
+    const payload = JSON.parse(result.stdout) as { version?: string; items?: unknown; availableMethods?: unknown };
     expect(typeof payload).toBe("object");
     expect(payload.version).toBeDefined();
     expect(Array.isArray(payload.items)).toBe(true);
+    // availableMethods (#812) — viewerRole.availablePaymentMethods. Shape
+    // assertion only; the list is empty on the maintainer's account, so
+    // element values stay unobservable (degenerate-capture posture).
+    expect(Array.isArray(payload.availableMethods)).toBe(true);
 
     if (!Array.isArray(payload.items) || payload.items.length === 0) {
       process.stderr.write(

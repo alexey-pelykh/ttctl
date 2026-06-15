@@ -17,17 +17,19 @@ import { handlePaymentsError, loadAuthTokenOrExit } from "./shared.js";
 export async function runPaymentsMethodsList(output: OutputFormat): Promise<void> {
   const token = await loadAuthTokenOrExit("payments methods list", output);
 
-  let items: payments.PaymentMethod[];
+  let result: payments.PaymentMethodList;
   try {
-    items = await payments.methods.list(token);
+    result = await payments.methods.list(token);
   } catch (err) {
     handlePaymentsError("payments methods list", err, output);
   }
 
-  emitResult(wrapListEnvelope(items), output, {
-    pretty: (data) => formatMethodsTable(data.items),
-    table: (data) => formatMethodsTable(data.items),
-    empty: { command: "payments.methods.list" },
+  // No empty-state wrapper here: `availableMethods` is a sibling dataset
+  // that must surface even when zero methods are configured (the wrapper
+  // keys on `items` and would drop it from both JSON and pretty output).
+  emitResult({ ...wrapListEnvelope(result.methods), availableMethods: result.availableMethods }, output, {
+    pretty: (data) => formatMethodsList(data.items, data.availableMethods),
+    table: (data) => formatMethodsList(data.items, data.availableMethods),
   });
 }
 
@@ -49,6 +51,14 @@ export async function runPaymentsMethodsShow(id: string, output: OutputFormat): 
   emitResult(item, output, {
     pretty: (data) => formatMethodDetail(data),
   });
+}
+
+export function formatMethodsList(items: payments.PaymentMethod[], availableMethods: string[]): string {
+  const sections = [items.length === 0 ? "No payment methods configured." : formatMethodsTable(items)];
+  if (availableMethods.length > 0) {
+    sections.push(`Available methods to add: ${availableMethods.join(", ")}`);
+  }
+  return sections.join("\n\n");
 }
 
 export function formatMethodsTable(items: payments.PaymentMethod[]): string {
