@@ -542,6 +542,24 @@ export interface JobMatchQuality {
 }
 
 /**
+ * A job's per-job rate insight — returned by {@link rateInsight}. The wire is
+ * a `TalentJobRateInsight` union: `kind` discriminates the two variants. Both
+ * carry `estimatedRevenue` + `estimatedRevenueExplanation`; the competitive
+ * variant adds `longTermDisclaimer`, the uncompetitive variant adds
+ * `recentApplicationRate` + `recommendedRate` (the recommended rate band).
+ * Every rate is a BigDecimal kept verbatim as a string (ADR-006 wire-string
+ * discipline) — never coerced to a number.
+ */
+export interface JobRateInsight {
+  kind: "competitive" | "uncompetitive" | null;
+  estimatedRevenue: string | null;
+  estimatedRevenueExplanation: string | null;
+  longTermDisclaimer: string | null;
+  recentApplicationRate: string | null;
+  recommendedRate: string | null;
+}
+
+/**
  * State payload returned by every mutation that toggles a job's
  * interest signals. Reflects the post-mutation server state.
  */
@@ -869,6 +887,43 @@ const GET_JOB_MATCH_QUALITY_QUERY = `query GetJobMatchQualityMetrics($jobId: ID!
   }
 }`;
 
+// GetTalentJobRateInsight — `viewer.job(id:).rateInsight`, the portal's per-job
+// rate-intelligence panel. Hand-authored against the portal capture; the
+// `rateInsight` field returns a `TalentJobRateInsight` union, `Unknown`-typed
+// in the synthesized Viewer SDL (`GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`) → T1.
+// `estimatedRevenue` is `BigDecimal!` on the competitive member but
+// `BigDecimal` on the uncompetitive one — live-verified (#474): selecting the
+// bare field on both members 400s with a merge conflict, so the competitive
+// member aliases it `competitiveEstimatedRevenue` (matching the portal
+// capture). `estimatedRevenueExplanation` is the same type on both, so it
+// merges cleanly. The capture's optional `$requestedRate` / `$onlyHourlyRates`
+// rate-scenario vars are kept verbatim but omitted by the caller (server
+// defaults to the talent's rate).
+const GET_TALENT_JOB_RATE_INSIGHT_QUERY = `query GetTalentJobRateInsight($jobId: ID!, $requestedRate: BigDecimal, $onlyHourlyRates: Boolean) {
+  viewer {
+    __typename
+    id
+    job(id: $jobId) {
+      __typename
+      id
+      rateInsight(requestedRate: $requestedRate, onlyHourlyRates: $onlyHourlyRates) {
+        __typename
+        ... on TalentJobRateInsightCompetitive {
+          competitiveEstimatedRevenue: estimatedRevenue
+          estimatedRevenueExplanation
+          longTermDisclaimer
+        }
+        ... on TalentJobRateInsightUncompetitive {
+          estimatedRevenue
+          estimatedRevenueExplanation
+          recentApplicationRate
+          recommendedRate
+        }
+      }
+    }
+  }
+}`;
+
 const MARK_JOB_SAVED_MUTATION = `mutation JobMarkSaved($jobID: ID!) {
   job(id: $jobID) {
     __typename
@@ -1155,6 +1210,32 @@ interface JobMatchQualityResponse {
       matchQuality: {
         metrics: JobMatchQualityMetricWire[] | null;
       } | null;
+    } | null;
+  } | null;
+}
+
+// `GetTalentJobRateInsight` wire shape — INFERRED (`rateInsight` is
+// `Unknown`-typed in the synthesized Viewer SDL → T1). The union is flattened:
+// every member field is optional, `__typename` discriminates. The projection
+// normalizes to the public {@link JobRateInsight}. Live E2E validates the shape.
+interface JobRateInsightWire {
+  __typename?: string | null;
+  // Uncompetitive member's `estimatedRevenue` (BigDecimal); the competitive
+  // member's non-null `estimatedRevenue` arrives under the alias below.
+  estimatedRevenue?: string | null;
+  competitiveEstimatedRevenue?: string | null;
+  estimatedRevenueExplanation?: string | null;
+  longTermDisclaimer?: string | null;
+  recentApplicationRate?: string | null;
+  recommendedRate?: string | null;
+}
+
+interface JobRateInsightResponse {
+  viewer: {
+    id: string;
+    job: {
+      id: string;
+      rateInsight: JobRateInsightWire | null;
     } | null;
   } | null;
 }
@@ -1632,6 +1713,66 @@ export async function matchQuality(token: string, jobId: string): Promise<JobMat
   }
   const metrics = (data.viewer.job.matchQuality?.metrics ?? []).map(projectMatchQualityMetric);
   return { metrics };
+}
+
+function projectRateInsight(wire: JobRateInsightWire): JobRateInsight {
+  const kind =
+    wire.__typename === "TalentJobRateInsightCompetitive"
+      ? "competitive"
+      : wire.__typename === "TalentJobRateInsightUncompetitive"
+        ? "uncompetitive"
+        : null;
+  return {
+    kind,
+    // The competitive member returns `estimatedRevenue` under the
+    // `competitiveEstimatedRevenue` alias (see the query); coalesce both.
+    estimatedRevenue: wire.estimatedRevenue ?? wire.competitiveEstimatedRevenue ?? null,
+    estimatedRevenueExplanation: wire.estimatedRevenueExplanation ?? null,
+    longTermDisclaimer: wire.longTermDisclaimer ?? null,
+    recentApplicationRate: wire.recentApplicationRate ?? null,
+    recommendedRate: wire.recommendedRate ?? null,
+  };
+}
+
+/**
+ * Fetch a job's rate insight by id — the platform's per-job rate-intelligence
+ * panel (the portal's "is your rate competitive for this job" projection).
+ * Returns a {@link JobRateInsight} (`kind` discriminates competitive vs
+ * uncompetitive), or `null` when the platform surfaces no rate insight for the
+ * job (e.g. an already-engaged or ineligible job — the wire elides
+ * `rateInsight`).
+ *
+ * Throws `JobsError("NOT_FOUND")` for an unknown / inaccessible id — both the
+ * top-level `Record not found` GraphQL error and a `viewer.job === null`
+ * response — mirroring {@link show} and {@link matchQuality}.
+ */
+export async function rateInsight(token: string, jobId: string): Promise<JobRateInsight | null> {
+  let data: JobRateInsightResponse;
+  try {
+    data = await callGateway<JobRateInsightResponse>(
+      token,
+      "GetTalentJobRateInsight",
+      GET_TALENT_JOB_RATE_INSIGHT_QUERY,
+      {
+        jobId,
+      },
+    );
+  } catch (err) {
+    if (err instanceof JobsError && err.code === "GRAPHQL_ERROR" && NOT_FOUND_MESSAGE_PATTERN.test(err.message)) {
+      throw new JobsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.job === null) {
+    throw new JobsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+  }
+  const wire = data.viewer.job.rateInsight;
+  return wire === null ? null : projectRateInsight(wire);
 }
 
 /**

@@ -31,10 +31,10 @@ Requires **Node.js ≥ 22.19.0**, ESM only.
 
 ### Tool catalog
 
-The server registers 134 tools spanning the full Toptal Talent surface that TTCtl exposes — read AND mutation paths (per-domain counts below sum to the total):
+The server registers 135 tools spanning the full Toptal Talent surface that TTCtl exposes — read AND mutation paths (per-domain counts below sum to the total):
 
 - **`profile.*`** (69 tools) — `basic`, `skills`, `industries`, `education`, `certifications`, `employment`, `portfolio`, `visas`, `resume`, `external`, `reviews`, `specializations`, `countries`
-- **`jobs`** (21 tools) — browse (list / show / show-many / match-quality / recommended) + saved / viewed / not-interested signals + search subscription + apply funnel
+- **`jobs`** (22 tools) — browse (list / show / show-many / match-quality / rate-insight / recommended) + saved / viewed / not-interested signals + search subscription + apply funnel
 - **`payments`** (9 tools) — summary + payouts (list / show) + methods (list / show) + rate (current / show / questions / change)
 - **`engagements`** (8 tools) — list / show / stats + breaks (list / add / remove / reschedule / reasons)
 - **`applications`** (7 tools) — list / show / stats + interview detail (show / notes / guide) + availability-request detail

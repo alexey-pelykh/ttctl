@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Oleksii PELYKH
 
-// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs, GetJobMatchQualityMetrics
+// e2e-covers: JobShow, JobsList, JobsByIDs, GetRecommendedJobs, GetJobMatchQualityMetrics, GetTalentJobRateInsight
 
 /**
  * E2E coverage for `ttctl jobs` (#148).
@@ -405,6 +405,73 @@ describe("jobs (live mobile-gateway)", () => {
     expect(() =>
       assertWireShapeStable({
         operationName: "GetJobMatchQualityMetrics",
+        surface: "mobile-gateway",
+        transport: "stock",
+        response,
+      }),
+    ).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------
+  // GetTalentJobRateInsight — per-job rate-intelligence panel (#474).
+  // READ-only, round-trip safe. Schema/contract: hand-authored op against
+  // a schema gap (`rateInsight` is `Unknown`-typed in the synthesized
+  // Viewer SDL), Track 1. The live call IS the wire proof — a wrong
+  // union-member selection 400s. `null` is a valid response (the platform
+  // surfaces no insight for already-engaged / ineligible jobs).
+  // -------------------------------------------------------------------
+  it.skipIf(!e2eEnabled)("jobs rate-insight returns the per-job rate insight (or null)", async () => {
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const probeId = listed.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write("warning: no eligible jobs in test account — jobs rate-insight assertions skipped\n");
+      return;
+    }
+    const result = await cli.run(["jobs", "rate-insight", probeId, "-o", "json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as Record<string, unknown> | null;
+    if (payload === null) {
+      process.stderr.write(
+        "warning: no rate insight surfaced for the probe job — rate-insight shape assertion skipped\n",
+      );
+      return;
+    }
+    for (const key of [
+      "kind",
+      "estimatedRevenue",
+      "estimatedRevenueExplanation",
+      "longTermDisclaimer",
+      "recentApplicationRate",
+      "recommendedRate",
+    ]) {
+      expect(key in payload).toBe(true);
+    }
+    // The discriminant, when present, is one of the two known variants.
+    if (payload["kind"] !== null) {
+      expect(["competitive", "uncompetitive"]).toContain(payload["kind"]);
+    }
+  });
+
+  it.skipIf(!e2eEnabled)("GetTalentJobRateInsight wire shape matches snapshot (Track 1)", async () => {
+    const token = loadSandboxBearer(sandboxConfigPath);
+    const listResult = await cli.run(["jobs", "list", "-o", "json"]);
+    expect(listResult.exitCode).toBe(0);
+    const listed = JSON.parse(listResult.stdout) as { items: Array<{ id?: string }> };
+    const probeId = listed.items[0]?.id;
+    if (probeId === undefined) {
+      process.stderr.write("warning: no eligible jobs in test account — GetTalentJobRateInsight snapshot skipped\n");
+      return;
+    }
+    const response = await jobs.rateInsight(token, probeId);
+    if (response === null) {
+      process.stderr.write("warning: no rate insight surfaced — GetTalentJobRateInsight snapshot skipped\n");
+      return;
+    }
+    expect(() =>
+      assertWireShapeStable({
+        operationName: "GetTalentJobRateInsight",
         surface: "mobile-gateway",
         transport: "stock",
         response,

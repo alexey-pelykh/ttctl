@@ -167,6 +167,7 @@ const EXPECTED_TOOLS = [
   "ttctl_jobs_show",
   "ttctl_jobs_show_many",
   "ttctl_jobs_match_quality",
+  "ttctl_jobs_rate_insight",
   "ttctl_jobs_save",
   "ttctl_jobs_unsave",
   "ttctl_jobs_saved",
@@ -252,7 +253,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (134 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (135 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

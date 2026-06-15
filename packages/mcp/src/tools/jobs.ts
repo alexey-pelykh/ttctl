@@ -98,12 +98,13 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * `opportunities_*` aliasing (MCP tool names must be deterministic for
  * LLM clients).
  *
- * Tool surface (21 tools):
+ * Tool surface (22 tools):
  *   - `ttctl_jobs_list`
  *   - `ttctl_jobs_recommended`
  *   - `ttctl_jobs_show`
  *   - `ttctl_jobs_show_many`
  *   - `ttctl_jobs_match_quality`
+ *   - `ttctl_jobs_rate_insight`
  *   - `ttctl_jobs_save`
  *   - `ttctl_jobs_unsave`
  *   - `ttctl_jobs_saved`
@@ -396,6 +397,49 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       }
       try {
         const result = await jobs.matchQuality(auth.token, args.id);
+        return successResponse(result);
+      } catch (err) {
+        return mapJobsError(err);
+      }
+    },
+  );
+
+  // -------- rate-insight -------------------------------------------------
+  server.registerTool(
+    "ttctl_jobs_rate_insight",
+    {
+      title: "Show a job's rate insight",
+      description: [
+        "Fetch the platform's per-job rate-intelligence panel for a job — Toptal's",
+        "view of whether the signed-in talent's rate is competitive for it. Returns a",
+        "`JobRateInsight` object whose `kind` is `competitive` or `uncompetitive`: both",
+        "carry `estimatedRevenue` + `estimatedRevenueExplanation`; the competitive",
+        "variant adds `longTermDisclaimer`, the uncompetitive variant adds the",
+        "recommended rate band (`recommendedRate` + `recentApplicationRate`). Every rate",
+        "is a verbatim BigDecimal string.",
+        "",
+        "Read-only — does not mutate any server state. Returns `null` when the platform",
+        "surfaces no rate insight for the job (e.g. an already-engaged or ineligible job).",
+        "",
+        "Example user prompts:",
+        '  - "Is my rate competitive for Toptal job <id>?"',
+        '  - "Show the rate insight for job <id>."',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (from `ttctl_jobs_list`)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("GetTalentJobRateInsight", "mobile-gateway", { jobId: args.id }, auth.token),
+        );
+      }
+      try {
+        const result = await jobs.rateInsight(auth.token, args.id);
         return successResponse(result);
       } catch (err) {
         return mapJobsError(err);

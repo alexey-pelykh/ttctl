@@ -7,6 +7,7 @@ import type { applications, jobs } from "@ttctl/core";
 
 import { formatInterestEntity } from "../interest.js";
 import { formatMatchQuality } from "../match-quality.js";
+import { formatRateInsight } from "../rate-insight.js";
 import { formatJobDetail, formatJobDetails, formatQuestionsSections } from "../show.js";
 import {
   buildJobsPageInfo,
@@ -529,5 +530,49 @@ describe("formatMatchQuality", () => {
       metrics: [{ ...METRIC_FIXTURE, isRequired: false, forAvailabilityRequest: true }],
     });
     expect(output).toContain("(availability-request)");
+  });
+});
+
+describe("formatRateInsight", () => {
+  const UNCOMPETITIVE: jobs.JobRateInsight = {
+    kind: "uncompetitive",
+    estimatedRevenue: "12000.0",
+    estimatedRevenueExplanation: "Based on a 3-month engagement.",
+    longTermDisclaimer: null,
+    recentApplicationRate: "95.0",
+    recommendedRate: "110.0",
+  };
+
+  it("renders the kind header and the recommended / recent-application band", () => {
+    const output = formatRateInsight("job-1", UNCOMPETITIVE);
+    expect(output).toContain("Rate insight for job job-1 — uncompetitive");
+    expect(output).toContain("Estimated revenue: 12000.0");
+    expect(output).toContain("Recommended rate: 110.0");
+    expect(output).toContain("Recent application rate: 95.0");
+    expect(output).toContain("Based on a 3-month engagement.");
+  });
+
+  it("renders the competitive variant with its disclaimer and no rate band", () => {
+    const output = formatRateInsight("job-1", {
+      kind: "competitive",
+      estimatedRevenue: "18000.0",
+      estimatedRevenueExplanation: "Your rate is competitive for this job.",
+      longTermDisclaimer: "Estimate assumes full-time allocation.",
+      recentApplicationRate: null,
+      recommendedRate: null,
+    });
+    expect(output).toContain("Rate insight for job job-1 — competitive");
+    expect(output).toContain("Estimate assumes full-time allocation.");
+    expect(output).not.toContain("Recommended rate:");
+    expect(output).not.toContain("Recent application rate:");
+  });
+
+  it("renders an explicit line when no insight is surfaced (null)", () => {
+    expect(formatRateInsight("job-1", null)).toBe("No rate insight available for job job-1.");
+  });
+
+  it("falls back to 'unknown' when the kind discriminant is null", () => {
+    const output = formatRateInsight("job-1", { ...UNCOMPETITIVE, kind: null });
+    expect(output.split("\n")[0]).toBe("Rate insight for job job-1 — unknown");
   });
 });
