@@ -40,14 +40,14 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
     {
       title: "Add education entry",
       description:
-        "Add a new education entry (institution + degree, with optional field of study, location, and start/end years). Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY).",
+        "Add a new education entry. institution, degree, field of study, location, and start/end years are ALL required — the Toptal API rejects a create that omits any of them. Dates accept ISO-8601 (YYYY-MM-DD) or year-only (YYYY).",
       inputSchema: {
         institution: z.string().min(1).describe("school / university name"),
         degree: z.string().min(1).describe("degree (e.g. BSc, MSc, PhD)"),
-        from: dateInput.optional().describe("start date — ISO-8601 or year"),
-        to: dateInput.optional().describe("end date — ISO-8601 or year"),
-        fieldOfStudy: z.string().optional(),
-        location: z.string().optional(),
+        from: dateInput.describe("start year — ISO-8601 or year (required on create)"),
+        to: dateInput.describe("end year — ISO-8601 or year (required on create)"),
+        fieldOfStudy: z.string().min(1).describe("field of study (required on create)"),
+        location: z.string().min(1).describe("city / country (required on create)"),
         skills: z
           .array(
             z.object({
@@ -69,15 +69,15 @@ export function registerEducationTools(server: McpServer, ctx: ToolRegistrationC
       const fields: profile.education.EducationFields = {
         institution: input.institution,
         degree: input.degree,
+        fieldOfStudy: input.fieldOfStudy,
+        location: input.location,
       };
       try {
-        if (input.from !== undefined) fields.yearFrom = parseDateInput(input.from, "from").year;
-        if (input.to !== undefined) fields.yearTo = parseDateInput(input.to, "to").year;
+        fields.yearFrom = parseDateInput(input.from, "from").year;
+        fields.yearTo = parseDateInput(input.to, "to").year;
       } catch (err) {
         return presentToolError("profile.education.add", err);
       }
-      if (input.fieldOfStudy !== undefined) fields.fieldOfStudy = input.fieldOfStudy;
-      if (input.location !== undefined) fields.location = input.location;
       // `name` falls back to "" — server keys on `id` (mirrors employment_add #541).
       if (input.skills !== undefined) {
         fields.skills = input.skills.map((s) => ({ id: s.id, name: s.name ?? "" }));

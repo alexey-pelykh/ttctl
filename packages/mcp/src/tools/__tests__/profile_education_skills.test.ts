@@ -99,6 +99,10 @@ describe("profile.education skills surface — MCP dry-run wiring (#633)", () =>
     const education = await runDryRun(server, "ttctl_profile_education_add", "CREATE_EDUCATION", {
       institution: "MIT",
       degree: "BSc",
+      fieldOfStudy: "CS",
+      location: "Cambridge",
+      from: "2018",
+      to: "2022",
       skills: [{ id: "V1-Skill-1", name: "Rust" }, { id: "V1-Skill-2" }],
     });
     expect(education["skills"]).toEqual([
@@ -111,6 +115,10 @@ describe("profile.education skills surface — MCP dry-run wiring (#633)", () =>
     const education = await runDryRun(server, "ttctl_profile_education_add", "CREATE_EDUCATION", {
       institution: "MIT",
       degree: "BSc",
+      fieldOfStudy: "CS",
+      location: "Cambridge",
+      from: "2018",
+      to: "2022",
     });
     expect(education["skills"]).toEqual([]);
   });

@@ -195,7 +195,14 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   // profile.countries (1, #596)
   ttctl_profile_countries_list: {},
   // profile.education (6, +list #341)
-  ttctl_profile_education_add: { institution: "MIT", degree: "BSc" },
+  ttctl_profile_education_add: {
+    institution: "MIT",
+    degree: "BSc",
+    fieldOfStudy: "CS",
+    location: "Cambridge",
+    from: "2018",
+    to: "2022",
+  },
   ttctl_profile_education_highlight: { id: "edu_123" },
   ttctl_profile_education_list: {},
   ttctl_profile_education_remove: { id: "edu_123" },

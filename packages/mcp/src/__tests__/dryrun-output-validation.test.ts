@@ -88,7 +88,14 @@ const FORMERLY_AFFECTED_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_profile_basic_update: { bio: "regression bio", headline: "regression headline" },
   ttctl_profile_basic_photo_upload: { file: "/tmp/photo.jpg" },
   ttctl_profile_resume_upload: { filePath: "/tmp/resume.pdf" },
-  ttctl_profile_education_add: { institution: "MIT", degree: "BSc" },
+  ttctl_profile_education_add: {
+    institution: "MIT",
+    degree: "BSc",
+    fieldOfStudy: "CS",
+    location: "Cambridge",
+    from: "2018",
+    to: "2022",
+  },
   ttctl_profile_education_update: { id: "edu_123", degree: "MSc" },
   ttctl_profile_education_remove: { id: "edu_123" },
   // employerId bypass keeps dry-run zero-transport — see sibling

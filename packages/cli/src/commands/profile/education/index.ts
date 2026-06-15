@@ -20,7 +20,7 @@ import { loadAuthTokenOrExit, presentSubDomainError } from "../shared.js";
  * Build the `ttctl profile education` command tree.
  *
  * Five leaves:
- *   - `add --institution --degree [--from --to]`
+ *   - `add --institution --degree --from --to --field-of-study --location`
  *   - `update <id> [field-flags]`
  *   - `remove <id>`
  *   - `show <id> [-o text|json|table]`
@@ -39,10 +39,10 @@ export function buildProfileEducationCommand(): Command {
     .description("Add a new education entry to your profile")
     .requiredOption("--institution <name>", "school / university name")
     .requiredOption("--degree <type>", "degree (e.g. BSc, MSc, PhD)")
-    .option("--from <date>", "start date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
-    .option("--to <date>", "end date — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
-    .option("--field-of-study <text>", "field of study (optional)")
-    .option("--location <text>", "city / country (optional)")
+    .requiredOption("--from <date>", "start year — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
+    .requiredOption("--to <date>", "end year — ISO-8601 (YYYY-MM-DD) or year (YYYY)")
+    .requiredOption("--field-of-study <text>", "field of study")
+    .requiredOption("--location <text>", "city / country")
     .option(
       "--skill-id <id>",
       "catalog Skill id (repeatable). Discover via `ttctl profile skills list`. The Toptal wire requires at least one skill on create (#612).",
@@ -140,10 +140,10 @@ export function buildProfileEducationCommand(): Command {
 interface AddOptions {
   institution: string;
   degree: string;
-  from?: string;
-  to?: string;
-  fieldOfStudy?: string;
-  location?: string;
+  from: string;
+  to: string;
+  fieldOfStudy: string;
+  location: string;
   // Catalog skill ids supplied via `--skill-id` (repeatable, #633).
   skillId?: string[];
   output: OutputFormat;
