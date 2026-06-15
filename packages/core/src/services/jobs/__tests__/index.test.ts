@@ -21,6 +21,7 @@ import {
   matchQuality,
   notInterested,
   notInterestedList,
+  rateInsight,
   recommended,
   save,
   saved,
@@ -650,6 +651,105 @@ describe("jobs.matchQuality", () => {
   it("translates viewer=null to NO_VIEWER", async () => {
     reply({ body: { data: { viewer: null } } });
     await expect(matchQuality(TOKEN, "job-1")).rejects.toMatchObject({ name: "JobsError", code: "NO_VIEWER" });
+  });
+});
+
+describe("jobs.rateInsight", () => {
+  function jobWith(rateInsight: unknown): unknown {
+    return {
+      data: { viewer: { __typename: "Viewer", id: "v1", job: { __typename: "TalentJob", id: "job-1", rateInsight } } },
+    };
+  }
+
+  it("projects the uncompetitive variant (wire op GetTalentJobRateInsight, sends jobId)", async () => {
+    reply({
+      body: jobWith({
+        __typename: "TalentJobRateInsightUncompetitive",
+        estimatedRevenue: "12000.0",
+        estimatedRevenueExplanation: "Based on a 3-month engagement.",
+        recentApplicationRate: "95.0",
+        recommendedRate: "110.0",
+      }),
+    });
+    const result = await rateInsight(TOKEN, "job-1");
+    expect(result).toEqual({
+      kind: "uncompetitive",
+      estimatedRevenue: "12000.0",
+      estimatedRevenueExplanation: "Based on a 3-month engagement.",
+      longTermDisclaimer: null,
+      recentApplicationRate: "95.0",
+      recommendedRate: "110.0",
+    });
+    const body = mockedStock.mock.calls[0]?.[0].body as { operationName: string; variables: Record<string, unknown> };
+    expect(body.operationName).toBe("GetTalentJobRateInsight");
+    expect(body.variables).toEqual({ jobId: "job-1" });
+  });
+
+  it("projects the competitive variant, coalescing the aliased estimatedRevenue", async () => {
+    // The competitive member returns its non-null `estimatedRevenue` under the
+    // `competitiveEstimatedRevenue` alias (the query aliases it to dodge the
+    // live BigDecimal!/BigDecimal union-merge conflict, #474).
+    reply({
+      body: jobWith({
+        __typename: "TalentJobRateInsightCompetitive",
+        competitiveEstimatedRevenue: "18000.0",
+        estimatedRevenueExplanation: "Your rate is competitive for this job.",
+        longTermDisclaimer: "Estimate assumes full-time allocation.",
+      }),
+    });
+    const result = await rateInsight(TOKEN, "job-1");
+    expect(result).toEqual({
+      kind: "competitive",
+      estimatedRevenue: "18000.0",
+      estimatedRevenueExplanation: "Your rate is competitive for this job.",
+      longTermDisclaimer: "Estimate assumes full-time allocation.",
+      recentApplicationRate: null,
+      recommendedRate: null,
+    });
+    // The query MUST request the alias, not the bare field, on the competitive member.
+    const body = mockedStock.mock.calls[0]?.[0].body as { query: string };
+    expect(body.query).toContain("competitiveEstimatedRevenue: estimatedRevenue");
+  });
+
+  it("preserves BigDecimal rates as strings (no numeric coercion, ADR-006)", async () => {
+    reply({
+      body: jobWith({
+        __typename: "TalentJobRateInsightUncompetitive",
+        recommendedRate: "110.00",
+        recentApplicationRate: "95.50",
+      }),
+    });
+    const result = await rateInsight(TOKEN, "job-1");
+    expect(result?.recommendedRate).toBe("110.00");
+    expect(result?.recentApplicationRate).toBe("95.50");
+  });
+
+  it("maps an unknown __typename discriminant to kind=null", async () => {
+    reply({ body: jobWith({ __typename: "TalentJobRateInsightFutureVariant", estimatedRevenue: "1.0" }) });
+    const result = await rateInsight(TOKEN, "job-1");
+    expect(result?.kind).toBeNull();
+    expect(result?.estimatedRevenue).toBe("1.0");
+  });
+
+  it("returns null when the platform elides rateInsight (e.g. already-engaged job)", async () => {
+    reply({ body: jobWith(null) });
+    const result = await rateInsight(TOKEN, "job-1");
+    expect(result).toBeNull();
+  });
+
+  it("translates `Record not found` to NOT_FOUND", async () => {
+    reply({ body: { data: null, errors: [{ message: "Record not found" }] } });
+    await expect(rateInsight(TOKEN, "missing")).rejects.toMatchObject({ name: "JobsError", code: "NOT_FOUND" });
+  });
+
+  it("translates viewer.job=null to NOT_FOUND", async () => {
+    reply({ body: { data: { viewer: { id: "v1", job: null } } } });
+    await expect(rateInsight(TOKEN, "missing")).rejects.toMatchObject({ name: "JobsError", code: "NOT_FOUND" });
+  });
+
+  it("translates viewer=null to NO_VIEWER", async () => {
+    reply({ body: { data: { viewer: null } } });
+    await expect(rateInsight(TOKEN, "job-1")).rejects.toMatchObject({ name: "JobsError", code: "NO_VIEWER" });
   });
 });
 

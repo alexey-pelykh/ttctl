@@ -17,6 +17,7 @@ import {
 } from "./interest.js";
 import { runJobsList, runJobsNotInterestedList, runJobsRecommended, runJobsSaved, runJobsViewed } from "./list.js";
 import { runJobsMatchQuality } from "./match-quality.js";
+import { runJobsRateInsight } from "./rate-insight.js";
 import { runJobsSearchList, runJobsSearchRemove, runJobsSearchSave } from "./search.js";
 import { runJobsShow, runJobsShowMany } from "./show.js";
 
@@ -46,6 +47,7 @@ function perPageOption(): Option {
  * | `list [filters]`                                      | Browse current job opportunities           |
  * | `show <id>`                                           | Job detail view                            |
  * | `match-quality <id>`                                  | Per-criterion match-quality breakdown      |
+ * | `rate-insight <id>`                                   | Per-job rate-intelligence panel            |
  * | `apply <id> --consent [...]`                          | Direct-apply to a job (DESTRUCTIVE — see ADR-008) |
  * | `save <id>`                                           | Mark a job as saved (bookmark)             |
  * | `unsave <id>`                                         | Clear interest flags (the wire's only unsave path; also clears not-interested) |
@@ -196,6 +198,19 @@ export function buildJobsCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runJobsMatchQuality(id, options.output);
+    });
+
+  cmd
+    .command("rate-insight")
+    .description("Show the platform's per-job rate-intelligence panel for a job")
+    .argument("<id>", "job id (from `jobs list`)", parseIdArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (id: string, options: { output: OutputFormat }) => {
+      await runJobsRateInsight(id, options.output);
     });
 
   cmd

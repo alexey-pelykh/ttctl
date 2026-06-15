@@ -1,0 +1,45 @@
+{
+  "version": "1",
+  "capturedAt": "2026-06-15T06:16:10.000Z",
+  "operationName": "GetTalentJobRateInsight",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "object",
+    "fields": {
+      "estimatedRevenue": {
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
+      },
+      "estimatedRevenueExplanation": {
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
+      },
+      "kind": {
+        "kind": "string"
+      },
+      "longTermDisclaimer": {
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
+      },
+      "recentApplicationRate": {
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
+      },
+      "recommendedRate": {
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
+      }
+    }
+  }
+}

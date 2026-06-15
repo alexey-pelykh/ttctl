@@ -166,6 +166,7 @@ const TOOL_INPUT_FIXTURES: Record<string, Record<string, unknown>> = {
   ttctl_jobs_match_quality: { id: "job_123" },
   ttctl_jobs_not_interested: { id: "job_123", reason: "schedule" },
   ttctl_jobs_not_interested_list: {},
+  ttctl_jobs_rate_insight: { id: "job_123" },
   ttctl_jobs_recommended: {},
   ttctl_jobs_save: { id: "job_123" },
   ttctl_jobs_saved: {},
@@ -359,8 +360,8 @@ describe("MCP tools — dryRun smoke test (#165)", () => {
     tools = listRegisteredTools(server);
   });
 
-  it("registers exactly 134 tools (sanity for the smoke loop)", () => {
-    expect(Object.keys(tools)).toHaveLength(134);
+  it("registers exactly 135 tools (sanity for the smoke loop)", () => {
+    expect(Object.keys(tools)).toHaveLength(135);
   });
 
   it("every registered tool has a fixture", () => {

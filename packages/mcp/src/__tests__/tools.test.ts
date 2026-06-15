@@ -64,7 +64,7 @@ describe("MCP tool registration (Wave 3)", () => {
     }).not.toThrow();
   });
 
-  it("registers exactly the cumulative tool set (134 tools)", () => {
+  it("registers exactly the cumulative tool set (135 tools)", () => {
     const server = new McpServer({ name: "ttctl-test", version: "0.0.0" });
     registerAllTools(server);
     const names = listRegisteredToolNames(server).sort();
@@ -116,6 +116,7 @@ describe("MCP tool registration (Wave 3)", () => {
       "ttctl_jobs_match_quality",
       "ttctl_jobs_not_interested",
       "ttctl_jobs_not_interested_list",
+      "ttctl_jobs_rate_insight",
       "ttctl_jobs_recommended",
       "ttctl_jobs_save",
       "ttctl_jobs_saved",
