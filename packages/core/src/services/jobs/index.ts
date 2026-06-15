@@ -517,6 +517,31 @@ export interface JobDetail extends JobListItem {
 }
 
 /**
+ * One row of a job's match-quality breakdown — the platform's per-criterion
+ * assessment (skills, rate, availability, …). `statusV2` is the per-criterion
+ * status; the rest is human-facing copy. All nullable — the op is `Unknown`-
+ * typed in the synthesized SDL (schema gap → T1), so non-null is unprovable.
+ */
+export interface JobMatchQualityMetric {
+  name: string | null;
+  slug: string | null;
+  statusV2: string | null;
+  description: string | null;
+  explanation: string | null;
+  isRequired: boolean | null;
+  forAvailabilityRequest: boolean | null;
+}
+
+/**
+ * A job's match-quality breakdown — returned by {@link matchQuality}.
+ * The wire exposes no aggregate score; the breakdown IS the per-criterion
+ * {@link JobMatchQualityMetric} list, each carrying its own `statusV2`.
+ */
+export interface JobMatchQuality {
+  metrics: JobMatchQualityMetric[];
+}
+
+/**
  * State payload returned by every mutation that toggles a job's
  * interest signals. Reflects the post-mutation server state.
  */
@@ -814,6 +839,36 @@ const JOBS_BY_IDS_QUERY = `query JobsByIDs($ids: [ID!]!) {
   }
 }`;
 
+// GetJobMatchQualityMetrics — `viewer.job(id:).matchQuality.metrics[]`,
+// the portal's per-criterion job-match breakdown. Hand-authored against the
+// portal capture; `Unknown`-typed in the synthesized Viewer SDL
+// (`GATEWAY_PORTAL_KNOWN_UNTRUSTED_OPS`) → T1. Optional `$requestedRate` /
+// `$requestedHourlyRate` (some criteria are rate-dependent) kept verbatim from
+// the capture but omitted by the caller — server defaults to the talent's rate.
+const GET_JOB_MATCH_QUALITY_QUERY = `query GetJobMatchQualityMetrics($jobId: ID!, $requestedRate: BigDecimal, $requestedHourlyRate: BigDecimal) {
+  viewer {
+    __typename
+    id
+    job(id: $jobId) {
+      __typename
+      id
+      matchQuality(requestedRate: $requestedRate, requestedHourlyRate: $requestedHourlyRate) {
+        __typename
+        metrics {
+          __typename
+          name
+          slug
+          statusV2
+          description
+          explanation
+          isRequired
+          forAvailabilityRequest
+        }
+      }
+    }
+  }
+}`;
+
 const MARK_JOB_SAVED_MUTATION = `mutation JobMarkSaved($jobID: ID!) {
   job(id: $jobID) {
     __typename
@@ -1075,6 +1130,32 @@ interface JobsByIdsResponse {
   viewer: {
     id: string;
     jobs: (JobDetailEntity | null)[] | null;
+  } | null;
+}
+
+// `GetJobMatchQualityMetrics` wire shape — INFERRED end-to-end (`matchQuality`
+// is `Unknown`-typed in the synthesized Viewer SDL → T1). Typed defensively
+// (every hop nullable, every metric field optional); the projection normalizes
+// to the public {@link JobMatchQuality}. Live E2E validates the shape.
+interface JobMatchQualityMetricWire {
+  name?: string | null;
+  slug?: string | null;
+  statusV2?: string | null;
+  description?: string | null;
+  explanation?: string | null;
+  isRequired?: boolean | null;
+  forAvailabilityRequest?: boolean | null;
+}
+
+interface JobMatchQualityResponse {
+  viewer: {
+    id: string;
+    job: {
+      id: string;
+      matchQuality: {
+        metrics: JobMatchQualityMetricWire[] | null;
+      } | null;
+    } | null;
   } | null;
 }
 
@@ -1504,6 +1585,53 @@ export async function showMany(token: string, ids: string[]): Promise<JobDetail[
     if (job !== undefined) out.push(job);
   }
   return out;
+}
+
+function projectMatchQualityMetric(metric: JobMatchQualityMetricWire): JobMatchQualityMetric {
+  return {
+    name: metric.name ?? null,
+    slug: metric.slug ?? null,
+    statusV2: metric.statusV2 ?? null,
+    description: metric.description ?? null,
+    explanation: metric.explanation ?? null,
+    isRequired: metric.isRequired ?? null,
+    forAvailabilityRequest: metric.forAvailabilityRequest ?? null,
+  };
+}
+
+/**
+ * Fetch a job's match-quality breakdown by id — the platform's
+ * per-criterion assessment of how well the talent matches the job (the
+ * portal's job-match panel). Returns a {@link JobMatchQuality} whose `metrics`
+ * is `[]` when the wire elides `matchQuality` (e.g. an already-engaged job, or
+ * one the platform surfaces no assessment for).
+ *
+ * Throws `JobsError("NOT_FOUND")` for an unknown / inaccessible id — both the
+ * top-level `Record not found` GraphQL error and a `viewer.job === null`
+ * response — mirroring {@link show}.
+ */
+export async function matchQuality(token: string, jobId: string): Promise<JobMatchQuality> {
+  let data: JobMatchQualityResponse;
+  try {
+    data = await callGateway<JobMatchQualityResponse>(token, "GetJobMatchQualityMetrics", GET_JOB_MATCH_QUALITY_QUERY, {
+      jobId,
+    });
+  } catch (err) {
+    if (err instanceof JobsError && err.code === "GRAPHQL_ERROR" && NOT_FOUND_MESSAGE_PATTERN.test(err.message)) {
+      throw new JobsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`, {
+        cause: err,
+      });
+    }
+    throw err;
+  }
+  if (data.viewer === null) {
+    throw new JobsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
+  }
+  if (data.viewer.job === null) {
+    throw new JobsError("NOT_FOUND", `No job found with id "${jobId}" (or you don't have access to it).`);
+  }
+  const metrics = (data.viewer.job.matchQuality?.metrics ?? []).map(projectMatchQualityMetric);
+  return { metrics };
 }
 
 /**

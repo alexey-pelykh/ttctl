@@ -98,11 +98,12 @@ function buildJobsPageInfo(page: jobs.JobListPage): JobsPageInfo {
  * `opportunities_*` aliasing (MCP tool names must be deterministic for
  * LLM clients).
  *
- * Tool surface (20 tools):
+ * Tool surface (21 tools):
  *   - `ttctl_jobs_list`
  *   - `ttctl_jobs_recommended`
  *   - `ttctl_jobs_show`
  *   - `ttctl_jobs_show_many`
+ *   - `ttctl_jobs_match_quality`
  *   - `ttctl_jobs_save`
  *   - `ttctl_jobs_unsave`
  *   - `ttctl_jobs_saved`
@@ -353,6 +354,49 @@ export function registerJobsTools(server: McpServer, ctx: ToolRegistrationContex
       try {
         const items = await jobs.showMany(auth.token, args.ids);
         return successResponse(items);
+      } catch (err) {
+        return mapJobsError(err);
+      }
+    },
+  );
+
+  // -------- match-quality ------------------------------------------------
+  server.registerTool(
+    "ttctl_jobs_match_quality",
+    {
+      title: "Show a job's match-quality breakdown",
+      description: [
+        "Fetch the platform's per-criterion match-quality assessment for a job —",
+        "Toptal's view of how well the signed-in talent matches the job (the portal's",
+        "job-match panel). Returns `{ metrics: [...] }`; each metric carries `name`,",
+        "`slug`, `statusV2` (the per-criterion status), `description`, `explanation`,",
+        "`isRequired`, and `forAvailabilityRequest`. The wire exposes no single",
+        "aggregate score — the breakdown IS the per-criterion list.",
+        "",
+        "Read-only — does not mutate any server state. Returns an empty `metrics`",
+        "array when the platform surfaces no assessment for the job (e.g. an",
+        "already-engaged job).",
+        "",
+        "Example user prompts:",
+        '  - "How well do I match Toptal job <id>?"',
+        '  - "Show the match-quality breakdown for job <id>."',
+      ].join("\n"),
+      inputSchema: {
+        id: z.string().describe("Job id (from `ttctl_jobs_list`)"),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("GetJobMatchQualityMetrics", "mobile-gateway", { jobId: args.id }, auth.token),
+        );
+      }
+      try {
+        const result = await jobs.matchQuality(auth.token, args.id);
+        return successResponse(result);
       } catch (err) {
         return mapJobsError(err);
       }
