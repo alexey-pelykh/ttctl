@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.17] - 2026-06-15
+
+### Added
+
+- **`timesheet update` — the missing timesheet CRUD verb (#458).** Wraps
+  the `UpdateTimesheet` mutation on both CLI (`ttctl timesheet update`) and
+  MCP (`ttctl_timesheet_update`), completing the timesheet
+  read/submit/update surface.
+- **`profile show --full` rich portal projection (#469).** A `--full` flag
+  renders the extended `GetViewer` portal projection (the web profile
+  editor's field set) beyond the default summary. (`--verbose` collides
+  with the root global flag, so the flag is `--full`.)
+- **`profile education` writable skills surface (#633).** `education add`
+  and `education update` accept catalog skills — CLI `--skill-id`
+  (repeatable) and the MCP `skills` array — mirroring the employment
+  skills surface.
+- **`me actions list` — performed-actions audit log (#389).** Reads the
+  viewer's server-side action history via `GetPerformedActions` (CLI + MCP).
+- **Jobs read surface expanded (wave-2).** Five new per-job / feed reads
+  across CLI + MCP:
+  - `jobs show-many` — `JobsByIDs` batch fetch (#471).
+  - `jobs recommended` — `GetRecommendedJobs` algorithmic feed (#472).
+  - `jobs match-quality` — `GetJobMatchQualityMetrics` per-job score (#473).
+  - `jobs rate-insight` — `GetTalentJobRateInsight` per-job rate intel (#474).
+  - `jobs dashboard` — `GetJobsForDashboard` + `GetJobsCountForDashboard`
+    projection (#479).
+- **`engagements payments list` — per-engagement payments (#388).** Reads
+  `viewer.job(id).activityItem.engagement.payments`
+  (`GetEngagementPayments`) with hybrid `--limit` + `--after <payment-id>`
+  pagination (ADR-007). Takes a job id, per the wire op.
+- **`payments show-many` — batch payment fetch (#456).** Wraps
+  `PaymentsByIDs` (CLI + MCP), the batch sibling to `payments show`.
+- **`payments methods list` surfaces available method types (#812).** The
+  list now returns `availableMethods`
+  (`viewer.viewerRole.availablePaymentMethods`) alongside the configured
+  methods, on both CLI and MCP.
+
+### Changed
+
+- **`@ttctl/core` transport and auth split into modules (#230).**
+  `transport.ts` became `transport/` (`stock` / `impersonated` / shared
+  infra) and `auth.ts` became `auth/`, closing ARCH-003. CI gates and docs
+  repointed at the new paths; no behavior change.
+
+### Fixed
+
+- **SMS-consent guidance corrected: `UPDATE_BASIC_INFO` is not
+  server-gated (#540).** Earlier guidance implied a server-side
+  SMS-consent precondition on basic-info updates; the gate is the web
+  form's client-side checkbox only, so ttctl's `basic set` is never
+  blocked by it. Corrected the JSDoc / CLI help / MCP tool descriptions
+  across core, CLI, and MCP.
+- **`education add` requires the full create field set upfront (#803).**
+  The Toptal API rejects a create that omits `fieldOfStudy`, `location`,
+  `yearFrom`, or `yearTo`; these are now validated upfront (CLI required
+  options, MCP schema, core guard) with a clear error instead of an opaque
+  server-side rejection.
+
 ## [v0.1.0-rc.16] - 2026-06-14
 
 ### Added
