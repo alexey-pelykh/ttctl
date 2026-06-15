@@ -40,6 +40,9 @@
   "Payments": {
     "items[].memorandums": "No credit-note/adjustment memorandums on this account's invoices."
   },
+  "PaymentsByIDs": {
+    "[].memorandums": "No credit-note/adjustment memorandums on this account's payments (batch sibling of Payments.items[].memorandums)."
+  },
   "PendingSurveys": {
     "[].questions[].answers": "Captured pending surveys carry free-text questions; multiple-choice answer-options are absent."
   },

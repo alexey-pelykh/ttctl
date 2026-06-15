@@ -54,10 +54,12 @@ function buildPayoutsPageInfo(result: payments.PayoutsListResult): PayoutsPageIn
 }
 
 /**
- * Register the `ttctl_payments_*` MCP tools (#149, #447, #448). 9
- * tools — `summary` at the top level plus 8 across 3 sub-namespaces:
+ * Register the `ttctl_payments_*` MCP tools (#149, #447, #448, #456). 10
+ * tools — `summary` and `show_many` at the top level plus 8 across 3
+ * sub-namespaces:
  *
  *   - `ttctl_payments_summary`        (#448, aggregate `GetTalentPaymentSummary`)
+ *   - `ttctl_payments_show_many`      (#456, batch `PaymentsByIDs`)
  *   - `ttctl_payments_payouts_list`
  *   - `ttctl_payments_payouts_show`
  *   - `ttctl_payments_methods_list`
@@ -186,6 +188,47 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
       try {
         const item = await payments.payouts.show(auth.token, args.id);
         return successResponse(item);
+      } catch (err) {
+        return mapPaymentsError(err);
+      }
+    },
+  );
+
+  // -------- show-many (top-level batch fetch) --------------------------
+  server.registerTool(
+    "ttctl_payments_show_many",
+    {
+      title: "Show several payments by id (batch)",
+      description: [
+        "Batch-fetch several payouts' full detail by `TalentPayment.id` in a single wire round-trip — the",
+        "bulk sibling of `ttctl_payments_payouts_show`. Each payout carries the same fields as that tool.",
+        "Returns the found payouts in INPUT order; ids that resolve to no payout are omitted (diff the",
+        "returned `id`s against the ids you passed). Accepts up to 20 ids.",
+        "",
+        "Example user prompts:",
+        '  - "Compare Toptal payouts pmt_abc123 and pmt_def456."',
+        '  - "Show me the details for these three payouts."',
+      ].join("\n"),
+      inputSchema: {
+        ids: z
+          .array(z.string())
+          .min(1)
+          .max(payments.MAX_SHOW_MANY_IDS)
+          .describe(
+            `Payout ids (TalentPayment.id from \`ttctl_payments_payouts_list\`). 1–${payments.MAX_SHOW_MANY_IDS.toString()} ids.`,
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(buildMcpDryRunPreview("PaymentsByIDs", "mobile-gateway", { ids: args.ids }, auth.token));
+      }
+      try {
+        const items = await payments.showMany(auth.token, args.ids);
+        return successResponse(items);
       } catch (err) {
         return mapPaymentsError(err);
       }

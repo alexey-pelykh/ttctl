@@ -17,6 +17,7 @@ import {
   runPaymentsRateQuestions,
   runPaymentsRateShow,
 } from "./rate.js";
+import { runPaymentsShowMany } from "./show-many.js";
 import { runPaymentsSummary } from "./summary.js";
 
 /**
@@ -87,6 +88,23 @@ export function buildPaymentsCommand(): Command {
     )
     .action(async (options: { output: OutputFormat }) => {
       await runPaymentsSummary(options.output);
+    });
+
+  // ----- show-many (top-level batch fetch) -----------------------------
+  // Batch sibling of `payouts show <id>` (the singular `Payment` fetch);
+  // top-level rather than under `payouts` so the leaf maps cleanly to the
+  // `ttctl_payments_show_many` MCP tool (#456).
+  cmd
+    .command("show-many")
+    .description("Show several payments by id in one batch fetch (≤20 ids; results in input order)")
+    .argument("<id...>", "payment ids (TalentPayment.id from `payments payouts list`)", parseIdsArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (ids: string[], options: { output: OutputFormat }) => {
+      await runPaymentsShowMany(ids, options.output);
     });
 
   // ----- payouts sub-group ---------------------------------------------
@@ -262,4 +280,11 @@ function parseIdArg(value: string): string {
     throw new InvalidArgumentError("id must not be empty");
   }
   return trimmed;
+}
+
+// Variadic `<id...>`: Commander invokes a custom parser once per value with
+// the accumulator threaded as `previous`, so it must accumulate (a single-value
+// parser would keep only the last id). Trims + rejects empties per element.
+function parseIdsArg(value: string, previous: string[] = []): string[] {
+  return [...previous, parseIdArg(value)];
 }
