@@ -225,10 +225,29 @@ describe("show", () => {
 });
 
 describe("add", () => {
-  it("requires --institution and --degree", async () => {
+  it("requires institution, degree, fieldOfStudy, location, yearFrom, yearTo (#803 CREATE non-null contract)", async () => {
     await expect(add(TOKEN, {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    await expect(add(TOKEN, { institution: "x" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    await expect(add(TOKEN, { degree: "x" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    // The pre-#803 minimal {institution, degree} is now rejected client-side.
+    await expect(add(TOKEN, { institution: "x", degree: "y" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    // Each remaining required field omitted in turn → still rejected, no wire call.
+    await expect(
+      add(TOKEN, { degree: "y", fieldOfStudy: "f", location: "l", yearFrom: 2018, yearTo: 2022 }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" }); // no institution
+    await expect(
+      add(TOKEN, { institution: "x", fieldOfStudy: "f", location: "l", yearFrom: 2018, yearTo: 2022 }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" }); // no degree
+    await expect(
+      add(TOKEN, { institution: "x", degree: "y", location: "l", yearFrom: 2018, yearTo: 2022 }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" }); // no fieldOfStudy
+    await expect(
+      add(TOKEN, { institution: "x", degree: "y", fieldOfStudy: "f", yearFrom: 2018, yearTo: 2022 }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" }); // no location
+    await expect(
+      add(TOKEN, { institution: "x", degree: "y", fieldOfStudy: "f", location: "l", yearTo: 2022 }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" }); // no yearFrom
+    await expect(
+      add(TOKEN, { institution: "x", degree: "y", fieldOfStudy: "f", location: "l", yearFrom: 2018 }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" }); // no yearTo
   });
 
   it("dispatches CREATE_EDUCATION with wire shape (institution → title, skills default []) (#612)", async () => {
@@ -246,13 +265,31 @@ describe("add", () => {
       },
     });
 
-    const created = await add(TOKEN, { institution: "Stanford", degree: "MSc" });
+    const created = await add(TOKEN, {
+      institution: "Stanford",
+      degree: "MSc",
+      fieldOfStudy: "CS",
+      location: "Palo Alto",
+      yearFrom: 2018,
+      yearTo: 2020,
+    });
 
     expect(created).toEqual(EDU_2_MAPPED);
     const createCall = mockedImpersonated.mock.calls[1]?.[0] as TransportRequest;
     expect(createCall.body.operationName).toBe("CREATE_EDUCATION");
     expect(createCall.body.variables).toEqual({
-      input: { profileId: "p1", education: { title: "Stanford", degree: "MSc", skills: [] } },
+      input: {
+        profileId: "p1",
+        education: {
+          title: "Stanford",
+          degree: "MSc",
+          fieldOfStudy: "CS",
+          location: "Palo Alto",
+          yearFrom: 2018,
+          yearTo: 2020,
+          skills: [],
+        },
+      },
     });
   });
 
@@ -274,6 +311,10 @@ describe("add", () => {
     await add(TOKEN, {
       institution: "Stanford",
       degree: "MSc",
+      fieldOfStudy: "CS",
+      location: "Palo Alto",
+      yearFrom: 2018,
+      yearTo: 2020,
       skills: [{ id: "V1-Skill-7", name: "Computer Engineering" }],
     });
 
@@ -284,6 +325,10 @@ describe("add", () => {
         education: {
           title: "Stanford",
           degree: "MSc",
+          fieldOfStudy: "CS",
+          location: "Palo Alto",
+          yearFrom: 2018,
+          yearTo: 2020,
           skills: [{ id: "V1-Skill-7", name: "Computer Engineering" }],
         },
       },
@@ -297,7 +342,9 @@ describe("add", () => {
       body: { data: { createEducation: { success: false, errors: [{ message: "bad", key: "institution" }] } } },
     });
 
-    await expect(add(TOKEN, { institution: "x", degree: "y" })).rejects.toMatchObject({
+    await expect(
+      add(TOKEN, { institution: "x", degree: "y", fieldOfStudy: "f", location: "l", yearFrom: 2018, yearTo: 2022 }),
+    ).rejects.toMatchObject({
       code: "USER_ERROR",
     });
   });

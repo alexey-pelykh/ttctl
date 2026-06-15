@@ -253,8 +253,23 @@ export async function show(token: string, id: string): Promise<Education> {
  * cert finding — the wire requires non-null on CREATE).
  */
 export async function add(token: string, fields: EducationFields): Promise<Education> {
-  if (!fields.institution || !fields.degree) {
-    throw new ProfileError("VALIDATION_ERROR", "education add requires --institution and --degree.");
+  // CreateEducationInput declares institution(→title) / degree / fieldOfStudy /
+  // location / yearFrom / yearTo non-null on the wire — a CREATE omitting any
+  // is rejected with "Expected value to not be null" (#803, live-confirmed).
+  // Gate client-side (the single source of truth for CLI + MCP) so the failure
+  // is an upfront VALIDATION_ERROR rather than a late, cryptic wire error.
+  const missing: string[] = [];
+  if (!fields.institution) missing.push("institution");
+  if (!fields.degree) missing.push("degree");
+  if (!fields.fieldOfStudy) missing.push("fieldOfStudy");
+  if (!fields.location) missing.push("location");
+  if (fields.yearFrom === undefined) missing.push("yearFrom");
+  if (fields.yearTo === undefined) missing.push("yearTo");
+  if (missing.length > 0) {
+    throw new ProfileError(
+      "VALIDATION_ERROR",
+      `education add requires non-empty ${missing.join(", ")} — the Toptal API rejects these as null on create.`,
+    );
   }
   const profileId = await extractProfileId(token);
   const before = await listByProfileId(token, profileId);
