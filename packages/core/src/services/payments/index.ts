@@ -1494,3 +1494,9 @@ export async function summary(token: string): Promise<PayoutsSummary> {
   }
   return data.viewer.payments?.summary ?? emptyPayoutsSummary();
 }
+
+// ---------------------------------------------------------------------
+// Batch fetch — `payments.showMany` (PaymentsByIDs), separate file (#456)
+// ---------------------------------------------------------------------
+
+export { showMany, MAX_SHOW_MANY_IDS } from "./by-ids.js";
