@@ -263,6 +263,7 @@ describe("methods.list", () => {
         data: {
           viewer: {
             id: "v1",
+            viewerRole: { availablePaymentMethods: ["PAYONEER", "WIRE"] },
             paymentOptions: [
               {
                 __typename: "PaymentOption",
@@ -279,10 +280,11 @@ describe("methods.list", () => {
         },
       },
     });
-    const list = await methods.list(TOKEN);
-    expect(list).toHaveLength(1);
-    expect(list[0]?.id).toBe("pm-1");
-    expect(list[0]?.preferredOption).toBe(true);
+    const result = await methods.list(TOKEN);
+    expect(result.methods).toHaveLength(1);
+    expect(result.methods[0]?.id).toBe("pm-1");
+    expect(result.methods[0]?.preferredOption).toBe(true);
+    expect(result.availableMethods).toEqual(["PAYONEER", "WIRE"]);
   });
 
   it("filters out null wire entries", async () => {
@@ -308,9 +310,11 @@ describe("methods.list", () => {
         },
       },
     });
-    const list = await methods.list(TOKEN);
-    expect(list).toHaveLength(1);
-    expect(list[0]?.id).toBe("pm-2");
+    const result = await methods.list(TOKEN);
+    expect(result.methods).toHaveLength(1);
+    expect(result.methods[0]?.id).toBe("pm-2");
+    // viewerRole absent in this fixture → availableMethods coalesces to [].
+    expect(result.availableMethods).toEqual([]);
   });
 });
 

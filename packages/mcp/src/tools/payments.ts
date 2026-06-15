@@ -282,7 +282,8 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
       description: [
         "List the talent's configured Toptal payment methods (Payoneer / wire /",
         "Toptal Payments / etc.). The preferred method is marked",
-        "`preferredOption: true`.",
+        "`preferredOption: true`. Returns `{ methods, availableMethods }` where",
+        "`availableMethods` is the enum list of method types the role may add.",
         "",
         "Read-only — adding / removing / changing preferred method is out of scope",
         "for v1 (the Toptal admin flow lives in the web portal).",
@@ -300,8 +301,8 @@ export function registerPaymentsTools(server: McpServer, ctx: ToolRegistrationCo
         return dryRunResponse(buildMcpDryRunPreview("PaymentOptions", "mobile-gateway", {}, auth.token));
       }
       try {
-        const items = await payments.methods.list(auth.token);
-        return successResponse(items);
+        const result = await payments.methods.list(auth.token);
+        return successResponse(result);
       } catch (err) {
         return mapPaymentsError(err);
       }

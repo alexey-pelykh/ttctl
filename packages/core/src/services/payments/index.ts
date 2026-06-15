@@ -301,6 +301,17 @@ export interface PaymentMethod {
   toptalPaymentsPending: boolean | null;
 }
 
+/**
+ * Result of {@link methods.list}: the talent's configured payment
+ * methods plus `availableMethods` — the method-type enum identifiers the
+ * role is permitted to add (gateway `viewerRole.availablePaymentMethods`,
+ * empty when the role is offered none).
+ */
+export interface PaymentMethodList {
+  methods: PaymentMethod[];
+  availableMethods: string[];
+}
+
 // ---------------------------------------------------------------------
 // Public types — rate namespace
 // ---------------------------------------------------------------------
@@ -554,15 +565,17 @@ const PAYMENT_QUERY = `query Payment($id: ID!) { node(id: $id) { __typename ... 
 
 // Hand-authored — no mobile-side `PaymentOptions` operation exists in
 // the research repo. Minimal projection covering what the v1 CLI / MCP
-// surface needs. Live-validated via E2E (`32-payments-methods.e2e.test.ts`).
+// surface needs. Live-validated via E2E (`31-payments-methods.e2e.test.ts`).
 //
 // Per CLAUDE.md § Schema/contract validation rule, this operation is
 // hand-authored → mandatory live E2E coverage. The `paymentOptions`
 // field on `Viewer` exists in the synthesized SDL via portal capture;
 // the empirical question is whether the mobile-gateway endpoint serves
 // it (the assumption is yes since portal + mobile share the same
-// backend per `08-portal-api.md`).
-const PAYMENT_OPTIONS_QUERY = `query PaymentOptions { viewer { __typename id paymentOptions { __typename id paymentMethod preferredOption fullName payoneerId comment toptalPaymentsPending } } }`;
+// backend per `08-portal-api.md`). `viewerRole.availablePaymentMethods`
+// is the enum list of method types the role may add — sourced from the
+// captured portal op `GetTalentPaymentOptions`.
+const PAYMENT_OPTIONS_QUERY = `query PaymentOptions { viewer { __typename id viewerRole { availablePaymentMethods } paymentOptions { __typename id paymentMethod preferredOption fullName payoneerId comment toptalPaymentsPending } } }`;
 
 // Verbatim from `../research/graphql/gateway/operations/portal/GetTalentRate.graphql`
 // (#447). Trusted catalog: `GetTalentRateQuery` lives in
@@ -718,6 +731,7 @@ interface WirePaymentOption {
 interface PaymentOptionsResponse {
   viewer: {
     id: string;
+    viewerRole: { availablePaymentMethods: string[] | null } | null;
     paymentOptions: (WirePaymentOption | null)[] | null;
   } | null;
 }
@@ -1203,13 +1217,16 @@ export const methods = {
    * `preferredOption: true` marks the active method; the CLI / MCP
    * surface annotates this in the rendered output.
    */
-  async list(token: string): Promise<PaymentMethod[]> {
+  async list(token: string): Promise<PaymentMethodList> {
     const data = await callGateway<PaymentOptionsResponse>(token, "PaymentOptions", PAYMENT_OPTIONS_QUERY, {});
     if (data.viewer === null) {
       throw new PaymentsError("NO_VIEWER", "Session is valid but no viewer is bound to it.");
     }
     const wires = (data.viewer.paymentOptions ?? []).filter((p): p is WirePaymentOption => p !== null);
-    return wires.map(projectPaymentMethod);
+    return {
+      methods: wires.map(projectPaymentMethod),
+      availableMethods: data.viewer.viewerRole?.availablePaymentMethods ?? [],
+    };
   },
 
   /**
@@ -1221,7 +1238,7 @@ export const methods = {
    * Throws `PaymentsError("NOT_FOUND")` when no entry matches.
    */
   async show(token: string, id: string): Promise<PaymentMethod> {
-    const list = await methods.list(token);
+    const { methods: list } = await methods.list(token);
     const found = list.find((m) => m.id === id);
     if (found === undefined) {
       throw new PaymentsError("NOT_FOUND", `No payment method found with id "${id}".`);
