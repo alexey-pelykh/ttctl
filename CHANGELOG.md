@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-16
+
+First stable release — `npm install -g ttctl` now resolves to a versioned,
+provenance-signed build.
+
+Read-heavy, personal-use CLI + MCP access to your own Toptal Talent profile:
+**auth**, **profile** (basic info, skills, employment, education,
+certifications, industries, portfolio, visas, résumé, external links,
+reviews, photo), **applications** (activity items, interview +
+availability-request detail, interest-request responses), **engagements**
+(list / breaks / stats), **jobs** (browse / recommended / match-quality /
+rate-insight / apply funnel / signals), **timesheets** (list / show /
+submit / update), **availability** (working + allocated hours),
+**contracts**, **payments** (payouts / methods / rate / summary), and
+**surveys**.
+
+The incremental development history is retained in the `v0.1.0-rc.1` …
+`v0.1.0-rc.18` sections below.
+
 ## [v0.1.0-rc.18] - 2026-06-16
 
 ### Security
