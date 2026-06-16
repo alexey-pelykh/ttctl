@@ -100,10 +100,6 @@ jobs:
           # MCP registry manifest: stamp both top-level .version (server) and .packages[0].version (npm package)
           jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
           mv server.json.tmp server.json
-          # Smithery MCP registry manifest: stamp the npx coordinate inside the
-          # YAML block scalar (#144). Portable -i.bak form for GNU/BSD sed parity.
-          sed -i.bak "s|'ttctl@[^']*'|'ttctl@$VERSION'|" smithery.yaml
-          rm smithery.yaml.bak
           # Derive the npm dist-tag from the semver prerelease component.
           # A '-' in $VERSION unambiguously signals a prerelease (build
           # metadata '+...' is already excluded by the regex above), so
@@ -145,11 +141,6 @@ jobs:
           fi
           if [ "$v_pkg" != "$EXPECTED" ]; then
             echo "::error file=server.json::.packages[0].version=$v_pkg, expected $EXPECTED"
-            FAIL=1
-          fi
-          if ! grep -qE "'ttctl@$EXPECTED'" smithery.yaml; then
-            echo "::error file=smithery.yaml::'ttctl@$EXPECTED' not present"
-            grep -nE "'ttctl@[^']*'" smithery.yaml || true
             FAIL=1
           fi
           if [ $FAIL -ne 0 ]; then exit 1; fi
