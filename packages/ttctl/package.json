@@ -44,7 +44,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist *.tsbuildinfo",
-    "prepack": "cp ../../LICENSE ../../THIRD-PARTY-NOTICES.md .",
+    "prepack": "cp ../../LICENSE ../../THIRD-PARTY-NOTICES.md ../../README.md .",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",

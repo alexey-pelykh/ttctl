@@ -9,6 +9,12 @@ build/
 /packages/*/LICENSE
 /packages/*/THIRD-PARTY-NOTICES.md
 
+# The `ttctl` umbrella ships the full root README so npmjs.com/ttctl renders the
+# complete project README rather than a per-package stub; its prepack copies the
+# root README in at pack/publish time. ttctl-only — @ttctl/core, /cli, /mcp keep
+# their own curated, tracked per-package READMEs.
+/packages/ttctl/README.md
+
 # Toptal session state (project-local; XDG path is also gitignored by being outside the repo)
 session.cookies
 .ttctl/
