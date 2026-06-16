@@ -4,7 +4,7 @@ This is the operational playbook for **withdrawing a bad release** of TTCtl. It
 covers the decision tree (deprecate vs unpublish vs roll-forward), the
 **manual `npm deprecate` procedure** on the npm side (there is no automated
 workflow — see [§ Authorization model](#authorization-model)), the surfaces that
-need a coordinated update (npm, MCP registry, Smithery, GitHub Release), and
+need a coordinated update (npm, MCP registry, GitHub Release), and
 the consumer-communication templates.
 
 > **Audience**: project maintainer(s) responding to a bad release under time
@@ -41,7 +41,6 @@ the constraint surface before deciding what action to take.
 | -------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | npm registry   | `ttctl`, `@ttctl/core`, `@ttctl/cli`, `@ttctl/mcp`  | `npm unpublish` ≤72h after publish AND zero dependents; `npm deprecate` anytime; version is burned. |
 | MCP registry   | `io.github.alexey-pelykh/ttctl` (via `server.json`) | Manifest can be re-submitted with a new version pointer; old version entries do not vanish.         |
-| Smithery       | `ttctl@<version>` coordinate in `smithery.yaml`     | Re-submission updates the published coordinate; old entries remain on the registry.                 |
 | GitHub Release | git tag (e.g. `v0.1.0`)                             | Tag is immutable in practice (do **not** force-push). Release notes / body can be edited.           |
 | Git history    | commit on `main`                                    | Immutable on the protected branch — fix forward only.                                               |
 
@@ -51,9 +50,9 @@ Two consequences fall out of this:
    the version string `0.1.0` can never be reused. The deprecation message
    stays attached to it forever; consumers who pinned `^0.1.0` keep
    resolving to it until they bump.
-2. **The MCP registry and Smithery surface separate, slower revocation
-   paths.** An `npm deprecate` does **not** retract the MCP-registry or
-   Smithery manifest pointers — those need a manual re-submission cycle.
+2. **The MCP registry surfaces a separate, slower revocation
+   path.** An `npm deprecate` does **not** retract the MCP-registry
+   manifest pointer — it needs a manual re-submission cycle.
    See [Cross-surface rollback](#cross-surface-rollback) for the order
    of operations.
 
@@ -79,7 +78,7 @@ Within 72h of publish AND zero dependents on registry?
               Run the manual `npm deprecate` procedure
                     │
                     ▼
-              Re-submit MCP-registry manifest + Smithery coordinate
+              Re-submit MCP-registry manifest
               pointing at the fixed version (after vX.Y.Z+1 publishes)
                     │
                     ▼
@@ -345,25 +344,6 @@ The deprecated version's entry on the MCP registry does **not** vanish; it
 remains as a historical record. Consumers using newer manifests will resolve
 to `<fixed-version>`.
 
-### 5. Smithery (~hours, manual)
-
-[`smithery.yaml`](../../smithery.yaml) declares the `npx ttctl@<version>`
-coordinate Smithery invokes for the MCP server. The release pipeline stamps
-the version at publish, but Smithery — like the MCP registry — caches the
-last-submitted manifest until the next submission.
-
-After the hotfix lands:
-
-1. Confirm `smithery.yaml` at the `v<fixed-version>` tag shows the new
-   coordinate:
-
-   ```sh
-   git show v<fixed-version>:smithery.yaml | grep "ttctl@"
-   # Expected: 'ttctl@<fixed-version>'
-   ```
-
-2. Re-submit per the Smithery submission path.
-
 ## Communication templates
 
 These go out **alongside** the technical rollback, not after. Consumers who
@@ -499,9 +479,6 @@ Skipping any item leaves a hole consumers will find at the worst moment.
 
 - [ ] **MCP-registry manifest** re-submitted (if applicable) and pointing
       at `<fixed-version>`.
-
-- [ ] **Smithery manifest** re-submitted (if applicable) and pointing at
-      `<fixed-version>`.
 
 - [ ] **Security advisory** published (if applicable) and is reachable at
       the URL named in the deprecation message and release banner.

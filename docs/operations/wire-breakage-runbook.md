@@ -207,8 +207,8 @@ In the event of a cease-and-desist or other legal notice from Toptal:
      enough. Outside the window, `npm deprecate` every version with a
      clear notice and request npm support intervention for true
      removal.
-   - The Smithery + MCP-registry submissions inherit from npm; once
-     npm is taken down, these naturally break.
+   - The MCP-registry submission inherits from npm; once
+     npm is taken down, it naturally breaks.
 6. **README banner**: replace the README with a single paragraph
    stating the project is no longer maintained. Do NOT include the
    legal correspondence or accusations — keep it factual.
