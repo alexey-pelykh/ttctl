@@ -259,13 +259,21 @@ jobs:
       #
       # The `npm view` skip guard exits 0 only when the version is already
       # on the registry. Any other failure mode (transient network, registry
-      # outage) returns non-zero, so the script falls through to
-      # `pnpm publish`, which itself returns a clear 403 if the version is in
-      # fact already published — preserving the same retry-safe state.
+      # outage) returns non-zero, so the script falls through to the publish,
+      # which itself returns a clear 403 if the version is in fact already
+      # published — preserving the same retry-safe state.
       #
-      # `--report-summary` from the previous command is dropped: nothing in
-      # this workflow consumes `pnpm-publish-summary.json`, and per-package
-      # calls would each overwrite it anyway.
+      # We publish the pre-packed dist/pack/*.tgz tarballs with `npm publish`,
+      # NOT `pnpm publish`: pnpm's native publish (v11+) ships README.md inside
+      # the tarball but does not populate the registry `readme` metadata field,
+      # so npmjs.com renders a blank README. `npm publish` populates it. Auth +
+      # provenance are unchanged — npm performs the same OIDC trusted-publishing
+      # token exchange (npm>=11.5.1, id-token: write, registry-url from the
+      # setup action) and `--provenance` attests the in-tarball package.json
+      # `repository`. Publishing the already-attested tarball also keeps the
+      # GitHub-side attestation strictly sound (same bytes attested ==
+      # published). The safe_name transform mirrors the SBOM step's
+      # `sed 's|^@||;s|/|-|g'`.
       - name: Publish packages (idempotent)
         env:
           EXPECTED: ${{ env.VERSION }}
@@ -276,8 +284,14 @@ jobs:
               echo "::notice::$pkg@$EXPECTED already published, skipping"
               continue
             fi
-            echo "::notice::publishing $pkg@$EXPECTED to dist-tag $DIST_TAG"
-            pnpm --filter "$pkg" publish --access public --no-git-checks --provenance --tag "$DIST_TAG"
+            safe_name=$(echo "$pkg" | sed 's|^@||;s|/|-|g')
+            tgz="dist/pack/${safe_name}-${EXPECTED}.tgz"
+            if [ ! -f "$tgz" ]; then
+              echo "::error::expected tarball $tgz not found (pack step drift?)"
+              exit 1
+            fi
+            echo "::notice::publishing $pkg@$EXPECTED ($tgz) to dist-tag $DIST_TAG"
+            npm publish "$tgz" --access public --provenance --tag "$DIST_TAG"
           done
 
       - name: Verify provenance attestations
