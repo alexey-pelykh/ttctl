@@ -60,9 +60,9 @@ export interface TravelVisa {
  * (the ID returned by the read-side `country.id`); `visaType` is a free
  * string the server validates against its catalog of known visa types.
  *
- * **[INFERRED]** Wrapper key `travelVisa` (Pattern 1/2 from
- * `research/notes/10-mutation-input-patterns.md`); falsifiable by live
- * capture if the server rejects the wrapper.
+ * **[VERIFIED live 2026-05-15, #317]** Wrapper key `travelVisa` confirmed
+ * — the server validates `travelVisa.countryId` / `travelVisa.visaType`
+ * (full-document semantics; see {@link update}).
  */
 export interface TravelVisaInput {
   countryId?: string;
