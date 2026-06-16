@@ -11,12 +11,16 @@ linkWorkspacePackages: true
 # Bump esbuild to the GHSA-gv7w-rqvm-qjhr patch (>=0.28.1) — dev-only via vitest, not in the shipped tarball;
 # a clean patch exists so we upgrade rather than ignore (the release-time `pnpm audit --audit-level=high`
 # gate fails on the HIGH otherwise).
+# Same gate, same rationale — both dev-only via vitest, clean patches exist:
+#   vite >=8.0.16 (GHSA-fx2h-pf6j-xcff), ws >=8.21.0 (GHSA-96hv-2xvq-fx4p).
 # Policy: `overrides` for REACHABLE advisories (above); `auditConfig.ignoreGhsas` (below) for
 # present-but-UNREACHABLE transitive ones — see ADR-011 (ttctl).
 overrides:
   fast-uri: "^3.1.2"
   shell-quote: "^1.8.4"
   esbuild: "^0.28.1"
+  vite: "^8.0.16"
+  ws: "^8.21.0"
 
 # Audit allowlist (#770) — all 9 are transitive through @modelcontextprotocol/sdk's HTTP/SSE transport
 # stack (hono, express, express-rate-limit, qs, ip-address) and require an active HTTP request handler.
@@ -42,8 +46,8 @@ catalog:
   # Pinned to ~6.0 (patch-only) until typescript-eslint relaxes peer ceiling (<6.1.0 as of 8.59.2)
   typescript: "~6.0.3"
   "@types/node": "^25"
-  vitest: "^4.1.8"
-  "@vitest/coverage-v8": "^4.1.8"
+  vitest: "^4.1.9"
+  "@vitest/coverage-v8": "^4.1.9"
   "@eslint/js": "^10.0.1"
   eslint: "^10.4.1"
   prettier: "^3.8.4"
