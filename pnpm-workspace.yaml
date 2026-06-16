@@ -58,7 +58,7 @@ catalog:
   "@graphql-codegen/cli": "^7.1.2"
   "@graphql-codegen/add": "^7.0.1"
   graphql-codegen-typescript-validation-schema: "^0.19.0"
-  graphql: "^16.14.2"
+  graphql: "^17.0.0"
   zod: "^4.4.3"
   commander: "^15.0.0"
   turbo: "^2.9.18"
