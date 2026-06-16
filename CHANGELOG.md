@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.0-rc.18] - 2026-06-16
+
+### Security
+
+- **Dev-toolchain dependency patches (#819).** Bumped dev-only transitive
+  dependencies `vite` (≥8.0.16, GHSA-fx2h-pf6j-xcff) and `ws` (≥8.21.0,
+  GHSA-96hv-2xvq-fx4p) past HIGH-severity advisories. Neither ships in the
+  published tarball; the bump clears the release-time
+  `pnpm audit --audit-level=high` gate.
+
+### Changed
+
+- **Portfolio and visas mutation wire shapes verified live (#90).** The
+  GraphQL input wrapper keys for the portfolio and visas mutations,
+  previously documented as `INFERRED`, are now confirmed against the live
+  Toptal API.
+
 ## [v0.1.0-rc.17] - 2026-06-15
 
 ### Added
