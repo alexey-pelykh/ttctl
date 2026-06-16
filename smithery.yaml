@@ -7,5 +7,5 @@ startCommand:
   commandFunction: |-
     () => ({
       command: 'npx',
-      args: ['-y', 'ttctl@1.0.0', 'mcp']
+      args: ['-y', 'ttctl@latest', 'mcp']
     })
