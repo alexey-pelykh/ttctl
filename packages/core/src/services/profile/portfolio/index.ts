@@ -87,16 +87,13 @@ export const PORTFOLIO_ITEM_KIND = {
 export type PortfolioItemKind = (typeof PORTFOLIO_ITEM_KIND)[keyof typeof PORTFOLIO_ITEM_KIND];
 
 /**
- * Portfolio item write-side input shape.
+ * Portfolio item write-side input shape (the `portfolioItem` payload inside
+ * `Create`/`UpdatePortfolioItemInput`).
  *
- * **[INFERRED — partially verified live]** Mirrors the read-side `Portfolio`
- * fragment field-by-field per Pattern 1/2 in
- * `research/notes/10-mutation-input-patterns.md`. The `UPDATE_BASIC_INFO`
- * precedent showed that wrapper-key inference can be falsified by live
- * capture (`profile` vs the predicted `basicInfo`). The 2026-05-15 batch
- * (issue #314) live-discovered that `kind`, `showViaToptal`, and `skills`
- * are non-null required on create — {@link add} applies safe defaults so
- * existing callers do not need to thread these fields.
+ * **[VERIFIED live 2026-05-16, #314]** Confirmed by live create/update
+ * round-trips (T1 snapshot `createPortfolioItem.snapshot.json`): `kind`,
+ * `showViaToptal`, and `skills` are non-null required on create —
+ * {@link add} applies safe defaults so callers need not thread them.
  */
 export interface PortfolioItemInput {
   title?: string;
@@ -982,9 +979,9 @@ export async function list(token: string): Promise<PortfolioItem[]> {
  * `talent-profile`. Returns the freshly-created list so the caller can
  * surface the new item's id without a second list round-trip.
  *
- * **[INFERRED]** Wrapper key `portfolioItem` per Pattern 2 — see
- * `research/notes/10-mutation-input-patterns.md`. Live-capture this
- * shape if the server rejects the wrapper.
+ * **[VERIFIED live 2026-05-16, #314]** Wrapper key `portfolioItem`
+ * confirmed — the server validates fields under
+ * `CreatePortfolioItemInput.portfolioItem`.
  */
 const CREATE_PORTFOLIO_ITEM_MUTATION = `mutation createPortfolioItem($input: CreatePortfolioItemInput!) {
   createPortfolioItem(input: $input) {
@@ -1197,7 +1194,8 @@ export async function add(token: string, input: PortfolioItemAddInput): Promise<
 /**
  * Full-document `updatePortfolioItem` mutation.
  *
- * **[INFERRED]** Wrapper key `portfolioItem` per Pattern 1.
+ * **[VERIFIED live 2026-05-16, #314]** Wrapper key `portfolioItem`
+ * confirmed (create/update wire empirically corrected).
  */
 const UPDATE_PORTFOLIO_ITEM_MUTATION = `mutation updatePortfolioItem($input: UpdatePortfolioItemInput!) {
   updatePortfolioItem(input: $input) {
