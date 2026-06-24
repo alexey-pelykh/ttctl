@@ -202,6 +202,28 @@ TTCtl parses `op://[ACCOUNT/]VAULT/ITEM` and runs `op item get ITEM --vault VAUL
 
 The optional `ACCOUNT` segment is required only when you have multiple `op` accounts configured (`op account list`); single-account setups can omit it. ACCOUNT may be the account UUID, the shorthand set via `op account add`, or the sign-in email — TTCtl forwards the value verbatim to `op` for validation.
 
+#### Form A2 — per-field 1Password references (signin populates `auth.token`)
+
+```yaml
+# username and password each resolve from their own field-level op:// ref
+auth:
+  credentials:
+    username: "op://Personal/ttctl/username"
+    password: "op://Personal/ttctl/password"
+
+# account prefix works on field refs too (parity with Form A)
+auth:
+  credentials:
+    username: "op://my-account/Personal/ttctl/username"
+    password: "op://my-account/Personal/ttctl/password"
+```
+
+When `credentials` is an **object of two `op://` field references**, TTCtl runs `op read --no-newline [--account ACCOUNT] op://VAULT/ITEM/FIELD` once per field. `op read` resolves the field by id or label, so the canonical `username` / `password` field ids work even on browser-autosaved LOGIN items. The optional leading `ACCOUNT` is split off and forwarded as `--account`, for parity with Form A.
+
+> A 4-segment field ref is always read as **account-prefixed** (`op://account/vault/item/field`). 1Password **sectioned** references (`op://vault/item/section/field`, also 4 segments) are therefore **not supported** — the section would be mis-taken as the account. Store the credential field at the item top level (LOGIN items do this by default).
+
+**Routing is by container shape, never by segment count** (`op://a/b/c` is account/vault/item as a bare string but vault/item/field as an object value). A bare-string `credentials` value is always single-item (Form A), item-level only. An object value is per-field (this form) when its values are `op://` refs, or literal (Form B) when they are an email/password pair.
+
 #### Form B — literal credentials (dev/testing only)
 
 ```yaml
@@ -213,7 +235,7 @@ auth:
 
 > Discouraged for daily use. Plaintext credentials in config files leak through backups, sync clients, and accidental commits. Form A is what you want.
 
-> **Per-field references (4+ segments, e.g. `op://Personal/ttctl/Section/username`) are NOT supported.** The schema rejects them. Use Form A (item-level reference) — TTCtl always reads both USERNAME and PASSWORD fields from a single LOGIN item.
+> **Item-level (Form A) vs per-field (Form A2).** Form A reads both USERNAME and PASSWORD from one LOGIN item; Form A2 points each credential at its own field. A bare-string reference with a `/field` suffix is rejected — per-field requires the object shape (one string cannot carry two references).
 
 #### Form C — token only (out-of-band bootstrap)
 

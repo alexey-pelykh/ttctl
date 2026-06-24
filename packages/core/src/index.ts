@@ -8,6 +8,8 @@ export {
   ConfigWriteSchema,
   discoverConfigPath,
   loadConfigFile,
+  OP_FIELD_REF_PATTERN_HINT,
+  OP_FIELD_REF_PATTERN_SOURCE,
   OP_REF_PATTERN_HINT,
   OP_REF_PATTERN_SOURCE,
   resolveConfig,
@@ -27,7 +29,7 @@ export { AuthTokenPersistError, clearAuthToken, persistAuthToken, writeNewConfig
 export { acquireConfigLock } from "./configLock.js";
 export type { ConfigLockHandle } from "./configLock.js";
 
-export { OnePasswordError, resolveOnePasswordReference } from "./onepassword.js";
+export { OnePasswordError, resolveOnePasswordField, resolveOnePasswordReference } from "./onepassword.js";
 
 export { getAuthStatus, resolveCredentials, signIn, signOut, SignInError } from "./auth/index.js";
 export type {

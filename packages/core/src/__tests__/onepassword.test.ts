@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
 
 import { execFileSync } from "node:child_process";
 
-import { OnePasswordError, resolveOnePasswordReference } from "../onepassword.js";
+import { OnePasswordError, resolveOnePasswordField, resolveOnePasswordReference } from "../onepassword.js";
 
 const mockedExec = vi.mocked(execFileSync);
 
@@ -233,5 +233,99 @@ describe("resolveOnePasswordReference", () => {
       const creds = resolveOnePasswordReference("op://Personal/ttctl");
       expect(creds).toEqual({ email: "u@example.com", password: "p" });
     });
+  });
+});
+
+describe("resolveOnePasswordField (per-field form)", () => {
+  beforeEach(() => {
+    mockedExec.mockReset();
+  });
+
+  it("resolves a 3-segment field ref via `op read --no-newline` (no --account)", () => {
+    mockedExec.mockReturnValueOnce("user@example.com");
+
+    const value = resolveOnePasswordField("op://Private/Toptal/username");
+
+    expect(value).toBe("user@example.com");
+    expect(mockedExec).toHaveBeenCalledTimes(1);
+    const [cmd, args] = mockedExec.mock.calls[0] ?? [];
+    expect(cmd).toBe("op");
+    expect(args).toEqual(["read", "--no-newline", "op://Private/Toptal/username"]);
+  });
+
+  it("forwards --account and strips it from the ref for a 4-segment field ref (parity)", () => {
+    mockedExec.mockReturnValueOnce("hunter2");
+
+    const value = resolveOnePasswordField("op://my-account/Private/Toptal/password");
+
+    expect(value).toBe("hunter2");
+    const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+    expect(args).toEqual(["read", "--no-newline", "--account", "my-account", "op://Private/Toptal/password"]);
+  });
+
+  // Pins the deliberate 4-segment interpretation: the leading segment is ALWAYS
+  // the account, for parity with the single-item path. A native 1Password
+  // SECTIONED field ref (op://vault/item/section/field — also 4-segment) is
+  // therefore mis-parsed: its vault becomes --account. This is the documented
+  // limitation (README § auth); the test makes the ambiguity visible so a future
+  // change cannot flip it silently.
+  it("reads a 4-segment ref as account-prefixed, NOT as a sectioned field ref", () => {
+    mockedExec.mockReturnValueOnce("v");
+
+    resolveOnePasswordField("op://Private/Toptal/Security/password");
+
+    const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+    // "Private" is taken as the account, NOT the vault of a sectioned ref.
+    expect(args).toEqual(["read", "--no-newline", "--account", "Private", "op://Toptal/Security/password"]);
+  });
+
+  it("forwards a UUID account verbatim", () => {
+    mockedExec.mockReturnValueOnce("u");
+
+    resolveOnePasswordField("op://FB4OMM7TV5GW7HGY2A2NCC7PP4/Private/Toptal/username");
+
+    const args = (mockedExec.mock.calls[0]?.[1] ?? []) as readonly string[];
+    expect(args).toContain("--account");
+    expect(args).toContain("FB4OMM7TV5GW7HGY2A2NCC7PP4");
+    expect(args).toContain("op://Private/Toptal/username");
+  });
+
+  it("rejects shapes outside op://[account/]vault/item/field without shelling out", () => {
+    expect(() => resolveOnePasswordField("not-a-ref")).toThrow(OnePasswordError);
+    expect(() => resolveOnePasswordField("op://vault/item")).toThrow(OnePasswordError); // 2-seg item-level
+    expect(() => resolveOnePasswordField("op://a/vault/item/field/extra")).toThrow(OnePasswordError); // 5-seg
+    expect(() => resolveOnePasswordField("op://vault//field")).toThrow(OnePasswordError); // empty segment
+    expect(mockedExec).not.toHaveBeenCalled();
+  });
+
+  it("translates ENOENT (op CLI not installed) into a friendly OnePasswordError", () => {
+    const enoent = new Error("spawn op ENOENT") as NodeJS.ErrnoException;
+    enoent.code = "ENOENT";
+    mockedExec.mockImplementationOnce(() => {
+      throw enoent;
+    });
+
+    const err = captureError(() => resolveOnePasswordField("op://Private/Toptal/username"));
+    expect(err).toBeInstanceOf(OnePasswordError);
+    expect(err.message).toMatch(/1Password CLI .* not found/);
+  });
+
+  it("wraps generic op read failures into OnePasswordError", () => {
+    const failure = new Error("isn't an item") as NodeJS.ErrnoException;
+    mockedExec.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    const err = captureError(() => resolveOnePasswordField("op://Private/Toptal/nope"));
+    expect(err).toBeInstanceOf(OnePasswordError);
+    expect(err.message).toMatch(/op read failed/);
+  });
+
+  it("throws when op read returns an empty value", () => {
+    mockedExec.mockReturnValueOnce("");
+
+    const err = captureError(() => resolveOnePasswordField("op://Private/Toptal/username"));
+    expect(err).toBeInstanceOf(OnePasswordError);
+    expect(err.message).toMatch(/empty value/);
   });
 });
