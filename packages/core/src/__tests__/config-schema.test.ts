@@ -33,9 +33,58 @@ describe("AuthCredentialsSchema", () => {
     expect(AuthCredentialsSchema.safeParse({ username: "ada@example.com", password: "hunter2" }).success).toBe(true);
   });
 
-  it("REJECTS per-field op:// references (4-segment op://account/vault/item/field)", () => {
+  it("REJECTS a bare-string field ref — per-field requires the object form, not a string", () => {
+    // A lone string cannot carry both a username AND a password ref, so the
+    // string member stays single-item-only (item-level grammar). Per-field
+    // is delivered via the OBJECT shape exercised below.
     const result = AuthCredentialsSchema.safeParse("op://my-account/Personal/ttctl/username");
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a per-field object of two op:// field refs (3-segment)", () => {
+    expect(
+      AuthCredentialsSchema.safeParse({
+        username: "op://Private/Toptal/username",
+        password: "op://Private/Toptal/password",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts a per-field object with 4-segment account-prefixed field refs (parity)", () => {
+    expect(
+      AuthCredentialsSchema.safeParse({
+        username: "op://my-account/Private/Toptal/username",
+        password: "op://my-account/Private/Toptal/password",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("REJECTS a per-field object whose values are item-level (missing the /field suffix)", () => {
+    expect(
+      AuthCredentialsSchema.safeParse({
+        username: "op://Private/Toptal",
+        password: "op://Private/Toptal",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("REJECTS a mixed object (one op:// field ref + one literal value)", () => {
+    expect(
+      AuthCredentialsSchema.safeParse({
+        username: "op://Private/Toptal/username",
+        password: "hunter2",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("REJECTS a per-field object with extra unknown fields (strict)", () => {
+    expect(
+      AuthCredentialsSchema.safeParse({
+        username: "op://Private/Toptal/username",
+        password: "op://Private/Toptal/password",
+        extra: "x",
+      }).success,
+    ).toBe(false);
   });
 
   it("REJECTS 1-segment op:// references (op://VAULT only)", () => {
@@ -82,6 +131,14 @@ describe("AuthCredentialsSchema", () => {
 describe("ConfigLoadSchema (strict — runtime load)", () => {
   it("Form A: accepts auth.credentials as 1Password reference (no token)", () => {
     expect(ConfigLoadSchema.safeParse({ auth: { credentials: "op://Personal/ttctl" } }).success).toBe(true);
+  });
+
+  it("Form A2: accepts auth.credentials as a per-field object of op:// field refs", () => {
+    expect(
+      ConfigLoadSchema.safeParse({
+        auth: { credentials: { username: "op://Private/Toptal/username", password: "op://Private/Toptal/password" } },
+      }).success,
+    ).toBe(true);
   });
 
   it("Form B: accepts auth.credentials as literal {username, password} (no token)", () => {
@@ -143,12 +200,13 @@ describe("ConfigLoadSchema (strict — runtime load)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("REJECTS per-field op:// reference inside auth.credentials (4-segment account/vault/item/field)", () => {
-    // `op://Personal/ttctl/username` is ambiguous syntactically — it could be
-    // account=Personal, vault=ttctl, item=username (a valid 3-segment ref) OR
-    // vault=Personal, item=ttctl, field=username (the unsupported per-field
-    // form). TTCtl interprets the 3-segment form as account/vault/item; the
-    // 4-segment form is unambiguously per-field and explicitly rejected.
+  it("REJECTS a field-level op:// reference passed as a bare STRING auth.credentials", () => {
+    // The per-field form is supported, but its refs live inside an OBJECT
+    // ({ username: op://.../field, password: op://.../field }) — never as a
+    // bare string. A STRING value at auth.credentials is ALWAYS the single-item
+    // form (op://[account/]vault/item, 2-3 segments). So a 4-segment string has
+    // no valid interpretation: too long for single-item, and per-field refs are
+    // not strings. It is rejected with the /field-suffix hint.
     const result = ConfigLoadSchema.safeParse({
       auth: { credentials: "op://my-account/Personal/ttctl/username" },
     });

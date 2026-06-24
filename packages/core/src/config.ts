@@ -9,13 +9,13 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 /**
- * Source pattern for a 1Password item reference, exported as a STRING (not
- * a `RegExp`) so non-schema consumers (the CLI's interactive `auth init`
- * flow's validation closure) can adopt the canonical pattern without
- * pulling the entire Zod schema into their bundle. Analogous to
+ * Source pattern for an ITEM-level 1Password reference, exported as a STRING
+ * (not a `RegExp`) so non-schema consumers (the CLI's interactive `auth init`
+ * flow's validation closure) can adopt the canonical pattern without pulling
+ * the entire Zod schema into their bundle. Analogous to
  * {@link ./lib/redact.ts#BEARER_PATTERN_SOURCE}.
  *
- * Forms accepted:
+ * Forms accepted (both resolve a single LOGIN item via `op item get`):
  *   - `op://VAULT/ITEM` (2-segment) — relies on `op` CLI default-account or
  *     `OP_ACCOUNT` env. Works for single-account setups.
  *   - `op://ACCOUNT/VAULT/ITEM` (3-segment) — selects a specific account
@@ -23,9 +23,13 @@ import { z } from "zod";
  *     forwarded verbatim to `op item get --account` (accepts UUID,
  *     shorthand, or sign-in email — `op` CLI validates).
  *
- * Per-field references (`op://VAULT/ITEM/FIELD` or 4+ segments) are
- * deliberately NOT supported — TTCtl always reads `username` and `password`
- * from a single LOGIN-category item. The pattern rejects 4+ segments.
+ * This is the SINGLE-ITEM grammar: a bare-string `credentials` value, item-
+ * level only — a 4-segment `/field` suffix is rejected here. The per-field
+ * form lives in the OBJECT `credentials` shape, with each value a
+ * {@link OP_FIELD_REF_PATTERN_SOURCE}; the union routes by container shape,
+ * since a lone string cannot carry the two refs a username+password pair
+ * needs. Note `op://a/b/c` overlaps both grammars — it is account/vault/item
+ * as a bare string, vault/item/field as an object value.
  */
 export const OP_REF_PATTERN_SOURCE = "^op://(?:[^/]+/)?[^/]+/[^/]+$" as const;
 
@@ -40,6 +44,44 @@ export const OP_REF_PATTERN_SOURCE = "^op://(?:[^/]+/)?[^/]+/[^/]+$" as const;
 export const OP_REF_PATTERN_HINT = "Expected op://[account/]vault/item — no /field suffix" as const;
 
 const OnePasswordReferenceSchema = z.string().regex(new RegExp(OP_REF_PATTERN_SOURCE), OP_REF_PATTERN_HINT);
+
+/**
+ * Source pattern for a FIELD-level 1Password reference — the per-field form.
+ * Each value of the OBJECT `credentials` shape is one of these and resolves
+ * to a single field via `op read --no-newline`.
+ *
+ *   - `op://VAULT/ITEM/FIELD` (3-segment) — `op` default account / `OP_ACCOUNT`.
+ *   - `op://ACCOUNT/VAULT/ITEM/FIELD` (4-segment) — pins an account; the
+ *     leading ACCOUNT is split out and forwarded to `op read --account` for
+ *     parity with the single-item path. (A 4-segment ref is always account-
+ *     prefixed, so 1Password SECTIONED refs `op://vault/item/section/field`
+ *     are not supported.)
+ *
+ * Exported (STRING, like {@link OP_REF_PATTERN_SOURCE}) as part of the public
+ * op:// grammar contract.
+ */
+export const OP_FIELD_REF_PATTERN_SOURCE = "^op://(?:[^/]+/)?[^/]+/[^/]+/[^/]+$" as const;
+
+/** User-facing hint paired with {@link OP_FIELD_REF_PATTERN_SOURCE}. */
+export const OP_FIELD_REF_PATTERN_HINT = "Expected op://[account/]vault/item/field" as const;
+
+const OnePasswordFieldReferenceSchema = z
+  .string()
+  .regex(new RegExp(OP_FIELD_REF_PATTERN_SOURCE), OP_FIELD_REF_PATTERN_HINT);
+
+/**
+ * Per-field credentials: username and password each resolve from their
+ * own field-level `op://` reference. Sibling to {@link LiteralCredentialsSchema}
+ * below — both are objects; the value grammar (op-ref vs email/string) is what
+ * discriminates them inside {@link AuthCredentialsSchema}. Strict: exactly
+ * `username` + `password`.
+ */
+const PerFieldCredentialsSchema = z
+  .object({
+    username: OnePasswordFieldReferenceSchema,
+    password: OnePasswordFieldReferenceSchema,
+  })
+  .strict();
 
 /**
  * Literal credentials in YAML — discouraged for daily use; the 1Password form
@@ -57,16 +99,38 @@ const LiteralCredentialsSchema = z
   .strict();
 
 /**
- * Polymorphic credentials value:
- *   - string → 1Password item reference (Form A)
- *   - object → literal { username, password } (Form B)
- *
- * The runtime `signIn()` flow collapses both into the internal `Credentials`
- * shape `{ email, password }` (the GraphQL mutation parameter name is
- * `email` — the YAML/op:// surface uses `username` to match 1Password's
- * USERNAME purpose).
+ * Object `credentials` dispatcher — validates BOTH the per-field op:// form and
+ * the literal form behind a SINGLE union member, so the top-level union stays
+ * `string | object`. A 3-way union with two object members makes zod collapse
+ * the failure to a naked "auth.credentials: Invalid input"; keeping one object
+ * member lets the delegated, field-named errors surface (the UX this config
+ * deliberately preserves). Discriminates by value grammar: if either value is
+ * an `op://` ref the pair is validated as per-field, else as literal — so a
+ * mixed pair fails with a field-named error on the offending value.
  */
-export const AuthCredentialsSchema = z.union([OnePasswordReferenceSchema, LiteralCredentialsSchema]);
+const CredentialsObjectSchema = z
+  .object({ username: z.string(), password: z.string() })
+  .strict()
+  .superRefine((obj, ctx) => {
+    const looksPerField = obj.username.startsWith("op://") || obj.password.startsWith("op://");
+    const result = (looksPerField ? PerFieldCredentialsSchema : LiteralCredentialsSchema).safeParse(obj);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        ctx.addIssue({ code: "custom", message: issue.message, path: issue.path });
+      }
+    }
+  });
+
+/**
+ * Polymorphic credentials value:
+ *   - string → 1Password ITEM reference, single-item form (Form A)
+ *   - object → per-field op:// refs OR literal { username, password } (Form B)
+ *
+ * `resolveCredentials` collapses all forms into the internal `Credentials`
+ * shape `{ email, password }` (the GraphQL mutation parameter is `email` — the
+ * YAML/op:// surface uses `username` to match 1Password's USERNAME purpose).
+ */
+export const AuthCredentialsSchema = z.union([OnePasswordReferenceSchema, CredentialsObjectSchema]);
 
 export type AuthCredentials = z.infer<typeof AuthCredentialsSchema>;
 export type LiteralAuthCredentials = z.infer<typeof LiteralCredentialsSchema>;

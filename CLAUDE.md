@@ -633,6 +633,13 @@ auth:
 auth:
   credentials: "op://my-account/Personal/ttctl"
 
+# Form A2 — per-field 1Password references (username + password each resolve
+# from their own field-level op:// ref; account prefix optional, as in Form A)
+auth:
+  credentials:
+    username: "op://Personal/ttctl/username"
+    password: "op://Personal/ttctl/password"
+
 # Form B — literal credentials (dev/testing only, discouraged)
 auth:
   credentials:
@@ -656,12 +663,31 @@ malformed credentials) used by `loadConfigFile`; and `ConfigWriteSchema`
 `clearAuthToken`. `superRefine` produces field-named error messages
 ("auth.credentials.password: …") instead of zod's naked "Invalid input".
 
-The 1Password reference accepts both `op://VAULT/ITEM` and
-`op://ACCOUNT/VAULT/ITEM` (3-segment); the latter forwards `--account ACCOUNT`
-to `op item get`. Per-field references (`op://Personal/ttctl/Section/username`,
-4+ segments) are NOT supported — TTCtl always reads `username` and `password`
-fields from a single LOGIN-category item by `purpose: USERNAME` /
-`purpose: PASSWORD`.
+TTCtl supports two 1Password credential forms, routed by the **container
+shape** of `auth.credentials` (not by segment count — `op://a/b/c` overlaps
+both grammars):
+
+- **Single-item (string)** — `op://[ACCOUNT/]VAULT/ITEM` (Form A). TTCtl runs
+  `op item get ITEM --vault VAULT [--account ACCOUNT] --format json` and reads
+  the `username` + `password` fields from one LOGIN-category item by
+  `purpose: USERNAME` / `purpose: PASSWORD` (canonical even on
+  browser-autosaved items whose labels are HTML input names).
+- **Per-field (object)** — `auth.credentials` is an object whose `username`
+  and `password` are each a field-level `op://[ACCOUNT/]VAULT/ITEM/FIELD`
+  reference (Form A2). TTCtl runs `op read --no-newline [--account
+ACCOUNT] op://VAULT/ITEM/FIELD` once per field; `op read` resolves the field
+  by id or label. The optional leading ACCOUNT is split out and forwarded as
+  `--account` for parity with the single-item path. A 4-segment ref is always
+  account-prefixed, so 1Password SECTIONED refs (`op://vault/item/section/field`)
+  are not supported (the section would be mis-taken as the account).
+
+Both forms accept the optional 1Password ACCOUNT segment. The string form
+stays item-level only — a bare-string `/field` suffix is rejected, because a
+lone string cannot carry the two references a username+password pair needs;
+per-field is the object form. (Form A2 reverses the prior "per-field NOT
+supported" decision; sibling to getreceipt's single-item support.) The literal
+Form B object (`{ username: <email>, password: <string> }`) is disambiguated
+from Form A2 by value grammar — op:// field refs vs an email/string pair.
 
 ### Bootstrap: `ttctl auth init`
 

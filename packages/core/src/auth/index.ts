@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Oleksii PELYKH
 
 import type { AuthCredentials } from "../config.js";
-import { resolveOnePasswordReference } from "../onepassword.js";
+import { resolveOnePasswordField, resolveOnePasswordReference } from "../onepassword.js";
 import { isAuthRevokedExtensionCode } from "./errors.js";
 import { impersonatedTransport, stockTransport } from "../transport/index.js";
 import type { TransportResponse } from "../transport/index.js";
@@ -105,19 +105,30 @@ interface ViewerResponse {
 /**
  * Collapse the polymorphic credentials value into resolved credentials.
  *
- * Form A (string) → `op://[account/]vault/item` → resolved via `op` CLI
- * Form B (object) → literal `{ username, password }` (username is an email
- *                   per Toptal's `EmailPasswordSignIn` mutation contract;
- *                   the YAML field is named `username` to match 1Password's
- *                   USERNAME purpose semantics)
+ * Single-item (string) → `op://[account/]vault/item` → resolved via `op item get`
+ * Per-field (object of op:// refs) → each of `username`/`password` resolved
+ *                   via `op read`
+ * Literal (object) → `{ username, password }` (username is an email per Toptal's
+ *                   `EmailPasswordSignIn` mutation contract; the YAML field is
+ *                   named `username` to match 1Password's USERNAME purpose)
  *
  * Returns the internal `Credentials` shape `{ email, password }` — that's
- * the GraphQL parameter name for the mutation. The username/email
- * synonymy is documented and load-bearing.
+ * the GraphQL parameter name for the mutation. The username/email synonymy
+ * is documented and load-bearing.
  */
 export function resolveCredentials(auth: AuthCredentials): Credentials {
   if (typeof auth === "string") {
     return resolveOnePasswordReference(auth);
+  }
+  // Object form: per-field op:// refs OR literal credentials. The schema makes
+  // both values field refs when either is; routing on EITHER prefix means a
+  // bypassed mixed object fails loudly in resolveOnePasswordField rather than
+  // smuggling a raw op:// ref through as a literal password.
+  if (auth.username.startsWith("op://") || auth.password.startsWith("op://")) {
+    return {
+      email: resolveOnePasswordField(auth.username),
+      password: resolveOnePasswordField(auth.password),
+    };
   }
   return { email: auth.username, password: auth.password };
 }

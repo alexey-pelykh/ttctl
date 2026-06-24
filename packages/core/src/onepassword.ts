@@ -33,7 +33,7 @@ interface ParsedReference {
 
 /**
  * Parse `op://[ACCOUNT/]VAULT/ITEM` into its components. Returns `null` for any
- * shape outside the 2- or 3-segment grammar (matches `OnePasswordItemRefSchema`
+ * shape outside the 2- or 3-segment grammar (matches `OnePasswordReferenceSchema`
  * in `config.ts`).
  *
  * Splitting on `/` after stripping the `op://` prefix avoids regex capture-group
@@ -50,6 +50,40 @@ function parseReference(ref: string): ParsedReference | null {
   if (segments.length === 3) {
     const [account, vault, item] = segments as [string, string, string];
     return { account, vault, item };
+  }
+  return null;
+}
+
+interface ParsedFieldReference {
+  /** Leading account segment (4-segment form); forwarded as `op read --account`. */
+  account?: string;
+  /** Canonical account-free `op://vault/item/field` ref passed to `op read`. */
+  secretRef: string;
+}
+
+/**
+ * Parse a FIELD-level reference `op://[ACCOUNT/]VAULT/ITEM/FIELD` (3- or
+ * 4-segment) for the per-field form. When the leading ACCOUNT is
+ * present it is split off so it can be forwarded as `--account`, and the ref
+ * normalized to the account-free `op://vault/item/field` shape `op read`
+ * expects. Returns `null` for any shape outside the 3-/4-segment grammar
+ * (matches `OnePasswordFieldReferenceSchema` in `config.ts`).
+ *
+ * A 4-segment ref is ALWAYS read as account-prefixed (`account/vault/item/field`)
+ * for parity with the single-item path. 1Password SECTIONED field refs
+ * (`op://vault/item/section/field` — also 4-segment) are therefore NOT supported:
+ * the leading VAULT would be mis-taken as the account. Documented in README § auth.
+ */
+function parseFieldReference(ref: string): ParsedFieldReference | null {
+  if (!ref.startsWith("op://")) return null;
+  const segments = ref.slice("op://".length).split("/");
+  if (segments.some((s) => s.length === 0)) return null;
+  if (segments.length === 3) {
+    return { secretRef: ref };
+  }
+  if (segments.length === 4) {
+    const [account, vault, item, field] = segments as [string, string, string, string];
+    return { account, secretRef: `op://${vault}/${item}/${field}` };
   }
   return null;
 }
@@ -130,4 +164,50 @@ export function resolveOnePasswordReference(ref: string): Credentials {
   }
 
   return { email: username, password };
+}
+
+/**
+ * Resolve a single field value from a FIELD-level reference — the per-field
+ * credential form, where `username` and `password` each carry their
+ * own `op://[account/]vault/item/field` reference.
+ *
+ * Mechanism: `op read --no-newline [--account ACCOUNT] op://vault/item/field`.
+ * `op read` resolves the field by id OR label, so canonical ids `username` /
+ * `password` work even on browser-autosaved LOGIN items whose labels are HTML
+ * input names (e.g. `user[email]`) — the same robustness `purpose`-matching
+ * gives the single-item path. The account, when present (4-segment form), is
+ * forwarded as `--account` rather than embedded in the ref, mirroring
+ * {@link resolveOnePasswordReference}.
+ */
+export function resolveOnePasswordField(ref: string): string {
+  const parsed = parseFieldReference(ref);
+  if (!parsed) {
+    throw new OnePasswordError(`Invalid field reference: ${ref}. Expected op://[account/]vault/item/field.`);
+  }
+  const { account, secretRef } = parsed;
+
+  const args = ["read", "--no-newline"];
+  if (account !== undefined) args.push("--account", account);
+  args.push(secretRef);
+
+  let value: string;
+  try {
+    value = execFileSync("op", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT") {
+      throw new OnePasswordError(
+        "1Password CLI (`op`) not found. Install: https://developer.1password.com/docs/cli/get-started/",
+      );
+    }
+    throw new OnePasswordError(`op read failed: ${e.message}`);
+  }
+
+  if (value.length === 0) {
+    throw new OnePasswordError(`op read returned an empty value for ${ref}.`);
+  }
+  return value;
 }
