@@ -63,7 +63,7 @@ catalog:
   commander: "^15.0.0"
   turbo: "^2.9.18"
   typedoc: "^0.28.18"
-  "@clack/prompts": "^1.5.1"
+  "@clack/prompts": "^1.6.0"
   "cli-table3": "^0.6.5"
   yaml: "^2.9.0"
   undici: "^8.5.0"
