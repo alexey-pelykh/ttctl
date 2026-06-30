@@ -55,8 +55,8 @@ catalogs:
       specifier: ^2.4.1
       version: 2.4.1
     prettier:
-      specifier: ^3.8.4
-      version: 3.8.4
+      specifier: ^3.9.4
+      version: 3.9.4
     proper-lockfile:
       specifier: ^4.1.2
       version: 4.1.2
@@ -125,7 +125,7 @@ importers:
         version: 0.19.0(graphql@17.0.0)(zod@4.4.3)
       prettier:
         specifier: 'catalog:'
-        version: 3.8.4
+        version: 3.9.4
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
@@ -2491,8 +2491,8 @@ packages:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
     engines: {node: '>= 0.8.0'}
 
-  prettier@3.8.4:
-    resolution: {integrity: sha512-N2MylSdi48+5N/6S5j+maeHbUSIzzZ5uOcX5Hm4QpV8Dkb1HFjfAKTKX6yNPJQD9AhcT3ifHNB66tWTTJDi11Q==}
+  prettier@3.9.4:
+    resolution: {integrity: sha512-yWG/o/4oJfo036EKAfK6ACAoDOfHeRHx4tuxkfBZiauURiaSmYwlpOr5LQqKtIkRD2z1PLteme2WoxEnj4tHTg==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -5263,7 +5263,7 @@ snapshots:
 
   prelude-ls@1.2.1: {}
 
-  prettier@3.8.4: {}
+  prettier@3.9.4: {}
 
   proper-lockfile@4.1.2:
     dependencies:
