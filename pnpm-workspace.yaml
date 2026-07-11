@@ -61,7 +61,7 @@ catalog:
   graphql: "^17.0.2"
   zod: "^4.4.3"
   commander: "^15.0.0"
-  turbo: "^2.9.18"
+  turbo: "^2.10.4"
   typedoc: "^0.28.18"
   "@clack/prompts": "^1.7.0"
   "cli-table3": "^0.6.5"
