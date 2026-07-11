@@ -489,7 +489,7 @@ consent, options)` (consent gate, then resolve kind and option ids from
     hatch). Reuses the `survey-submission` consent domain (no consent or ADR
     change). Core: `surveys.addFeedback(...)` sends the portal-shape `{ kind,
 surveyId, feedback }` over the mobile gateway. CLI: `ttctl surveys feedback
-    <surveyId> --text <text>`. MCP: `ttctl_surveys_feedback`
+<surveyId> --text <text>`. MCP: `ttctl_surveys_feedback`
     (`destructiveHint`, consent literal, `dryRun` preview). Wire-shape
     disposition: Schema/contract rule **triggered**; **Track 1** (committed
     `AddSurveyFeedback.snapshot.json`). Satisfied by a **capture-based
@@ -2311,7 +2311,7 @@ try again later.`) and the remedy (clear an existing highlight with
   `linkedin + github + website + twitter` and the live
   `talent-profile` server rejected the variable verbatim: `"Variable
 $input of type UpdateExternalProfilesInput! was provided invalid value
-  for profile.twitter (Field is not defined on ExternalProfilesInput)"`.
+for profile.twitter (Field is not defined on ExternalProfilesInput)"`.
   Crucially the failure is **transactional** — the three otherwise-valid
   URLs (`linkedin`, `github`, `website`) were also NOT persisted; a
   follow-up call with the same payload minus `twitter` succeeded on all
@@ -3640,7 +3640,7 @@ public, [id] } } }` — `profileId` resolved via
   contract (#393)**. Live `talent_profile/graphql` treats
   `UpdateBasicInfoInput!` as a full-replacement contract: any required
   non-null field omitted from the input fails with `"Expected value to not
-  be null"`, regardless of its current value on the server. Pre-fix,
+be null"`, regardless of its current value on the server. Pre-fix,
   `set({bio, headline})` sent only `{profileId, profile: {about?, quote?}}`
   and the live API rejected on **9 required fields** (`fullName`, `legalName`,
   `countryId`, `city`, `placeIdentity`, `citizenshipId`, `languageIds`,

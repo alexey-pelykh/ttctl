@@ -14,12 +14,7 @@ import { join } from "node:path";
  * (e.g. server-side rejection of an empty bio) is the caller's domain.
  */
 export type FreeTextErrorCode =
-  | "MODE_CONFLICT"
-  | "FILE_NOT_FOUND"
-  | "FILE_READ_ERROR"
-  | "STDIN_UNAVAILABLE"
-  | "STDIN_DOUBLE_CLAIM"
-  | "EDITOR_FAILED";
+  "MODE_CONFLICT" | "FILE_NOT_FOUND" | "FILE_READ_ERROR" | "STDIN_UNAVAILABLE" | "STDIN_DOUBLE_CLAIM" | "EDITOR_FAILED";
 
 /**
  * Typed error thrown by {@link resolveFreeText} for input mistakes the user

@@ -173,10 +173,7 @@ export interface PortfolioItemInput {
  * catches `__typename` drift across releases.
  */
 export type PortfolioItemDetails =
-  | PortfolioImageBlock
-  | PortfolioTextBlock
-  | PortfolioVideoBlock
-  | PortfolioGalleryBlock;
+  PortfolioImageBlock | PortfolioTextBlock | PortfolioVideoBlock | PortfolioGalleryBlock;
 
 export interface PortfolioImageBlock {
   kind: "image";

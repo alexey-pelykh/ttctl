@@ -24,12 +24,7 @@ import type { z, ZodType } from "zod";
  * field path lives in the error `message`.
  */
 export type JsonInputErrorCode =
-  | "FILE_NOT_FOUND"
-  | "FILE_READ_ERROR"
-  | "PARSE_ERROR"
-  | "SCHEMA_ERROR"
-  | "STDIN_UNAVAILABLE"
-  | "STDIN_DOUBLE_CLAIM";
+  "FILE_NOT_FOUND" | "FILE_READ_ERROR" | "PARSE_ERROR" | "SCHEMA_ERROR" | "STDIN_UNAVAILABLE" | "STDIN_DOUBLE_CLAIM";
 
 /**
  * Typed error thrown by {@link readJsonInput} for input mistakes the user

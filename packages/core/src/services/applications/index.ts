@@ -2276,9 +2276,7 @@ type MarketplaceFlexibleMetadataKindWire = {
 };
 
 type AvailabilityRequestKindMetadataWire =
-  | FixedMetadataKindWire
-  | FlexibleMetadataKindWire
-  | MarketplaceFlexibleMetadataKindWire;
+  FixedMetadataKindWire | FlexibleMetadataKindWire | MarketplaceFlexibleMetadataKindWire;
 
 interface GetAvailabilityRequestKindResponse {
   viewer: {
@@ -3369,13 +3367,7 @@ export async function similarAnswers(token: string, jobId: string): Promise<Simi
  * (`../research/graphql/gateway/schema.graphql`). Closed set.
  */
 export type InterviewStatus =
-  | "ACCEPTED"
-  | "MISSED"
-  | "PENDING"
-  | "REJECTED"
-  | "SCHEDULED"
-  | "TIME_ACCEPTED"
-  | "TIME_REJECTED";
+  "ACCEPTED" | "MISSED" | "PENDING" | "REJECTED" | "SCHEDULED" | "TIME_ACCEPTED" | "TIME_REJECTED";
 
 export const INTERVIEW_STATUSES: readonly InterviewStatus[] = [
   "ACCEPTED",
@@ -4117,12 +4109,7 @@ async function interviewsNotesShow(token: string, jobId: string): Promise<Interv
  * ask the interviewer).
  */
 export type InterviewGuideSectionIdentifier =
-  | "ASK_YOUR_CLIENT"
-  | "GAPS"
-  | "JOB_HIGHLIGHTS"
-  | "POTENTIAL_QUESTIONS"
-  | "PRO_TIPS"
-  | "STRENGTHS";
+  "ASK_YOUR_CLIENT" | "GAPS" | "JOB_HIGHLIGHTS" | "POTENTIAL_QUESTIONS" | "PRO_TIPS" | "STRENGTHS";
 
 export const INTERVIEW_GUIDE_SECTION_IDENTIFIERS: readonly InterviewGuideSectionIdentifier[] = [
   "ASK_YOUR_CLIENT",

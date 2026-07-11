@@ -234,13 +234,7 @@ const PROFILE_SHOW_QUERY = `query ProfileShow {
  * service raised the failure.
  */
 export type ProfileErrorCode =
-  | "NO_VIEWER"
-  | "GRAPHQL_ERROR"
-  | "NETWORK_ERROR"
-  | "USER_ERROR"
-  | "VALIDATION_ERROR"
-  | "WIRE_SHAPE_ERROR"
-  | "UNKNOWN";
+  "NO_VIEWER" | "GRAPHQL_ERROR" | "NETWORK_ERROR" | "USER_ERROR" | "VALIDATION_ERROR" | "WIRE_SHAPE_ERROR" | "UNKNOWN";
 
 export class ProfileError extends Error {
   override readonly name = "ProfileError";

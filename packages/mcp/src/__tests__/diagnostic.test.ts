@@ -75,14 +75,12 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
     });
 
     it("emitMcpDebug routes through the injected logger regardless of env", () => {
-      emitMcpDebug(
-        (): McpToolInvokeStartRecord => ({
-          ts: "2026-05-13T00:00:00.000Z",
-          event: "mcp_tool_invoke_start",
-          tool: "ttctl_smoke_tool",
-          args_redacted: { foo: "bar" },
-        }),
-      );
+      emitMcpDebug((): McpToolInvokeStartRecord => ({
+        ts: "2026-05-13T00:00:00.000Z",
+        event: "mcp_tool_invoke_start",
+        tool: "ttctl_smoke_tool",
+        args_redacted: { foo: "bar" },
+      }));
       expect(captured).toHaveLength(1);
       expect(captured[0]?.event).toBe("mcp_tool_invoke_start");
     });
@@ -556,14 +554,12 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
       try {
         // Use the freshly-imported module's emit so the env capture is
         // re-evaluated. The default logger is in effect.
-        mod.emitMcpDebug(
-          (): McpToolInvokeStartRecord => ({
-            ts: "2026-05-13T00:00:00.000Z",
-            event: "mcp_tool_invoke_start",
-            tool: "ttctl_env_off_tool",
-            args_redacted: {},
-          }),
-        );
+        mod.emitMcpDebug((): McpToolInvokeStartRecord => ({
+          ts: "2026-05-13T00:00:00.000Z",
+          event: "mcp_tool_invoke_start",
+          tool: "ttctl_env_off_tool",
+          args_redacted: {},
+        }));
       } finally {
         spy.mockRestore();
       }
@@ -582,14 +578,12 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
         return true;
       }) as never);
       try {
-        mod.emitMcpDebug(
-          (): McpToolInvokeStartRecord => ({
-            ts: "2026-05-13T00:00:00.000Z",
-            event: "mcp_tool_invoke_start",
-            tool: "ttctl_env_on_tool",
-            args_redacted: {},
-          }),
-        );
+        mod.emitMcpDebug((): McpToolInvokeStartRecord => ({
+          ts: "2026-05-13T00:00:00.000Z",
+          event: "mcp_tool_invoke_start",
+          tool: "ttctl_env_on_tool",
+          args_redacted: {},
+        }));
       } finally {
         spy.mockRestore();
       }
@@ -610,14 +604,12 @@ describe("@ttctl/mcp diagnostic (issue #224)", () => {
         return true;
       }) as never);
       try {
-        mod.emitMcpDebug(
-          (): McpToolInvokeStartRecord => ({
-            ts: "2026-05-13T00:00:00.000Z",
-            event: "mcp_tool_invoke_start",
-            tool: "ttctl_env_empty_tool",
-            args_redacted: {},
-          }),
-        );
+        mod.emitMcpDebug((): McpToolInvokeStartRecord => ({
+          ts: "2026-05-13T00:00:00.000Z",
+          event: "mcp_tool_invoke_start",
+          tool: "ttctl_env_empty_tool",
+          args_redacted: {},
+        }));
       } finally {
         spy.mockRestore();
       }
