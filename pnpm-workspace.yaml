@@ -49,7 +49,7 @@ catalog:
   vitest: "^4.1.9"
   "@vitest/coverage-v8": "^4.1.10"
   "@eslint/js": "^10.0.1"
-  eslint: "^10.4.1"
+  eslint: "^10.7.0"
   prettier: "^3.9.5"
   typescript-eslint: "^8.63.0"
   eslint-config-prettier: "^10.1.8"
@@ -77,6 +77,9 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAgeExclude:
+  # eslint 10.7.0 published 2026-07-10T21:22:48Z; manual dev-tool bump lands inside the 24h
+  # cooldown, so cold CI (frozen install) rejects it until the window clears. Dev-only, not shipped.
+  - eslint@10.7.0
   - "@node-wreq/darwin-arm64@2.4.1"
   - "@node-wreq/darwin-x64@2.4.1"
   - "@node-wreq/linux-arm64-gnu@2.4.1"
