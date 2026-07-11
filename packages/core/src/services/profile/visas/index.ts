@@ -11,13 +11,7 @@ import { extractProfileId, isAuthRevokedExtensionCode } from "../shared.js";
  * propagate as `TtctlError` subclasses unchanged.
  */
 export type VisasErrorCode =
-  | "NO_VIEWER"
-  | "GRAPHQL_ERROR"
-  | "NETWORK_ERROR"
-  | "USER_ERROR"
-  | "VALIDATION_ERROR"
-  | "WIRE_SHAPE_ERROR"
-  | "UNKNOWN";
+  "NO_VIEWER" | "GRAPHQL_ERROR" | "NETWORK_ERROR" | "USER_ERROR" | "VALIDATION_ERROR" | "WIRE_SHAPE_ERROR" | "UNKNOWN";
 
 export class VisasError extends Error {
   override readonly name = "VisasError";

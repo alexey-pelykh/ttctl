@@ -120,11 +120,7 @@ import { TtctlError } from "./auth/errors.js";
  * name (camelCase + `ConsentIssued`) is in {@link CONSENT_FIELD}.
  */
 export type ConsentDomain =
-  | "interview-action"
-  | "payment-routing"
-  | "profile-capability"
-  | "timesheet-billing"
-  | "survey-submission";
+  "interview-action" | "payment-routing" | "profile-capability" | "timesheet-billing" | "survey-submission";
 
 /**
  * Per-domain Zod field name (camelCase). Maps {@link ConsentDomain} to

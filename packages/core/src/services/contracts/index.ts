@@ -98,13 +98,7 @@ import { extractProfileId } from "../profile/shared.js";
  * same actionable message as `ttctl profile show`.
  */
 export type ContractsErrorCode =
-  | "NO_TALENT"
-  | "NO_VIEWER"
-  | "NOT_FOUND"
-  | "GRAPHQL_ERROR"
-  | "NETWORK_ERROR"
-  | "WIRE_SHAPE_ERROR"
-  | "UNKNOWN";
+  "NO_TALENT" | "NO_VIEWER" | "NOT_FOUND" | "GRAPHQL_ERROR" | "NETWORK_ERROR" | "WIRE_SHAPE_ERROR" | "UNKNOWN";
 
 export class ContractsError extends Error {
   override readonly name = "ContractsError";

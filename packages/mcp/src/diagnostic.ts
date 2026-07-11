@@ -182,10 +182,7 @@ export interface McpTransportErrorRecord extends McpDebugRecordBase {
  * client-supplied data flows in).
  */
 export type McpDebugRecord =
-  | McpToolInvokeStartRecord
-  | McpToolInvokeEndRecord
-  | McpAuthResolveRecord
-  | McpTransportErrorRecord;
+  McpToolInvokeStartRecord | McpToolInvokeEndRecord | McpAuthResolveRecord | McpTransportErrorRecord;
 
 /**
  * Logger signature: receives a fully-constructed record and emits it

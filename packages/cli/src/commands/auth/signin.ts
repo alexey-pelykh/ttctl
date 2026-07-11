@@ -35,11 +35,7 @@ export interface AuthSignInOptions {
  * prose messages.
  */
 export type SignInResultErrorCode =
-  | SignInErrorCode
-  | ConfigErrorCode
-  | "ONEPASSWORD_ERROR"
-  | "SAVE_FAILED"
-  | "NO_CREDENTIALS";
+  SignInErrorCode | ConfigErrorCode | "ONEPASSWORD_ERROR" | "SAVE_FAILED" | "NO_CREDENTIALS";
 
 /**
  * Terminal outcome of `ttctl auth signin`. `signed-in` carries the verified
@@ -48,8 +44,7 @@ export type SignInResultErrorCode =
  * containing any actionable hint.
  */
 export type SignInResult =
-  | { status: "signed-in"; email: string }
-  | { status: "error"; code: SignInResultErrorCode; message: string };
+  { status: "signed-in"; email: string } | { status: "error"; code: SignInResultErrorCode; message: string };
 
 /**
  * Map a `SignInResult` to a process exit code:

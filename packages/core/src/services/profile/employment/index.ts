@@ -1285,9 +1285,7 @@ export interface EmploymentSkillsPreviewOutcome {
  * dry-run callers branch on `"preview"`.
  */
 export type EmploymentSkillsOutcome =
-  | EmploymentSkillsUpdatedOutcome
-  | EmploymentSkillsNoopOutcome
-  | EmploymentSkillsPreviewOutcome;
+  EmploymentSkillsUpdatedOutcome | EmploymentSkillsNoopOutcome | EmploymentSkillsPreviewOutcome;
 
 function sanitizeSkillSetIds(operation: string, ids: readonly string[]): string[] {
   if (ids.length === 0) {
