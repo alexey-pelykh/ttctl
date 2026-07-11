@@ -152,7 +152,10 @@
                     "kind": "string"
                   },
                   "value": {
-                    "kind": "null"
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
                   }
                 }
               }
@@ -243,7 +246,10 @@
                         "kind": "string"
                       },
                       "skype": {
-                        "kind": "null"
+                        "kind": "nullable",
+                        "inner": {
+                          "kind": "string"
+                        }
                       }
                     }
                   },
@@ -254,10 +260,13 @@
                     "kind": "string"
                   },
                   "photo": {
-                    "kind": "object",
-                    "fields": {
-                      "small": {
-                        "kind": "string"
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "object",
+                      "fields": {
+                        "small": {
+                          "kind": "string"
+                        }
                       }
                     }
                   },
