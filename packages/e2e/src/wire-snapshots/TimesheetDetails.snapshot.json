@@ -185,6 +185,15 @@
       "startDate": {
         "kind": "string"
       },
+      "status": {
+        "kind": "nullable",
+        "inner": {
+          "kind": "string"
+        }
+      },
+      "timesheetApproved": {
+        "kind": "boolean"
+      },
       "timesheetComment": {
         "kind": "nullable",
         "inner": {
@@ -225,6 +234,9 @@
             }
           }
         }
+      },
+      "timesheetRequiresApproval": {
+        "kind": "boolean"
       },
       "timesheetSubmissionDeadlineDatetime": {
         "kind": "string"

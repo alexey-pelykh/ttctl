@@ -67,11 +67,13 @@ export function buildTimesheetCommand(): Command {
   // `ttctl timesheet pending list [--limit N]` (#374) — viewer-wide pending
   // pagination with the surface-honest `--limit` flag (the wire field is
   // `LimitPagination`, NO `offset`). See ADR-007 row 3 for the grammar.
-  const pending = cmd.command("pending").description("Viewer-wide pending timesheets (limit-only pagination)");
+  const pending = cmd
+    .command("pending")
+    .description("Viewer-wide timesheets pending submission — not client approval (limit-only pagination)");
 
   pending
     .command("list")
-    .description("List viewer-wide pending timesheet billing cycles (limit-only pagination)")
+    .description("List viewer-wide timesheet cycles pending submission — not client approval (limit-only pagination)")
     .addOption(
       new Option(
         "--limit <number>",

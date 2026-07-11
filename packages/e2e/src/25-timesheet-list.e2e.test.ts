@@ -101,6 +101,10 @@ describe("timesheet list (live mobile-gateway)", () => {
     expect("timesheetSubmissionOpenDatetime" in first).toBe(true);
     expect("timesheetSubmissionDeadlineDatetime" in first).toBe(true);
     expect("timesheetSubmitted" in first).toBe(true);
+    // Approval-state fields — carried on the shared timesheetListFields fragment.
+    expect("timesheetApproved" in first).toBe(true);
+    expect("timesheetRequiresApproval" in first).toBe(true);
+    expect("status" in first).toBe(true);
     expect("engagement" in first).toBe(true);
 
     // Pending-timesheets filter is server-side; every row MUST be
