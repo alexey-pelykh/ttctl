@@ -53,10 +53,11 @@ export async function runTimesheetList(opts: TimesheetListOptions): Promise<void
  * Render the timesheet list as a `cli-table3` table sized to the
  * current terminal width. Columns:
  *
- *   id | engagement | job | week | hours | submitted | overdue
+ *   id | engagement | job | week | hours | submitted | approved | overdue
  *
  * `week` shows the cycle's date range (`YYYY-MM-DD → YYYY-MM-DD`).
- * `submitted` is `✓` / `·` for visual scanning; `overdue` is
+ * `submitted` is `✓` / `·` for visual scanning; `approved` (#849) is
+ * `✓` approved / `·` pending / `—` approval not required; `overdue` is
  * `!` only when overdue (otherwise blank) so non-overdue rows are
  * visually quiet.
  */
@@ -65,7 +66,7 @@ export function formatTimesheetsTable(
   terminalWidth: number = process.stdout.columns || 100,
 ): string {
   if (items.length === 0) {
-    const empty = new Table({ head: ["id", "engagement", "job", "week", "hours", "submitted", "overdue"] });
+    const empty = new Table({ head: ["id", "engagement", "job", "week", "hours", "submitted", "approved", "overdue"] });
     return empty.toString();
   }
   const idWidth = 22;
@@ -73,17 +74,26 @@ export function formatTimesheetsTable(
   const weekWidth = 24;
   const hoursWidth = 7;
   const submittedWidth = 10;
+  const approvedWidth = 10;
   const overdueWidth = 8;
-  // 7 columns × 2 padding-char + 8 borders ≈ 22
+  // 8 columns × 2 padding-char + 9 borders ≈ 25
   const remaining = Math.max(
     20,
-    terminalWidth - idWidth - engagementWidth - weekWidth - hoursWidth - submittedWidth - overdueWidth - 22,
+    terminalWidth -
+      idWidth -
+      engagementWidth -
+      weekWidth -
+      hoursWidth -
+      submittedWidth -
+      approvedWidth -
+      overdueWidth -
+      25,
   );
   const jobWidth = Math.max(20, remaining);
   const table = new Table({
-    head: ["id", "engagement", "job", "week", "hours", "submitted", "overdue"],
-    colWidths: [idWidth, engagementWidth, jobWidth, weekWidth, hoursWidth, submittedWidth, overdueWidth],
-    colAligns: ["left", "left", "left", "left", "right", "center", "center"],
+    head: ["id", "engagement", "job", "week", "hours", "submitted", "approved", "overdue"],
+    colWidths: [idWidth, engagementWidth, jobWidth, weekWidth, hoursWidth, submittedWidth, approvedWidth, overdueWidth],
+    colAligns: ["left", "left", "left", "left", "right", "center", "center", "center"],
     wordWrap: true,
   });
   for (const it of items) {
@@ -96,6 +106,7 @@ export function formatTimesheetsTable(
       formatWeek(it.startDate, it.endDate),
       it.hours,
       it.timesheetSubmitted ? "✓" : "·",
+      it.timesheetApproved ? "✓" : it.timesheetRequiresApproval ? "·" : "—",
       it.timesheetOverdue ? "!" : "",
     ]);
   }

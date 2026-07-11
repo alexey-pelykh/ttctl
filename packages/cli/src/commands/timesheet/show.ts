@@ -44,6 +44,9 @@ export function formatTimesheetDetail(item: timesheet.TimesheetDetail): string {
   lines.push(`  Hours: ${item.hours}`);
   lines.push(`  Submitted: ${String(item.timesheetSubmitted)}`);
   lines.push(`  Overdue: ${String(item.timesheetOverdue)}`);
+  lines.push(`  Requires approval: ${String(item.timesheetRequiresApproval)}`);
+  lines.push(`  Approved: ${String(item.timesheetApproved)}`);
+  if (item.status !== null) lines.push(`  Status: ${item.status}`);
   if (item.timesheetSubmissionOpenDatetime !== null) {
     lines.push(`  Submission opens: ${item.timesheetSubmissionOpenDatetime}`);
   }

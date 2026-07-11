@@ -77,6 +77,10 @@ describe("timesheet show (live mobile-gateway)", () => {
     expect("endDate" in payload).toBe(true);
     expect("hours" in payload).toBe(true);
     expect("timesheetSubmitted" in payload).toBe(true);
+    // Approval-state fields — carried on the shared timesheetListFields fragment.
+    expect("timesheetApproved" in payload).toBe(true);
+    expect("timesheetRequiresApproval" in payload).toBe(true);
+    expect("status" in payload).toBe(true);
     // Detail-fragment extension
     expect("timesheetUrl" in payload).toBe(true);
     expect("timesheetComment" in payload).toBe(true);

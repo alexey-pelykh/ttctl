@@ -18,6 +18,9 @@ const LIST_FIXTURE: timesheet.TimesheetListItem = {
   timesheetSubmissionOpenDatetime: "2026-05-12T00:00:00+00:00",
   timesheetSubmissionDeadlineDatetime: "2026-05-31T23:59:59+00:00",
   timesheetSubmitted: false,
+  timesheetApproved: false,
+  timesheetRequiresApproval: true,
+  status: "open",
   engagement: {
     id: "eng-1",
     job: {
@@ -58,6 +61,7 @@ describe("formatTimesheetsTable", () => {
     expect(out).toContain("engagement");
     expect(out).toContain("week");
     expect(out).toContain("submitted");
+    expect(out).toContain("approved");
     expect(out).not.toContain("bc-1");
   });
 
@@ -88,6 +92,20 @@ describe("formatTimesheetsTable", () => {
     expect(out).toContain("!");
   });
 
+  it("renders the approved glyph (✓) in the approved column when timesheetApproved is true", () => {
+    // timesheetSubmitted:false → submitted column is `·`, so the only `✓`
+    // in the row must come from the approved column.
+    const approved = { ...LIST_FIXTURE, timesheetSubmitted: false, timesheetApproved: true };
+    const out = formatTimesheetsTable([approved], 200);
+    expect(out).toContain("✓");
+  });
+
+  it("renders the not-required approval glyph (—) when timesheetRequiresApproval is false", () => {
+    const notRequired = { ...LIST_FIXTURE, timesheetApproved: false, timesheetRequiresApproval: false };
+    const out = formatTimesheetsTable([notRequired], 200);
+    expect(out).toContain("—");
+  });
+
   it("handles null client and title gracefully", () => {
     const noClient: timesheet.TimesheetListItem = {
       ...LIST_FIXTURE,
@@ -111,6 +129,18 @@ describe("formatTimesheetDetail", () => {
     expect(out).toContain("Submitted: false");
     expect(out).toContain("Overdue: false");
     expect(out).toContain("URL: https://www.toptal.com/timesheet/bc-1");
+  });
+
+  it("renders approval state (requires-approval, approved, status)", () => {
+    const out = formatTimesheetDetail(DETAIL_FIXTURE);
+    expect(out).toContain("Requires approval: true");
+    expect(out).toContain("Approved: false");
+    expect(out).toContain("Status: open");
+  });
+
+  it("omits the Status line when status is null", () => {
+    const out = formatTimesheetDetail({ ...DETAIL_FIXTURE, status: null });
+    expect(out).not.toContain("Status:");
   });
 
   it("renders the engagement section", () => {

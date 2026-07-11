@@ -63,7 +63,19 @@
         "startDate": {
           "kind": "string"
         },
+        "status": {
+          "kind": "nullable",
+          "inner": {
+            "kind": "string"
+          }
+        },
+        "timesheetApproved": {
+          "kind": "boolean"
+        },
         "timesheetOverdue": {
+          "kind": "boolean"
+        },
+        "timesheetRequiresApproval": {
           "kind": "boolean"
         },
         "timesheetSubmissionDeadlineDatetime": {

@@ -52,6 +52,9 @@ const LIST_WIRE_ITEM = {
   timesheetSubmissionOpenDatetime: "2026-05-12T00:00:00+00:00",
   timesheetSubmissionDeadlineDatetime: "2026-05-31T23:59:59+00:00",
   timesheetSubmitted: false,
+  timesheetApproved: false,
+  timesheetRequiresApproval: true,
+  status: "open",
   engagement: {
     __typename: "TalentEngagement",
     id: "eng-1",
@@ -117,8 +120,13 @@ describe("timesheet.list", () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.id).toBe("bc-1");
     expect(items[0]?.timesheetSubmitted).toBe(false);
+    // Approval state is projected onto every list row.
+    expect(items[0]?.timesheetApproved).toBe(false);
+    expect(items[0]?.timesheetRequiresApproval).toBe(true);
+    expect(items[0]?.status).toBe("open");
     expect(items[0]?.engagement.job.client?.fullName).toBe("Acme Inc.");
     const call = mockedStock.mock.calls[0]?.[0];
+    expect(JSON.stringify(call?.body)).toContain("timesheetApproved timesheetRequiresApproval status");
     expect(call?.body).toMatchObject({
       operationName: "PendingTimesheets",
       // #374: viewer-wide variant now threads `$limit` through
