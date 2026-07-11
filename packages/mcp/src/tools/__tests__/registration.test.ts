@@ -196,6 +196,7 @@ const EXPECTED_TOOLS = [
   "ttctl_timesheet_list",
   "ttctl_timesheet_pending_list",
   "ttctl_timesheet_show",
+  "ttctl_timesheet_show_many",
   "ttctl_timesheet_submit",
   "ttctl_timesheet_update",
   // payments (#149, #447, #448) — 9 tools (summary + payouts list/show +
@@ -257,7 +258,7 @@ function buildStubCtx(): ToolRegistrationContext {
 }
 
 describe("registerAllTools", () => {
-  it("registers exactly the EXPECTED_TOOLS set (139 tools)", () => {
+  it("registers exactly the EXPECTED_TOOLS set (140 tools)", () => {
     const server = new McpServer({ name: "test", version: "0.0.0" });
     registerAllTools(server, buildStubCtx());
     const registered = getRegisteredToolNames(server);

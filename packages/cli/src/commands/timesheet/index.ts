@@ -10,6 +10,7 @@ import { parsePaginationFlag } from "../../lib/pagination.js";
 import { runTimesheetList } from "./list.js";
 import { runTimesheetPendingList } from "./pending/list.js";
 import { runTimesheetShow } from "./show.js";
+import { runTimesheetShowMany } from "./show-many.js";
 import { runTimesheetSubmit } from "./submit.js";
 import { runTimesheetUpdate } from "./update.js";
 
@@ -102,6 +103,19 @@ export function buildTimesheetCommand(): Command {
     )
     .action(async (id: string, options: { output: OutputFormat }) => {
       await runTimesheetShow(id, options.output);
+    });
+
+  cmd
+    .command("show-many")
+    .description("Show several timesheets by id in one batch fetch (≤20 ids; input order; list-row fields only)")
+    .argument("<id...>", "timesheet ids (BillingCycle.id from `timesheet list`)", parseIdsArg)
+    .addOption(
+      new Option("-o, --output <format>", "output format")
+        .choices(OUTPUT_FORMATS)
+        .default("pretty" satisfies OutputFormat),
+    )
+    .action(async (ids: string[], options: { output: OutputFormat }) => {
+      await runTimesheetShowMany(ids, options.output);
     });
 
   const submitCmd = cmd
@@ -208,6 +222,14 @@ function parseIdArg(value: string): string {
     throw new InvalidArgumentError("id must not be empty");
   }
   return trimmed;
+}
+
+// Variadic `<id...>` accumulator for `show-many`: Commander invokes a custom
+// parser once per value with the accumulated array as `previous`, so it must
+// append (a single-value parser would keep only the last id). Trims + rejects
+// empty ids per element via `parseIdArg`. Mirrors the jobs/payments groups.
+function parseIdsArg(value: string, previous: string[] = []): string[] {
+  return [...previous, parseIdArg(value)];
 }
 
 /**

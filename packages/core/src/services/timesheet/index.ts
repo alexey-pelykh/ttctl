@@ -1117,3 +1117,7 @@ function formatMutationErrors(prefix: string, errors: MutationResultErrors[] | n
   });
   return `${prefix}: ${parts.join("; ")}`;
 }
+
+// Batch fetch — `timesheet.showMany` (TimesheetsByIDs), separate file (#460)
+// per the `payments`/`jobs` by-ids sibling pattern.
+export { showMany, MAX_SHOW_MANY_IDS } from "./by-ids.js";

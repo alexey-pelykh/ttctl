@@ -34,6 +34,7 @@ const SUBMIT_AUTO_RESOLVE_PLACEHOLDER = "<auto-resolved-at-apply-time>";
  *   - `ttctl_timesheet_list`
  *   - `ttctl_timesheet_pending_list`   (#374)
  *   - `ttctl_timesheet_show`
+ *   - `ttctl_timesheet_show_many`      (#460)
  *   - `ttctl_timesheet_submit`
  *   - `ttctl_timesheet_update`         (#458)
  *
@@ -247,6 +248,53 @@ export function registerTimesheetTools(server: McpServer, ctx: ToolRegistrationC
       try {
         const item = await timesheet.show(auth.token, args.id);
         return successResponse(item);
+      } catch (err) {
+        return mapTimesheetError(err);
+      }
+    },
+  );
+
+  // -------- show-many -------------------------------------------------
+  server.registerTool(
+    "ttctl_timesheet_show_many",
+    {
+      title: "Show several timesheets by id (batch)",
+      description: [
+        "Batch-fetch several timesheets by id in a single wire round-trip — the bulk sibling of",
+        "`ttctl_timesheet_show`. Returns the found timesheets in INPUT order; ids that resolve to no",
+        "timesheet are omitted (diff the returned `id`s against the ids you passed). Accepts up to 20 ids.",
+        "",
+        "Returns LIST-ROW fields only (week range, hours, submission + approval state, engagement+job",
+        "reference) — the same shape as `ttctl_timesheet_list`. It does NOT return the per-day",
+        "`timesheetRecords`, comment, or rate-card that `ttctl_timesheet_show` returns. For a single",
+        "timesheet's full detail, call `ttctl_timesheet_show`.",
+        "",
+        "Example user prompts:",
+        '  - "Compare the status of timesheets bc_abc123 and bc_def456."',
+        '  - "Give me a quick summary of these three timesheets."',
+      ].join("\n"),
+      inputSchema: {
+        ids: z
+          .array(z.string())
+          .min(1)
+          .max(timesheet.MAX_SHOW_MANY_IDS)
+          .describe(
+            `Timesheet ids (BillingCycle.id from \`ttctl_timesheet_list\`). 1–${timesheet.MAX_SHOW_MANY_IDS.toString()} ids.`,
+          ),
+        dryRun: DRY_RUN_FIELD,
+      },
+    },
+    async (args) => {
+      const auth = await ctx.resolveToolAuth();
+      if (!auth.ok) return auth.response;
+      if (args.dryRun === true) {
+        return dryRunResponse(
+          buildMcpDryRunPreview("TimesheetsByIDs", "mobile-gateway", { ids: args.ids }, auth.token),
+        );
+      }
+      try {
+        const items = await timesheet.showMany(auth.token, args.ids);
+        return successResponse(items);
       } catch (err) {
         return mapTimesheetError(err);
       }
