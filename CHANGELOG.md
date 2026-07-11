@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-11
+
+### Added
+
+- **`timesheet show-many` — batch timesheet fetch (#460).** Wraps the
+  mobile-gateway `TimesheetsByIDs` op (`nodes(ids:)`, up to 20 ids) on both
+  CLI (`ttctl timesheet show-many <id...>`) and MCP
+  (`ttctl_timesheet_show_many`), returning found timesheets in input order
+  — the batch sibling to `timesheet show`, following the jobs/payments
+  `show-many` house convention.
+- **Per-field 1Password credential references (#831).** `auth.credentials`
+  may now be an object whose `username` and `password` each resolve from
+  their own field-level `op://` reference (via `op read`), alongside the
+  existing single-item and literal credential forms. Additive and
+  non-breaking; routing is by container shape, never segment count.
+- **Timesheet approval status exposed (#849).** `timesheetApproved`,
+  `timesheetRequiresApproval`, and `status` now surface on the timesheet
+  list and detail shapes (CLI `show` detail plus a `list` column, and the
+  MCP tool descriptions). Clarifies that a "pending" timesheet means
+  pending submission, not client approval.
+
+### Fixed
+
+- **`vacation.__typename` restored on the TimesheetDetails wire snapshot
+  (#851).** The mobile-gateway `recruiterData` fragment selects
+  `vacation.__typename` and `timesheet.show()` passes it through, but the
+  committed snapshot had hand-marked the inner object without it (a
+  degenerate capture — vacation was null), so a populated vacation would
+  drift. Live-validated, no drift.
+- **Degenerate job wire-snapshot fields hand-marked nullable (#855).**
+  `teamSize.value`, `contactFields.skype`, `contactFields.phoneNumber`,
+  and `pointsOfContact.current.photo` across the `JobShow`, `JobsByIDs`,
+  and `JobActivityItem` snapshots were captured as bare `null` or `object`
+  though the wire genuinely returns a `string` or object; they are now
+  typed to match the service shapes so they no longer drift on the next
+  populated-or-null cycle.
+
+### Dependencies
+
+- Bump `graphql` 16.14.2 → 17.0.2, `undici` 8.4.1 → 8.5.0, `turbo` 2.9.18
+  → 2.10.4, `tsx` 4.22.4 → 4.23.0, `@types/node` 25.9.3 → 26.1.1,
+  `typescript-eslint` 8.61.0 → 8.63.0, `@clack/prompts` 1.5.1 → 1.7.0,
+  `@graphql-codegen/cli` 7.1.2 → 7.1.3, `@graphql-codegen/add` 7.0.1 →
+  7.1.0, `@vitest/coverage-v8` 4.1.9 → 4.1.10, `prettier` 3.8.4 → 3.9.5,
+  and `eslint` 10.5.0 → 10.7.0 (all dev-only). CI actions:
+  `actions/checkout` 6.0.3 → 7.0.0, `actions/attest-build-provenance`
+  4.1.0 → 4.1.1.
+
+## [0.1.1] - 2026-06-16
+
+### Removed
+
+- **Smithery MCP registry support (#214).** Smithery stopped accepting
+  stdio listings, which is incompatible with ttctl's local-credential
+  model, so the `smithery.yaml` manifest was dropped.
+
+### Changed
+
+- The umbrella `ttctl` package now ships the full root README, so the npm
+  package page renders the complete project overview.
+
 ## [0.1.0] - 2026-06-16
 
 First stable release — `npm install -g ttctl` now resolves to a versioned,
