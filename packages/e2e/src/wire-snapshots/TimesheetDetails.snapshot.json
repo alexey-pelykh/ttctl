@@ -144,6 +144,9 @@
                         "inner": {
                           "kind": "object",
                           "fields": {
+                            "__typename": {
+                              "kind": "string"
+                            },
                             "endDate": {
                               "kind": "string"
                             },
