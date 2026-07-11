@@ -44,7 +44,10 @@
                 "kind": "string"
               },
               "value": {
-                "kind": "null"
+                "kind": "nullable",
+                "inner": {
+                  "kind": "string"
+                }
               }
             }
           },
@@ -165,7 +168,10 @@
                     }
                   },
                   "skype": {
-                    "kind": "null"
+                    "kind": "nullable",
+                    "inner": {
+                      "kind": "string"
+                    }
                   }
                 }
               },
