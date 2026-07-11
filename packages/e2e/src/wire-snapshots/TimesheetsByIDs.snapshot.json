@@ -1,0 +1,90 @@
+{
+  "version": "1",
+  "capturedAt": "2026-07-11T15:33:14.795Z",
+  "operationName": "TimesheetsByIDs",
+  "surface": "mobile-gateway",
+  "transport": "stock",
+  "shape": {
+    "kind": "array",
+    "item": {
+      "kind": "object",
+      "fields": {
+        "endDate": {
+          "kind": "string"
+        },
+        "engagement": {
+          "kind": "object",
+          "fields": {
+            "__typename": {
+              "kind": "string"
+            },
+            "id": {
+              "kind": "string"
+            },
+            "job": {
+              "kind": "object",
+              "fields": {
+                "__typename": {
+                  "kind": "string"
+                },
+                "client": {
+                  "kind": "object",
+                  "fields": {
+                    "__typename": {
+                      "kind": "string"
+                    },
+                    "fullName": {
+                      "kind": "string"
+                    },
+                    "id": {
+                      "kind": "string"
+                    }
+                  }
+                },
+                "id": {
+                  "kind": "string"
+                },
+                "title": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        },
+        "hours": {
+          "kind": "string"
+        },
+        "id": {
+          "kind": "string"
+        },
+        "minimumCommitment": {
+          "kind": "null"
+        },
+        "startDate": {
+          "kind": "string"
+        },
+        "status": {
+          "kind": "string"
+        },
+        "timesheetApproved": {
+          "kind": "boolean"
+        },
+        "timesheetOverdue": {
+          "kind": "boolean"
+        },
+        "timesheetRequiresApproval": {
+          "kind": "boolean"
+        },
+        "timesheetSubmissionDeadlineDatetime": {
+          "kind": "string"
+        },
+        "timesheetSubmissionOpenDatetime": {
+          "kind": "string"
+        },
+        "timesheetSubmitted": {
+          "kind": "boolean"
+        }
+      }
+    }
+  }
+}
