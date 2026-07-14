@@ -44,7 +44,7 @@ auditConfig:
 
 catalog:
   # Pinned to ~6.0 (patch-only) until typescript-eslint relaxes peer ceiling (<6.1.0 as of 8.59.2)
-  typescript: "~6.0.3"
+  typescript: "~7.0.2"
   "@types/node": "^26"
   vitest: "^4.1.9"
   "@vitest/coverage-v8": "^4.1.10"
