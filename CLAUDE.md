@@ -211,7 +211,9 @@ against `talent-profile` or `scheduler` surfaces and cross-references
 against `// e2e-covers: X` directives in `packages/e2e/src/**/*.e2e.test.ts`.
 
 - **Cover** an operation by adding `// e2e-covers: <OpName>` (or a
-  comma-separated list) to the e2e file that exercises it.
+  comma-separated list) to the e2e file that exercises it. The claim is
+  keyed on the operation NAME — see the granularity note below for what
+  that does and does not assert.
 - **Exempt** an operation by placing `// e2e-exempt: <reason>` within
   five lines preceding the `operationName:` literal.
 - **Default mode** is warn-only (exit 0). Set
@@ -227,6 +229,29 @@ surface boundary requires registering its name + surface there; the
 script header documents the protocol. For one-off dynamic-dispatch
 sites the helper can't model, place an `// e2e-exempt: <reason>`
 marker at the call site.
+
+**Granularity**: operation-level, not path-level. Both the
+`// e2e-covers:` claim and the gate's check are keyed on the operation
+NAME: directives are collected by regex without parsing any test body,
+and the verdict is a bare name lookup. Nothing in the mechanism inspects
+which code paths inside an operation the covering test reaches, so a test
+exercising one input shape is indistinguishable from one exercising all
+of them. A `COVERED` verdict therefore means "some e2e file names this
+operation" — NOT "every branch that builds and sends it is exercised",
+and not even that the file carrying the directive invokes it.
+
+Path-level assertion is deliberately not built into this gate (#881).
+Branch coverage is already instrumented by `pnpm test:coverage`
+(`vitest run --coverage`, v8 provider) — its natural home for the UNIT
+suite. Re-deriving it here from directive markers would be a large build
+for a gate whose value is its simplicity, and reinterpreting the existing
+directive would mean re-auditing what every claim already on record
+asserts. That leaves a residual gap, and it is NOT the one vitest closes:
+the root `vitest.config.ts` — the config `--coverage` runs against —
+excludes `**/*.e2e.test.ts`, and the e2e configs that do run them
+instrument nothing, so no branch report exists for a live `TTCTL_E2E=1`
+run. When an operation's wire behavior forks on input shape, assert each
+branch explicitly rather than relying on either instrument to notice.
 
 ### Write-read symmetry gate (Class B gap defense)
 
