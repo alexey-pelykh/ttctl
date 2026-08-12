@@ -167,11 +167,22 @@ test path + transcript):
 
 - Any file under `packages/core/src/auth/` (the cross-cutting auth
   module — e.g. `auth/index.ts`, `auth/errors.ts`)
-- Any file under `packages/core/src/services/profile/` (the
-  talent-profile domain services — e.g. `services/profile/basic/index.ts`
-  for `UPDATE_BASIC_INFO`)
+- Any file under `packages/core/src/services/` — every service domain,
+  not just `profile` (e.g. `services/profile/basic/index.ts` for
+  `UPDATE_BASIC_INFO`, `services/surveys/index.ts` for
+  `SurveyAnswerInput`)
 - Any new GraphQL operation — query, mutation, or subscription — whose
   document was hand-authored rather than generated from a live capture
+
+The services prefix is deliberately over-inclusive: it covers read-only
+domains that can never trigger the rule substantively, and also the
+non-domain paths under that prefix (`services/_shared/`,
+`services/translations.ts`, and every `services/**/__tests__/`
+directory), so a test-only PR under `packages/core/src/services/` needs
+the marker too. That is the intended trade — `NOT triggered` is one line
+and a legitimate answer, whereas enumerating only the mutation-bearing
+domains is precise today and stale the moment a service gains a
+mutation.
 
 If the rule was NOT triggered (e.g. the change touches only types,
 refactors without altering wire format, or otherwise does not introduce
@@ -187,10 +198,12 @@ rule above; both apply.
 The disposition statement is mechanically enforced by the
 **Schema/Contract Rule Disposition** CI check
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), job
-`schema-contract-disposition`, wired through the `CI` ci-gate aggregate
-that is the required status check on the `main-protection` ruleset). The
-gate inspects the PR diff against the file-path trigger set above
-(`packages/core/src/auth/**`, `packages/core/src/services/profile/**`)
+`schema-contract-disposition`). The `main-protection` ruleset requires
+two status checks — `CI` (the ci-gate aggregate, which this job also
+feeds) and `Schema/Contract Rule Disposition` directly — so this gate
+blocks a merge on its own as well as through the aggregate. The gate
+inspects the PR diff against the file-path trigger set above
+(`packages/core/src/auth/**`, `packages/core/src/services/**`)
 and, when any matches, requires the PR body to contain a
 `Schema/contract rule: triggered` or `Schema/contract rule: NOT triggered`
 marker. Hand-authored GraphQL detection is intentionally deferred (issue

@@ -20,8 +20,8 @@ CLAUDE.md.
 - [ ] **Inferred-schema E2E** — If this PR introduces or modifies a
       hand-rolled GraphQL operation, an inferred contract shape, or
       changes any `packages/core/src/auth/` or
-      `packages/core/src/services/profile/` file, the schema /
-      contract validation rule from
+      `packages/core/src/services/` file (every service domain, not
+      just `profile`), the schema / contract validation rule from
       [`CLAUDE.md`](../CLAUDE.md#schemacontract-validation-rule) was
       satisfied (E2E test path + transcript pasted below), OR the rule
       was NOT triggered (explicit statement here).

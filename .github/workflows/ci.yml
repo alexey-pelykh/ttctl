@@ -84,6 +84,14 @@ jobs:
     # files (auth/**, config*.ts, transport/**, services/profile/**, codegen
     # config, synthesized schema) without an attestation line in the PR body.
     # Rationale: #225 / prevents recurrence of #107-class doc drift.
+    #
+    # Tracked set stays deliberately NARROWER than the sibling
+    # schema-contract-disposition gate (#878) — do not widen for symmetry.
+    # `Schema/contract rule: NOT triggered` denies one checkable thing; `Doc
+    # surface: no doc surface affected` denies that nothing anywhere in the
+    # READMEs, docs/, CLAUDE.md, SECURITY.md or the ADRs went stale. Demanded
+    # on nearly every core PR, that degrades into a reflex paste and costs the
+    # signal on the config/auth/transport paths where it matters.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -176,7 +184,8 @@ jobs:
     #
     # Trigger set (per CLAUDE.md):
     #   - packages/core/src/auth/** (any file under)
-    #   - packages/core/src/services/profile/** (any file under)
+    #   - packages/core/src/services/** (any file under — every service
+    #     domain, not just profile)
     #   - Any new hand-authored GraphQL operation (deferred — file-path
     #     triggers cover the typical sites; hand-authored detection is an
     #     optional refinement per issue #302 AC)
@@ -188,6 +197,11 @@ jobs:
     # Rationale: #302. The rule was load-bearing on real wire-shape bugs in
     # #146 and #275. Author-side discipline alone is insufficient — this
     # gate mechanically enforces what CLAUDE.md prescribes.
+    #
+    # The services prefix is deliberately OVER-inclusive — see CLAUDE.md
+    # § Code-review checklist for the trade. Before #878 the gate reached
+    # `profile` alone, so #877 (a `SurveyAnswerInput` wire-shape fix,
+    # squarely inside the rule) sat outside every mechanical trigger.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -202,7 +216,7 @@ jobs:
             const exactPaths = [];
             const dirPrefixes = [
               'packages/core/src/auth/',
-              'packages/core/src/services/profile/',
+              'packages/core/src/services/',
             ];
 
             const isTrigger = (filename) =>

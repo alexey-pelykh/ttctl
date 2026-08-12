@@ -25,13 +25,13 @@ for the post-publish unpublish window and rollback procedure.
 Strongest first; weaker sources can give earlier warning but require
 more verification before action.
 
-| #   | Source                                              | Detection latency            | Signal strength                                                | Surface                                                        |
-| --- | --------------------------------------------------- | ---------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
-| 1   | **T1 wire-shape snapshot diff failure**             | Per-PR (`TTCTL_E2E=1` runs)  | High — structural mismatch verified against committed snapshot | All ops with snapshots                                         |
-| 2   | **T2 codegen-Zod `WIRE_SHAPE_ERROR` envelope rate** | Production (live user calls) | High — runtime parse failure on a typed schema                 | Ops in the trusted catalog (codegen produced)                  |
-| 3   | **User-submitted issue reports**                    | Variable (hours to weeks)    | Medium — narrative, often single-incident                      | Any surface                                                    |
-| 4   | **Maintainer's own `TTCTL_E2E=1` runs**             | Manual cadence               | High — full live API exercised against synthesized schema      | Whatever the E2E suite covers (see `packages/e2e/src/`)        |
-| 5   | **CI Schema/Contract Rule Disposition gate**        | Per-PR                       | Medium — gate-level, enforces declaration but not behavior     | Auth + profile-services + new GraphQL ops (file-path triggers) |
+| #   | Source                                              | Detection latency            | Signal strength                                                | Surface                                                           |
+| --- | --------------------------------------------------- | ---------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1   | **T1 wire-shape snapshot diff failure**             | Per-PR (`TTCTL_E2E=1` runs)  | High — structural mismatch verified against committed snapshot | All ops with snapshots                                            |
+| 2   | **T2 codegen-Zod `WIRE_SHAPE_ERROR` envelope rate** | Production (live user calls) | High — runtime parse failure on a typed schema                 | Ops in the trusted catalog (codegen produced)                     |
+| 3   | **User-submitted issue reports**                    | Variable (hours to weeks)    | Medium — narrative, often single-incident                      | Any surface                                                       |
+| 4   | **Maintainer's own `TTCTL_E2E=1` runs**             | Manual cadence               | High — full live API exercised against synthesized schema      | Whatever the E2E suite covers (see `packages/e2e/src/`)           |
+| 5   | **CI Schema/Contract Rule Disposition gate**        | Per-PR                       | Medium — gate-level, enforces declaration but not behavior     | Auth + all service domains + new GraphQL ops (file-path triggers) |
 
 T1 and T2 are the two ongoing wire-validation tracks (per
 [ADR-006](../../hq/engineering/adr/ADR-006-hybrid-wire-validation.md) /
