@@ -297,6 +297,26 @@ export function formatRateChangeRequestEntity(r: payments.RateChangeRequest): st
   return lines.map((l) => l.replace(/^ {2}/, "")).join("\n");
 }
 
+/**
+ * Renders one question's `options` cell, keyed on the declared `kind`.
+ * Option-emptiness is not the discriminator — a free-text question on
+ * this platform can arrive carrying options.
+ */
+function formatQuestionOptions(q: payments.RateQuestion): string {
+  const optionList = q.options.map((o) => `${o.label}${o.commentRequired ? " (comment required)" : ""}`).join(" / ");
+  const hasOptions = q.options.length > 0;
+  switch (q.kind) {
+    case "TEXT":
+      return hasOptions ? "(free text — server also returned options)" : "(free text)";
+    case "RADIO":
+      return hasOptions ? optionList : "(no options returned by the server)";
+    default:
+      return hasOptions
+        ? `${optionList} (unrecognized kind)`
+        : "(unrecognized kind — no options returned by the server)";
+  }
+}
+
 export function formatQuestionsBlock(items: payments.RateQuestion[]): string {
   if (items.length === 0) {
     return "(no questions returned by the server)";
@@ -307,11 +327,7 @@ export function formatQuestionsBlock(items: payments.RateQuestion[]): string {
     wordWrap: true,
   });
   for (const q of items) {
-    const opts =
-      q.options.length === 0
-        ? "(free text)"
-        : q.options.map((o) => `${o.label}${o.commentRequired ? " (comment required)" : ""}`).join(" / ");
-    table.push([q.id, q.kind, q.label, opts]);
+    table.push([q.id, q.kind, q.label, formatQuestionOptions(q)]);
   }
   return table.toString();
 }
