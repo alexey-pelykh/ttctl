@@ -47,7 +47,7 @@ export function buildSurveysCommand(): Command {
     .description("Submit answers to a pending survey (IRREVERSIBLE — requires --consent-survey-submission)")
     .option(
       "-a, --answer <questionId=value>",
-      "an answer as `<questionId>=<value>` (repeatable). Multiple-choice: the option value from `surveys list`. Checkbox (inputType CHECKBOX): `true` or `false`. Free-text: the text. All mandatory questions must be answered.",
+      "an answer as `<questionId>=<value>` (repeatable). Keyed off the question's `inputType` from `surveys list`, not its `answers` length. Multiple-choice (RADIO_BUTTONS/RATING/SLIDER): the option value. Checkbox (CHECKBOX): `true` or `false`. Free-text (OPEN_TEXT): the text. All mandatory questions must be answered; unanswered optional ones are forfeited, since submitting closes the survey.",
       collectAnswer,
       [],
     )

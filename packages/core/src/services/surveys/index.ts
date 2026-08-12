@@ -41,6 +41,7 @@
 
 import type { z } from "zod";
 
+import type { SurveyInputTypeEnum } from "../../__generated__/gateway.js";
 import { ensureDestructiveConsent } from "../../consent.js";
 import { callGatewayShared } from "../_shared/transport.js";
 
@@ -95,10 +96,14 @@ export interface SurveyAnswerOption {
 }
 
 /**
- * A single survey question. `inputType` describes how the answer is
- * collected (e.g. a rating scale, free text); `answers` enumerates the
- * selectable options (empty for free-text and checkbox questions). Downstream
- * `surveys submit` / `surveys feedback` consume `id` + `inputType` +
+ * A single survey question. `inputType` is a `SurveyInputTypeEnum` value
+ * describing how the answer is collected (a rating scale, free text, …);
+ * `answers` enumerates the selectable options.
+ *
+ * `answers` emptiness does NOT classify the question: an `OPEN_TEXT` question
+ * on an `ENGAGEMENT_ENDED` survey arrives carrying one sentinel option, while
+ * the same type on `MID_ENGAGEMENT` arrives with none (#877). `inputType` is
+ * the authority. Downstream `surveys submit` consumes `id` + `inputType` +
  * `answers[].value` to build a valid response.
  */
 export interface SurveyQuestion {
@@ -300,10 +305,12 @@ export interface SurveyAnswerInput {
 }
 
 /**
- * A caller-supplied answer before resolution. For a multiple-choice
- * question the `value` is matched against the question's answer options to
- * recover the option id; a free-text value is sent verbatim and a checkbox
- * takes `"true"`/`"false"`. {@link buildSurveyAnswers} performs the resolution.
+ * A caller-supplied answer before resolution. For a multiple-choice question
+ * (`RADIO_BUTTONS` / `RATING` / `SLIDER`) the `value` is matched against the
+ * question's answer options to recover the option id; a free-text
+ * (`OPEN_TEXT`) value is sent verbatim and a `CHECKBOX` takes
+ * `"true"`/`"false"`. The question's `inputType` — not its `answers` length —
+ * selects the treatment. {@link buildSurveyAnswers} performs the resolution.
  */
 export interface RawSurveyAnswer {
   questionId: string;
@@ -401,22 +408,77 @@ interface SubmitSurveyResponse {
 // ---------------------------------------------------------------------
 
 /**
- * `SurveyQuestion.inputType` for a boolean checkbox question — carries no
- * answer options yet requires a stringified-boolean value (e.g. the mandatory
- * "This interview didn't occur." question on an `INTERVIEW_ENDED` survey).
+ * How a question's answer value is produced:
+ *
+ * - `option` — the value must be one of `answers[].value`.
+ * - `boolean` — a stringified `"true"`/`"false"` (live-verified, #754).
+ * - `free-text` — arbitrary prose.
+ * - `unverified` — a declared type whose answer shape ttctl has not observed.
+ *   Routes exactly like `unmodelled` today: having no evidence about a type is
+ *   not evidence against it. The distinct name marks the #880 slot, so nobody
+ *   promotes it to `option` on the strength of one fixture.
+ * - `unmodelled` — an `inputType` the schema does not declare, or none at all.
  */
-const CHECKBOX_INPUT_TYPE = "CHECKBOX";
+type SurveyAnswerShape = "boolean" | "free-text" | "option" | "unmodelled" | "unverified";
+
+/**
+ * Exhaustive `inputType` → answer-shape classification, keyed on the GENERATED
+ * `SurveyInputTypeEnum` so a member added by `pnpm codegen` stops this map
+ * compiling until it is classified, instead of falling through to
+ * option-matching.
+ *
+ * That gate catches a REGENERATED schema, not a new value on the wire —
+ * `inputType` is `String!` in the SDL and the enum is an orphan no field
+ * references — which is why unrecognized values route to `unmodelled`.
+ */
+const ANSWER_SHAPE_BY_INPUT_TYPE: Record<SurveyInputTypeEnum, SurveyAnswerShape> = {
+  CHECKBOX: "boolean",
+  OPEN_TEXT: "free-text",
+  PROPOSED_ENGAGEMENT_END_DATE: "unverified",
+  RADIO_BUTTONS: "option",
+  RATING: "option",
+  SLIDER: "option",
+};
+
+/**
+ * Classify a question's declared `inputType`. Matching is EXACT: the two values
+ * grounded in live wire evidence are `CHECKBOX` (#754) and `OPEN_TEXT` (#877),
+ * both upper-case, and case-folding a near-miss into a modelled branch would
+ * change how an already-working question is answered — a lower-case
+ * `"checkbox"` would flip from verbatim pass-through to boolean normalization.
+ * Every value the schema does not declare is `unmodelled`, and every
+ * `unmodelled` path behaves exactly as it did before #877.
+ */
+function classifyInputType(inputType: string | null): SurveyAnswerShape {
+  if (inputType !== null && Object.hasOwn(ANSWER_SHAPE_BY_INPUT_TYPE, inputType)) {
+    return ANSWER_SHAPE_BY_INPUT_TYPE[inputType as SurveyInputTypeEnum];
+  }
+  return "unmodelled";
+}
+
+/** `"<id>" (<label>)`, or just `"<id>"` when the question carries no label. */
+function describeQuestion(question: SurveyQuestion): string {
+  return question.label === null ? `"${question.id}"` : `"${question.id}" (${question.label})`;
+}
 
 /**
  * Resolve caller-supplied {@link RawSurveyAnswer}s against a {@link Survey}
- * into wire {@link SurveyAnswerInput}s. A question carrying answer options
- * (multiple-choice) has its `value` matched against an option's `value` and
- * the option `id` attached; an option-less question sends the `value` with a
- * `null` id — verbatim for free-text, or `"true"`/`"false"` for a checkbox
- * ({@link CHECKBOX_INPUT_TYPE}, which has no options but accepts only a
- * stringified boolean). Throws `SurveysError(VALIDATION_ERROR)` for an unknown
- * question id, a value matching no option of a multiple-choice question, or a
- * non-boolean checkbox value.
+ * into wire {@link SurveyAnswerInput}s.
+ *
+ * An option-less question sends its `value` with a `null` id — verbatim, or
+ * `"true"`/`"false"` for a `CHECKBOX`. An option-bearing question has its
+ * `value` matched against an option's `value` and that option's `id` attached.
+ *
+ * The declared `inputType` ({@link classifyInputType}) then qualifies the
+ * option-bearing path, which `answers` emptiness alone cannot: an `OPEN_TEXT`
+ * question arriving WITH options is refused rather than validated against its
+ * sentinel, and a value matching no option is reported as a shape mismatch
+ * only for a `CHECKBOX` (which should carry none) — every other type gets the
+ * plain value error.
+ *
+ * Throws `SurveysError(VALIDATION_ERROR)` for an unknown question id, a
+ * non-boolean checkbox value, an unanswerable free-text question, or a value
+ * matching no option.
  */
 function buildSurveyAnswers(survey: Survey, raw: RawSurveyAnswer[]): SurveyAnswerInput[] {
   return raw.map((answer) => {
@@ -424,26 +486,53 @@ function buildSurveyAnswers(survey: Survey, raw: RawSurveyAnswer[]): SurveyAnswe
     if (question === undefined) {
       throw new SurveysError("VALIDATION_ERROR", `Survey ${survey.id} has no question "${answer.questionId}".`);
     }
+    const shape = classifyInputType(question.inputType);
+
     if (question.answers.length === 0) {
-      if (question.inputType === CHECKBOX_INPUT_TYPE) {
+      if (shape === "boolean") {
         const normalized = answer.value.trim().toLowerCase();
         if (normalized !== "true" && normalized !== "false") {
-          const labelHint = question.label === null ? "" : ` (${question.label})`;
           throw new SurveysError(
             "VALIDATION_ERROR",
-            `Checkbox question "${answer.questionId}"${labelHint} accepts only "true" or "false", got "${answer.value}".`,
+            `Checkbox question ${describeQuestion(question)} accepts only "true" or "false", got "${answer.value}".`,
           );
         }
         return { questionId: answer.questionId, id: null, value: normalized };
       }
       return { questionId: answer.questionId, id: null, value: answer.value };
     }
+
+    // The options are a sentinel vocabulary, not an answer vocabulary.
+    if (shape === "free-text") {
+      throw new SurveysError(
+        "VALIDATION_ERROR",
+        `ttctl cannot yet answer free-text questions on this survey — answer it in the Toptal ` +
+          `web portal instead. Question ${describeQuestion(question)} declares inputType ` +
+          `"OPEN_TEXT" but arrived carrying answer options, a shape ttctl has not validated ` +
+          `against the live API; submitting a guess would close the survey and forfeit the ` +
+          `answer. Progress: https://github.com/alexey-pelykh/ttctl/issues/877.`,
+      );
+    }
+
     const option = question.answers.find((o) => o.value === answer.value);
     if (option === undefined) {
       const valid = question.answers
         .map((o) => o.value)
         .filter((v): v is string => v !== null)
         .join(", ");
+      // `CHECKBOX` is the one type whose observed shape genuinely contradicts
+      // arriving with options. Everything else keeps the plain value error —
+      // claiming ttctl cannot model a question it answers on a matching value
+      // would be false, and a typo is not a shape surprise.
+      if (shape === "boolean") {
+        throw new SurveysError(
+          "VALIDATION_ERROR",
+          `Question ${describeQuestion(question)} declares inputType "CHECKBOX", which takes ` +
+            `"true"/"false" and carries no options — yet it arrived with them, and "${answer.value}" ` +
+            `matched none (${valid}). ttctl does not model this question shape; please report it at ` +
+            `https://github.com/alexey-pelykh/ttctl/issues so it can be answered correctly.`,
+        );
+      }
       throw new SurveysError(
         "VALIDATION_ERROR",
         `"${answer.value}" is not a valid answer for question "${answer.questionId}". Valid values: ${valid}.`,
@@ -458,6 +547,25 @@ function buildSurveyAnswers(survey: Survey, raw: RawSurveyAnswer[]): SurveyAnswe
 // ---------------------------------------------------------------------
 // submit — public API
 // ---------------------------------------------------------------------
+
+/**
+ * Warn on stderr when a submission would leave optional questions unanswered.
+ * Submitting CLOSES the survey, so an omitted optional question is forfeited
+ * permanently — silence there is the harm #877 reports. Advisory only: an
+ * omission is a legitimate choice, so this never blocks. stderr keeps `-o json`
+ * stdout clean, as `loadConfigFile` does for its file-permission warning.
+ */
+function warnUnansweredOptional(survey: Survey, answers: RawSurveyAnswer[]): void {
+  const skipped = survey.questions.filter((q) => q.isMandatory !== true && !answers.some((a) => a.questionId === q.id));
+  if (skipped.length === 0) {
+    return;
+  }
+  process.stderr.write(
+    `warning: submitting survey "${survey.id}" leaves ${skipped.length.toString()} optional question(s) ` +
+      `unanswered; submission closes it, so they cannot be answered afterwards: ` +
+      `${skipped.map(describeQuestion).join(", ")}\n`,
+  );
+}
 
 /**
  * Resolve {@link SubmitSurveyArgs} into a wire {@link ResolvedSubmission} by
@@ -491,7 +599,7 @@ async function prepareSubmission(token: string, args: SubmitSurveyArgs): Promise
     (q) => q.isMandatory === true && !args.answers.some((a) => a.questionId === q.id),
   );
   if (unanswered.length > 0) {
-    const names = unanswered.map((q) => (q.label === null ? `"${q.id}"` : `"${q.id}" (${q.label})`)).join(", ");
+    const names = unanswered.map(describeQuestion).join(", ");
     throw new SurveysError(
       "VALIDATION_ERROR",
       `Survey "${args.surveyId}" has unanswered mandatory question(s): ${names}. Run \`ttctl surveys list\` to see all questions.`,
@@ -504,7 +612,11 @@ async function prepareSubmission(token: string, args: SubmitSurveyArgs): Promise
       `Could not resolve the kind for survey "${args.surveyId}"; pass an explicit kind.`,
     );
   }
-  return { kind, surveyId: args.surveyId, answers: buildSurveyAnswers(survey, args.answers) };
+  const answers = buildSurveyAnswers(survey, args.answers);
+  // Only once the submission is known to be well-formed — a warning ahead of a
+  // throw would be noise.
+  warnUnansweredOptional(survey, args.answers);
+  return { kind, surveyId: args.surveyId, answers };
 }
 
 /**
