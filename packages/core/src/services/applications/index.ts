@@ -1320,15 +1320,14 @@ export async function stats(token: string): Promise<ApplicationsStats> {
 // § Decision Part 5; PR body declares the trigger + Track 1
 // (snapshots) disposition. Wire-shape snapshots commit in #445.
 //
-// The CLI `schema-contract-disposition` CI gate's file-path triggers
-// cover `packages/core/src/auth/**` + `packages/core/src/services/profile/**`
-// — `applications/` is not in the gate's scan set, so the gate doesn't
-// mechanically fire for this issue. The rule's INTENT is preserved
-// via the explicit cross-issue commitment to #445.
+// The `schema-contract-disposition` CI gate's file-path triggers cover
+// `packages/core/src/auth/**` + `packages/core/src/services/**` (#878),
+// so `applications/` IS in the gate's scan set. The rule's INTENT is
+// additionally preserved via the cross-issue commitment to #445.
 //
 // Surface coverage gate (`scripts/check-surface-coverage.ts`) does
-// not currently scope `applications/` either (covered domains:
-// `profile`, `engagements`, `payments`, `timesheet`, `scheduler`).
+// not currently scope `applications/` (covered domains: `profile`,
+// `engagements`, `payments`, `timesheet`, `scheduler`).
 // The `applyData` / `applyQuestions` / `rateInsight` fns are wired
 // to user-facing surfaces:
 //   - `apply()` — `ttctl_jobs_apply` (#436)
