@@ -456,9 +456,12 @@ SENT field set.
 Captures with no matching ttctl invocation are reported once at the end
 and skipped — typical case: `UpdateTimeZoneWorkingHoursInput` (the
 talent-profile sibling of `UpdateWorkingHours` that ttctl uses on the
-gateway surface). Helper-name allowlist mirrors `HELPER_SIGNATURES` in
-`check-e2e-coverage.ts` and must be kept in sync manually when a new
-transport helper is added.
+gateway surface). The helper-name allowlist is DERIVED from
+`HELPER_SIGNATURES` in `check-e2e-coverage.ts` (imported, then filtered to
+the `standard` arg-1 shape — `surface-first` helpers such as
+`callGatewayShared` put the op name at arg 2 and would be misread), so
+registering a transport helper there reaches this gate automatically. The
+manual sync protocol this allowlist used to carry was retired in #887.
 
 ### Snapshot degeneracy gate (degenerate-contract visibility)
 
@@ -647,6 +650,79 @@ above.
   most siblings — the package.json wiring passes `--strict` from day one:
   the catalog baseline is consistent (roster 140 = stated total 140 =
   per-domain sum 140), so there is no warn-phase gap to pay down.
+
+### Wire-routing manifest gate (op-enumeration drift defense)
+
+`scripts/check-wire-routing-manifest.ts` (wired into `pnpm lint`) is the
+structural CI-time defense for the maintenance rule § Track 1 vs Track 2
+disposition states below: "The manifest must be updated in the same PR as
+any new op invocation." Until #887 nothing enforced it — the rule was
+carried by author memory and PR review alone, and had already been broken
+six times (`AddProfileIndustryConnections`, `GetPerformedActions`,
+`GetViewer`, `JobsByIDs`, `UpdateTimesheet`, and
+`GET_REPORTING_TO_AUTOCOMPLETE` were each invoked with no row anywhere in
+[`docs/wire-validation-routing.md`](docs/wire-validation-routing.md)).
+
+The invariant, one direction only: every operation invoked from
+`packages/core/src/**` has a manifest row.
+
+Op extraction is **imported, not re-implemented**.
+`scripts/check-e2e-coverage.ts` owns the scan — the `operationName: "X"`
+sweep plus the `HELPER_SIGNATURES` allowlist resolving helper-wrapped
+invocations that pass the name positionally
+(`callTalentProfile(token, "X", …)`), which a naive literal scan misses
+entirely. That module now exports its pure core (`scanCoreSrcLines`,
+`isCoreSrcCandidate`, `HELPER_SIGNATURES`) behind an `invokedDirectly()`
+guard, so importing it is side-effect-free. `check-merge-completeness.ts`
+used to mirror the allowlist by hand under a documented sync protocol; a
+third hand-mirrored copy would recreate the enumeration-agreement problem
+this gate family exists to prevent, so this gate shares instead — and the
+same change switched that script to deriving its allowlist from the shared
+map, so only one enumeration now exists (see § Merge-completeness gate).
+
+Detection scope: every tracked file under `packages/core/src/**` that
+`isCoreSrcCandidate` accepts (excludes `__tests__/`, `*.test.ts`,
+`*.d.ts`). **No surface filter is applied** — unlike the e2e-coverage gate,
+which gates only the Cloudflare-protected surfaces, every invoked op is
+in scope here whatever surface it targets. Manifest rows are read from the per-surface sections
+(``## `<surface>` (N ops)``); a row's track cell must carry a canonical
+token — `T1`, `T2`, or `NEITHER` — with an optional parenthetical
+wiring-state qualifier (`T2 (wired)` / `T2 (ready)`).
+
+**Granularity**: presence, not correctness. The gate asserts an invoked op
+HAS a row; it does not re-derive that row's track from codegen state, so a
+row asserting the wrong track passes. Nor must a row sit in the section
+matching its call site's surface. Both are deliberate — #887 scoped the
+gate to the rule CLAUDE.md actually states, and re-deriving tracks here
+would duplicate the codegen-exclusion logic that lives on the research
+side. The section-heading `(N ops)` counts and the Summary table are
+likewise **not** gated — both are hand-derived from the rows, so re-derive
+them when adding a row rather than trusting them.
+
+**Stale rows** — a row naming an op nothing invokes — are the inverse
+drift. They are reported but never fail the gate: the rule is
+one-directional, and a row outliving its call site is a documentation
+question (removed, or renamed?) rather than the silent-omission failure
+the gate exists to catch. Visible, never silently dropped.
+
+- **Exempt** a call site with `// wire-routing-exempt: <reason>` within
+  five lines preceding the invocation — the same call-site placement as
+  `// e2e-exempt:` and `// surface-exempt:`. The reason is mandatory and
+  surfaces in the report. A marker with an **empty** reason exempts
+  NOTHING and is reported as a marker issue; silently honouring it would
+  suppress a genuinely missing row and report only the comment syntax.
+- **Default mode** is warn-only (exit 0). Set `WIRE_ROUTING_STRICT=1` (or
+  pass `--strict`) to fail. Like `check-readme-verbs.ts` and
+  `check-mcp-tool-catalog.ts` — and unlike most siblings — the
+  package.json wiring passes `--strict` from day one: the drifted ops
+  listed above were dispositioned in the same PR that added the gate (each
+  derived to `T1`; none has a generated operation type), so the baseline is
+  clean and there is no warn-phase gap to pay down.
+
+`docs/wire-validation-routing.md` is a wide markdown table, and a literal
+`|` inside a cell — **even inside backticks** — makes Prettier silently
+re-tabulate the row into extra columns (#479 / PR #809 bit this exact
+file). Escape it `\|` when a row needs one.
 
 ### Wire-shape snapshots
 

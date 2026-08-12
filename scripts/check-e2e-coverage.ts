@@ -29,8 +29,8 @@
  *     in `services/profile/skills/index.ts`, or `callGateway(token, "Payments", ...)`
  *     in `services/payments/index.ts`) are detected via an allowlist of
  *     known helpers — see `HELPER_SIGNATURES`. Helpers come in two shapes:
- *     **standard** (`callTalentProfile`, `callGateway`) hardcode a single
- *     surface; **surface-first** (`callGatewayShared`, the shared transport
+ *     **standard** ones hardcode a single surface; **surface-first**
+ *     (`callGatewayShared`, the shared transport
  *     primitive) take the surface as a literal at arg 0 and the operation
  *     name at arg 2, so the surface is read from the call site rather than
  *     hardcoded. In either case, the surface walk-back is unnecessary for
@@ -95,8 +95,9 @@
  */
 
 import { execSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Surfaces the gate enforces. `mobile-gateway` is intentionally absent. */
 const IN_SCOPE_SURFACES = new Set<string>(["talent-profile", "scheduler"]);
@@ -124,12 +125,9 @@ const EXEMPT_SEARCH_WINDOW = 5;
  *
  * The helper names below cover the call-site shapes currently shipped:
  *
- *   - **standard** `(token, "OperationName", ...)` — surface hardcoded by
- *     the helper. `callTalentProfile` (industries / employment / education /
- *     certifications / skills / contracts wrappers) targets
- *     `talent-profile`; `callGateway` (payments / jobs / applications /
- *     engagements / availability / timesheet wrappers) targets
- *     `mobile-gateway`.
+ *   - **standard** `(token, "OperationName", ...)` — the helper hardcodes its
+ *     surface, so the map's entry reproduces it. Per-domain wrappers of this
+ *     shape are the common case; see the map itself for the current members.
  *   - **surface-first** `("surface", token, "OperationName", ...)` — the
  *     surface is a literal at arg 0, read from the call site rather than
  *     hardcoded, because the helper is surface-agnostic. `callGatewayShared`
@@ -146,11 +144,12 @@ const EXEMPT_SEARCH_WINDOW = 5;
  * cannot distinguish call sites by file alone — make the name surface-specific
  * (e.g. `callScheduler`) or use inline `// e2e-exempt:` markers.
  */
-type HelperSig = { readonly kind: "standard"; readonly surface: string } | { readonly kind: "surface-first" };
+export type HelperSig = { readonly kind: "standard"; readonly surface: string } | { readonly kind: "surface-first" };
 
-const HELPER_SIGNATURES: ReadonlyMap<string, HelperSig> = new Map([
+export const HELPER_SIGNATURES: ReadonlyMap<string, HelperSig> = new Map([
   ["callTalentProfile", { kind: "standard", surface: "talent-profile" }],
   ["callGatewayShared", { kind: "surface-first" }],
+  ["callGatewayNoViewer", { kind: "standard", surface: "mobile-gateway" }],
   ["callGateway", { kind: "standard", surface: "mobile-gateway" }],
 ]);
 
@@ -162,7 +161,14 @@ const HELPER_SIGNATURES: ReadonlyMap<string, HelperSig> = new Map([
  */
 const HELPER_SNIPPET_WINDOW = 8;
 
-interface CalledOp {
+/**
+ * A single GraphQL operation invocation found in `packages/core/src/**`.
+ *
+ * Exported because this module is the repo's ONE op-extraction implementation:
+ * `check-wire-routing-manifest.ts` imports {@link scanCoreSrcLines} rather than
+ * mirroring the scan (and, with it, {@link HELPER_SIGNATURES}) a third time.
+ */
+export interface CalledOp {
   /** Operation name from the `operationName: "X"` literal. */
   name: string;
   /** Surface from the nearest `surface: "..."` above. `null` if none found. */
@@ -173,10 +179,6 @@ interface CalledOp {
   line: number;
   /** Reason from a nearby `// e2e-exempt:` marker, or `null` if not exempt. */
   exempt: string | null;
-}
-
-interface FileScanResult {
-  ops: CalledOp[];
 }
 
 interface CoverageDeclaration {
@@ -198,7 +200,7 @@ function listTrackedFiles(repoRoot: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-function isCoreSrcCandidate(path: string): boolean {
+export function isCoreSrcCandidate(path: string): boolean {
   if (!path.startsWith(CORE_SRC_PREFIX)) return false;
   if (!path.endsWith(".ts")) return false;
   if (path.endsWith(".d.ts")) return false;
@@ -335,9 +337,18 @@ const HELPER_INVOKE_RE = /^\s*(?:<[^>]*>)?\s*\(\s*[^,)]+,\s*["']([A-Za-z_][A-Za-
 const HELPER_INVOKE_SURFACE_FIRST_RE =
   /^\s*(?:<[^>]*>)?\s*\(\s*["']([a-z-]+)["']\s*,\s*[^,)]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/;
 
-function scanCoreSrc(absPath: string, relPath: string): FileScanResult {
+function scanCoreSrc(absPath: string, relPath: string): CalledOp[] {
   const lines = readSourceLines(absPath);
-  if (lines === null) return { ops: [] };
+  if (lines === null) return [];
+  return scanCoreSrcLines(lines, relPath);
+}
+
+/**
+ * The op-extraction core, taking file CONTENT rather than a path so importers
+ * can inject their own reader (and, in tests, in-memory fixtures). {@link scanCoreSrc}
+ * is the filesystem-bound wrapper this module itself uses.
+ */
+export function scanCoreSrcLines(lines: readonly string[], relPath: string): CalledOp[] {
   const inComment = maskBlockComments(lines);
   const ops: CalledOp[] = [];
 
@@ -379,7 +390,7 @@ function scanCoreSrc(absPath: string, relPath: string): FileScanResult {
   // operationName literal at positional argument index 1.
   ops.push(...scanHelperInvocations(lines, inComment, relPath));
 
-  return { ops };
+  return ops;
 }
 
 /**
@@ -707,8 +718,7 @@ function main(): void {
   for (const relPath of tracked) {
     if (isCoreSrcCandidate(relPath)) {
       const abs = join(repoRoot, relPath);
-      const { ops } = scanCoreSrc(abs, relPath);
-      calledOps.push(...ops);
+      calledOps.push(...scanCoreSrc(abs, relPath));
     } else if (isE2eSrcCandidate(relPath)) {
       const abs = join(repoRoot, relPath);
       const fileDecl = scanE2eCoverage(abs, relPath);
@@ -734,4 +744,23 @@ function main(): void {
   // Default warn-mode: always exit 0.
 }
 
-main();
+/**
+ * True when this module is the process entrypoint (`tsx scripts/...`), false
+ * when imported (e.g. by `check-wire-routing-manifest.ts`). Compares
+ * realpath-normalized native paths rather than URL strings so a Windows
+ * drive-letter / slash mismatch cannot make the gate silently no-op (which, in
+ * warn mode, would still exit 0 and look green).
+ */
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main();
+}
