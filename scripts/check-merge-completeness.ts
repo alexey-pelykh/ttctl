@@ -52,8 +52,9 @@
  *     ttctl uses today).
  *   - **Invocation sites**: scan `packages/core/src/services/**\/index.ts`
  *     for matches against both literal `operationName:` patterns and the
- *     helper-wrapped positional-arg pattern (allowlist mirrors
- *     `check-e2e-coverage.ts` HELPER_SIGNATURES).
+ *     helper-wrapped positional-arg pattern (allowlist DERIVED from
+ *     `check-e2e-coverage.ts` HELPER_SIGNATURES, filtered to the `standard`
+ *     arg-1 shape — no longer hand-mirrored).
  *
  * ## Exemption mechanism
  *
@@ -95,6 +96,8 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
+import { HELPER_SIGNATURES } from "./check-e2e-coverage.js";
+
 // ─── Configuration ──────────────────────────────────────────────────
 
 /** Path prefix scanned for ttctl invocations. */
@@ -111,10 +114,16 @@ const RESOLUTION_WINDOW_UP = 120;
 
 /**
  * Helpers that wrap the transport and accept `operationName` as positional
- * arg 1. Mirrors `HELPER_SIGNATURES` in `check-e2e-coverage.ts` (kept in
- * sync manually — adding a helper there should add it here).
+ * arg 1. DERIVED from `HELPER_SIGNATURES` in `check-e2e-coverage.ts` rather
+ * than hand-mirrored, so registering a helper there reaches this gate too.
+ *
+ * The `standard` filter is load-bearing: `surface-first` helpers (e.g.
+ * `callGatewayShared`) put the op name at arg 2, which the arg-1 regex below
+ * would misread.
  */
-const HELPER_NAMES: ReadonlySet<string> = new Set(["callTalentProfile", "callGateway"]);
+const HELPER_NAMES: ReadonlySet<string> = new Set(
+  [...HELPER_SIGNATURES].filter(([, sig]) => sig.kind === "standard").map(([name]) => name),
+);
 
 /** Built-in identifier names treated as non-resolvable when seen in `<wrapper>: <expr>`. */
 const NON_RESOLVABLE_IDENTS: ReadonlySet<string> = new Set(["null", "undefined", "true", "false", "this"]);
