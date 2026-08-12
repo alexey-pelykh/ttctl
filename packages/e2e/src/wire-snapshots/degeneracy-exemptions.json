@@ -44,7 +44,7 @@
     "[].memorandums": "No credit-note/adjustment memorandums on this account's payments (batch sibling of Payments.items[].memorandums)."
   },
   "PendingSurveys": {
-    "[].questions[].answers": "Captured pending surveys carry free-text questions; multiple-choice answer-options are absent."
+    "[].questions[].answers": "The capture account's pending surveys happened to carry only option-less questions. Emptiness does not classify them: an OPEN_TEXT question can arrive carrying a sentinel option (#877)."
   },
   "SimilarJobQuestionAnswers": {
     "[].suggestions": "No prior reusable answers to suggest from on this account (no eligible jobs with similar answers)."
