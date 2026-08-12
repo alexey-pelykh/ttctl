@@ -61,7 +61,7 @@ pnpm dev              # Watch mode
 (`lint:root`), and the repo `check-*` gates (secret-leakage,
 e2e-coverage, surface-coverage, dep-confusion, write-read-symmetry,
 merge-completeness, snapshot-degeneracy, readme-verbs,
-scalar-type-consistency). Running `pnpm lint` before
+scalar-type-consistency, mcp-tool-catalog). Running `pnpm lint` before
 pushing catches every check that CI enforces in its lint-class steps.
 `pnpm format:check` remains a separate script so it can be invoked
 standalone (e.g. by CI's first step at `.github/workflows/ci.yml`, or by
@@ -586,6 +586,67 @@ exemption marker absorb collisions.
   `E2E_COVERAGE_STRICT` / `SURFACE_COVERAGE_STRICT` /
   `WRITE_READ_SYMMETRY_STRICT` / `MERGE_COMPLETENESS_STRICT` /
   `SNAPSHOT_DEGENERACY_STRICT`.
+
+### MCP tool-catalog gate (fourth-enumeration-site defense)
+
+`scripts/check-mcp-tool-catalog.ts` (wired into `pnpm lint`) is the
+structural CI-time defense for the one MCP enumeration site that had no
+test behind it. Adding or removing a tool requires updating **four**
+places; three are test-enforced and the README was not:
+
+1. `registration.test.ts` — `EXPECTED_TOOLS` roster + count
+2. `tools.test.ts` — sorted list + count
+3. dry-run smoke — `TOOL_INPUT_FIXTURES` map + count
+4. `packages/mcp/README.md` — stated total + per-domain breakdown ← this gate
+
+The catalog drifted **88 → 129** before #769 caught it by hand.
+
+Authority: `EXPECTED_TOOLS` in
+`packages/mcp/src/tools/__tests__/registration.test.ts`, parsed via
+`parseExpectedToolNames` re-used from `check-readme-verbs.ts` rather than
+re-implemented, so the two gates cannot disagree about what the roster is.
+Subject: the `### Tool catalog` section of `packages/mcp/README.md`, up to
+the next heading — exactly one total (`<N> tools`) must be stated on a
+non-bullet line in it, and domain bullets take the form
+``- **`<domain>`** (<N> tools) — …``.
+
+Two invariants, both checked:
+
+- **total** — the README's stated count equals the roster size.
+- **sum** — the per-domain bullet counts add up to that stated total. The
+  README asserts this about itself in prose, and a per-domain count can
+  drift while the total stays right, so the total check alone would not
+  catch it.
+
+A missing section, an absent or ambiguous total, zero parsed bullets, a
+malformed top-level list line, or an unreadable roster are all structural
+errors — a parser that matches nothing asserts nothing, so none of them is
+a silent pass. Ambiguity is counted per _occurrence_, not per line, so two
+counts on one line fail rather than letting the first silently win. The
+practical consequence is that the section's prose is now constrained: any
+sentence inside it (including inside a fenced block) that reads `<N> tools`
+registers as a second total and fails the gate.
+
+**Residual, named rather than implied**: the gate does not verify each
+bullet's count against the roster's actual per-domain grouping, so two
+bullets drifting in opposite directions (+1 / −1) satisfy both invariants
+and pass. Closing that needs a domain-label → tool-name-prefix map, which
+is itself a staleness surface; #886 scoped this gate to the two invariants
+above.
+
+- **Exempt** a deliberate divergence with
+  `<!-- mcp-catalog-exempt: <reason> -->` above the total line (exempts the
+  total invariant) or above a domain bullet (drops that bullet from the
+  sum). It binds to the next total or bullet, so intervening blank lines
+  are fine. The reason is mandatory and surfaces in the report; an empty
+  reason, or a marker followed by neither, fails strict mode. Exempting
+  the total is the one marker that removes the roster comparison outright,
+  leaving only a README self-consistency check.
+- **Default mode** is warn-only (exit 0). Set `MCP_TOOL_CATALOG_STRICT=1`
+  (or pass `--strict`) to fail. Like `check-readme-verbs.ts` — and unlike
+  most siblings — the package.json wiring passes `--strict` from day one:
+  the catalog baseline is consistent (roster 140 = stated total 140 =
+  per-domain sum 140), so there is no warn-phase gap to pay down.
 
 ### Wire-shape snapshots
 
