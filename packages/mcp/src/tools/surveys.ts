@@ -94,6 +94,8 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
         "    NEVER guess a checkbox value — submission is irreversible.",
         "  - `OPEN_TEXT` → `value` is the free text. If such a question arrives carrying answer options,",
         "    ttctl refuses it (its wire shape is unvalidated); answer that one in the Toptal web portal.",
+        '  - `PROPOSED_ENGAGEMENT_END_DATE` → `value` is the date as `YYYY-MM-DD`, or `"I do not know"`.',
+        "    Both Toptal clients ignore any answer options on such a question — never pick one.",
         "The survey `kind` and per-question answer-option ids are resolved from `surveys list` automatically.",
         "",
         "Set `dryRun: true` to preview the request (operationName + your answers + redacted bearer) without",
@@ -112,7 +114,7 @@ export function registerSurveysTools(server: McpServer, ctx: ToolRegistrationCon
               value: z
                 .string()
                 .describe(
-                  "Keyed off the question's `inputType`, not its `answers[]` length. RADIO_BUTTONS/RATING/SLIDER: the chosen option's `value`. CHECKBOX: `true` or `false`. OPEN_TEXT: the answer text.",
+                  "Keyed off the question's `inputType`, not its `answers[]` length. RADIO_BUTTONS/RATING/SLIDER: the chosen option's `value`. CHECKBOX: `true` or `false`. OPEN_TEXT: the answer text. PROPOSED_ENGAGEMENT_END_DATE: the date as `YYYY-MM-DD`, or `I do not know`.",
                 ),
             }),
           )

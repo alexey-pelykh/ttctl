@@ -82,8 +82,9 @@ const SURVEY_WITH_CHECKBOX = {
 
 // ENGAGEMENT_ENDED shape (the #877 case), transcribed from the issue's observed
 // wire: an OPEN_TEXT question arrives carrying ONE sentinel option, so
-// `answers` emptiness cannot classify the question. `q-end` is the unverified
-// PROPOSED_ENGAGEMENT_END_DATE sibling (#880) — likewise option-bearing.
+// `answers` emptiness cannot classify the question. `q-end` is the
+// PROPOSED_ENGAGEMENT_END_DATE sibling (#880) — likewise option-bearing, and
+// its option's value deliberately equals a date a caller might send.
 const SURVEY_ENGAGEMENT_ENDED = {
   __typename: "Survey",
   id: "sv-ee",
@@ -615,12 +616,14 @@ describe("surveys.submit", () => {
     expect(message).not.toContain("is not a valid answer");
   });
 
-  it("keeps the enum message for an unverified PROPOSED_ENGAGEMENT_END_DATE value miss", async () => {
-    // The same code answers this type successfully when the value matches (see
-    // the next test), so "ttctl does not model this shape" would be false: a
-    // value miss here is a value miss, not a shape surprise.
+  it("sends a PROPOSED_ENGAGEMENT_END_DATE value matching no option instead of enum-matching it", async () => {
+    // A date is caller-supplied, so matching no option is not an error condition.
     replyStock(viewerWith([SURVEY_ENGAGEMENT_ENDED]));
-    const err: unknown = await submit(
+    submitReply({ success: true, notice: null, errors: [], viewer: { id: "viewer-1", pendingSurveys: [] } });
+    // `q-extra` is deliberately left out, so the forfeiture warning fires here.
+    captureStderr();
+
+    await submit(
       TOKEN,
       {
         surveyId: "sv-ee",
@@ -630,19 +633,19 @@ describe("surveys.submit", () => {
         ],
       },
       CONSENT,
-    ).catch((e: unknown) => e);
+    );
 
-    expect(err).toMatchObject({ code: "VALIDATION_ERROR" });
-    const message = (err as SurveysError).message;
-    expect(message).toContain("is not a valid answer");
-    expect(message).toContain("Valid values: 2026-09-01");
-    expect(message).not.toContain("does not model this question shape");
+    expect(submitVariables()).toMatchObject({
+      answers: [
+        { questionId: "q-score", id: "a-hi", value: "5" },
+        { questionId: "q-end", id: null, value: "2026-12-31" },
+      ],
+    });
   });
 
-  it("still answers an unverified PROPOSED_ENGAGEMENT_END_DATE question whose value matches an option", async () => {
+  it("attaches no option id when a PROPOSED_ENGAGEMENT_END_DATE value coincides with one", async () => {
     replyStock(viewerWith([SURVEY_ENGAGEMENT_ENDED]));
     submitReply({ success: true, notice: null, errors: [], viewer: { id: "viewer-1", pendingSurveys: [] } });
-    // `q-extra` is deliberately left out, so the forfeiture warning fires here.
     captureStderr();
 
     await submit(
@@ -660,7 +663,34 @@ describe("surveys.submit", () => {
     expect(submitVariables()).toMatchObject({
       answers: [
         { questionId: "q-score", id: "a-hi", value: "5" },
-        { questionId: "q-end", id: "a-date", value: "2026-09-01" },
+        { questionId: "q-end", id: null, value: "2026-09-01" },
+      ],
+    });
+  });
+
+  it('passes the PROPOSED_ENGAGEMENT_END_DATE "I do not know" sentinel through verbatim', async () => {
+    // The second value form the Android client sends for this type. It looks
+    // like invalid input, so pin it against a future date-format validator.
+    replyStock(viewerWith([SURVEY_ENGAGEMENT_ENDED]));
+    submitReply({ success: true, notice: null, errors: [], viewer: { id: "viewer-1", pendingSurveys: [] } });
+    captureStderr();
+
+    await submit(
+      TOKEN,
+      {
+        surveyId: "sv-ee",
+        answers: [
+          { questionId: "q-score", value: "5" },
+          { questionId: "q-end", value: "I do not know" },
+        ],
+      },
+      CONSENT,
+    );
+
+    expect(submitVariables()).toMatchObject({
+      answers: [
+        { questionId: "q-score", id: "a-hi", value: "5" },
+        { questionId: "q-end", id: null, value: "I do not know" },
       ],
     });
   });

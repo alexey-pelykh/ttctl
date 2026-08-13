@@ -294,9 +294,9 @@ export async function list(token: string): Promise<Survey[]> {
 /**
  * One resolved wire answer. `questionId` is the {@link SurveyQuestion} id;
  * `id` is the selected {@link SurveyAnswerOption} id for a multiple-choice
- * question and `null` for free-text; `value` is the option's `value`
- * (multiple-choice) or the free-text answer. Matches the `SurveyAnswerInput`
- * wire shape verified by a live round-trip (2026-05-29).
+ * question and `null` for every other treatment; `value` is the option's
+ * `value` (multiple-choice) or the caller's answer. Matches the
+ * `SurveyAnswerInput` wire shape verified by a live round-trip (2026-05-29).
  */
 export interface SurveyAnswerInput {
   questionId: string;
@@ -308,9 +308,11 @@ export interface SurveyAnswerInput {
  * A caller-supplied answer before resolution. For a multiple-choice question
  * (`RADIO_BUTTONS` / `RATING` / `SLIDER`) the `value` is matched against the
  * question's answer options to recover the option id; a free-text
- * (`OPEN_TEXT`) value is sent verbatim and a `CHECKBOX` takes
- * `"true"`/`"false"`. The question's `inputType` — not its `answers` length —
- * selects the treatment. {@link buildSurveyAnswers} performs the resolution.
+ * (`OPEN_TEXT`) value is sent verbatim, a `CHECKBOX` takes `"true"`/`"false"`,
+ * and a `PROPOSED_ENGAGEMENT_END_DATE` sends the caller's date (or the
+ * `"I do not know"` sentinel) with no option id. The question's `inputType` —
+ * not its `answers` length — selects the treatment.
+ * {@link buildSurveyAnswers} performs the resolution.
  */
 export interface RawSurveyAnswer {
   questionId: string;
@@ -413,13 +415,10 @@ interface SubmitSurveyResponse {
  * - `option` — the value must be one of `answers[].value`.
  * - `boolean` — a stringified `"true"`/`"false"` (live-verified, #754).
  * - `free-text` — arbitrary prose.
- * - `unverified` — a declared type whose answer shape ttctl has not observed.
- *   Routes exactly like `unmodelled` today: having no evidence about a type is
- *   not evidence against it. The distinct name marks the #880 slot, so nobody
- *   promotes it to `option` on the strength of one fixture.
+ * - `date` — a caller-supplied date, never drawn from `answers[]`.
  * - `unmodelled` — an `inputType` the schema does not declare, or none at all.
  */
-type SurveyAnswerShape = "boolean" | "free-text" | "option" | "unmodelled" | "unverified";
+type SurveyAnswerShape = "boolean" | "date" | "free-text" | "option" | "unmodelled";
 
 /**
  * Exhaustive `inputType` → answer-shape classification, keyed on the GENERATED
@@ -434,7 +433,7 @@ type SurveyAnswerShape = "boolean" | "free-text" | "option" | "unmodelled" | "un
 const ANSWER_SHAPE_BY_INPUT_TYPE: Record<SurveyInputTypeEnum, SurveyAnswerShape> = {
   CHECKBOX: "boolean",
   OPEN_TEXT: "free-text",
-  PROPOSED_ENGAGEMENT_END_DATE: "unverified",
+  PROPOSED_ENGAGEMENT_END_DATE: "date",
   RADIO_BUTTONS: "option",
   RATING: "option",
   SLIDER: "option",
@@ -472,9 +471,10 @@ function describeQuestion(question: SurveyQuestion): string {
  * The declared `inputType` ({@link classifyInputType}) then qualifies the
  * option-bearing path, which `answers` emptiness alone cannot: an `OPEN_TEXT`
  * question arriving WITH options is refused rather than validated against its
- * sentinel, and a value matching no option is reported as a shape mismatch
- * only for a `CHECKBOX` (which should carry none) — every other type gets the
- * plain value error.
+ * sentinel, a `PROPOSED_ENGAGEMENT_END_DATE` sends its caller-supplied value
+ * with a `null` id either way, and a value matching no option is reported as a
+ * shape mismatch only for a `CHECKBOX` (which should carry none) — every other
+ * type gets the plain value error.
  *
  * Throws `SurveysError(VALIDATION_ERROR)` for an unknown question id, a
  * non-boolean checkbox value, an unanswerable free-text question, or a value
@@ -487,6 +487,12 @@ function buildSurveyAnswers(survey: Survey, raw: RawSurveyAnswer[]): SurveyAnswe
       throw new SurveysError("VALIDATION_ERROR", `Survey ${survey.id} has no question "${answer.questionId}".`);
     }
     const shape = classifyInputType(question.inputType);
+
+    // A date is caller-supplied, never chosen from `answers[]` — matching it
+    // against the question's options would attach an id no Toptal client sends.
+    if (shape === "date") {
+      return { questionId: answer.questionId, id: null, value: answer.value };
+    }
 
     if (question.answers.length === 0) {
       if (shape === "boolean") {
