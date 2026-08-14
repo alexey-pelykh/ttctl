@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-14
+
+### Fixed
+
+- **Survey answers dispatch on `inputType`, not `answers` emptiness (#877).**
+  `buildSurveyAnswers` classified a question by `answers.length === 0`, so an
+  `OPEN_TEXT` question on an `ENGAGEMENT_ENDED` survey — which arrives carrying
+  one sentinel option (`value: "open_text"`) — took the multiple-choice path and
+  validated prose against a one-item enum. The only value that passed was the
+  sentinel itself, which submits the sentinel as the answer and closes the
+  survey, forfeiting the prose permanently. Classification now keys on the
+  generated `SurveyInputTypeEnum`.
+- **`PROPOSED_ENGAGEMENT_END_DATE` answers are sent verbatim (#880).** The type
+  was classified as an unverified placeholder, so an option-bearing date
+  question fell through to option-matching: a caller's date either picked up an
+  unrelated option's id, or raised `VALIDATION_ERROR` when it matched no option.
+  Dates (and the `"I do not know"` sentinel) are now sent with a null option id
+  regardless of options, matching both the Android client and the web portal.
+  CLI `--answer` help and the MCP tool description document the value form.
+- **Rate-question free-text label reads `kind`, not option emptiness (#885).**
+  `formatQuestionsBlock` decided whether a rate-change question was free text by
+  testing `options.length === 0`, while the authoritative discriminator —
+  `RateQuestion.kind` — sat in the same object. A RADIO question returning an
+  empty `options[]` was labelled "(free text)", inviting prose for a
+  multiple-choice question, and a TEXT question carrying options was never
+  labelled free text at all.
+
+### Added
+
+- **MCP tool-catalog lint gate (#886).** Adding or removing an MCP tool requires
+  updating four enumeration sites; three were test-enforced and
+  `packages/mcp/README.md` was not — it drifted 88 → 129 before being caught by
+  hand. `scripts/check-mcp-tool-catalog.ts` asserts the README's stated total
+  equals the registered roster and that per-domain counts sum to it. Strict from
+  day one.
+- **Wire-routing manifest lint gate (#887).** "The manifest must be updated in
+  the same PR as any new op invocation" was carried by author memory alone and
+  had already been broken six times. `scripts/check-wire-routing-manifest.ts`
+  asserts every op invoked from `packages/core/src` has a row in
+  `docs/wire-validation-routing.md`. Op extraction is imported from
+  `check-e2e-coverage.ts` rather than re-implemented, so the gates cannot
+  disagree about what was invoked. Strict from day one.
+
+### Changed
+
+- **Schema/contract disposition gate covers every service domain.** The CI gate
+  triggered only on `packages/core/src/auth/**` and
+  `packages/core/src/services/profile/**` — where past incidents landed, not
+  where the risk class lives. The trigger prefix is now
+  `packages/core/src/services/`, deliberately over-inclusive: `NOT triggered` is
+  one line and a legitimate answer, whereas enumerating only the
+  mutation-bearing domains goes stale the moment a service gains a mutation.
+- **E2E-coverage gate granularity documented (#881).** The gate asserts coverage
+  at operation-name granularity, not path level; CLAUDE.md was silent on this,
+  which a reader could fill with a stronger reading than the mechanism supports.
+
+### Security
+
+- **Dependency overrides bumped to patched floors.** The release-time
+  `pnpm audit --audit-level=high` gate failed on 15 high advisories, blocking any
+  release. All 15 had clean upstream patches, so each is closed by upgrading
+  rather than allowlisting: `brace-expansion` ≥5.0.9, `fast-uri` ≥3.1.5,
+  `immutable` ≥5.1.8, `ip-address` ≥10.3.1, `js-yaml` ≥4.3.1, `nanoid` ≥3.3.18,
+  `postcss` ≥8.5.18, `shell-quote` ≥1.8.5. Two existing pins (`fast-uri`,
+  `shell-quote`) had themselves gone stale and named vulnerable floors. Eleven of
+  the 15 were dev-only; the four in the shipped tree (via
+  `@modelcontextprotocol/sdk`) were additionally confirmed unreachable under
+  stdio.
+
+### Dependencies
+
+- Bump `undici` 8.5.0 → 8.9.0 and `@modelcontextprotocol/sdk` 1.29.0 → 1.30.0
+  (both shipped runtime deps). Dev-only: `eslint` 10.7.0 → 10.8.1,
+  `typescript-eslint` 8.63.0 → 8.66.0, `@graphql-codegen/cli` 7.1.3 → 7.2.0,
+  `turbo` 2.10.4 → 2.10.9, `tsx` 4.23.0 → 4.23.11, `vitest` 4.1.9 → 4.1.10,
+  `prettier` 3.9.5 → 3.9.6. CI actions: `actions/checkout` 7.0.0 → 7.0.1,
+  `actions/attest-build-provenance` 4.1.1 → 4.2.2.
+
 ## [0.2.0] - 2026-07-11
 
 ### Added
