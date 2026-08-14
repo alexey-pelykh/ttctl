@@ -61,8 +61,18 @@ pnpm dev              # Watch mode
 (`lint:root`), and the repo `check-*` gates (secret-leakage,
 e2e-coverage, surface-coverage, dep-confusion, write-read-symmetry,
 merge-completeness, snapshot-degeneracy, readme-verbs,
-scalar-type-consistency, mcp-tool-catalog). Running `pnpm lint` before
-pushing catches every check that CI enforces in its lint-class steps.
+scalar-type-consistency, mcp-tool-catalog, wire-routing-manifest).
+Running `pnpm lint` before pushing catches every check that CI enforces
+in its lint-class steps.
+
+Gate posture, three kinds. `secret-leakage` and `dep-confusion` are
+unconditional — no warn mode, no flag, any finding exits non-zero. The
+rest ship a warn default plus a `--strict` mode, and the `lint` wiring
+passes `--strict` to all of them **except `e2e-coverage` and
+`write-read-symmetry`**, the two still carrying an untriaged baseline
+(tracked in #895). Each gate's own section below restates its posture and
+names its exemption marker; each strict-capable script also honours a
+`<GATE>_STRICT=1` env switch for standalone runs.
 `pnpm format:check` remains a separate script so it can be invoked
 standalone (e.g. by CI's first step at `.github/workflows/ci.yml`, or by
 editor save hooks); use `pnpm format` to auto-fix.
@@ -364,12 +374,14 @@ register as coverage.
   report. A marker placed on a namespace header
   (`export const breaks = {`) applies to every method inside; per-
   method markers override the namespace marker for that method.
-- **Default mode** is warn-only (exit 0). Set
-  `SURFACE_COVERAGE_STRICT=1` (or pass `--strict`) to fail on Class A
-  gaps (the `NEITHER` disposition). Class C gaps (one surface only —
-  e.g. an export invoked from CLI only) are reported as informational
-  rows but do not fail this gate; that framing belongs to the sibling
-  parity contract test.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`** — the baseline was already clean, so there
+  was no gap to pay down: a Class A gap (the `NEITHER` disposition) fails
+  `pnpm lint`. `SURFACE_COVERAGE_STRICT=1` is the
+  equivalent env switch for a standalone run. Class C gaps (one surface
+  only — e.g. an export invoked from CLI only) are reported as
+  informational rows but do not fail this gate; that framing belongs to
+  the sibling parity contract test.
 
 Exports whose names start with `_` (e.g.
 `_setMultipartFetchForTesting`) are treated as internal by convention
@@ -412,8 +424,8 @@ scan of the tool files cannot resolve. Canonical names only; CLI aliases
   cross-surface renames + MCP-only affordances + one CLI-only leaf is
   pending triage). Set `CLI_MCP_PARITY_STRICT=1` to fail on any non-exempt
   missing-MCP or orphan-MCP once the baseline is triaged. Sibling switch
-  to `SURFACE_COVERAGE_STRICT` / `E2E_COVERAGE_STRICT` and the other
-  `check-*` strict flags.
+  to `E2E_COVERAGE_STRICT` / `WRITE_READ_SYMMETRY_STRICT` — the other two
+  gates still carrying an untriaged baseline.
 
 ### Merge-completeness gate (full-replace class defense)
 
@@ -448,10 +460,10 @@ SENT field set.
   secrets), operations empirically verified as partial-merge
   (#606/#607/#608 lineage), capture-vs-live shape divergence (the
   capture is outdated or for a sibling op).
-- **Default mode** is warn-only (exit 0). Set
-  `MERGE_COMPLETENESS_STRICT=1` (or pass `--strict`) to fail on
-  non-exempt gaps. Sibling pattern to `E2E_COVERAGE_STRICT` /
-  `SURFACE_COVERAGE_STRICT` / `WRITE_READ_SYMMETRY_STRICT`.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`** — the baseline was already clean: a
+  non-exempt gap fails `pnpm lint`. `MERGE_COMPLETENESS_STRICT=1` is the
+  equivalent env switch for a standalone run.
 
 Captures with no matching ttctl invocation are reported once at the end
 and skipped — typical case: `UpdateTimeZoneWorkingHoursInput` (the
@@ -486,10 +498,11 @@ wrappers — is `unknown`, using the `assertWireShapeStable` path syntax
   `TTCTL_UPDATE_WIRE_SNAPSHOTS=1` and exemptions must survive
   re-capture. Stale entries (no matching degenerate node) are
   reported and fail strict mode.
-- **Default mode** is warn-only (exit 0). Set
-  `SNAPSHOT_DEGENERACY_STRICT=1` (or pass `--strict`) to fail on
-  non-exempt degenerate nodes once the corpus is triaged. Sibling
-  pattern to the other `check-*` strict switches.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`** (#737 triaged 18 degenerate nodes and
+  flipped it): a non-exempt degenerate node fails `pnpm lint`.
+  `SNAPSHOT_DEGENERACY_STRICT=1` is the equivalent env switch for a
+  standalone run.
 
 ### README verb gate (docs-drift defense)
 
@@ -520,12 +533,12 @@ silently dropped.
   `<!-- readme-verbs-exempt: <reason> -->` on the line directly above
   it. The reason is mandatory and surfaces in the report; a marker
   with no following bullet fails strict mode.
-- **Default mode** is warn-only (exit 0). Set `README_VERBS_STRICT=1`
-  (or pass `--strict`) to fail on missing-command claims, structural
-  parse errors, or marker issues. Unlike most siblings, the
-  package.json wiring passes `--strict` from day one — the README
-  baseline is clean post-#751, so there is no warn-phase gap to pay
-  down.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`** from day one — the README baseline is clean
+  post-#751, so there was no warn-phase gap to pay down. A
+  missing-command claim, structural parse error, or marker issue fails
+  `pnpm lint`. `README_VERBS_STRICT=1` is the equivalent env switch for
+  a standalone run.
 
 ### Scalar type-consistency gate (#275 mistype-class defense)
 
@@ -574,21 +587,20 @@ exemption marker absorb collisions.
 
 - **Exempt** a deliberate divergence (a numeric wire scalar intentionally
   surfaced as a `string`, or a name-collision false positive) with
-  `// scalar-consistency-exempt: <reason>` directly above the field — or
-  above the `export interface` header to cover every field in it; per-field
-  markers override. The reason is mandatory and surfaces in the report.
-- **Default mode** is warn-only (exit 0). Set `SCALAR_CONSISTENCY_STRICT=1`
-  (or pass `--strict`) to fail on non-exempt mismatches once the corpus is
-  triaged. Three field-name-collision false positives stand today —
-  `Certification.number` / `CertificationFields.number` (a credential
-  string colliding with `TalentPayment.number: Int`) and
+  `// scalar-consistency-exempt: <reason>` on the line **immediately**
+  above the field — or immediately above the `export interface` header to
+  cover every field in it; per-field markers override. The search window
+  is one line, so a marker whose reason wraps onto a second line no longer
+  binds. The reason is mandatory and surfaces in the report.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`**: a non-exempt mismatch fails `pnpm lint`. `SCALAR_CONSISTENCY_STRICT=1` is the equivalent env switch
+  for a standalone run. Three field-name-collision false positives are
+  exempted in-tree — `Certification.number` / `CertificationFields.number`
+  (a credential string colliding with `TalentPayment.number: Int`) and
   `ProfileSkillSet.position` (an ordering index colliding with an unrelated
   `position: String`); each semantically-correct field is `Unknown`-typed
   in the synthesized talent_profile SDL, so the colliding gateway primitive
-  wins. Exempt these and flip strict in a follow-up. Sibling pattern to
-  `E2E_COVERAGE_STRICT` / `SURFACE_COVERAGE_STRICT` /
-  `WRITE_READ_SYMMETRY_STRICT` / `MERGE_COMPLETENESS_STRICT` /
-  `SNAPSHOT_DEGENERACY_STRICT`.
+  wins.
 
 ### MCP tool-catalog gate (fourth-enumeration-site defense)
 
@@ -645,11 +657,11 @@ above.
   reason, or a marker followed by neither, fails strict mode. Exempting
   the total is the one marker that removes the roster comparison outright,
   leaving only a README self-consistency check.
-- **Default mode** is warn-only (exit 0). Set `MCP_TOOL_CATALOG_STRICT=1`
-  (or pass `--strict`) to fail. Like `check-readme-verbs.ts` — and unlike
-  most siblings — the package.json wiring passes `--strict` from day one:
-  the catalog baseline is consistent (roster 140 = stated total 140 =
-  per-domain sum 140), so there is no warn-phase gap to pay down.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`** from day one — the catalog baseline is
+  consistent (roster 140 = stated total 140 = per-domain sum 140), so
+  there was no warn-phase gap to pay down. `MCP_TOOL_CATALOG_STRICT=1` is
+  the equivalent env switch for a standalone run.
 
 ### Wire-routing manifest gate (op-enumeration drift defense)
 
@@ -711,13 +723,12 @@ the gate exists to catch. Visible, never silently dropped.
   surfaces in the report. A marker with an **empty** reason exempts
   NOTHING and is reported as a marker issue; silently honouring it would
   suppress a genuinely missing row and report only the comment syntax.
-- **Default mode** is warn-only (exit 0). Set `WIRE_ROUTING_STRICT=1` (or
-  pass `--strict`) to fail. Like `check-readme-verbs.ts` and
-  `check-mcp-tool-catalog.ts` — and unlike most siblings — the
-  package.json wiring passes `--strict` from day one: the drifted ops
-  listed above were dispositioned in the same PR that added the gate (each
-  derived to `T1`; none has a generated operation type), so the baseline is
-  clean and there is no warn-phase gap to pay down.
+- The script's own default is warn-only (exit 0), but **the package.json
+  wiring passes `--strict`** from day one: the drifted ops listed above
+  were dispositioned in the same PR that added the gate (each derived to
+  `T1`; none has a generated operation type), so the baseline was clean
+  and there was no warn-phase gap to pay down. `WIRE_ROUTING_STRICT=1` is
+  the equivalent env switch for a standalone run.
 
 `docs/wire-validation-routing.md` is a wide markdown table, and a literal
 `|` inside a cell — **even inside backticks** — makes Prettier silently

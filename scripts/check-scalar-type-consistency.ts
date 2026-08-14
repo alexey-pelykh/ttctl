@@ -73,10 +73,11 @@
  * Modes:
  *
  *   - **warn** (default): always exits 0; MISMATCHes print to stderr for
- *     visibility. The package.json wiring runs warn-mode, mirroring the
- *     coverage/symmetry/merge siblings.
+ *     visibility. Standalone exploratory runs only.
  *   - **strict** (`--strict` or `SCALAR_CONSISTENCY_STRICT=1`): exits non-zero on
- *     any non-exempt MISMATCH. Flip on once the corpus is clean.
+ *     any non-exempt MISMATCH. This is what the package.json wiring passes —
+ *     the corpus is clean, with three field-name collisions carrying
+ *     `// scalar-consistency-exempt:` markers.
  *
  * Exit codes: 0 — warn-mode (always) OR strict with no mismatches. 1 — strict
  * with one or more mismatches.
