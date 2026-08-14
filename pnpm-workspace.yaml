@@ -6,19 +6,21 @@ engineStrict: true
 autoInstallPeers: true
 linkWorkspacePackages: true
 
-# Close fast-uri CVEs via MCP SDK (#223). ^3.1.2 forces re-resolution; ^3.0.0 would let locked 3.1.0 stay.
-# Close shell-quote GHSA-w7jw-789q-3m8p (critical) via @graphql-codegen/cli; locked 1.8.3 is vulnerable.
-# Bump esbuild to the GHSA-gv7w-rqvm-qjhr patch (>=0.28.1) — dev-only via vitest, not in the shipped tarball;
-# a clean patch exists so we upgrade rather than ignore (the release-time `pnpm audit --audit-level=high`
-# gate fails on the HIGH otherwise).
-# Same gate, same rationale — both dev-only via vitest, clean patches exist:
-#   vite >=8.0.16 (GHSA-fx2h-pf6j-xcff), ws >=8.21.0 (GHSA-96hv-2xvq-fx4p).
-# Policy: `overrides` for REACHABLE advisories (above); `auditConfig.ignoreGhsas` (below) for
-# present-but-UNREACHABLE transitive ones — see ADR-011 (ttctl).
+# Each entry closes a HIGH that the release-time `pnpm audit --audit-level=high` gate fails on, and each
+# has a clean upstream patch — so we upgrade rather than ignore. The caret must name the PATCHED floor:
+# a looser range lets the vulnerable locked version stay put.
+# Policy: `overrides` for advisories with a patch (here); `auditConfig.ignoreGhsas` (below) for
+# present-but-UNREACHABLE transitive ones with none — see ADR-011 (ttctl).
 overrides:
-  fast-uri: "^3.1.2"
-  shell-quote: "^1.8.4"
+  brace-expansion: "^5.0.9"
   esbuild: "^0.28.1"
+  fast-uri: "^3.1.5"
+  immutable: "^5.1.8"
+  ip-address: "^10.3.1"
+  js-yaml: "^4.3.1"
+  nanoid: "^3.3.18"
+  postcss: "^8.5.18"
+  shell-quote: "^1.8.5"
   vite: "^8.0.16"
   ws: "^8.21.0"
 
