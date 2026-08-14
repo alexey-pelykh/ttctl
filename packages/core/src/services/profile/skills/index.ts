@@ -292,6 +292,7 @@ export interface ProfileSkillSet {
   experience: number | null;
   rating: ProficiencyRating | null;
   public: boolean;
+  // scalar-consistency-exempt: ordering index; name collides with an unrelated `position: String`.
   position: number | null;
   skill: SkillRef;
   connectionsCount: number;

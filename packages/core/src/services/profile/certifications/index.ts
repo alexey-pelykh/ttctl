@@ -31,6 +31,7 @@ export interface Certification {
   certificate: string;
   institution: string;
   link: string | null;
+  // scalar-consistency-exempt: credential id string; name collides with `TalentPayment.number: Int`.
   number: string | null;
   validFromMonth: number | null;
   validFromYear: number | null;
@@ -53,6 +54,7 @@ export interface CertificationFields {
   certificate?: string;
   institution?: string;
   link?: string;
+  // scalar-consistency-exempt: write-side mirror of `Certification.number`; same collision.
   number?: string;
   validFromMonth?: number;
   validFromYear?: number;

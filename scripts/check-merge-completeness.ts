@@ -76,10 +76,11 @@
  *   - **warn** (default): always exits 0. Mismatches reported to stderr.
  *     Suitable for the rollout phase before existing gaps are paid down.
  *   - **strict** (`--strict` flag or `MERGE_COMPLETENESS_STRICT=1` env):
- *     exits non-zero if any non-exempt gap exists. Flip to strict once
- *     the existing gap has been paid down. Sibling pattern to the
- *     `E2E_COVERAGE_STRICT` / `SURFACE_COVERAGE_STRICT` / `WRITE_READ_SYMMETRY_STRICT`
- *     env switches.
+ *     exits non-zero if any non-exempt gap exists. This is what the
+ *     package.json wiring passes — the baseline was already clean, so
+ *     warn mode is now only for standalone exploratory runs. Sibling
+ *     pattern to the `E2E_COVERAGE_STRICT` / `WRITE_READ_SYMMETRY_STRICT`
+ *     env switches, the two gates still wired warn-only.
  *
  * ## Wire-up
  *

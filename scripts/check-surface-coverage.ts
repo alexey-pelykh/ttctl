@@ -89,8 +89,9 @@
  *     (#151).
  *   - **strict** (`--strict` flag or `SURFACE_COVERAGE_STRICT=1` env):
  *     exits non-zero iff any non-exempt service export has `NEITHER`
- *     disposition. Flip to strict once the existing Class A gap window
- *     (#341, #342, #343, etc.) has been paid down.
+ *     disposition. This is what the package.json wiring passes — the
+ *     Class A gap window (#341, #342, #343) was paid down, so warn mode
+ *     is now only for standalone exploratory runs.
  *
  * Output:
  *
