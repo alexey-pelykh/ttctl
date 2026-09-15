@@ -82,8 +82,8 @@ catalogs:
       specifier: ^2.9.0
       version: 2.9.0
     zod:
-      specifier: ^4.4.3
-      version: 4.4.3
+      specifier: ^4.6.2
+      version: 4.6.2
 
 overrides:
   brace-expansion: ^5.0.9
@@ -128,7 +128,7 @@ importers:
         version: 17.0.2
       graphql-codegen-typescript-validation-schema:
         specifier: 'catalog:'
-        version: 0.19.0(graphql@17.0.2)(zod@4.4.3)
+        version: 0.19.0(graphql@17.0.2)(zod@4.6.2)
       prettier:
         specifier: 'catalog:'
         version: 3.9.6
@@ -167,7 +167,7 @@ importers:
         version: 2.9.0
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.6.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -198,7 +198,7 @@ importers:
         version: 2.9.0
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.6.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -251,13 +251,13 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
-        version: 1.30.0(zod@4.4.3)
+        version: 1.30.0(zod@4.6.2)
       '@ttctl/core':
         specifier: workspace:^
         version: link:../core
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.6.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -2996,8 +2996,8 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.2:
+    resolution: {integrity: sha512-lh5RCAGFa1Cm2hjtNwLQhSs/AsqdWnTQaBER9fEwN/88pSh7KOtJavtBx/0VlkN/uFd61SwYmljLMDAsHlvzBQ==}
 
 snapshots:
 
@@ -3868,7 +3868,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.30.0(zod@4.4.3)':
+  '@modelcontextprotocol/sdk@1.30.0(zod@4.6.2)':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.25)
       ajv: 8.20.0
@@ -3885,8 +3885,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
+      zod: 4.6.2
+      zod-to-json-schema: 3.25.2(zod@4.6.2)
     transitivePeerDependencies:
       - supports-color
 
@@ -4796,7 +4796,7 @@ snapshots:
     dependencies:
       lodash: 4.18.1
 
-  graphql-codegen-typescript-validation-schema@0.19.0(graphql@17.0.2)(zod@4.4.3):
+  graphql-codegen-typescript-validation-schema@0.19.0(graphql@17.0.2)(zod@4.6.2):
     dependencies:
       '@graphql-codegen/plugin-helpers': 6.3.0(graphql@17.0.2)
       '@graphql-codegen/schema-ast': 5.0.2(graphql@17.0.2)
@@ -4804,7 +4804,7 @@ snapshots:
       '@graphql-tools/utils': 11.1.0(graphql@17.0.2)
       graphlib: 2.1.8
       graphql: 17.0.2
-      zod: 4.4.3
+      zod: 4.6.2
 
   graphql-config@5.1.6(@types/node@26.1.1)(graphql@17.0.2)(typescript@6.0.3):
     dependencies:
@@ -5726,8 +5726,8 @@ snapshots:
 
   yoctocolors@2.1.2: {}
 
-  zod-to-json-schema@3.25.2(zod@4.4.3):
+  zod-to-json-schema@3.25.2(zod@4.6.2):
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.2
 
-  zod@4.4.3: {}
+  zod@4.6.2: {}
